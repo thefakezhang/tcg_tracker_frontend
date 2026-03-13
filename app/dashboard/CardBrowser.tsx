@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -12,15 +11,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { type Game, useGame } from "./GameContext";
 
-type Tab = "pokemon" | "mtg";
-
-const TABLE_MAP: Record<Tab, string> = {
+const TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_card_definitions",
   mtg: "mtg_card_definitions",
 };
 
-const LISTINGS_TABLE_MAP: Record<Tab, string> = {
+const LISTINGS_TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_market_listings",
   mtg: "mtg_market_listings",
 };
@@ -115,7 +113,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
 ];
 
 export default function CardBrowser() {
-  const [activeTab, setActiveTab] = useState<Tab>("pokemon");
+  const { activeGame } = useGame();
   const [search, setSearch] = useState("");
   const [data, setData] = useState<CardDefinition[]>([]);
   const [priceSummaries, setPriceSummaries] = useState<
@@ -168,6 +166,10 @@ export default function CardBrowser() {
   }, [data, priceSummaries, sortKey, sortDir]);
 
   useEffect(() => {
+    setSearch("");
+  }, [activeGame]);
+
+  useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     debounceRef.current = setTimeout(() => {
@@ -177,7 +179,7 @@ export default function CardBrowser() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [activeTab, search]);
+  }, [activeGame, search]);
 
   async function fetchCards() {
     setLoading(true);
@@ -185,7 +187,7 @@ export default function CardBrowser() {
 
     const supabase = createClient();
     let query = supabase
-      .from(TABLE_MAP[activeTab])
+      .from(TABLE_MAP[activeGame])
       .select("card_id, regional_name, set_code, card_number, misc_info");
 
     if (search.trim()) {
@@ -213,7 +215,7 @@ export default function CardBrowser() {
 
     const [{ data: listings }, { data: rates }] = await Promise.all([
       supabase
-        .from(LISTINGS_TABLE_MAP[activeTab])
+        .from(LISTINGS_TABLE_MAP[activeGame])
         .select("card_id, price_type, price, currency, currencies(symbol)")
         .in("card_id", cardIds),
       supabase
@@ -244,19 +246,6 @@ export default function CardBrowser() {
 
   return (
     <div className="space-y-4">
-      <Tabs
-        value={activeTab}
-        onValueChange={(value) => {
-          setActiveTab(value as Tab);
-          setSearch("");
-        }}
-      >
-        <TabsList variant="line">
-          <TabsTrigger value="pokemon">Pokemon</TabsTrigger>
-          <TabsTrigger value="mtg">MTG</TabsTrigger>
-        </TabsList>
-      </Tabs>
-
       <Input
         type="text"
         placeholder="Search by name..."
