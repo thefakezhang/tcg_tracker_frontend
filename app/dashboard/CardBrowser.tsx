@@ -39,10 +39,17 @@ interface MarketListing {
   currency_symbol: string;
 }
 
+interface PriceEntry {
+  price: number;
+  symbol: string;
+  normalizedPrice: number;
+}
+
 interface PriceSummary {
-  lowestBuy: { price: number; symbol: string } | null;
-  secondLowestBuy: { price: number; symbol: string } | null;
-  highestSell: { price: number; symbol: string } | null;
+  lowestBuy: PriceEntry | null;
+  secondLowestBuy: PriceEntry | null;
+  highestSell: PriceEntry | null;
+  secondHighestSell: PriceEntry | null;
 }
 
 function computePriceSummaries(
@@ -69,26 +76,45 @@ function computePriceSummaries(
       .filter((l) => l.price_type === "Sell")
       .sort((a, b) => normalize(b) - normalize(a));
 
+    const toEntry = (l: MarketListing): PriceEntry => ({
+      price: l.price,
+      symbol: l.currency_symbol,
+      normalizedPrice: normalize(l),
+    });
+
     result.set(cardId, {
-      lowestBuy: buys[0]
-        ? { price: buys[0].price, symbol: buys[0].currency_symbol }
-        : null,
-      secondLowestBuy: buys[1]
-        ? { price: buys[1].price, symbol: buys[1].currency_symbol }
-        : null,
-      highestSell: sells[0]
-        ? { price: sells[0].price, symbol: sells[0].currency_symbol }
-        : null,
+      lowestBuy: buys[0] ? toEntry(buys[0]) : null,
+      secondLowestBuy: buys[1] ? toEntry(buys[1]) : null,
+      highestSell: sells[0] ? toEntry(sells[0]) : null,
+      secondHighestSell: sells[1] ? toEntry(sells[1]) : null,
     });
   }
   return result;
 }
 
-function formatPrice(
-  entry: { price: number; symbol: string } | null
+function formatPriceWithDiff(
+  primary: { price: number; symbol: string } | null,
+  secondary: { price: number; symbol: string } | null
 ): string {
-  if (!entry) return "—";
-  return `${entry.symbol}${entry.price}`;
+  if (!primary) return "—";
+  const base = `${primary.symbol}${primary.price}`;
+  if (!secondary) return base;
+  const diff = Math.abs(secondary.price - primary.price);
+  const rounded = Math.round(diff * 100) / 100;
+  return `${base} (${primary.symbol}${rounded})`;
+}
+
+function computeRoi(prices: PriceSummary | undefined): number | null {
+  const buy = prices?.lowestBuy?.normalizedPrice;
+  const sell = prices?.highestSell?.normalizedPrice;
+  if (buy == null || sell == null || buy === 0) return null;
+  return ((sell - buy) / buy) * 100;
+}
+
+function formatRoi(prices: PriceSummary): string {
+  const roi = computeRoi(prices);
+  if (roi === null) return "—";
+  return `${Math.round(roi * 100) / 100}%`;
 }
 
 type SortKey =
@@ -97,8 +123,8 @@ type SortKey =
   | "card_number"
   | "misc_info"
   | "lowestBuy"
-  | "secondLowestBuy"
-  | "highestSell";
+  | "highestSell"
+  | "roi";
 
 type SortDir = "asc" | "desc";
 
@@ -108,8 +134,8 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: "set_code", label: "Set Code" },
   { key: "misc_info", label: "Misc Info" },
   { key: "lowestBuy", label: "Lowest Buy" },
-  { key: "secondLowestBuy", label: "2nd Lowest Buy" },
   { key: "highestSell", label: "Highest Sell" },
+  { key: "roi", label: "ROI" },
 ];
 
 export default function CardBrowser() {
@@ -123,8 +149,8 @@ export default function CardBrowser() {
   >(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey | null>(null);
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [sortKey, setSortKey] = useState<SortKey>("roi");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   function handleSort(key: SortKey) {
@@ -137,22 +163,27 @@ export default function CardBrowser() {
   }
 
   const sortedData = useMemo(() => {
-    if (!sortKey) return data;
-
-    const priceKeys = ["lowestBuy", "secondLowestBuy", "highestSell"] as const;
+    const priceKeys = ["lowestBuy", "highestSell"] as const;
 
     return [...data].sort((a, b) => {
       let cmp = 0;
 
-      if (priceKeys.includes(sortKey as (typeof priceKeys)[number])) {
+      if (sortKey === "roi") {
+        const ra = computeRoi(priceSummaries.get(Number(a.card_id)));
+        const rb = computeRoi(priceSummaries.get(Number(b.card_id)));
+        if (ra === null && rb === null) cmp = 0;
+        else if (ra === null) cmp = 1;
+        else if (rb === null) cmp = -1;
+        else cmp = ra - rb;
+      } else if (priceKeys.includes(sortKey as (typeof priceKeys)[number])) {
         const pa =
           priceSummaries.get(Number(a.card_id))?.[
             sortKey as (typeof priceKeys)[number]
-          ]?.price ?? null;
+          ]?.normalizedPrice ?? null;
         const pb =
           priceSummaries.get(Number(b.card_id))?.[
             sortKey as (typeof priceKeys)[number]
-          ]?.price ?? null;
+          ]?.normalizedPrice ?? null;
         if (pa === null && pb === null) cmp = 0;
         else if (pa === null) cmp = 1;
         else if (pb === null) cmp = -1;
@@ -322,6 +353,7 @@ export default function CardBrowser() {
                     lowestBuy: null,
                     secondLowestBuy: null,
                     highestSell: null,
+                    secondHighestSell: null,
                   };
                   return (
                     <TableRow key={card.card_id}>
@@ -330,14 +362,12 @@ export default function CardBrowser() {
                       <TableCell>{card.set_code}</TableCell>
                       <TableCell>{card.misc_info ?? "—"}</TableCell>
                       <TableCell>
-                        {formatPrice(prices.lowestBuy)}
+                        {formatPriceWithDiff(prices.lowestBuy, prices.secondLowestBuy)}
                       </TableCell>
                       <TableCell>
-                        {formatPrice(prices.secondLowestBuy)}
+                        {formatPriceWithDiff(prices.highestSell, prices.secondHighestSell)}
                       </TableCell>
-                      <TableCell>
-                        {formatPrice(prices.highestSell)}
-                      </TableCell>
+                      <TableCell>{formatRoi(prices)}</TableCell>
                     </TableRow>
                   );
                 })
