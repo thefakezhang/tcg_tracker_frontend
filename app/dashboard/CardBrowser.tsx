@@ -323,7 +323,7 @@ export default function CardBrowser() {
                 {COLUMNS.map((col) => (
                   <TableHead
                     key={col.key}
-                    className="cursor-pointer select-none"
+                    className={`cursor-pointer select-none${col.key === "regional_name" ? " w-[40%]" : ""}`}
                     onClick={() => handleSort(col.key)}
                   >
                     {col.label}
