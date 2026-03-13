@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -12,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { type Game, useGame } from "./GameContext";
+import { Search } from "lucide-react";
 
 const TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_card_definitions",
@@ -246,13 +248,17 @@ export default function CardBrowser() {
 
   return (
     <div className="space-y-4">
-      <Input
-        type="text"
-        placeholder="Search by name..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="max-w-sm"
-      />
+      <div className="flex gap-2">
+        <Input
+          type="text"
+          placeholder="Search by name..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <Button variant="outline" size="icon" onClick={fetchCards}>
+          <Search className="size-4" />
+        </Button>
+      </div>
 
       {error && (
         <p className="text-destructive text-sm">Error: {error}</p>
