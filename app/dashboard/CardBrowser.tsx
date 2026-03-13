@@ -121,7 +121,6 @@ type SortKey =
   | "regional_name"
   | "set_code"
   | "card_number"
-  | "misc_info"
   | "lowestBuy"
   | "highestSell"
   | "roi";
@@ -132,7 +131,6 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: "regional_name", label: "Name" },
   { key: "card_number", label: "Card Number" },
   { key: "set_code", label: "Set Code" },
-  { key: "misc_info", label: "Misc Info" },
   { key: "lowestBuy", label: "Lowest Buy" },
   { key: "highestSell", label: "Highest Sell" },
   { key: "roi", label: "ROI" },
@@ -341,7 +339,7 @@ export default function CardBrowser() {
             <TableBody>
               {sortedData.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center">
+                  <TableCell colSpan={6} className="text-center">
                     No results found
                   </TableCell>
                 </TableRow>
@@ -357,10 +355,12 @@ export default function CardBrowser() {
                   };
                   return (
                     <TableRow key={card.card_id}>
-                      <TableCell>{card.regional_name}</TableCell>
+                      <TableCell>
+                        {card.regional_name}
+                        {card.misc_info ? ` (${card.misc_info})` : ""}
+                      </TableCell>
                       <TableCell>{card.card_number ?? "—"}</TableCell>
                       <TableCell>{card.set_code}</TableCell>
-                      <TableCell>{card.misc_info ?? "—"}</TableCell>
                       <TableCell>
                         {formatPriceWithDiff(prices.lowestBuy, prices.secondLowestBuy)}
                       </TableCell>
