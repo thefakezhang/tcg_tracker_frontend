@@ -33,7 +33,7 @@ serve(async () => {
         throw new Error(`ExchangeRate-API returned: ${json.result}`);
       }
 
-      const usdRates: Record<string, number> = json.rates;
+      const usdRates: Record<string, number> = json.conversion_rates;
 
       // 3. Build a rate map for only our currencies
       const rateFromUsd: Record<string, number> = {};
