@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -93,6 +93,27 @@ function formatPrice(
   return `${entry.symbol}${entry.price}`;
 }
 
+type SortKey =
+  | "regional_name"
+  | "set_code"
+  | "card_number"
+  | "misc_info"
+  | "lowestBuy"
+  | "secondLowestBuy"
+  | "highestSell";
+
+type SortDir = "asc" | "desc";
+
+const COLUMNS: { key: SortKey; label: string }[] = [
+  { key: "regional_name", label: "Name" },
+  { key: "set_code", label: "Set Code" },
+  { key: "card_number", label: "Card #" },
+  { key: "misc_info", label: "Misc Info" },
+  { key: "lowestBuy", label: "Lowest Buy" },
+  { key: "secondLowestBuy", label: "2nd Lowest Buy" },
+  { key: "highestSell", label: "Highest Sell" },
+];
+
 export default function CardBrowser() {
   const [activeTab, setActiveTab] = useState<Tab>("pokemon");
   const [search, setSearch] = useState("");
@@ -102,7 +123,49 @@ export default function CardBrowser() {
   >(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  function handleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
+
+  const sortedData = useMemo(() => {
+    if (!sortKey) return data;
+
+    const priceKeys = ["lowestBuy", "secondLowestBuy", "highestSell"] as const;
+
+    return [...data].sort((a, b) => {
+      let cmp = 0;
+
+      if (priceKeys.includes(sortKey as (typeof priceKeys)[number])) {
+        const pa =
+          priceSummaries.get(Number(a.card_id))?.[
+            sortKey as (typeof priceKeys)[number]
+          ]?.price ?? null;
+        const pb =
+          priceSummaries.get(Number(b.card_id))?.[
+            sortKey as (typeof priceKeys)[number]
+          ]?.price ?? null;
+        if (pa === null && pb === null) cmp = 0;
+        else if (pa === null) cmp = 1;
+        else if (pb === null) cmp = -1;
+        else cmp = pa - pb;
+      } else {
+        const va = (a[sortKey as keyof CardDefinition] as string | null) ?? "";
+        const vb = (b[sortKey as keyof CardDefinition] as string | null) ?? "";
+        cmp = va.localeCompare(vb);
+      }
+
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [data, priceSummaries, sortKey, sortDir]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -213,24 +276,31 @@ export default function CardBrowser() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Set Code</TableHead>
-                <TableHead>Card #</TableHead>
-                <TableHead>Misc Info</TableHead>
-                <TableHead>Lowest Buy</TableHead>
-                <TableHead>2nd Lowest Buy</TableHead>
-                <TableHead>Highest Sell</TableHead>
+                {COLUMNS.map((col) => (
+                  <TableHead
+                    key={col.key}
+                    className="cursor-pointer select-none"
+                    onClick={() => handleSort(col.key)}
+                  >
+                    {col.label}
+                    {sortKey === col.key
+                      ? sortDir === "asc"
+                        ? " \u25B2"
+                        : " \u25BC"
+                      : ""}
+                  </TableHead>
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.length === 0 ? (
+              {sortedData.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center">
                     No results found
                   </TableCell>
                 </TableRow>
               ) : (
-                data.map((card) => {
+                sortedData.map((card) => {
                   const prices = priceSummaries.get(
                     Number(card.card_id)
                   ) ?? {
