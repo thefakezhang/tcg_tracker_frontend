@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -12,6 +13,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { type Game, useGame } from "./GameContext";
+import { useHeader } from "./HeaderContext";
+
 
 const TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_card_definitions",
@@ -37,6 +40,7 @@ interface MarketListing {
   price: number;
   currency: string;
   currency_symbol: string;
+  psa_grade: number;
 }
 
 interface PriceEntry {
@@ -54,17 +58,19 @@ interface PriceSummary {
 
 function computePriceSummaries(
   listings: MarketListing[],
-  rateMap: Map<string, number>
-): Map<number, PriceSummary> {
-  const grouped = new Map<number, MarketListing[]>();
+  rateMap: Map<string, number>,
+  keyFn: (l: MarketListing) => string
+): Map<string, PriceSummary> {
+  const grouped = new Map<string, MarketListing[]>();
   for (const l of listings) {
-    const arr = grouped.get(l.card_id) ?? [];
+    const key = keyFn(l);
+    const arr = grouped.get(key) ?? [];
     arr.push(l);
-    grouped.set(l.card_id, arr);
+    grouped.set(key, arr);
   }
 
-  const result = new Map<number, PriceSummary>();
-  for (const [cardId, cardListings] of grouped) {
+  const result = new Map<string, PriceSummary>();
+  for (const [key, cardListings] of grouped) {
     const normalize = (l: MarketListing) =>
       l.price * (rateMap.get(l.currency) ?? 1);
 
@@ -82,7 +88,7 @@ function computePriceSummaries(
       normalizedPrice: normalize(l),
     });
 
-    result.set(cardId, {
+    result.set(key, {
       lowestBuy: buys[0] ? toEntry(buys[0]) : null,
       secondLowestBuy: buys[1] ? toEntry(buys[1]) : null,
       highestSell: sells[0] ? toEntry(sells[0]) : null,
@@ -121,37 +127,56 @@ type SortKey =
   | "regional_name"
   | "set_code"
   | "card_number"
-  | "misc_info"
+  | "psa_grade"
   | "lowestBuy"
   | "highestSell"
   | "roi";
 
 type SortDir = "asc" | "desc";
 
-const COLUMNS: { key: SortKey; label: string }[] = [
+const BASE_COLUMNS: { key: SortKey; label: string }[] = [
   { key: "regional_name", label: "Name" },
   { key: "card_number", label: "Card Number" },
   { key: "set_code", label: "Set Code" },
-  { key: "misc_info", label: "Misc Info" },
+];
+
+const PRICE_COLUMNS: { key: SortKey; label: string }[] = [
   { key: "lowestBuy", label: "Lowest Buy" },
   { key: "highestSell", label: "Highest Sell" },
   { key: "roi", label: "ROI" },
 ];
 
+const PSA_COLUMN = { key: "psa_grade" as SortKey, label: "PSA" };
+
+interface DisplayRow {
+  key: string;
+  card: CardDefinition;
+  psaGrade?: number;
+}
+
 export default function CardBrowser() {
-  const { activeGame } = useGame();
+  const { activeGame, psaMode, setPsaMode } = useGame();
+  const { setHeaderActions } = useHeader();
   const [search, setSearch] = useState("");
   const [searchCardNumber, setSearchCardNumber] = useState("");
   const [searchSetCode, setSearchSetCode] = useState("");
-  const [data, setData] = useState<CardDefinition[]>([]);
+  const [displayRows, setDisplayRows] = useState<DisplayRow[]>([]);
   const [priceSummaries, setPriceSummaries] = useState<
-    Map<number, PriceSummary>
+    Map<string, PriceSummary>
   >(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("roi");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  const columns = useMemo(
+    () =>
+      psaMode === "psa"
+        ? [...BASE_COLUMNS, PSA_COLUMN, ...PRICE_COLUMNS]
+        : [...BASE_COLUMNS, ...PRICE_COLUMNS],
+    [psaMode]
+  );
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {
@@ -162,26 +187,30 @@ export default function CardBrowser() {
     }
   }
 
-  const sortedData = useMemo(() => {
+  const sortedRows = useMemo(() => {
     const priceKeys = ["lowestBuy", "highestSell"] as const;
 
-    return [...data].sort((a, b) => {
+    return [...displayRows].sort((a, b) => {
       let cmp = 0;
 
       if (sortKey === "roi") {
-        const ra = computeRoi(priceSummaries.get(Number(a.card_id)));
-        const rb = computeRoi(priceSummaries.get(Number(b.card_id)));
+        const ra = computeRoi(priceSummaries.get(a.key));
+        const rb = computeRoi(priceSummaries.get(b.key));
         if (ra === null && rb === null) cmp = 0;
         else if (ra === null) cmp = 1;
         else if (rb === null) cmp = -1;
         else cmp = ra - rb;
+      } else if (sortKey === "psa_grade") {
+        const ga = a.psaGrade ?? 0;
+        const gb = b.psaGrade ?? 0;
+        cmp = ga - gb;
       } else if (priceKeys.includes(sortKey as (typeof priceKeys)[number])) {
         const pa =
-          priceSummaries.get(Number(a.card_id))?.[
+          priceSummaries.get(a.key)?.[
             sortKey as (typeof priceKeys)[number]
           ]?.normalizedPrice ?? null;
         const pb =
-          priceSummaries.get(Number(b.card_id))?.[
+          priceSummaries.get(b.key)?.[
             sortKey as (typeof priceKeys)[number]
           ]?.normalizedPrice ?? null;
         if (pa === null && pb === null) cmp = 0;
@@ -189,20 +218,38 @@ export default function CardBrowser() {
         else if (pb === null) cmp = -1;
         else cmp = pa - pb;
       } else {
-        const va = (a[sortKey as keyof CardDefinition] as string | null) ?? "";
-        const vb = (b[sortKey as keyof CardDefinition] as string | null) ?? "";
+        const va = (a.card[sortKey as keyof CardDefinition] as string | null) ?? "";
+        const vb = (b.card[sortKey as keyof CardDefinition] as string | null) ?? "";
         cmp = va.localeCompare(vb);
       }
 
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [data, priceSummaries, sortKey, sortDir]);
+  }, [displayRows, priceSummaries, sortKey, sortDir]);
 
   useEffect(() => {
     setSearch("");
     setSearchCardNumber("");
     setSearchSetCode("");
   }, [activeGame]);
+
+  useEffect(() => {
+    setHeaderActions(
+      <>
+        <Switch
+          id="psa-toggle"
+          checked={psaMode === "psa"}
+          onCheckedChange={(checked: boolean) =>
+            setPsaMode(checked ? "psa" : "non-psa")
+          }
+        />
+        <label htmlFor="psa-toggle" className="text-sm text-muted-foreground">
+          PSA
+        </label>
+      </>
+    );
+    return () => setHeaderActions(null);
+  }, [psaMode, setPsaMode, setHeaderActions]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -214,7 +261,7 @@ export default function CardBrowser() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [activeGame, search, searchCardNumber, searchSetCode]);
+  }, [activeGame, psaMode, search, searchCardNumber, searchSetCode]);
 
   async function fetchCards() {
     setLoading(true);
@@ -239,26 +286,33 @@ export default function CardBrowser() {
 
     if (cardsError) {
       setError(cardsError.message);
-      setData([]);
+      setDisplayRows([]);
       setPriceSummaries(new Map());
       setLoading(false);
       return;
     }
-
-    setData(cards ?? []);
 
     const cardIds = (cards ?? []).map((c) => c.card_id);
     if (cardIds.length === 0) {
+      setDisplayRows([]);
       setPriceSummaries(new Map());
       setLoading(false);
       return;
     }
 
+    let listingsQuery = supabase
+      .from(LISTINGS_TABLE_MAP[activeGame])
+      .select("card_id, price_type, price, currency, psa_grade, currencies(symbol)")
+      .in("card_id", cardIds);
+
+    if (psaMode === "non-psa") {
+      listingsQuery = listingsQuery.eq("psa_grade", 0);
+    } else {
+      listingsQuery = listingsQuery.gt("psa_grade", 0);
+    }
+
     const [{ data: listings }, { data: rates }] = await Promise.all([
-      supabase
-        .from(LISTINGS_TABLE_MAP[activeGame])
-        .select("card_id, price_type, price, currency, currencies(symbol)")
-        .in("card_id", cardIds),
+      listingsQuery,
       supabase
         .from("exchange_rates")
         .select("from_currency, to_currency, rate")
@@ -278,10 +332,45 @@ export default function CardBrowser() {
         currency: l.currency as string,
         currency_symbol:
           (l.currencies as { symbol: string } | null)?.symbol ?? "",
+        psa_grade: l.psa_grade as number,
       })
     );
 
-    setPriceSummaries(computePriceSummaries(normalizedListings, rateMap));
+    const cardMap = new Map((cards ?? []).map((c) => [String(c.card_id), c]));
+
+    if (psaMode === "non-psa") {
+      const rows: DisplayRow[] = (cards ?? []).map((c) => ({
+        key: String(c.card_id),
+        card: c,
+      }));
+      setDisplayRows(rows);
+      setPriceSummaries(
+        computePriceSummaries(normalizedListings, rateMap, (l) =>
+          String(l.card_id)
+        )
+      );
+    } else {
+      // Group by card_id + psa_grade to create unique rows
+      const seen = new Set<string>();
+      const rows: DisplayRow[] = [];
+      for (const l of normalizedListings) {
+        const key = `${l.card_id}:${l.psa_grade}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          const card = cardMap.get(String(l.card_id));
+          if (card) {
+            rows.push({ key, card, psaGrade: l.psa_grade });
+          }
+        }
+      }
+      setDisplayRows(rows);
+      setPriceSummaries(
+        computePriceSummaries(normalizedListings, rateMap, (l) =>
+          `${l.card_id}:${l.psa_grade}`
+        )
+      );
+    }
+
     setLoading(false);
   }
 
@@ -322,10 +411,10 @@ export default function CardBrowser() {
           <Table>
             <TableHeader>
               <TableRow>
-                {COLUMNS.map((col) => (
+                {columns.map((col) => (
                   <TableHead
                     key={col.key}
-                    className="cursor-pointer select-none"
+                    className={`cursor-pointer select-none${col.key === "regional_name" ? " w-[40%]" : ""}`}
                     onClick={() => handleSort(col.key)}
                   >
                     {col.label}
@@ -339,28 +428,31 @@ export default function CardBrowser() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedData.length === 0 ? (
+              {sortedRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center">
+                  <TableCell colSpan={columns.length} className="text-center">
                     No results found
                   </TableCell>
                 </TableRow>
               ) : (
-                sortedData.map((card) => {
-                  const prices = priceSummaries.get(
-                    Number(card.card_id)
-                  ) ?? {
+                sortedRows.map((row) => {
+                  const prices = priceSummaries.get(row.key) ?? {
                     lowestBuy: null,
                     secondLowestBuy: null,
                     highestSell: null,
                     secondHighestSell: null,
                   };
                   return (
-                    <TableRow key={card.card_id}>
-                      <TableCell>{card.regional_name}</TableCell>
-                      <TableCell>{card.card_number ?? "—"}</TableCell>
-                      <TableCell>{card.set_code}</TableCell>
-                      <TableCell>{card.misc_info ?? "—"}</TableCell>
+                    <TableRow key={row.key}>
+                      <TableCell>
+                        {row.card.regional_name}
+                        {row.card.misc_info ? ` (${row.card.misc_info})` : ""}
+                      </TableCell>
+                      <TableCell>{row.card.card_number ?? "—"}</TableCell>
+                      <TableCell>{row.card.set_code}</TableCell>
+                      {psaMode === "psa" && (
+                        <TableCell>{row.psaGrade}</TableCell>
+                      )}
                       <TableCell>
                         {formatPriceWithDiff(prices.lowestBuy, prices.secondLowestBuy)}
                       </TableCell>
