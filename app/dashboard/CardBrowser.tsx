@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -13,7 +12,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { type Game, useGame } from "./GameContext";
-import { Search } from "lucide-react";
 
 const TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_card_definitions",
@@ -106,8 +104,8 @@ type SortDir = "asc" | "desc";
 
 const COLUMNS: { key: SortKey; label: string }[] = [
   { key: "regional_name", label: "Name" },
+  { key: "card_number", label: "Card Number" },
   { key: "set_code", label: "Set Code" },
-  { key: "card_number", label: "Card #" },
   { key: "misc_info", label: "Misc Info" },
   { key: "lowestBuy", label: "Lowest Buy" },
   { key: "secondLowestBuy", label: "2nd Lowest Buy" },
@@ -117,6 +115,8 @@ const COLUMNS: { key: SortKey; label: string }[] = [
 export default function CardBrowser() {
   const { activeGame } = useGame();
   const [search, setSearch] = useState("");
+  const [searchCardNumber, setSearchCardNumber] = useState("");
+  const [searchSetCode, setSearchSetCode] = useState("");
   const [data, setData] = useState<CardDefinition[]>([]);
   const [priceSummaries, setPriceSummaries] = useState<
     Map<number, PriceSummary>
@@ -169,6 +169,8 @@ export default function CardBrowser() {
 
   useEffect(() => {
     setSearch("");
+    setSearchCardNumber("");
+    setSearchSetCode("");
   }, [activeGame]);
 
   useEffect(() => {
@@ -181,7 +183,7 @@ export default function CardBrowser() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [activeGame, search]);
+  }, [activeGame, search, searchCardNumber, searchSetCode]);
 
   async function fetchCards() {
     setLoading(true);
@@ -194,6 +196,12 @@ export default function CardBrowser() {
 
     if (search.trim()) {
       query = query.ilike("regional_name", `%${search.trim()}%`);
+    }
+    if (searchCardNumber.trim()) {
+      query = query.ilike("card_number", `%${searchCardNumber.trim()}%`);
+    }
+    if (searchSetCode.trim()) {
+      query = query.ilike("set_code", `%${searchSetCode.trim()}%`);
     }
 
     const { data: cards, error: cardsError } = await query;
@@ -251,13 +259,25 @@ export default function CardBrowser() {
       <div className="flex gap-2">
         <Input
           type="text"
-          placeholder="Search by name..."
+          placeholder="Name..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          className="basis-1/2"
         />
-        <Button variant="outline" size="icon" onClick={fetchCards}>
-          <Search className="size-4" />
-        </Button>
+        <Input
+          type="text"
+          placeholder="Card Number..."
+          value={searchCardNumber}
+          onChange={(e) => setSearchCardNumber(e.target.value)}
+          className="basis-1/4"
+        />
+        <Input
+          type="text"
+          placeholder="Set code..."
+          value={searchSetCode}
+          onChange={(e) => setSearchSetCode(e.target.value)}
+          className="basis-1/4"
+        />
       </div>
 
       {error && (
@@ -306,8 +326,8 @@ export default function CardBrowser() {
                   return (
                     <TableRow key={card.card_id}>
                       <TableCell>{card.regional_name}</TableCell>
-                      <TableCell>{card.set_code}</TableCell>
                       <TableCell>{card.card_number ?? "—"}</TableCell>
+                      <TableCell>{card.set_code}</TableCell>
                       <TableCell>{card.misc_info ?? "—"}</TableCell>
                       <TableCell>
                         {formatPrice(prices.lowestBuy)}
