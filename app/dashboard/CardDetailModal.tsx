@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -18,6 +19,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useGame } from "./GameContext";
@@ -50,15 +58,18 @@ export default function CardDetailModal({
 }: CardDetailModalProps) {
   const { t } = useTranslation();
   const { activeGame } = useGame();
-  const [buyListings, setBuyListings] = useState<{
-    nonPsa: DetailListing[];
-    psa: DetailListing[];
-  }>({ nonPsa: [], psa: [] });
-  const [sellListings, setSellListings] = useState<{
-    nonPsa: DetailListing[];
-    psa: DetailListing[];
-  }>({ nonPsa: [], psa: [] });
+  const [rawListings, setRawListings] = useState<MarketListing[]>([]);
+  const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
+  const [locationMap, setLocationMap] = useState<Map<number, string>>(
+    new Map()
+  );
+  const [conditionsMap, setConditionsMap] = useState<Map<number, number>>(
+    new Map()
+  );
+  const [availableTiers, setAvailableTiers] = useState<number[]>([]);
+  const [selectedTiers, setSelectedTiers] = useState<number[]>([1]);
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("non-psa");
 
   useEffect(() => {
     if (!card || !open) return;
@@ -68,7 +79,7 @@ export default function CardDetailModal({
 
     async function fetchListings() {
       const supabase = createClient();
-      const [{ data: raw }, rateMap, locationMap, conditionsData] =
+      const [{ data: raw }, rates, locations, conditionsData] =
         await Promise.all([
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
@@ -97,39 +108,11 @@ export default function CardDetailModal({
         })
       );
 
-      const toDetail = (l: MarketListing): DetailListing => {
-        let conditionLabel = "";
-        if (l.psa_grade > 0) {
-          conditionLabel = `PSA ${l.psa_grade}`;
-        } else if (l.condition != null) {
-          const tier = conditionsData.map.get(l.condition);
-          conditionLabel = tier != null ? `Tier ${tier}` : String(l.condition);
-        }
-        return {
-          price: l.price,
-          currencySymbol: l.currency_symbol,
-          locationName: locationMap.get(l.location_id) ?? "",
-          conditionLabel,
-        };
-      };
-
-      const normalize = (l: MarketListing) =>
-        l.price * (rateMap.get(l.currency) ?? 1);
-
-      const buys = listings.filter((l) => l.price_type === "Buy");
-      const sells = listings.filter((l) => l.price_type === "Sell");
-
-      buys.sort((a, b) => normalize(a) - normalize(b));
-      sells.sort((a, b) => normalize(b) - normalize(a));
-
-      setBuyListings({
-        nonPsa: buys.filter((l) => l.psa_grade === 0).map(toDetail),
-        psa: buys.filter((l) => l.psa_grade > 0).map(toDetail),
-      });
-      setSellListings({
-        nonPsa: sells.filter((l) => l.psa_grade === 0).map(toDetail),
-        psa: sells.filter((l) => l.psa_grade > 0).map(toDetail),
-      });
+      setRawListings(listings);
+      setRateMap(rates);
+      setLocationMap(locations);
+      setConditionsMap(conditionsData.map);
+      setAvailableTiers(conditionsData.tiers);
       setLoading(false);
     }
 
@@ -138,6 +121,61 @@ export default function CardDetailModal({
       cancelled = true;
     };
   }, [card, open, activeGame]);
+
+  const { buyNonPsa, sellNonPsa, buyPsa, sellPsa } = useMemo(() => {
+    const normalize = (l: MarketListing) =>
+      l.price * (rateMap.get(l.currency) ?? 1);
+
+    const toDetail = (l: MarketListing): DetailListing => {
+      let conditionLabel = "";
+      if (l.psa_grade > 0) {
+        conditionLabel = `PSA ${l.psa_grade}`;
+      } else if (l.condition != null) {
+        const tier = conditionsMap.get(l.condition);
+        conditionLabel = tier != null ? `Tier ${tier}` : String(l.condition);
+      }
+      return {
+        price: l.price,
+        currencySymbol: l.currency_symbol,
+        locationName: locationMap.get(l.location_id) ?? "",
+        conditionLabel,
+      };
+    };
+
+    const tierSet = new Set(selectedTiers);
+    const nonPsa = rawListings.filter((l) => {
+      if (l.psa_grade !== 0) return false;
+      if (l.condition == null) return true;
+      const tier = conditionsMap.get(l.condition);
+      return tier != null && tierSet.has(tier);
+    });
+    const psa = rawListings.filter((l) => l.psa_grade > 0);
+
+    const sortBuy = (a: MarketListing, b: MarketListing) =>
+      normalize(a) - normalize(b);
+    const sortSell = (a: MarketListing, b: MarketListing) =>
+      normalize(b) - normalize(a);
+
+    const buyNonPsaSorted = nonPsa
+      .filter((l) => l.price_type === "Buy")
+      .sort(sortBuy);
+    const sellNonPsaSorted = nonPsa
+      .filter((l) => l.price_type === "Sell")
+      .sort(sortSell);
+    const buyPsaSorted = psa
+      .filter((l) => l.price_type === "Buy")
+      .sort(sortBuy);
+    const sellPsaSorted = psa
+      .filter((l) => l.price_type === "Sell")
+      .sort(sortSell);
+
+    return {
+      buyNonPsa: buyNonPsaSorted.map(toDetail),
+      sellNonPsa: sellNonPsaSorted.map(toDetail),
+      buyPsa: buyPsaSorted.map(toDetail),
+      sellPsa: sellPsaSorted.map(toDetail),
+    };
+  }, [rawListings, rateMap, locationMap, conditionsMap, selectedTiers]);
 
   if (!card) return null;
 
@@ -184,26 +222,58 @@ export default function CardDetailModal({
             ))}
           </div>
         ) : (
-          <Tabs defaultValue="non-psa">
-            <TabsList>
-              <TabsTrigger value="non-psa">
-                {t("modal.tabNonPsa")}
-              </TabsTrigger>
-              <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
-            </TabsList>
+          <Tabs defaultValue="non-psa" onValueChange={(v) => setActiveTab(String(v))}>
+            <div className="flex items-center gap-2">
+              <TabsList>
+                <TabsTrigger value="non-psa">
+                  {t("modal.tabNonPsa")}
+                </TabsTrigger>
+                <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
+              </TabsList>
+
+              {activeTab === "non-psa" && availableTiers.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button variant="outline" />
+                    }
+                  >
+                    {t("cardBrowser.tierPrefix")}{selectedTiers.sort((a, b) => a - b).join(", ") || t("cardBrowser.tierNone")}
+                    <ChevronDown className="ml-1 size-4" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent>
+                    {availableTiers.map((tier) => (
+                      <DropdownMenuCheckboxItem
+                        key={tier}
+                        checked={selectedTiers.includes(tier)}
+                        onCheckedChange={(checked) => {
+                          setSelectedTiers((prev) =>
+                            checked
+                              ? [...prev, tier]
+                              : prev.filter((t) => t !== tier)
+                          );
+                        }}
+                      >
+                        {t("cardBrowser.tierItem", { tier })}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
 
             <TabsContent value="non-psa">
               <ListingTables
-                buy={buyListings.nonPsa}
-                sell={sellListings.nonPsa}
+                buy={buyNonPsa}
+                sell={sellNonPsa}
                 conditionHeader={t("modal.condition")}
                 t={t}
               />
             </TabsContent>
             <TabsContent value="psa">
               <ListingTables
-                buy={buyListings.psa}
-                sell={sellListings.psa}
+                buy={buyPsa}
+                sell={sellPsa}
                 conditionHeader={t("modal.psaGrade")}
                 t={t}
               />
