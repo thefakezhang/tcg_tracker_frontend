@@ -8,8 +8,17 @@ import {
   CardTitle,
   CardContent,
 } from "@/components/ui/card";
+import { t } from "@/lib/i18n";
+import type { Language } from "@/app/dashboard/LanguageContext";
+
+function getStoredLanguage(): Language {
+  if (typeof window === "undefined") return "en";
+  const stored = localStorage.getItem("language");
+  return stored === "ja" ? "ja" : "en";
+}
 
 export default function LoginPage() {
+  const lang = getStoredLanguage();
   const handleLogin = async () => {
     const supabase = createClient();
     await supabase.auth.signInWithOAuth({
@@ -24,11 +33,11 @@ export default function LoginPage() {
     <div className="flex items-center justify-center min-h-screen">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle className="text-center">TCG Tracker</CardTitle>
+          <CardTitle className="text-center">{t(lang, "app.title")}</CardTitle>
         </CardHeader>
         <CardContent>
           <Button onClick={handleLogin} className="w-full" size="lg">
-            Sign in with Google
+            {t(lang, "app.signInWithGoogle")}
           </Button>
         </CardContent>
       </Card>

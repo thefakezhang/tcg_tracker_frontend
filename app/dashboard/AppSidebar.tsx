@@ -2,7 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { type Game, useGame, GAME_LABELS } from "./GameContext";
+import { type Game, useGame } from "./GameContext";
+import { useTranslation, type TranslationKey } from "@/lib/i18n";
+import {
+  type Language,
+  useLanguage,
+  LANGUAGE_LABELS,
+} from "./LanguageContext";
 import {
   Sidebar,
   SidebarContent,
@@ -19,24 +25,34 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { ChevronsUpDown, ListChecks, LogOut, Sparkles, Squirrel } from "lucide-react";
+import { ChevronsUpDown, Globe, ListChecks, LogOut, Sparkles, Squirrel } from "lucide-react";
 
 const GAME_ICONS: Record<Game, React.ReactNode> = {
   pokemon: <Squirrel className="size-4" />,
   mtg: <Sparkles className="size-4" />,
 };
 
-const GAMES = Object.keys(GAME_LABELS) as Game[];
+const GAMES: Game[] = ["pokemon", "mtg"];
 
 interface AppSidebarProps {
   user: { email: string; name?: string };
 }
 
+const LANGUAGES = Object.keys(LANGUAGE_LABELS) as Language[];
+
 export function AppSidebar({ user }: AppSidebarProps) {
   const { activeGame, setActiveGame } = useGame();
+  const { language, setLanguage } = useLanguage();
+  const { t } = useTranslation();
   const router = useRouter();
 
   const displayName = user.name ?? user.email;
@@ -59,14 +75,14 @@ export function AppSidebar({ user }: AppSidebarProps) {
           <SidebarMenuItem>
             <span className="flex items-center gap-2 px-2 py-1.5 text-lg font-bold">
               <ListChecks className="size-5" />
-              TCG Tracker
+              {t("app.title")}
             </span>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Card Listings</SidebarGroupLabel>
+          <SidebarGroupLabel>{t("sidebar.cardListings")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {GAMES.map((game) => (
@@ -76,7 +92,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
                     onClick={() => setActiveGame(game)}
                   >
                     {GAME_ICONS[game]}
-                    {GAME_LABELS[game]}
+                    {t(`game.${game}` as TranslationKey)}
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
@@ -102,9 +118,28 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 }
               />
               <DropdownMenuContent side="top" align="start">
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <Globe className="mr-2 size-4" />
+                    {t("sidebar.language")}
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup
+                      value={language}
+                      onValueChange={(v) => setLanguage(v as Language)}
+                    >
+                      {LANGUAGES.map((lang) => (
+                        <DropdownMenuRadioItem key={lang} value={lang}>
+                          {LANGUAGE_LABELS[lang]}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout}>
                   <LogOut className="mr-2 size-4" />
-                  Log out
+                  {t("sidebar.logOut")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

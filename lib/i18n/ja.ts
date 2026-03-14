@@ -1,0 +1,33 @@
+import type en from "./en";
+
+const ja: { [K in keyof typeof en]: string } = {
+  "app.title": "TCG トラッカー",
+  "app.signInWithGoogle": "Googleでサインイン",
+  "sidebar.cardListings": "カード一覧",
+  "sidebar.language": "言語",
+  "sidebar.logOut": "ログアウト",
+  "game.pokemon": "ポケモン",
+  "game.mtg": "マジック：ザ・ギャザリング",
+  "cardBrowser.psa": "PSA",
+  "cardBrowser.namePlaceholder": "名前...",
+  "cardBrowser.cardNumberPlaceholder": "カード番号...",
+  "cardBrowser.setCodePlaceholder": "セットコード...",
+  "cardBrowser.tierPrefix": "ティア: ",
+  "cardBrowser.tierNone": "なし",
+  "cardBrowser.tierItem": "ティア {tier}",
+  "cardBrowser.error": "エラー: {message}",
+  "dataTable.loading": "読み込み中...",
+  "dataTable.noResults": "結果が見つかりません",
+  "dataTable.rowsPerPage": "表示件数",
+  "dataTable.pageOf": "{current} / {total} ページ",
+  "dataTable.previous": "前へ",
+  "dataTable.next": "次へ",
+  "column.name": "名前",
+  "column.cardNumber": "カード番号",
+  "column.setCode": "セットコード",
+  "column.psa": "PSA",
+  "column.lowestBuy": "最安購入価格",
+  "column.highestSell": "最高売却価格",
+  "column.roi": "ROI",
+} as const;
+export default ja;
