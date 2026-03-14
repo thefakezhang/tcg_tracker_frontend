@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
 import { useCardData, type CardRowData } from "./use-card-data";
@@ -51,22 +51,9 @@ export default function CardBrowser() {
   }, [activeGame]);
 
   useEffect(() => {
-    setHeaderActions(
-      <>
-        <Switch
-          id="psa-toggle"
-          checked={psaMode === "psa"}
-          onCheckedChange={(checked: boolean) =>
-            setPsaMode(checked ? "psa" : "non-psa")
-          }
-        />
-        <label htmlFor="psa-toggle" className="text-sm text-muted-foreground">
-          {t("cardBrowser.psa")}
-        </label>
-      </>
-    );
+    setHeaderActions(null);
     return () => setHeaderActions(null);
-  }, [psaMode, setPsaMode, setHeaderActions]);
+  }, [setHeaderActions]);
 
   const columnVisibility = {
     psa_grade: psaMode === "psa",
@@ -96,13 +83,28 @@ export default function CardBrowser() {
           onChange={(e) => setSearchSetCode(e.target.value)}
           className="basis-1/4"
         />
-        <Button
-          variant="outline"
+      </div>
+      <div className="flex items-center gap-2">
+        <Tabs
+          value={showSecond ? "second" : "first"}
+          onValueChange={(v) => setShowSecond(String(v) === "second")}
           className="shrink-0"
-          onClick={() => setShowSecond((v) => !v)}
         >
-          {showSecond ? t("cardBrowser.secondPrices") : t("cardBrowser.bestPrices")}
-        </Button>
+          <TabsList>
+            <TabsTrigger value="first">{t("cardBrowser.bestPrices")}</TabsTrigger>
+            <TabsTrigger value="second">{t("cardBrowser.secondPrices")}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <Tabs
+          value={psaMode === "psa" ? "psa" : "non-psa"}
+          onValueChange={(v) => setPsaMode(String(v) === "psa" ? "psa" : "non-psa")}
+          className="shrink-0"
+        >
+          <TabsList>
+            <TabsTrigger value="non-psa">{t("modal.tabNonPsa")}</TabsTrigger>
+            <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
+          </TabsList>
+        </Tabs>
         {psaMode === "non-psa" && availableTiers.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger
