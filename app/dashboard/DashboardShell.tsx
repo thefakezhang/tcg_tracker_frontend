@@ -3,6 +3,7 @@
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { GameProvider, useGame, GAME_LABELS } from "./GameContext";
 import { HeaderProvider, useHeader } from "./HeaderContext";
+import { LanguageProvider } from "./LanguageContext";
 import { AppSidebar } from "./AppSidebar";
 
 interface DashboardShellProps {
@@ -26,16 +27,18 @@ function DashboardHeader() {
 
 export function DashboardShell({ user, children }: DashboardShellProps) {
   return (
-    <GameProvider>
-      <HeaderProvider>
-        <SidebarProvider>
-          <AppSidebar user={user} />
-          <SidebarInset>
-            <DashboardHeader />
-            <main className="p-6">{children}</main>
-          </SidebarInset>
-        </SidebarProvider>
-      </HeaderProvider>
-    </GameProvider>
+    <LanguageProvider>
+      <GameProvider>
+        <HeaderProvider>
+          <SidebarProvider>
+            <AppSidebar user={user} />
+            <SidebarInset>
+              <DashboardHeader />
+              <main className="p-6">{children}</main>
+            </SidebarInset>
+          </SidebarProvider>
+        </HeaderProvider>
+      </GameProvider>
+    </LanguageProvider>
   );
 }
