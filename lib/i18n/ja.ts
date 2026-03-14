@@ -12,6 +12,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardBrowser.namePlaceholder": "名前...",
   "cardBrowser.cardNumberPlaceholder": "カード番号...",
   "cardBrowser.setCodePlaceholder": "セットコード...",
+  "cardBrowser.bestPrices": "1番目",
+  "cardBrowser.secondPrices": "2番目",
   "cardBrowser.tierPrefix": "ティア: ",
   "cardBrowser.tierNone": "なし",
   "cardBrowser.tierItem": "ティア {tier}",

@@ -10,6 +10,8 @@ const en = {
   "cardBrowser.namePlaceholder": "Name...",
   "cardBrowser.cardNumberPlaceholder": "Card Number...",
   "cardBrowser.setCodePlaceholder": "Set code...",
+  "cardBrowser.bestPrices": "First",
+  "cardBrowser.secondPrices": "Second",
   "cardBrowser.tierPrefix": "Tier: ",
   "cardBrowser.tierNone": "None",
   "cardBrowser.tierItem": "Tier {tier}",

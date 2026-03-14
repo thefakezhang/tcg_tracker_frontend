@@ -2,29 +2,20 @@
 
 import { ColumnDef } from "@tanstack/react-table";
 import { ArrowUp, ArrowDown } from "lucide-react";
-import { type CardRowData, type PriceSummary } from "./use-card-data";
+import { type CardRowData, type PriceEntry } from "./use-card-data";
 
-function formatPrice(entry: { price: number; symbol: string } | null): string {
-  if (!entry) return "\u2014";
-  return `${entry.symbol}${entry.price}`;
-}
-
-function PriceCell({
-  primary,
-  secondary,
-}: {
-  primary: { price: number; symbol: string } | null;
-  secondary: { price: number; symbol: string } | null;
-}) {
+function PriceCell({ entry }: { entry: PriceEntry | null }) {
+  if (!entry) return <span>{"\u2014"}</span>;
   return (
     <div>
-      <div>{formatPrice(primary)}</div>
-      {secondary && (
-        <div className="text-xs text-muted-foreground">{formatPrice(secondary)}</div>
+      <div>{entry.symbol}{entry.price}</div>
+      {entry.locationName && (
+        <div className="text-xs text-muted-foreground">{entry.locationName}</div>
       )}
     </div>
   );
 }
+
 
 function formatRoi(roi: number | null): string {
   if (roi === null) return "\u2014";
@@ -69,7 +60,7 @@ function nullsLastNumber(
 
 type TranslateFn = (key: import("@/lib/i18n").TranslationKey) => string;
 
-export function createColumns(t: TranslateFn): ColumnDef<CardRowData>[] {
+export function createColumns(t: TranslateFn, showSecond = false): ColumnDef<CardRowData>[] {
   return [
     {
       id: "regional_name",
@@ -110,26 +101,32 @@ export function createColumns(t: TranslateFn): ColumnDef<CardRowData>[] {
     },
     {
       id: "lowestBuy",
-      accessorFn: (row) => row.prices.lowestBuy?.normalizedPrice ?? undefined,
+      accessorFn: (row) => {
+        const p = showSecond ? row.prices.secondLowestBuy : row.prices.lowestBuy;
+        return p?.normalizedPrice ?? undefined;
+      },
       header: ({ column }) => (
         <SortableHeader column={column} label={t("column.lowestBuy")} />
       ),
       cell: ({ row }) => {
-        const p = row.original.prices;
-        return <PriceCell primary={p.lowestBuy} secondary={p.secondLowestBuy} />;
+        const p = showSecond ? row.original.prices.secondLowestBuy : row.original.prices.lowestBuy;
+        return <PriceCell entry={p} />;
       },
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
     },
     {
       id: "highestSell",
-      accessorFn: (row) => row.prices.highestSell?.normalizedPrice ?? undefined,
+      accessorFn: (row) => {
+        const p = showSecond ? row.prices.secondHighestSell : row.prices.highestSell;
+        return p?.normalizedPrice ?? undefined;
+      },
       header: ({ column }) => (
         <SortableHeader column={column} label={t("column.highestSell")} />
       ),
       cell: ({ row }) => {
-        const p = row.original.prices;
-        return <PriceCell primary={p.highestSell} secondary={p.secondHighestSell} />;
+        const p = showSecond ? row.original.prices.secondHighestSell : row.original.prices.highestSell;
+        return <PriceCell entry={p} />;
       },
       sortUndefined: "last",
       sortingFn: nullsLastNumber,

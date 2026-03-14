@@ -27,6 +27,7 @@ export default function CardBrowser() {
   const [searchCardNumber, setSearchCardNumber] = useState("");
   const [searchSetCode, setSearchSetCode] = useState("");
   const [selectedTiers, setSelectedTiers] = useState<number[]>([1]);
+  const [showSecond, setShowSecond] = useState(false);
   const [sorting, setSorting] = useState<SortingState>([
     { id: "roi", desc: true },
   ]);
@@ -93,6 +94,13 @@ export default function CardBrowser() {
           onChange={(e) => setSearchSetCode(e.target.value)}
           className="basis-1/4"
         />
+        <Button
+          variant="outline"
+          className="shrink-0"
+          onClick={() => setShowSecond((v) => !v)}
+        >
+          {showSecond ? t("cardBrowser.secondPrices") : t("cardBrowser.bestPrices")}
+        </Button>
         {psaMode === "non-psa" && availableTiers.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -129,7 +137,7 @@ export default function CardBrowser() {
       )}
 
       <DataTable
-        columns={useMemo(() => createColumns(t), [t])}
+        columns={useMemo(() => createColumns(t, showSecond), [t, showSecond])}
         data={data}
         loading={loading}
         sorting={sorting}
