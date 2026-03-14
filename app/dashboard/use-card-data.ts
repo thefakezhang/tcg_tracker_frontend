@@ -108,6 +108,27 @@ export function computeRoi(prices: PriceSummary): number | null {
   return ((sell - buy) / buy) * 100;
 }
 
+// Cache exchange rates per session — they rarely change
+let rateMapCache: Map<string, number> | null = null;
+
+async function fetchRateMap(
+  supabase: ReturnType<typeof createClient>
+): Promise<Map<string, number>> {
+  if (rateMapCache) return rateMapCache;
+
+  const { data: rates } = await supabase
+    .from("exchange_rates")
+    .select("from_currency, to_currency, rate")
+    .eq("to_currency", "USD");
+
+  const map = new Map<string, number>();
+  for (const r of rates ?? []) {
+    map.set(r.from_currency, r.rate);
+  }
+  rateMapCache = map;
+  return map;
+}
+
 export function useCardData(options: {
   activeGame: Game;
   psaMode: PsaMode;
@@ -121,6 +142,7 @@ export function useCardData(options: {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -135,10 +157,16 @@ export function useCardData(options: {
   }, [activeGame, psaMode, search, searchCardNumber, searchSetCode]);
 
   async function fetchCards() {
+    // Cancel any in-flight request
+    if (abortRef.current) abortRef.current.abort();
+    const abort = new AbortController();
+    abortRef.current = abort;
+
     setLoading(true);
     setError(null);
 
     const supabase = createClient();
+
     let query = supabase
       .from(TABLE_MAP[activeGame])
       .select("card_id, regional_name, set_code, card_number, misc_info");
@@ -154,6 +182,8 @@ export function useCardData(options: {
     }
 
     const { data: cards, error: cardsError } = await query;
+
+    if (abort.signal.aborted) return;
 
     if (cardsError) {
       setError(cardsError.message);
@@ -182,18 +212,12 @@ export function useCardData(options: {
       listingsQuery = listingsQuery.gt("psa_grade", 0);
     }
 
-    const [{ data: listings }, { data: rates }] = await Promise.all([
+    const [{ data: listings }, rateMap] = await Promise.all([
       listingsQuery,
-      supabase
-        .from("exchange_rates")
-        .select("from_currency, to_currency, rate")
-        .eq("to_currency", "USD"),
+      fetchRateMap(supabase),
     ]);
 
-    const rateMap = new Map<string, number>();
-    for (const r of rates ?? []) {
-      rateMap.set(r.from_currency, r.rate);
-    }
+    if (abort.signal.aborted) return;
 
     const normalizedListings: MarketListing[] = (listings ?? []).map(
       (l: Record<string, unknown>) => ({
