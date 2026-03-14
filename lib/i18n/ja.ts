@@ -5,6 +5,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "app.signInWithGoogle": "Googleでサインイン",
   "sidebar.cardListings": "カード一覧",
   "sidebar.language": "言語",
+  "sidebar.convertCurrency": "通貨変換",
   "sidebar.logOut": "ログアウト",
   "game.pokemon": "ポケモン",
   "game.mtg": "マジック：ザ・ギャザリング",

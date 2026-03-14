@@ -3,6 +3,7 @@ const en = {
   "app.signInWithGoogle": "Sign in with Google",
   "sidebar.cardListings": "Card Listings",
   "sidebar.language": "Language",
+  "sidebar.convertCurrency": "Convert Currency",
   "sidebar.logOut": "Log out",
   "game.pokemon": "Pokémon",
   "game.mtg": "Magic: The Gathering",

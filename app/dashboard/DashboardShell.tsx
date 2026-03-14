@@ -4,6 +4,7 @@ import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/s
 import { GameProvider, useGame } from "./GameContext";
 import { HeaderProvider, useHeader } from "./HeaderContext";
 import { LanguageProvider } from "./LanguageContext";
+import { CurrencyProvider } from "./CurrencyContext";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { AppSidebar } from "./AppSidebar";
 
@@ -30,6 +31,7 @@ function DashboardHeader() {
 export function DashboardShell({ user, children }: DashboardShellProps) {
   return (
     <LanguageProvider>
+      <CurrencyProvider>
       <GameProvider>
         <HeaderProvider>
           <SidebarProvider>
@@ -41,6 +43,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
           </SidebarProvider>
         </HeaderProvider>
       </GameProvider>
+      </CurrencyProvider>
     </LanguageProvider>
   );
 }

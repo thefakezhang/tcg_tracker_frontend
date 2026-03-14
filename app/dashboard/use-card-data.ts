@@ -37,6 +37,7 @@ export interface MarketListing {
 export interface PriceEntry {
   price: number;
   symbol: string;
+  currencyCode: string;
   normalizedPrice: number;
   locationName: string;
 }
@@ -93,6 +94,7 @@ function computePriceSummaries(
     const toEntry = (l: MarketListing): PriceEntry => ({
       price: l.price,
       symbol: l.currency_symbol,
+      currencyCode: l.currency,
       normalizedPrice: normalize(l),
       locationName: locationMap.get(l.location_id) ?? "",
     });

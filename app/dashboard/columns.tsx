@@ -3,12 +3,23 @@
 import { ColumnDef } from "@tanstack/react-table";
 import { ArrowUp, ArrowDown } from "lucide-react";
 import { type CardRowData, type PriceEntry } from "./use-card-data";
+import { useCurrency } from "./CurrencyContext";
 
 function PriceCell({ entry }: { entry: PriceEntry | null }) {
+  const { displayCurrency, convertPrice } = useCurrency();
   if (!entry) return <span>{"\u2014"}</span>;
+
+  let symbol = entry.symbol;
+  let price = entry.price;
+  if (displayCurrency !== "none") {
+    const converted = convertPrice(entry.price, entry.currencyCode);
+    symbol = converted.symbol;
+    price = converted.price;
+  }
+
   return (
     <div>
-      <div>{entry.symbol}{entry.price}</div>
+      <div>{symbol}{price}</div>
       {entry.locationName && (
         <div className="text-xs text-muted-foreground">{entry.locationName}</div>
       )}

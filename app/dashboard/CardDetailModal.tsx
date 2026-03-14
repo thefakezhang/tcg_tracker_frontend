@@ -29,6 +29,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useGame } from "./GameContext";
+import { useCurrency } from "./CurrencyContext";
 import {
   type CardRowData,
   type MarketListing,
@@ -41,6 +42,7 @@ import {
 interface DetailListing {
   price: number;
   currencySymbol: string;
+  currencyCode: string;
   locationName: string;
   conditionLabel: string;
 }
@@ -137,6 +139,7 @@ export default function CardDetailModal({
       return {
         price: l.price,
         currencySymbol: l.currency_symbol,
+        currencyCode: l.currency,
         locationName: locationMap.get(l.location_id) ?? "",
         conditionLabel,
       };
@@ -327,6 +330,8 @@ function ListingTable({
   conditionHeader: string;
   t: (key: import("@/lib/i18n").TranslationKey) => string;
 }) {
+  const { displayCurrency, convertPrice } = useCurrency();
+
   if (listings.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">{t("modal.noListings")}</p>
@@ -344,16 +349,25 @@ function ListingTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {listings.map((l, i) => (
-            <TableRow key={i}>
-              <TableCell>
-                {l.currencySymbol}
-                {l.price}
-              </TableCell>
-              <TableCell>{l.locationName}</TableCell>
-              <TableCell>{l.conditionLabel}</TableCell>
-            </TableRow>
-          ))}
+          {listings.map((l, i) => {
+            let symbol = l.currencySymbol;
+            let price = l.price;
+            if (displayCurrency !== "none") {
+              const converted = convertPrice(l.price, l.currencyCode);
+              symbol = converted.symbol;
+              price = converted.price;
+            }
+            return (
+              <TableRow key={i}>
+                <TableCell>
+                  {symbol}
+                  {price}
+                </TableCell>
+                <TableCell>{l.locationName}</TableCell>
+                <TableCell>{l.conditionLabel}</TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>
