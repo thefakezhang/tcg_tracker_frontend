@@ -30,12 +30,14 @@ interface MarketListing {
   currency_symbol: string;
   psa_grade: number;
   condition: number | null;
+  location_id: number;
 }
 
 export interface PriceEntry {
   price: number;
   symbol: string;
   normalizedPrice: number;
+  locationName: string;
 }
 
 export interface PriceSummary {
@@ -63,6 +65,7 @@ const EMPTY_PRICES: PriceSummary = {
 function computePriceSummaries(
   listings: MarketListing[],
   rateMap: Map<string, number>,
+  locationMap: Map<number, string>,
   keyFn: (l: MarketListing) => string
 ): Map<string, PriceSummary> {
   const grouped = new Map<string, MarketListing[]>();
@@ -90,6 +93,7 @@ function computePriceSummaries(
       price: l.price,
       symbol: l.currency_symbol,
       normalizedPrice: normalize(l),
+      locationName: locationMap.get(l.location_id) ?? "",
     });
 
     result.set(key, {
@@ -151,6 +155,25 @@ async function fetchRateMap(
     map.set(r.from_currency, r.rate);
   }
   rateMapCache = map;
+  return map;
+}
+
+let locationMapCache: Map<number, string> | null = null;
+
+async function fetchLocationMap(
+  supabase: ReturnType<typeof createClient>
+): Promise<Map<number, string>> {
+  if (locationMapCache) return locationMapCache;
+
+  const { data: locations } = await supabase
+    .from("locations")
+    .select("location_id, name");
+
+  const map = new Map<number, string>();
+  for (const loc of locations ?? []) {
+    map.set(loc.location_id, loc.name);
+  }
+  locationMapCache = map;
   return map;
 }
 
@@ -245,7 +268,7 @@ export function useCardData(options: {
     let listingsQuery = supabase
       .from(LISTINGS_TABLE_MAP[activeGame])
       .select(
-        "card_id, price_type, price, currency, psa_grade, condition, currencies(symbol)"
+        "card_id, price_type, price, currency, psa_grade, condition, location_id, currencies(symbol)"
       )
       .in("card_id", cardIds);
 
@@ -255,10 +278,11 @@ export function useCardData(options: {
       listingsQuery = listingsQuery.gt("psa_grade", 0);
     }
 
-    const [{ data: listings }, rateMap, conditionsData] = await Promise.all([
+    const [{ data: listings }, rateMap, conditionsData, locationMap] = await Promise.all([
       listingsQuery,
       fetchRateMap(supabase),
       fetchConditionsCache(supabase),
+      fetchLocationMap(supabase),
     ] as const);
 
     if (abort.signal.aborted) return;
@@ -275,6 +299,7 @@ export function useCardData(options: {
           (l.currencies as { symbol: string } | null)?.symbol ?? "",
         psa_grade: l.psa_grade as number,
         condition: (l.condition as number | null) ?? null,
+        location_id: l.location_id as number,
       })
     );
 
@@ -292,6 +317,7 @@ export function useCardData(options: {
       const summaries = computePriceSummaries(
         filteredListings,
         rateMap,
+        locationMap,
         (l) => String(l.card_id)
       );
       rows = (cards ?? []).map((c) => {
@@ -307,6 +333,7 @@ export function useCardData(options: {
       const summaries = computePriceSummaries(
         normalizedListings,
         rateMap,
+        locationMap,
         (l) => `${l.card_id}:${l.psa_grade}`
       );
       const seen = new Set<string>();
