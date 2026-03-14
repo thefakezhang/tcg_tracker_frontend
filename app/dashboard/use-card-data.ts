@@ -29,6 +29,7 @@ interface MarketListing {
   currency: string;
   currency_symbol: string;
   psa_grade: number;
+  condition: number | null;
 }
 
 export interface PriceEntry {
@@ -111,6 +112,30 @@ export function computeRoi(prices: PriceSummary): number | null {
 // Cache exchange rates per session — they rarely change
 let rateMapCache: Map<string, number> | null = null;
 
+// Cache conditions table: condition_id → tier
+let conditionsCache: { map: Map<number, number>; tiers: number[] } | null =
+  null;
+
+async function fetchConditionsCache(
+  supabase: ReturnType<typeof createClient>
+): Promise<{ map: Map<number, number>; tiers: number[] }> {
+  if (conditionsCache) return conditionsCache;
+
+  const { data: conditions } = await supabase
+    .from("conditions")
+    .select("condition_id, tier");
+
+  const map = new Map<number, number>();
+  const tierSet = new Set<number>();
+  for (const c of conditions ?? []) {
+    map.set(c.condition_id, c.tier);
+    tierSet.add(c.tier);
+  }
+  const tiers = [...tierSet].sort((a, b) => a - b);
+  conditionsCache = { map, tiers };
+  return conditionsCache;
+}
+
 async function fetchRateMap(
   supabase: ReturnType<typeof createClient>
 ): Promise<Map<string, number>> {
@@ -135,14 +160,32 @@ export function useCardData(options: {
   search: string;
   searchCardNumber: string;
   searchSetCode: string;
-}): { data: CardRowData[]; loading: boolean; error: string | null } {
-  const { activeGame, psaMode, search, searchCardNumber, searchSetCode } =
-    options;
+  selectedTiers: number[];
+}): {
+  data: CardRowData[];
+  loading: boolean;
+  error: string | null;
+  availableTiers: number[];
+} {
+  const {
+    activeGame,
+    psaMode,
+    search,
+    searchCardNumber,
+    searchSetCode,
+    selectedTiers,
+  } = options;
   const [data, setData] = useState<CardRowData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [availableTiers, setAvailableTiers] = useState<number[]>([]);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    fetchConditionsCache(supabase).then((c) => setAvailableTiers(c.tiers));
+  }, []);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -154,7 +197,7 @@ export function useCardData(options: {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [activeGame, psaMode, search, searchCardNumber, searchSetCode]);
+  }, [activeGame, psaMode, search, searchCardNumber, searchSetCode, selectedTiers]);
 
   async function fetchCards() {
     // Cancel any in-flight request
@@ -202,7 +245,7 @@ export function useCardData(options: {
     let listingsQuery = supabase
       .from(LISTINGS_TABLE_MAP[activeGame])
       .select(
-        "card_id, price_type, price, currency, psa_grade, currencies(symbol)"
+        "card_id, price_type, price, currency, psa_grade, condition, currencies(symbol)"
       )
       .in("card_id", cardIds);
 
@@ -212,12 +255,15 @@ export function useCardData(options: {
       listingsQuery = listingsQuery.gt("psa_grade", 0);
     }
 
-    const [{ data: listings }, rateMap] = await Promise.all([
+    const [{ data: listings }, rateMap, conditionsData] = await Promise.all([
       listingsQuery,
       fetchRateMap(supabase),
-    ]);
+      fetchConditionsCache(supabase),
+    ] as const);
 
     if (abort.signal.aborted) return;
+
+    setAvailableTiers(conditionsData.tiers);
 
     const normalizedListings: MarketListing[] = (listings ?? []).map(
       (l: Record<string, unknown>) => ({
@@ -228,6 +274,7 @@ export function useCardData(options: {
         currency_symbol:
           (l.currencies as { symbol: string } | null)?.symbol ?? "",
         psa_grade: l.psa_grade as number,
+        condition: (l.condition as number | null) ?? null,
       })
     );
 
@@ -236,8 +283,14 @@ export function useCardData(options: {
     let rows: CardRowData[];
 
     if (psaMode === "non-psa") {
+      const tierSet = new Set(selectedTiers);
+      const filteredListings = normalizedListings.filter((l) => {
+        if (l.condition == null) return true;
+        const tier = conditionsData.map.get(l.condition);
+        return tier != null && tierSet.has(tier);
+      });
       const summaries = computePriceSummaries(
-        normalizedListings,
+        filteredListings,
         rateMap,
         (l) => String(l.card_id)
       );
@@ -281,5 +334,5 @@ export function useCardData(options: {
     setLoading(false);
   }
 
-  return { data, loading, error };
+  return { data, loading, error, availableTiers };
 }

@@ -2,6 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { type SortingState } from "@tanstack/react-table";
+import { ChevronDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useGame } from "./GameContext";
@@ -16,22 +24,25 @@ export default function CardBrowser() {
   const [search, setSearch] = useState("");
   const [searchCardNumber, setSearchCardNumber] = useState("");
   const [searchSetCode, setSearchSetCode] = useState("");
+  const [selectedTiers, setSelectedTiers] = useState<number[]>([1]);
   const [sorting, setSorting] = useState<SortingState>([
     { id: "roi", desc: true },
   ]);
 
-  const { data, loading, error } = useCardData({
+  const { data, loading, error, availableTiers } = useCardData({
     activeGame,
     psaMode,
     search,
     searchCardNumber,
     searchSetCode,
+    selectedTiers,
   });
 
   useEffect(() => {
     setSearch("");
     setSearchCardNumber("");
     setSearchSetCode("");
+    setSelectedTiers([1]);
   }, [activeGame]);
 
   useEffect(() => {
@@ -80,6 +91,35 @@ export default function CardBrowser() {
           onChange={(e) => setSearchSetCode(e.target.value)}
           className="basis-1/4"
         />
+        {psaMode === "non-psa" && availableTiers.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="outline" className="shrink-0" />
+              }
+            >
+              Tier: {selectedTiers.sort((a, b) => a - b).join(", ") || "None"}
+              <ChevronDown className="ml-1 size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              {availableTiers.map((tier) => (
+                <DropdownMenuCheckboxItem
+                  key={tier}
+                  checked={selectedTiers.includes(tier)}
+                  onCheckedChange={(checked) => {
+                    setSelectedTiers((prev) =>
+                      checked
+                        ? [...prev, tier]
+                        : prev.filter((t) => t !== tier)
+                    );
+                  }}
+                >
+                  Tier {tier}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       {error && (
