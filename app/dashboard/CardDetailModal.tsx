@@ -8,6 +8,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Table,
@@ -170,9 +171,18 @@ export default function CardDetailModal({
         </DialogHeader>
 
         {loading ? (
-          <p className="text-sm text-muted-foreground py-4">
-            {t("modal.loading")}
-          </p>
+          <div className="grid grid-cols-2 gap-4 pt-2">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="space-y-2">
+                <Skeleton className="h-4 w-16" />
+                <div className="rounded-md border p-2 space-y-2">
+                  {Array.from({ length: 3 }).map((_, j) => (
+                    <Skeleton key={j} className="h-4 w-full" />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <Tabs defaultValue="non-psa">
             <TabsList>

@@ -212,6 +212,8 @@ export function useCardData(options: {
   }, []);
 
   useEffect(() => {
+    setLoading(true);
+
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     debounceRef.current = setTimeout(() => {
