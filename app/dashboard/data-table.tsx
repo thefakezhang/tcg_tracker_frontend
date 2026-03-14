@@ -19,6 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/lib/i18n";
 
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
@@ -39,6 +40,7 @@ export function DataTable<TData, TValue>({
   columnVisibility,
   pagination = true,
 }: DataTableProps<TData, TValue>) {
+  const { t } = useTranslation();
   const table = useReactTable({
     data,
     columns,
@@ -94,7 +96,7 @@ export function DataTable<TData, TValue>({
                   colSpan={columns.length}
                   className="h-24 text-center text-muted-foreground"
                 >
-                  Loading...
+                  {t("dataTable.loading")}
                 </TableCell>
               </TableRow>
             ) : table.getRowModel().rows.length ? (
@@ -116,7 +118,7 @@ export function DataTable<TData, TValue>({
                   colSpan={columns.length}
                   className="h-24 text-center"
                 >
-                  No results found
+                  {t("dataTable.noResults")}
                 </TableCell>
               </TableRow>
             )}
@@ -126,7 +128,7 @@ export function DataTable<TData, TValue>({
       {pagination && (
         <div className="flex items-center justify-between py-4">
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Rows per page</span>
+            <span className="text-sm text-muted-foreground">{t("dataTable.rowsPerPage")}</span>
             <select
               className="h-8 rounded-md border bg-background px-2 text-sm"
               value={table.getState().pagination.pageSize}
@@ -141,8 +143,7 @@ export function DataTable<TData, TValue>({
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">
-              Page {table.getState().pagination.pageIndex + 1} of{" "}
-              {table.getPageCount()}
+              {t("dataTable.pageOf", { current: table.getState().pagination.pageIndex + 1, total: table.getPageCount() })}
             </span>
             <Button
               variant="outline"
@@ -150,7 +151,7 @@ export function DataTable<TData, TValue>({
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
             >
-              Previous
+              {t("dataTable.previous")}
             </Button>
             <Button
               variant="outline"
@@ -158,7 +159,7 @@ export function DataTable<TData, TValue>({
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
             >
-              Next
+              {t("dataTable.next")}
             </Button>
           </div>
         </div>

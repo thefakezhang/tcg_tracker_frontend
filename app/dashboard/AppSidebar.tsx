@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { type Game, useGame, GAME_LABELS } from "./GameContext";
+import { type Game, useGame } from "./GameContext";
+import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import {
   type Language,
   useLanguage,
@@ -40,7 +41,7 @@ const GAME_ICONS: Record<Game, React.ReactNode> = {
   mtg: <Sparkles className="size-4" />,
 };
 
-const GAMES = Object.keys(GAME_LABELS) as Game[];
+const GAMES: Game[] = ["pokemon", "mtg"];
 
 interface AppSidebarProps {
   user: { email: string; name?: string };
@@ -51,6 +52,7 @@ const LANGUAGES = Object.keys(LANGUAGE_LABELS) as Language[];
 export function AppSidebar({ user }: AppSidebarProps) {
   const { activeGame, setActiveGame } = useGame();
   const { language, setLanguage } = useLanguage();
+  const { t } = useTranslation();
   const router = useRouter();
 
   const displayName = user.name ?? user.email;
@@ -73,14 +75,14 @@ export function AppSidebar({ user }: AppSidebarProps) {
           <SidebarMenuItem>
             <span className="flex items-center gap-2 px-2 py-1.5 text-lg font-bold">
               <ListChecks className="size-5" />
-              TCG Tracker
+              {t("app.title")}
             </span>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Card Listings</SidebarGroupLabel>
+          <SidebarGroupLabel>{t("sidebar.cardListings")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {GAMES.map((game) => (
@@ -90,7 +92,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
                     onClick={() => setActiveGame(game)}
                   >
                     {GAME_ICONS[game]}
-                    {GAME_LABELS[game]}
+                    {t(`game.${game}` as TranslationKey)}
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
@@ -119,7 +121,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
                     <Globe className="mr-2 size-4" />
-                    Language
+                    {t("sidebar.language")}
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
                     <DropdownMenuRadioGroup
@@ -137,7 +139,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout}>
                   <LogOut className="mr-2 size-4" />
-                  Log out
+                  {t("sidebar.logOut")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

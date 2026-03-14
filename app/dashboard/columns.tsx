@@ -57,72 +57,76 @@ function nullsLastNumber(
   return a - b;
 }
 
-export const columns: ColumnDef<CardRowData>[] = [
-  {
-    id: "regional_name",
-    accessorFn: (row) => row.card.regional_name,
-    header: ({ column }) => <SortableHeader column={column} label="Name" />,
-    cell: ({ row }) => {
-      const card = row.original.card;
-      return (
-        <>
-          {card.regional_name}
-          {card.misc_info ? ` (${card.misc_info})` : ""}
-        </>
-      );
+type TranslateFn = (key: import("@/lib/i18n").TranslationKey) => string;
+
+export function createColumns(t: TranslateFn): ColumnDef<CardRowData>[] {
+  return [
+    {
+      id: "regional_name",
+      accessorFn: (row) => row.card.regional_name,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.name")} />,
+      cell: ({ row }) => {
+        const card = row.original.card;
+        return (
+          <>
+            {card.regional_name}
+            {card.misc_info ? ` (${card.misc_info})` : ""}
+          </>
+        );
+      },
+      size: 400,
+      meta: { className: "w-[40%]" },
     },
-    size: 400,
-    meta: { className: "w-[40%]" },
-  },
-  {
-    id: "card_number",
-    accessorFn: (row) => row.card.card_number,
-    header: ({ column }) => (
-      <SortableHeader column={column} label="Card Number" />
-    ),
-    cell: ({ getValue }) => (getValue() as string | null) ?? "\u2014",
-  },
-  {
-    id: "set_code",
-    accessorFn: (row) => row.card.set_code,
-    header: ({ column }) => (
-      <SortableHeader column={column} label="Set Code" />
-    ),
-  },
-  {
-    id: "psa_grade",
-    accessorFn: (row) => row.psaGrade ?? null,
-    header: ({ column }) => <SortableHeader column={column} label="PSA" />,
-  },
-  {
-    id: "lowestBuy",
-    accessorFn: (row) => row.prices.lowestBuy?.normalizedPrice ?? null,
-    header: ({ column }) => (
-      <SortableHeader column={column} label="Lowest Buy" />
-    ),
-    cell: ({ row }) => {
-      const p = row.original.prices;
-      return formatPriceWithDiff(p.lowestBuy, p.secondLowestBuy);
+    {
+      id: "card_number",
+      accessorFn: (row) => row.card.card_number,
+      header: ({ column }) => (
+        <SortableHeader column={column} label={t("column.cardNumber")} />
+      ),
+      cell: ({ getValue }) => (getValue() as string | null) ?? "\u2014",
     },
-    sortingFn: nullsLastNumber,
-  },
-  {
-    id: "highestSell",
-    accessorFn: (row) => row.prices.highestSell?.normalizedPrice ?? null,
-    header: ({ column }) => (
-      <SortableHeader column={column} label="Highest Sell" />
-    ),
-    cell: ({ row }) => {
-      const p = row.original.prices;
-      return formatPriceWithDiff(p.highestSell, p.secondHighestSell);
+    {
+      id: "set_code",
+      accessorFn: (row) => row.card.set_code,
+      header: ({ column }) => (
+        <SortableHeader column={column} label={t("column.setCode")} />
+      ),
     },
-    sortingFn: nullsLastNumber,
-  },
-  {
-    id: "roi",
-    accessorFn: (row) => row.roi,
-    header: ({ column }) => <SortableHeader column={column} label="ROI" />,
-    cell: ({ getValue }) => formatRoi(getValue() as number | null),
-    sortingFn: nullsLastNumber,
-  },
-];
+    {
+      id: "psa_grade",
+      accessorFn: (row) => row.psaGrade ?? null,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.psa")} />,
+    },
+    {
+      id: "lowestBuy",
+      accessorFn: (row) => row.prices.lowestBuy?.normalizedPrice ?? null,
+      header: ({ column }) => (
+        <SortableHeader column={column} label={t("column.lowestBuy")} />
+      ),
+      cell: ({ row }) => {
+        const p = row.original.prices;
+        return formatPriceWithDiff(p.lowestBuy, p.secondLowestBuy);
+      },
+      sortingFn: nullsLastNumber,
+    },
+    {
+      id: "highestSell",
+      accessorFn: (row) => row.prices.highestSell?.normalizedPrice ?? null,
+      header: ({ column }) => (
+        <SortableHeader column={column} label={t("column.highestSell")} />
+      ),
+      cell: ({ row }) => {
+        const p = row.original.prices;
+        return formatPriceWithDiff(p.highestSell, p.secondHighestSell);
+      },
+      sortingFn: nullsLastNumber,
+    },
+    {
+      id: "roi",
+      accessorFn: (row) => row.roi,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.roi")} />,
+      cell: ({ getValue }) => formatRoi(getValue() as number | null),
+      sortingFn: nullsLastNumber,
+    },
+  ];
+}

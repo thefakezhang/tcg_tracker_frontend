@@ -5,11 +5,6 @@ import { createContext, useContext, useState } from "react";
 export type Game = "pokemon" | "mtg";
 export type PsaMode = "non-psa" | "psa";
 
-export const GAME_LABELS: Record<Game, string> = {
-  pokemon: "Pokémon",
-  mtg: "Magic: The Gathering",
-};
-
 interface GameContextValue {
   activeGame: Game;
   setActiveGame: (game: Game) => void;

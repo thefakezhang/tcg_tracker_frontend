@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { type SortingState } from "@tanstack/react-table";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,10 +15,12 @@ import { Switch } from "@/components/ui/switch";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
 import { useCardData } from "./use-card-data";
-import { columns } from "./columns";
+import { createColumns } from "./columns";
 import { DataTable } from "./data-table";
+import { useTranslation } from "@/lib/i18n";
 
 export default function CardBrowser() {
+  const { t } = useTranslation();
   const { activeGame, psaMode, setPsaMode } = useGame();
   const { setHeaderActions } = useHeader();
   const [search, setSearch] = useState("");
@@ -56,7 +58,7 @@ export default function CardBrowser() {
           }
         />
         <label htmlFor="psa-toggle" className="text-sm text-muted-foreground">
-          PSA
+          {t("cardBrowser.psa")}
         </label>
       </>
     );
@@ -72,21 +74,21 @@ export default function CardBrowser() {
       <div className="flex gap-2">
         <Input
           type="text"
-          placeholder="Name..."
+          placeholder={t("cardBrowser.namePlaceholder")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="basis-1/2"
         />
         <Input
           type="text"
-          placeholder="Card Number..."
+          placeholder={t("cardBrowser.cardNumberPlaceholder")}
           value={searchCardNumber}
           onChange={(e) => setSearchCardNumber(e.target.value)}
           className="basis-1/4"
         />
         <Input
           type="text"
-          placeholder="Set code..."
+          placeholder={t("cardBrowser.setCodePlaceholder")}
           value={searchSetCode}
           onChange={(e) => setSearchSetCode(e.target.value)}
           className="basis-1/4"
@@ -98,7 +100,7 @@ export default function CardBrowser() {
                 <Button variant="outline" className="shrink-0" />
               }
             >
-              Tier: {selectedTiers.sort((a, b) => a - b).join(", ") || "None"}
+              {t("cardBrowser.tierPrefix")}{selectedTiers.sort((a, b) => a - b).join(", ") || t("cardBrowser.tierNone")}
               <ChevronDown className="ml-1 size-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
@@ -114,7 +116,7 @@ export default function CardBrowser() {
                     );
                   }}
                 >
-                  Tier {tier}
+                  {t("cardBrowser.tierItem", { tier })}
                 </DropdownMenuCheckboxItem>
               ))}
             </DropdownMenuContent>
@@ -123,11 +125,11 @@ export default function CardBrowser() {
       </div>
 
       {error && (
-        <p className="text-destructive text-sm">Error: {error}</p>
+        <p className="text-destructive text-sm">{t("cardBrowser.error", { message: error })}</p>
       )}
 
       <DataTable
-        columns={columns}
+        columns={useMemo(() => createColumns(t), [t])}
         data={data}
         loading={loading}
         sorting={sorting}
