@@ -14,9 +14,10 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
-import { useCardData } from "./use-card-data";
+import { useCardData, type CardRowData } from "./use-card-data";
 import { createColumns } from "./columns";
 import { DataTable } from "./data-table";
+import CardDetailModal from "./CardDetailModal";
 import { useTranslation } from "@/lib/i18n";
 
 export default function CardBrowser() {
@@ -31,6 +32,7 @@ export default function CardBrowser() {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "roi", desc: true },
   ]);
+  const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
 
   const { data, loading, error, availableTiers } = useCardData({
     activeGame,
@@ -143,6 +145,13 @@ export default function CardBrowser() {
         sorting={sorting}
         onSortingChange={setSorting}
         columnVisibility={columnVisibility}
+        onRowClick={setSelectedCard}
+      />
+
+      <CardDetailModal
+        card={selectedCard}
+        open={!!selectedCard}
+        onClose={() => setSelectedCard(null)}
       />
     </div>
   );

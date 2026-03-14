@@ -29,6 +29,7 @@ interface DataTableProps<TData, TValue> {
   columnVisibility?: VisibilityState;
   loading?: boolean;
   pagination?: boolean;
+  onRowClick?: (row: TData) => void;
 }
 
 export function DataTable<TData, TValue>({
@@ -39,6 +40,7 @@ export function DataTable<TData, TValue>({
   onSortingChange,
   columnVisibility,
   pagination = true,
+  onRowClick,
 }: DataTableProps<TData, TValue>) {
   const { t } = useTranslation();
   const table = useReactTable({
@@ -101,7 +103,11 @@ export function DataTable<TData, TValue>({
               </TableRow>
             ) : table.getRowModel().rows.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id}>
+                <TableRow
+                  key={row.id}
+                  className={onRowClick ? "cursor-pointer" : undefined}
+                  onClick={() => onRowClick?.(row.original)}
+                >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>
                       {flexRender(

@@ -9,7 +9,7 @@ const TABLE_MAP: Record<Game, string> = {
   mtg: "mtg_card_definitions",
 };
 
-const LISTINGS_TABLE_MAP: Record<Game, string> = {
+export const LISTINGS_TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_market_listings",
   mtg: "mtg_market_listings",
 };
@@ -22,7 +22,7 @@ export interface CardDefinition {
   misc_info: string | null;
 }
 
-interface MarketListing {
+export interface MarketListing {
   card_id: number;
   price_type: "Buy" | "Sell";
   price: number;
@@ -120,7 +120,7 @@ let rateMapCache: Map<string, number> | null = null;
 let conditionsCache: { map: Map<number, number>; tiers: number[] } | null =
   null;
 
-async function fetchConditionsCache(
+export async function fetchConditionsCache(
   supabase: ReturnType<typeof createClient>
 ): Promise<{ map: Map<number, number>; tiers: number[] }> {
   if (conditionsCache) return conditionsCache;
@@ -140,7 +140,7 @@ async function fetchConditionsCache(
   return conditionsCache;
 }
 
-async function fetchRateMap(
+export async function fetchRateMap(
   supabase: ReturnType<typeof createClient>
 ): Promise<Map<string, number>> {
   if (rateMapCache) return rateMapCache;
@@ -160,7 +160,7 @@ async function fetchRateMap(
 
 let locationMapCache: Map<number, string> | null = null;
 
-async function fetchLocationMap(
+export async function fetchLocationMap(
   supabase: ReturnType<typeof createClient>
 ): Promise<Map<number, string>> {
   if (locationMapCache) return locationMapCache;
