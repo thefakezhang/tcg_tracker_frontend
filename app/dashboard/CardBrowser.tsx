@@ -86,17 +86,14 @@ export default function CardBrowser() {
         <p className="text-destructive text-sm">Error: {error}</p>
       )}
 
-      {loading ? (
-        <p className="text-muted-foreground">Loading...</p>
-      ) : (
-        <DataTable
-          columns={columns}
-          data={data}
-          sorting={sorting}
-          onSortingChange={setSorting}
-          columnVisibility={columnVisibility}
-        />
-      )}
+      <DataTable
+        columns={columns}
+        data={data}
+        loading={loading}
+        sorting={sorting}
+        onSortingChange={setSorting}
+        columnVisibility={columnVisibility}
+      />
     </div>
   );
 }

@@ -26,12 +26,14 @@ interface DataTableProps<TData, TValue> {
   sorting: SortingState;
   onSortingChange: (sorting: SortingState) => void;
   columnVisibility?: VisibilityState;
+  loading?: boolean;
   pagination?: boolean;
 }
 
 export function DataTable<TData, TValue>({
   columns,
   data,
+  loading,
   sorting,
   onSortingChange,
   columnVisibility,
@@ -53,7 +55,7 @@ export function DataTable<TData, TValue>({
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: pagination ? getPaginationRowModel() : undefined,
     initialState: {
-      pagination: { pageSize: 20 },
+      pagination: { pageSize: 50 },
     },
   });
 
@@ -86,7 +88,16 @@ export function DataTable<TData, TValue>({
             ))}
           </TableHeader>
           <TableBody>
-            {table.getRowModel().rows.length ? (
+            {loading ? (
+              <TableRow>
+                <TableCell
+                  colSpan={columns.length}
+                  className="h-24 text-center text-muted-foreground"
+                >
+                  Loading...
+                </TableCell>
+              </TableRow>
+            ) : table.getRowModel().rows.length ? (
               table.getRowModel().rows.map((row) => (
                 <TableRow key={row.id}>
                   {row.getVisibleCells().map((cell) => (
@@ -121,7 +132,7 @@ export function DataTable<TData, TValue>({
               value={table.getState().pagination.pageSize}
               onChange={(e) => table.setPageSize(Number(e.target.value))}
             >
-              {[10, 20, 50].map((size) => (
+              {[10, 20, 50, 100].map((size) => (
                 <option key={size} value={size}>
                   {size}
                 </option>

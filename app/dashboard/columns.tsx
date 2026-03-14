@@ -1,7 +1,7 @@
 "use client";
 
 import { ColumnDef } from "@tanstack/react-table";
-import { ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { ArrowUp, ArrowDown } from "lucide-react";
 import { type CardRowData, type PriceSummary } from "./use-card-data";
 
 function formatPriceWithDiff(
@@ -31,7 +31,7 @@ function SortableHeader({
   const sorted = column.getIsSorted();
   return (
     <button
-      className="flex items-center gap-1 hover:text-foreground"
+      className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-accent hover:text-foreground"
       onClick={() => column.toggleSorting(sorted === "asc")}
     >
       {label}
@@ -39,9 +39,7 @@ function SortableHeader({
         <ArrowUp className="h-4 w-4" />
       ) : sorted === "desc" ? (
         <ArrowDown className="h-4 w-4" />
-      ) : (
-        <ArrowUpDown className="h-4 w-4" />
-      )}
+      ) : null}
     </button>
   );
 }
