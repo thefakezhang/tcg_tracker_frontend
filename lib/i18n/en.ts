@@ -29,5 +29,17 @@ const en = {
   "column.lowestBuy": "Lowest Buy",
   "column.highestSell": "Highest Sell",
   "column.roi": "ROI",
+  "modal.set": "Set Code",
+  "modal.number": "Card Number",
+  "modal.tabNonPsa": "Non-PSA",
+  "modal.tabPsa": "PSA",
+  "modal.buy": "Buy",
+  "modal.sell": "Sell",
+  "modal.price": "Price",
+  "modal.location": "Location",
+  "modal.condition": "Condition",
+  "modal.psaGrade": "PSA Grade",
+  "modal.noListings": "No listings",
+  "modal.loading": "Loading listings...",
 } as const;
 export default en;

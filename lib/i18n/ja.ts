@@ -31,5 +31,17 @@ const ja: { [K in keyof typeof en]: string } = {
   "column.lowestBuy": "最安購入価格",
   "column.highestSell": "最高売却価格",
   "column.roi": "ROI",
+  "modal.set": "セットコード",
+  "modal.number": "カード番号",
+  "modal.tabNonPsa": "Non-PSA",
+  "modal.tabPsa": "PSA",
+  "modal.buy": "購入",
+  "modal.sell": "売却",
+  "modal.price": "価格",
+  "modal.location": "場所",
+  "modal.condition": "コンディション",
+  "modal.psaGrade": "PSAグレード",
+  "modal.noListings": "リスティングなし",
+  "modal.loading": "リスティング読み込み中...",
 } as const;
 export default ja;

@@ -1,0 +1,291 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { createClient } from "@/lib/supabase/client";
+import { useTranslation } from "@/lib/i18n";
+import { useGame } from "./GameContext";
+import {
+  type CardRowData,
+  type MarketListing,
+  LISTINGS_TABLE_MAP,
+  fetchRateMap,
+  fetchLocationMap,
+  fetchConditionsCache,
+} from "./use-card-data";
+
+interface DetailListing {
+  price: number;
+  currencySymbol: string;
+  locationName: string;
+  conditionLabel: string;
+}
+
+interface CardDetailModalProps {
+  card: CardRowData | null;
+  open: boolean;
+  onClose: () => void;
+}
+
+export default function CardDetailModal({
+  card,
+  open,
+  onClose,
+}: CardDetailModalProps) {
+  const { t } = useTranslation();
+  const { activeGame } = useGame();
+  const [buyListings, setBuyListings] = useState<{
+    nonPsa: DetailListing[];
+    psa: DetailListing[];
+  }>({ nonPsa: [], psa: [] });
+  const [sellListings, setSellListings] = useState<{
+    nonPsa: DetailListing[];
+    psa: DetailListing[];
+  }>({ nonPsa: [], psa: [] });
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!card || !open) return;
+
+    let cancelled = false;
+    setLoading(true);
+
+    async function fetchListings() {
+      const supabase = createClient();
+      const [{ data: raw }, rateMap, locationMap, conditionsData] =
+        await Promise.all([
+          supabase
+            .from(LISTINGS_TABLE_MAP[activeGame])
+            .select(
+              "card_id, price_type, price, currency, psa_grade, condition, location_id, currencies(symbol)"
+            )
+            .eq("card_id", card!.card.card_id),
+          fetchRateMap(supabase),
+          fetchLocationMap(supabase),
+          fetchConditionsCache(supabase),
+        ]);
+
+      if (cancelled) return;
+
+      const listings: MarketListing[] = (raw ?? []).map(
+        (l: Record<string, unknown>) => ({
+          card_id: l.card_id as number,
+          price_type: l.price_type as "Buy" | "Sell",
+          price: l.price as number,
+          currency: l.currency as string,
+          currency_symbol:
+            (l.currencies as { symbol: string } | null)?.symbol ?? "",
+          psa_grade: l.psa_grade as number,
+          condition: (l.condition as number | null) ?? null,
+          location_id: l.location_id as number,
+        })
+      );
+
+      const toDetail = (l: MarketListing): DetailListing => {
+        let conditionLabel = "";
+        if (l.psa_grade > 0) {
+          conditionLabel = `PSA ${l.psa_grade}`;
+        } else if (l.condition != null) {
+          const tier = conditionsData.map.get(l.condition);
+          conditionLabel = tier != null ? `Tier ${tier}` : String(l.condition);
+        }
+        return {
+          price: l.price,
+          currencySymbol: l.currency_symbol,
+          locationName: locationMap.get(l.location_id) ?? "",
+          conditionLabel,
+        };
+      };
+
+      const normalize = (l: MarketListing) =>
+        l.price * (rateMap.get(l.currency) ?? 1);
+
+      const buys = listings.filter((l) => l.price_type === "Buy");
+      const sells = listings.filter((l) => l.price_type === "Sell");
+
+      buys.sort((a, b) => normalize(a) - normalize(b));
+      sells.sort((a, b) => normalize(b) - normalize(a));
+
+      setBuyListings({
+        nonPsa: buys.filter((l) => l.psa_grade === 0).map(toDetail),
+        psa: buys.filter((l) => l.psa_grade > 0).map(toDetail),
+      });
+      setSellListings({
+        nonPsa: sells.filter((l) => l.psa_grade === 0).map(toDetail),
+        psa: sells.filter((l) => l.psa_grade > 0).map(toDetail),
+      });
+      setLoading(false);
+    }
+
+    fetchListings();
+    return () => {
+      cancelled = true;
+    };
+  }, [card, open, activeGame]);
+
+  if (!card) return null;
+
+  const { card: def } = card;
+  const cardNumber =
+    def.card_number && def.card_number !== "UNKNOWN" ? def.card_number : null;
+  const misc =
+    def.misc_info && def.misc_info !== "UNKNOWN" ? def.misc_info : null;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-3xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <div className="flex justify-between gap-4">
+            <div className="flex flex-col gap-1 min-w-0">
+              <DialogTitle className="text-xl">{def.regional_name}</DialogTitle>
+              <DialogDescription className="flex flex-col">
+                {cardNumber && <span>{t("modal.number")}: {cardNumber}</span>}
+                <span>{t("modal.set")}: {def.set_code}</span>
+                {misc && <span>{misc}</span>}
+              </DialogDescription>
+            </div>
+            {def.image_url && (
+              <img
+                src={def.image_url}
+                alt={def.regional_name}
+                className="h-32 w-auto rounded-md object-contain shrink-0"
+              />
+            )}
+          </div>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="grid grid-cols-2 gap-4 pt-2">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="space-y-2">
+                <Skeleton className="h-4 w-16" />
+                <div className="rounded-md border p-2 space-y-2">
+                  {Array.from({ length: 3 }).map((_, j) => (
+                    <Skeleton key={j} className="h-4 w-full" />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <Tabs defaultValue="non-psa">
+            <TabsList>
+              <TabsTrigger value="non-psa">
+                {t("modal.tabNonPsa")}
+              </TabsTrigger>
+              <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="non-psa">
+              <ListingTables
+                buy={buyListings.nonPsa}
+                sell={sellListings.nonPsa}
+                conditionHeader={t("modal.condition")}
+                t={t}
+              />
+            </TabsContent>
+            <TabsContent value="psa">
+              <ListingTables
+                buy={buyListings.psa}
+                sell={sellListings.psa}
+                conditionHeader={t("modal.psaGrade")}
+                t={t}
+              />
+            </TabsContent>
+          </Tabs>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ListingTables({
+  buy,
+  sell,
+  conditionHeader,
+  t,
+}: {
+  buy: DetailListing[];
+  sell: DetailListing[];
+  conditionHeader: string;
+  t: (key: import("@/lib/i18n").TranslationKey) => string;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-4 pt-2">
+      <div>
+        <h3 className="text-sm font-medium mb-2">{t("modal.buy")}</h3>
+        <ListingTable
+          listings={buy}
+          conditionHeader={conditionHeader}
+          t={t}
+        />
+      </div>
+      <div>
+        <h3 className="text-sm font-medium mb-2">{t("modal.sell")}</h3>
+        <ListingTable
+          listings={sell}
+          conditionHeader={conditionHeader}
+          t={t}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ListingTable({
+  listings,
+  conditionHeader,
+  t,
+}: {
+  listings: DetailListing[];
+  conditionHeader: string;
+  t: (key: import("@/lib/i18n").TranslationKey) => string;
+}) {
+  if (listings.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">{t("modal.noListings")}</p>
+    );
+  }
+
+  return (
+    <div className="rounded-md border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t("modal.price")}</TableHead>
+            <TableHead>{t("modal.location")}</TableHead>
+            <TableHead>{conditionHeader}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {listings.map((l, i) => (
+            <TableRow key={i}>
+              <TableCell>
+                {l.currencySymbol}
+                {l.price}
+              </TableCell>
+              <TableCell>{l.locationName}</TableCell>
+              <TableCell>{l.conditionLabel}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
