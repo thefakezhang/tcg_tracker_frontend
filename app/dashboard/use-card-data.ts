@@ -20,6 +20,7 @@ export interface CardDefinition {
   set_code: string;
   card_number: string | null;
   misc_info: string | null;
+  image_url: string | null;
 }
 
 export interface MarketListing {
@@ -235,7 +236,7 @@ export function useCardData(options: {
 
     let query = supabase
       .from(TABLE_MAP[activeGame])
-      .select("card_id, regional_name, set_code, card_number, misc_info");
+      .select("card_id, regional_name, set_code, card_number, misc_info, image_url");
 
     if (search.trim()) {
       query = query.ilike("regional_name", `%${search.trim()}%`);

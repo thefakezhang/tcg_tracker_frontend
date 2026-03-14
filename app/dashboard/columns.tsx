@@ -81,11 +81,17 @@ export function createColumns(t: TranslateFn, showSecond = false): ColumnDef<Car
     },
     {
       id: "card_number",
-      accessorFn: (row) => row.card.card_number,
+      accessorFn: (row) => {
+        const v = row.card.card_number;
+        return v && v !== "UNKNOWN" ? v : null;
+      },
       header: ({ column }) => (
         <SortableHeader column={column} label={t("column.cardNumber")} />
       ),
-      cell: ({ getValue }) => (getValue() as string | null) ?? "\u2014",
+      cell: ({ getValue }) => {
+        const v = getValue() as string | null;
+        return v && v !== "UNKNOWN" ? v : "\u2014";
+      },
     },
     {
       id: "set_code",

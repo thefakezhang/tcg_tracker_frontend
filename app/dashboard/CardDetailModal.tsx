@@ -102,7 +102,7 @@ export default function CardDetailModal({
           conditionLabel = `PSA ${l.psa_grade}`;
         } else if (l.condition != null) {
           const tier = conditionsData.map.get(l.condition);
-          conditionLabel = tier != null ? `T${tier}` : String(l.condition);
+          conditionLabel = tier != null ? `Tier ${tier}` : String(l.condition);
         }
         return {
           price: l.price,
@@ -141,6 +141,8 @@ export default function CardDetailModal({
   if (!card) return null;
 
   const { card: def } = card;
+  const cardNumber =
+    def.card_number && def.card_number !== "UNKNOWN" ? def.card_number : null;
   const misc =
     def.misc_info && def.misc_info !== "UNKNOWN" ? def.misc_info : null;
 
@@ -148,12 +150,23 @@ export default function CardDetailModal({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-3xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{def.regional_name}</DialogTitle>
-          <DialogDescription>
-            {t("modal.set")}: {def.set_code}
-            {def.card_number && ` | ${t("modal.number")}${def.card_number}`}
-            {misc && ` | ${misc}`}
-          </DialogDescription>
+          <div className="flex justify-between gap-4">
+            <div className="flex flex-col gap-1 min-w-0">
+              <DialogTitle className="text-xl">{def.regional_name}</DialogTitle>
+              <DialogDescription className="flex flex-col">
+                {cardNumber && <span>{t("modal.number")}: {cardNumber}</span>}
+                <span>{t("modal.set")}: {def.set_code}</span>
+                {misc && <span>{misc}</span>}
+              </DialogDescription>
+            </div>
+            {def.image_url && (
+              <img
+                src={def.image_url}
+                alt={def.regional_name}
+                className="h-32 w-auto rounded-md object-contain shrink-0"
+              />
+            )}
+          </div>
         </DialogHeader>
 
         {loading ? (
