@@ -79,7 +79,7 @@ function nullsLastNumber(
 
 type TranslateFn = (key: import("@/lib/i18n").TranslationKey) => string;
 
-export function createColumns(t: TranslateFn, showSecond = false): ColumnDef<CardRowData>[] {
+export function createColumns(t: TranslateFn): ColumnDef<CardRowData>[] {
   return [
     {
       id: "regional_name",
@@ -126,33 +126,21 @@ export function createColumns(t: TranslateFn, showSecond = false): ColumnDef<Car
     },
     {
       id: "highestBuy",
-      accessorFn: (row) => {
-        const p = showSecond ? row.prices.secondHighestBuy : row.prices.highestBuy;
-        return p?.normalizedPrice ?? undefined;
-      },
+      accessorFn: (row) => row.prices.highestBuy?.normalizedPrice ?? undefined,
       header: ({ column }) => (
         <SortableHeader column={column} label={t("column.highestBuy")} />
       ),
-      cell: ({ row }) => {
-        const p = showSecond ? row.original.prices.secondHighestBuy : row.original.prices.highestBuy;
-        return <PriceCell entry={p} />;
-      },
+      cell: ({ row }) => <PriceCell entry={row.original.prices.highestBuy} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
     },
     {
       id: "lowestSell",
-      accessorFn: (row) => {
-        const p = showSecond ? row.prices.secondLowestSell : row.prices.lowestSell;
-        return p?.normalizedPrice ?? undefined;
-      },
+      accessorFn: (row) => row.prices.lowestSell?.normalizedPrice ?? undefined,
       header: ({ column }) => (
         <SortableHeader column={column} label={t("column.lowestSell")} />
       ),
-      cell: ({ row }) => {
-        const p = showSecond ? row.original.prices.secondLowestSell : row.original.prices.lowestSell;
-        return <PriceCell entry={p} />;
-      },
+      cell: ({ row }) => <PriceCell entry={row.original.prices.lowestSell} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
     },

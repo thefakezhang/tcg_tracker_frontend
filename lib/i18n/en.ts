@@ -13,8 +13,6 @@ const en = {
   "cardBrowser.setCodePlaceholder": "Set code...",
   "cardBrowser.list": "List",
   "cardBrowser.grid": "Grid",
-  "cardBrowser.bestPrices": "First",
-  "cardBrowser.secondPrices": "Second",
   "cardBrowser.tierPrefix": "Tier: ",
   "cardBrowser.tierNone": "None",
   "cardBrowser.tierItem": "Tier {tier}",

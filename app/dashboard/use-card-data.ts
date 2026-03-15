@@ -45,9 +45,7 @@ export interface PriceEntry {
 
 export interface PriceSummary {
   highestBuy: PriceEntry | null;
-  secondHighestBuy: PriceEntry | null;
   lowestSell: PriceEntry | null;
-  secondLowestSell: PriceEntry | null;
 }
 
 export interface CardRowData {
@@ -60,9 +58,7 @@ export interface CardRowData {
 
 const EMPTY_PRICES: PriceSummary = {
   highestBuy: null,
-  secondHighestBuy: null,
   lowestSell: null,
-  secondLowestSell: null,
 };
 
 function computePriceSummaries(
@@ -104,21 +100,46 @@ function computePriceSummaries(
       };
     };
 
+    // Find the best cross-region buy/sell pair for arbitrage ROI.
+    // buys sorted desc, sells sorted asc by normalized price.
+    let bestRoi = -Infinity;
+    let bestBuy: MarketListing | null = null;
+    let bestSell: MarketListing | null = null;
+
+    for (const b of buys) {
+      const bRegion = locationMap.get(b.location_id)?.marketRegion ?? null;
+      for (const s of sells) {
+        const sRegion = locationMap.get(s.location_id)?.marketRegion ?? null;
+        if (bRegion === sRegion) continue;
+        const sellNorm = normalize(s);
+        if (sellNorm === 0) continue;
+        const roi = (normalize(b) - sellNorm) / sellNorm;
+        if (roi > bestRoi) {
+          bestRoi = roi;
+          bestBuy = b;
+          bestSell = s;
+        }
+        // For this buy, first cross-region sell is cheapest → best ROI
+        break;
+      }
+    }
+
     result.set(key, {
-      highestBuy: buys[0] ? toEntry(buys[0]) : null,
-      secondHighestBuy: buys[1] ? toEntry(buys[1]) : null,
-      lowestSell: sells[0] ? toEntry(sells[0]) : null,
-      secondLowestSell: sells[1] ? toEntry(sells[1]) : null,
+      highestBuy: bestBuy ? toEntry(bestBuy) : (buys[0] ? toEntry(buys[0]) : null),
+      lowestSell: bestSell ? toEntry(bestSell) : (sells[0] ? toEntry(sells[0]) : null),
     });
   }
   return result;
 }
 
 export function computeRoi(prices: PriceSummary): number | null {
-  const buy = prices.highestBuy?.normalizedPrice;
-  const sell = prices.lowestSell?.normalizedPrice;
-  if (buy == null || sell == null || sell === 0) return null;
-  return ((buy - sell) / sell) * 100;
+  const { highestBuy, lowestSell } = prices;
+  if (!highestBuy || !lowestSell) return null;
+  // Only show ROI for cross-region arbitrage
+  if (highestBuy.marketRegion === lowestSell.marketRegion) return null;
+  const sell = lowestSell.normalizedPrice;
+  if (sell === 0) return null;
+  return ((highestBuy.normalizedPrice - sell) / sell) * 100;
 }
 
 // Cache exchange rates per session — they rarely change

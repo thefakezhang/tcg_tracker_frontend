@@ -38,7 +38,6 @@ export default function CardBrowser() {
   const [searchCardNumber, setSearchCardNumber] = useState("");
   const [searchSetCode, setSearchSetCode] = useState("");
   const [selectedTiers, setSelectedTiers] = useState<number[]>([1]);
-  const [showSecond, setShowSecond] = useState(false);
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [sorting, setSorting] = useState<SortingState>([
     { id: "roi", desc: true },
@@ -135,16 +134,6 @@ export default function CardBrowser() {
             </DropdownMenu>
           )}
           <Tabs
-            value={showSecond ? "second" : "first"}
-            onValueChange={(v) => setShowSecond(String(v) === "second")}
-            className="shrink-0"
-          >
-            <TabsList>
-              <TabsTrigger value="first">{t("cardBrowser.bestPrices")}</TabsTrigger>
-              <TabsTrigger value="second">{t("cardBrowser.secondPrices")}</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <Tabs
             value={psaMode === "psa" ? "psa" : "non-psa"}
             onValueChange={(v) => setPsaMode(String(v) === "psa" ? "psa" : "non-psa")}
             className="shrink-0"
@@ -162,7 +151,7 @@ export default function CardBrowser() {
       )}
 
       <DataTable
-        columns={useMemo(() => createColumns(t, showSecond), [t, showSecond])}
+        columns={useMemo(() => createColumns(t), [t])}
         data={data}
         loading={loading}
         sorting={sorting}
@@ -180,12 +169,8 @@ export default function CardBrowser() {
               row.card.card_number && row.card.card_number !== "UNKNOWN"
                 ? row.card.card_number
                 : null;
-            const buyEntry = showSecond
-              ? row.prices.secondHighestBuy
-              : row.prices.highestBuy;
-            const sellEntry = showSecond
-              ? row.prices.secondLowestSell
-              : row.prices.lowestSell;
+            const buyEntry = row.prices.highestBuy;
+            const sellEntry = row.prices.lowestSell;
 
             return (
               <Card
@@ -247,7 +232,7 @@ export default function CardBrowser() {
               </Card>
             );
           },
-          [showSecond, t]
+          [t]
         )}
       />
 
