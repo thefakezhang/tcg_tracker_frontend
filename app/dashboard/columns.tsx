@@ -125,22 +125,22 @@ export function createColumns(t: TranslateFn): ColumnDef<CardRowData>[] {
       header: ({ column }) => <SortableHeader column={column} label={t("column.psa")} />,
     },
     {
-      id: "highestBuy",
-      accessorFn: (row) => row.prices.highestBuy?.normalizedPrice ?? undefined,
-      header: ({ column }) => (
-        <SortableHeader column={column} label={t("column.highestBuy")} />
-      ),
-      cell: ({ row }) => <PriceCell entry={row.original.prices.highestBuy} />,
-      sortUndefined: "last",
-      sortingFn: nullsLastNumber,
-    },
-    {
       id: "lowestSell",
       accessorFn: (row) => row.prices.lowestSell?.normalizedPrice ?? undefined,
       header: ({ column }) => (
         <SortableHeader column={column} label={t("column.lowestSell")} />
       ),
       cell: ({ row }) => <PriceCell entry={row.original.prices.lowestSell} />,
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+    {
+      id: "highestBuy",
+      accessorFn: (row) => row.prices.highestBuy?.normalizedPrice ?? undefined,
+      header: ({ column }) => (
+        <SortableHeader column={column} label={t("column.highestBuy")} />
+      ),
+      cell: ({ row }) => <PriceCell entry={row.original.prices.highestBuy} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
     },

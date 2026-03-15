@@ -319,17 +319,17 @@ function ListingTables({
   return (
     <div className="grid grid-cols-2 gap-4 pt-2">
       <div>
-        <h3 className="text-sm font-medium mb-2">{t("modal.buy")}</h3>
+        <h3 className="text-sm font-medium mb-2">{t("modal.sell")}</h3>
         <ListingTable
-          listings={buy}
+          listings={sell}
           conditionHeader={conditionHeader}
           t={t}
         />
       </div>
       <div>
-        <h3 className="text-sm font-medium mb-2">{t("modal.sell")}</h3>
+        <h3 className="text-sm font-medium mb-2">{t("modal.buy")}</h3>
         <ListingTable
-          listings={sell}
+          listings={buy}
           conditionHeader={conditionHeader}
           t={t}
         />
