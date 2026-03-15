@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type SortingState } from "@tanstack/react-table";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Hash, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -209,11 +209,13 @@ export default function CardBrowser() {
                   <CardAction>
                     <div className="flex flex-col items-end gap-1">
                       {cardNumber && (
-                        <Badge variant="outline" className="h-auto px-1.5 py-px">
+                        <Badge variant="secondary" className="h-auto px-1.5 py-px">
+                          <Hash className="size-3" />
                           {cardNumber}
                         </Badge>
                       )}
-                      <Badge variant="outline" className="h-auto px-1.5 py-px">
+                      <Badge variant="secondary" className="h-auto px-1.5 py-px">
+                        <Layers className="size-3" />
                         {row.card.set_code}
                       </Badge>
                     </div>

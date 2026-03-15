@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Hash, Layers } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -197,22 +197,34 @@ export default function CardDetailModal({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-3xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <div className="flex justify-between gap-4">
-            <div className="flex flex-col gap-1 min-w-0">
-              <DialogTitle className="text-xl">{def.regional_name}</DialogTitle>
-              <DialogDescription className="flex flex-col">
-                {cardNumber && <span>{t("modal.number")}: {cardNumber}</span>}
-                <span>{t("modal.set")}: {def.set_code}</span>
-                {misc && <span>{misc}</span>}
-              </DialogDescription>
-            </div>
+          <div className="flex gap-4">
             {def.image_url && (
               <img
                 src={def.image_url}
                 alt={def.regional_name}
-                className="h-32 w-auto rounded-md object-contain shrink-0"
+                className="h-64 w-auto rounded-md object-contain shrink-0"
               />
             )}
+            <div className="flex min-w-0 flex-col gap-1">
+              <DialogTitle className="text-lg">{def.regional_name}</DialogTitle>
+              {misc && (
+                <DialogDescription className="text-xs">
+                  {misc}
+                </DialogDescription>
+              )}
+              <div className="mt-2 flex flex-wrap gap-1">
+                {cardNumber && (
+                  <Badge variant="secondary" className="h-auto px-1.5 py-px">
+                    <Hash className="size-3" />
+                    {cardNumber}
+                  </Badge>
+                )}
+                <Badge variant="secondary" className="h-auto px-1.5 py-px">
+                  <Layers className="size-3" />
+                  {def.set_code}
+                </Badge>
+              </div>
+            </div>
           </div>
         </DialogHeader>
 
@@ -369,10 +381,10 @@ function ListingTable({
                   {price}
                 </TableCell>
                 <TableCell>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1.5">
                     <span>{l.locationName}</span>
                     {l.marketRegion && (
-                      <Badge variant="secondary" className="h-auto px-1 py-px text-[10px]">
+                      <Badge variant="secondary" className="h-auto px-1.5 py-px text-xs">
                         {l.marketRegion}
                       </Badge>
                     )}
