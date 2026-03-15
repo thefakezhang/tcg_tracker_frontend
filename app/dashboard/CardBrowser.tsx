@@ -29,6 +29,7 @@ export default function CardBrowser() {
   const [searchSetCode, setSearchSetCode] = useState("");
   const [selectedTiers, setSelectedTiers] = useState<number[]>([1]);
   const [showSecond, setShowSecond] = useState(false);
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [sorting, setSorting] = useState<SortingState>([
     { id: "roi", desc: true },
   ]);
@@ -61,79 +62,89 @@ export default function CardBrowser() {
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Input
           type="text"
           placeholder={t("cardBrowser.namePlaceholder")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="basis-1/2"
+          className="col-span-2"
         />
         <Input
           type="text"
           placeholder={t("cardBrowser.cardNumberPlaceholder")}
           value={searchCardNumber}
           onChange={(e) => setSearchCardNumber(e.target.value)}
-          className="basis-1/4"
         />
         <Input
           type="text"
           placeholder={t("cardBrowser.setCodePlaceholder")}
           value={searchSetCode}
           onChange={(e) => setSearchSetCode(e.target.value)}
-          className="basis-1/4"
         />
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Tabs
-          value={showSecond ? "second" : "first"}
-          onValueChange={(v) => setShowSecond(String(v) === "second")}
+          value={viewMode}
+          onValueChange={(v) => setViewMode(String(v) as "list" | "grid")}
           className="shrink-0"
         >
           <TabsList>
-            <TabsTrigger value="first">{t("cardBrowser.bestPrices")}</TabsTrigger>
-            <TabsTrigger value="second">{t("cardBrowser.secondPrices")}</TabsTrigger>
+            <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
+            <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
           </TabsList>
         </Tabs>
-        <Tabs
-          value={psaMode === "psa" ? "psa" : "non-psa"}
-          onValueChange={(v) => setPsaMode(String(v) === "psa" ? "psa" : "non-psa")}
-          className="shrink-0"
-        >
-          <TabsList>
-            <TabsTrigger value="non-psa">{t("modal.tabNonPsa")}</TabsTrigger>
-            <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
-          </TabsList>
-        </Tabs>
-        {psaMode === "non-psa" && availableTiers.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button variant="outline" className="shrink-0" />
-              }
-            >
-              {t("cardBrowser.tierPrefix")}{selectedTiers.sort((a, b) => a - b).join(", ") || t("cardBrowser.tierNone")}
-              <ChevronDown className="ml-1 size-4" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              {availableTiers.map((tier) => (
-                <DropdownMenuCheckboxItem
-                  key={tier}
-                  checked={selectedTiers.includes(tier)}
-                  onCheckedChange={(checked) => {
-                    setSelectedTiers((prev) =>
-                      checked
-                        ? [...prev, tier]
-                        : prev.filter((t) => t !== tier)
-                    );
-                  }}
-                >
-                  {t("cardBrowser.tierItem", { tier })}
-                </DropdownMenuCheckboxItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {psaMode === "non-psa" && availableTiers.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button variant="outline" className="shrink-0" />
+                }
+              >
+                {t("cardBrowser.tierPrefix")}{selectedTiers.sort((a, b) => a - b).join(", ") || t("cardBrowser.tierNone")}
+                <ChevronDown className="ml-1 size-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                {availableTiers.map((tier) => (
+                  <DropdownMenuCheckboxItem
+                    key={tier}
+                    checked={selectedTiers.includes(tier)}
+                    onCheckedChange={(checked) => {
+                      setSelectedTiers((prev) =>
+                        checked
+                          ? [...prev, tier]
+                          : prev.filter((t) => t !== tier)
+                      );
+                    }}
+                  >
+                    {t("cardBrowser.tierItem", { tier })}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          <Tabs
+            value={showSecond ? "second" : "first"}
+            onValueChange={(v) => setShowSecond(String(v) === "second")}
+            className="shrink-0"
+          >
+            <TabsList>
+              <TabsTrigger value="first">{t("cardBrowser.bestPrices")}</TabsTrigger>
+              <TabsTrigger value="second">{t("cardBrowser.secondPrices")}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <Tabs
+            value={psaMode === "psa" ? "psa" : "non-psa"}
+            onValueChange={(v) => setPsaMode(String(v) === "psa" ? "psa" : "non-psa")}
+            className="shrink-0"
+          >
+            <TabsList>
+              <TabsTrigger value="non-psa">{t("modal.tabNonPsa")}</TabsTrigger>
+              <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
       </div>
 
       {error && (
