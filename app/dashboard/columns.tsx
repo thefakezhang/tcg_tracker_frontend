@@ -125,32 +125,32 @@ export function createColumns(t: TranslateFn, showSecond = false): ColumnDef<Car
       header: ({ column }) => <SortableHeader column={column} label={t("column.psa")} />,
     },
     {
-      id: "lowestBuy",
+      id: "highestBuy",
       accessorFn: (row) => {
-        const p = showSecond ? row.prices.secondLowestBuy : row.prices.lowestBuy;
+        const p = showSecond ? row.prices.secondHighestBuy : row.prices.highestBuy;
         return p?.normalizedPrice ?? undefined;
       },
       header: ({ column }) => (
-        <SortableHeader column={column} label={t("column.lowestBuy")} />
+        <SortableHeader column={column} label={t("column.highestBuy")} />
       ),
       cell: ({ row }) => {
-        const p = showSecond ? row.original.prices.secondLowestBuy : row.original.prices.lowestBuy;
+        const p = showSecond ? row.original.prices.secondHighestBuy : row.original.prices.highestBuy;
         return <PriceCell entry={p} />;
       },
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
     },
     {
-      id: "highestSell",
+      id: "lowestSell",
       accessorFn: (row) => {
-        const p = showSecond ? row.prices.secondHighestSell : row.prices.highestSell;
+        const p = showSecond ? row.prices.secondLowestSell : row.prices.lowestSell;
         return p?.normalizedPrice ?? undefined;
       },
       header: ({ column }) => (
-        <SortableHeader column={column} label={t("column.highestSell")} />
+        <SortableHeader column={column} label={t("column.lowestSell")} />
       ),
       cell: ({ row }) => {
-        const p = showSecond ? row.original.prices.secondHighestSell : row.original.prices.highestSell;
+        const p = showSecond ? row.original.prices.secondLowestSell : row.original.prices.lowestSell;
         return <PriceCell entry={p} />;
       },
       sortUndefined: "last",

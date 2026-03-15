@@ -160,9 +160,9 @@ export default function CardDetailModal({
     const psa = rawListings.filter((l) => l.psa_grade > 0);
 
     const sortBuy = (a: MarketListing, b: MarketListing) =>
-      normalize(a) - normalize(b);
-    const sortSell = (a: MarketListing, b: MarketListing) =>
       normalize(b) - normalize(a);
+    const sortSell = (a: MarketListing, b: MarketListing) =>
+      normalize(a) - normalize(b);
 
     const buyNonPsaSorted = nonPsa
       .filter((l) => l.price_type === "Buy")

@@ -181,11 +181,11 @@ export default function CardBrowser() {
                 ? row.card.card_number
                 : null;
             const buyEntry = showSecond
-              ? row.prices.secondLowestBuy
-              : row.prices.lowestBuy;
+              ? row.prices.secondHighestBuy
+              : row.prices.highestBuy;
             const sellEntry = showSecond
-              ? row.prices.secondHighestSell
-              : row.prices.highestSell;
+              ? row.prices.secondLowestSell
+              : row.prices.lowestSell;
 
             return (
               <Card
@@ -230,12 +230,12 @@ export default function CardBrowser() {
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
                   <div className="grid w-full grid-cols-[1fr_auto_1fr] gap-2">
                     <div className="space-y-1">
-                      <div className="text-muted-foreground">{t("column.lowestBuy")}</div>
+                      <div className="text-muted-foreground">{t("column.highestBuy")}</div>
                       <PriceCell entry={buyEntry} badgeVariant="outline" />
                     </div>
                     <div className="w-px self-stretch bg-foreground/10" />
                     <div className="space-y-1 text-right">
-                      <div className="text-muted-foreground">{t("column.highestSell")}</div>
+                      <div className="text-muted-foreground">{t("column.lowestSell")}</div>
                       <PriceCell entry={sellEntry} align="right" badgeVariant="outline" />
                     </div>
                   </div>

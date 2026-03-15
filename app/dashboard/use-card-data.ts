@@ -44,10 +44,10 @@ export interface PriceEntry {
 }
 
 export interface PriceSummary {
-  lowestBuy: PriceEntry | null;
-  secondLowestBuy: PriceEntry | null;
-  highestSell: PriceEntry | null;
-  secondHighestSell: PriceEntry | null;
+  highestBuy: PriceEntry | null;
+  secondHighestBuy: PriceEntry | null;
+  lowestSell: PriceEntry | null;
+  secondLowestSell: PriceEntry | null;
 }
 
 export interface CardRowData {
@@ -59,10 +59,10 @@ export interface CardRowData {
 }
 
 const EMPTY_PRICES: PriceSummary = {
-  lowestBuy: null,
-  secondLowestBuy: null,
-  highestSell: null,
-  secondHighestSell: null,
+  highestBuy: null,
+  secondHighestBuy: null,
+  lowestSell: null,
+  secondLowestSell: null,
 };
 
 function computePriceSummaries(
@@ -86,11 +86,11 @@ function computePriceSummaries(
 
     const buys = cardListings
       .filter((l) => l.price_type === "Buy")
-      .sort((a, b) => normalize(a) - normalize(b));
+      .sort((a, b) => normalize(b) - normalize(a));
 
     const sells = cardListings
       .filter((l) => l.price_type === "Sell")
-      .sort((a, b) => normalize(b) - normalize(a));
+      .sort((a, b) => normalize(a) - normalize(b));
 
     const toEntry = (l: MarketListing): PriceEntry => {
       const loc = locationMap.get(l.location_id);
@@ -105,20 +105,20 @@ function computePriceSummaries(
     };
 
     result.set(key, {
-      lowestBuy: buys[0] ? toEntry(buys[0]) : null,
-      secondLowestBuy: buys[1] ? toEntry(buys[1]) : null,
-      highestSell: sells[0] ? toEntry(sells[0]) : null,
-      secondHighestSell: sells[1] ? toEntry(sells[1]) : null,
+      highestBuy: buys[0] ? toEntry(buys[0]) : null,
+      secondHighestBuy: buys[1] ? toEntry(buys[1]) : null,
+      lowestSell: sells[0] ? toEntry(sells[0]) : null,
+      secondLowestSell: sells[1] ? toEntry(sells[1]) : null,
     });
   }
   return result;
 }
 
 export function computeRoi(prices: PriceSummary): number | null {
-  const buy = prices.lowestBuy?.normalizedPrice;
-  const sell = prices.highestSell?.normalizedPrice;
-  if (buy == null || sell == null || buy === 0) return null;
-  return ((sell - buy) / buy) * 100;
+  const buy = prices.highestBuy?.normalizedPrice;
+  const sell = prices.lowestSell?.normalizedPrice;
+  if (buy == null || sell == null || sell === 0) return null;
+  return ((buy - sell) / sell) * 100;
 }
 
 // Cache exchange rates per session — they rarely change
