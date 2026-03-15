@@ -79,7 +79,7 @@ function nullsLastNumber(
 
 type TranslateFn = (key: import("@/lib/i18n").TranslationKey) => string;
 
-export function createColumns(t: TranslateFn, showSecond = false): ColumnDef<CardRowData>[] {
+export function createColumns(t: TranslateFn): ColumnDef<CardRowData>[] {
   return [
     {
       id: "regional_name",
@@ -125,34 +125,22 @@ export function createColumns(t: TranslateFn, showSecond = false): ColumnDef<Car
       header: ({ column }) => <SortableHeader column={column} label={t("column.psa")} />,
     },
     {
-      id: "lowestBuy",
-      accessorFn: (row) => {
-        const p = showSecond ? row.prices.secondLowestBuy : row.prices.lowestBuy;
-        return p?.normalizedPrice ?? undefined;
-      },
+      id: "highestBuy",
+      accessorFn: (row) => row.prices.highestBuy?.normalizedPrice ?? undefined,
       header: ({ column }) => (
-        <SortableHeader column={column} label={t("column.lowestBuy")} />
+        <SortableHeader column={column} label={t("column.highestBuy")} />
       ),
-      cell: ({ row }) => {
-        const p = showSecond ? row.original.prices.secondLowestBuy : row.original.prices.lowestBuy;
-        return <PriceCell entry={p} />;
-      },
+      cell: ({ row }) => <PriceCell entry={row.original.prices.highestBuy} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
     },
     {
-      id: "highestSell",
-      accessorFn: (row) => {
-        const p = showSecond ? row.prices.secondHighestSell : row.prices.highestSell;
-        return p?.normalizedPrice ?? undefined;
-      },
+      id: "lowestSell",
+      accessorFn: (row) => row.prices.lowestSell?.normalizedPrice ?? undefined,
       header: ({ column }) => (
-        <SortableHeader column={column} label={t("column.highestSell")} />
+        <SortableHeader column={column} label={t("column.lowestSell")} />
       ),
-      cell: ({ row }) => {
-        const p = showSecond ? row.original.prices.secondHighestSell : row.original.prices.highestSell;
-        return <PriceCell entry={p} />;
-      },
+      cell: ({ row }) => <PriceCell entry={row.original.prices.lowestSell} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
     },

@@ -44,10 +44,8 @@ export interface PriceEntry {
 }
 
 export interface PriceSummary {
-  lowestBuy: PriceEntry | null;
-  secondLowestBuy: PriceEntry | null;
-  highestSell: PriceEntry | null;
-  secondHighestSell: PriceEntry | null;
+  highestBuy: PriceEntry | null;
+  lowestSell: PriceEntry | null;
 }
 
 export interface CardRowData {
@@ -59,10 +57,8 @@ export interface CardRowData {
 }
 
 const EMPTY_PRICES: PriceSummary = {
-  lowestBuy: null,
-  secondLowestBuy: null,
-  highestSell: null,
-  secondHighestSell: null,
+  highestBuy: null,
+  lowestSell: null,
 };
 
 function computePriceSummaries(
@@ -86,11 +82,11 @@ function computePriceSummaries(
 
     const buys = cardListings
       .filter((l) => l.price_type === "Buy")
-      .sort((a, b) => normalize(a) - normalize(b));
+      .sort((a, b) => normalize(b) - normalize(a));
 
     const sells = cardListings
       .filter((l) => l.price_type === "Sell")
-      .sort((a, b) => normalize(b) - normalize(a));
+      .sort((a, b) => normalize(a) - normalize(b));
 
     const toEntry = (l: MarketListing): PriceEntry => {
       const loc = locationMap.get(l.location_id);
@@ -104,21 +100,46 @@ function computePriceSummaries(
       };
     };
 
+    // Find the best cross-region buy/sell pair for arbitrage ROI.
+    // buys sorted desc, sells sorted asc by normalized price.
+    let bestRoi = -Infinity;
+    let bestBuy: MarketListing | null = null;
+    let bestSell: MarketListing | null = null;
+
+    for (const b of buys) {
+      const bRegion = locationMap.get(b.location_id)?.marketRegion ?? null;
+      for (const s of sells) {
+        const sRegion = locationMap.get(s.location_id)?.marketRegion ?? null;
+        if (bRegion === sRegion) continue;
+        const sellNorm = normalize(s);
+        if (sellNorm === 0) continue;
+        const roi = (normalize(b) - sellNorm) / sellNorm;
+        if (roi > bestRoi) {
+          bestRoi = roi;
+          bestBuy = b;
+          bestSell = s;
+        }
+        // For this buy, first cross-region sell is cheapest → best ROI
+        break;
+      }
+    }
+
     result.set(key, {
-      lowestBuy: buys[0] ? toEntry(buys[0]) : null,
-      secondLowestBuy: buys[1] ? toEntry(buys[1]) : null,
-      highestSell: sells[0] ? toEntry(sells[0]) : null,
-      secondHighestSell: sells[1] ? toEntry(sells[1]) : null,
+      highestBuy: bestBuy ? toEntry(bestBuy) : (buys[0] ? toEntry(buys[0]) : null),
+      lowestSell: bestSell ? toEntry(bestSell) : (sells[0] ? toEntry(sells[0]) : null),
     });
   }
   return result;
 }
 
 export function computeRoi(prices: PriceSummary): number | null {
-  const buy = prices.lowestBuy?.normalizedPrice;
-  const sell = prices.highestSell?.normalizedPrice;
-  if (buy == null || sell == null || buy === 0) return null;
-  return ((sell - buy) / buy) * 100;
+  const { highestBuy, lowestSell } = prices;
+  if (!highestBuy || !lowestSell) return null;
+  // Only show ROI for cross-region arbitrage
+  if (highestBuy.marketRegion === lowestSell.marketRegion) return null;
+  const sell = lowestSell.normalizedPrice;
+  if (sell === 0) return null;
+  return ((highestBuy.normalizedPrice - sell) / sell) * 100;
 }
 
 // Cache exchange rates per session — they rarely change
