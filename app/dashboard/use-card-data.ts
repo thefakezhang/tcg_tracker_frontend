@@ -34,6 +34,23 @@ export interface MarketListing {
   location_id: number;
 }
 
+interface RpcPriceSummaryRow {
+  card_id: number;
+  psa_grade: number;
+  best_buy_price: number | null;
+  best_buy_currency: string | null;
+  best_buy_symbol: string | null;
+  best_buy_location: string | null;
+  best_buy_region: string | null;
+  best_buy_normalized: number | null;
+  best_sell_price: number | null;
+  best_sell_currency: string | null;
+  best_sell_symbol: string | null;
+  best_sell_location: string | null;
+  best_sell_region: string | null;
+  best_sell_normalized: number | null;
+}
+
 export interface PriceEntry {
   price: number;
   symbol: string;
@@ -61,75 +78,32 @@ const EMPTY_PRICES: PriceSummary = {
   lowestSell: null,
 };
 
-function computePriceSummaries(
-  listings: MarketListing[],
-  rateMap: Map<string, number>,
-  locationMap: Map<number, LocationInfo>,
-  keyFn: (l: MarketListing) => string
-): Map<string, PriceSummary> {
-  const grouped = new Map<string, MarketListing[]>();
-  for (const l of listings) {
-    const key = keyFn(l);
-    const arr = grouped.get(key) ?? [];
-    arr.push(l);
-    grouped.set(key, arr);
-  }
-
-  const result = new Map<string, PriceSummary>();
-  for (const [key, cardListings] of grouped) {
-    const normalize = (l: MarketListing) =>
-      l.price * (rateMap.get(l.currency) ?? 1);
-
-    const buys = cardListings
-      .filter((l) => l.price_type === "Buy")
-      .sort((a, b) => normalize(b) - normalize(a));
-
-    const sells = cardListings
-      .filter((l) => l.price_type === "Sell")
-      .sort((a, b) => normalize(a) - normalize(b));
-
-    const toEntry = (l: MarketListing): PriceEntry => {
-      const loc = locationMap.get(l.location_id);
-      return {
-        price: l.price,
-        symbol: l.currency_symbol,
-        currencyCode: l.currency,
-        normalizedPrice: normalize(l),
-        locationName: loc?.name ?? "",
-        marketRegion: loc?.marketRegion ?? null,
-      };
-    };
-
-    // Find the best cross-region buy/sell pair for arbitrage ROI.
-    // buys sorted desc, sells sorted asc by normalized price.
-    let bestRoi = -Infinity;
-    let bestBuy: MarketListing | null = null;
-    let bestSell: MarketListing | null = null;
-
-    for (const b of buys) {
-      const bRegion = locationMap.get(b.location_id)?.marketRegion ?? null;
-      for (const s of sells) {
-        const sRegion = locationMap.get(s.location_id)?.marketRegion ?? null;
-        if (bRegion === sRegion) continue;
-        const sellNorm = normalize(s);
-        if (sellNorm === 0) continue;
-        const roi = (normalize(b) - sellNorm) / sellNorm;
-        if (roi > bestRoi) {
-          bestRoi = roi;
-          bestBuy = b;
-          bestSell = s;
+function rpcRowToPriceSummary(row: RpcPriceSummaryRow): PriceSummary {
+  const highestBuy: PriceEntry | null =
+    row.best_buy_price != null
+      ? {
+          price: row.best_buy_price,
+          symbol: row.best_buy_symbol ?? "",
+          currencyCode: row.best_buy_currency ?? "",
+          normalizedPrice: row.best_buy_normalized ?? 0,
+          locationName: row.best_buy_location ?? "",
+          marketRegion: row.best_buy_region ?? null,
         }
-        // For this buy, first cross-region sell is cheapest → best ROI
-        break;
-      }
-    }
+      : null;
 
-    result.set(key, {
-      highestBuy: bestBuy ? toEntry(bestBuy) : (buys[0] ? toEntry(buys[0]) : null),
-      lowestSell: bestSell ? toEntry(bestSell) : (sells[0] ? toEntry(sells[0]) : null),
-    });
-  }
-  return result;
+  const lowestSell: PriceEntry | null =
+    row.best_sell_price != null
+      ? {
+          price: row.best_sell_price,
+          symbol: row.best_sell_symbol ?? "",
+          currencyCode: row.best_sell_currency ?? "",
+          normalizedPrice: row.best_sell_normalized ?? 0,
+          locationName: row.best_sell_location ?? "",
+          marketRegion: row.best_sell_region ?? null,
+        }
+      : null;
+
+  return { highestBuy, lowestSell };
 }
 
 export function computeRoi(prices: PriceSummary): number | null {
@@ -214,6 +188,13 @@ export async function fetchLocationMap(
   return map;
 }
 
+// Cache RPC price summaries per game:psaMode — only refreshed on explicit user action
+const priceSummaryCache = new Map<string, RpcPriceSummaryRow[]>();
+
+function priceCacheKey(game: Game, psaMode: PsaMode): string {
+  return `${game}:${psaMode}`;
+}
+
 export function useCardData(options: {
   activeGame: Game;
   psaMode: PsaMode;
@@ -226,6 +207,7 @@ export function useCardData(options: {
   loading: boolean;
   error: string | null;
   availableTiers: number[];
+  refetch: () => void;
 } {
   const {
     activeGame,
@@ -253,7 +235,7 @@ export function useCardData(options: {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     debounceRef.current = setTimeout(() => {
-      fetchCards();
+      fetchCards(false);
     }, 300);
 
     return () => {
@@ -261,7 +243,7 @@ export function useCardData(options: {
     };
   }, [activeGame, psaMode, search, searchCardNumber, searchSetCode, selectedTiers]);
 
-  async function fetchCards() {
+  async function fetchCards(forceRefresh: boolean) {
     // Cancel any in-flight request
     if (abortRef.current) abortRef.current.abort();
     const abort = new AbortController();
@@ -304,63 +286,47 @@ export function useCardData(options: {
       return;
     }
 
-    let listingsQuery = supabase
-      .from(LISTINGS_TABLE_MAP[activeGame])
-      .select(
-        "card_id, price_type, price, currency, psa_grade, condition, location_id, currencies(symbol)"
-      )
-      .in("card_id", cardIds);
+    const cacheKey = priceCacheKey(activeGame, psaMode);
+    let summaryRows: RpcPriceSummaryRow[];
 
-    if (psaMode === "non-psa") {
-      listingsQuery = listingsQuery.eq("psa_grade", 0);
+    const cached = priceSummaryCache.get(cacheKey);
+    if (cached && !forceRefresh) {
+      summaryRows = cached;
     } else {
-      listingsQuery = listingsQuery.gt("psa_grade", 0);
+      const { data: rpcRows, error: rpcError } = await supabase.rpc(
+        "get_card_price_summaries",
+        {
+          p_game: activeGame,
+          p_card_ids: cardIds,
+          p_psa_mode: psaMode,
+          p_tiers: psaMode === "non-psa" && selectedTiers.length > 0 ? selectedTiers : null,
+        }
+      );
+
+      if (abort.signal.aborted) return;
+
+      if (rpcError) {
+        setError(rpcError.message);
+        setData([]);
+        setLoading(false);
+        return;
+      }
+
+      summaryRows = (rpcRows ?? []) as RpcPriceSummaryRow[];
+      priceSummaryCache.set(cacheKey, summaryRows);
     }
 
-    const [{ data: listings }, rateMap, conditionsData, locationMap] = await Promise.all([
-      listingsQuery,
-      fetchRateMap(supabase),
-      fetchConditionsCache(supabase),
-      fetchLocationMap(supabase),
-    ] as const);
-
-    if (abort.signal.aborted) return;
-
-    setAvailableTiers(conditionsData.tiers);
-
-    const normalizedListings: MarketListing[] = (listings ?? []).map(
-      (l: Record<string, unknown>) => ({
-        card_id: l.card_id as number,
-        price_type: l.price_type as "Buy" | "Sell",
-        price: l.price as number,
-        currency: l.currency as string,
-        currency_symbol:
-          (l.currencies as { symbol: string } | null)?.symbol ?? "",
-        psa_grade: l.psa_grade as number,
-        condition: (l.condition as number | null) ?? null,
-        location_id: l.location_id as number,
-      })
-    );
-
-    const cardMap = new Map((cards ?? []).map((c) => [String(c.card_id), c]));
+    const cardMap = new Map((cards ?? []).map((c) => [c.card_id, c]));
 
     let rows: CardRowData[];
 
     if (psaMode === "non-psa") {
-      const tierSet = new Set(selectedTiers);
-      const filteredListings = normalizedListings.filter((l) => {
-        if (l.condition == null) return true;
-        const tier = conditionsData.map.get(l.condition);
-        return tier != null && tierSet.has(tier);
-      });
-      const summaries = computePriceSummaries(
-        filteredListings,
-        rateMap,
-        locationMap,
-        (l) => String(l.card_id)
-      );
+      const summaryMap = new Map<number, PriceSummary>();
+      for (const row of summaryRows) {
+        summaryMap.set(row.card_id, rpcRowToPriceSummary(row));
+      }
       rows = (cards ?? []).map((c) => {
-        const prices = summaries.get(String(c.card_id)) ?? EMPTY_PRICES;
+        const prices = summaryMap.get(c.card_id) ?? EMPTY_PRICES;
         return {
           key: String(c.card_id),
           card: c,
@@ -369,30 +335,18 @@ export function useCardData(options: {
         };
       });
     } else {
-      const summaries = computePriceSummaries(
-        normalizedListings,
-        rateMap,
-        locationMap,
-        (l) => `${l.card_id}:${l.psa_grade}`
-      );
-      const seen = new Set<string>();
       rows = [];
-      for (const l of normalizedListings) {
-        const key = `${l.card_id}:${l.psa_grade}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          const card = cardMap.get(String(l.card_id));
-          if (card) {
-            const prices = summaries.get(key) ?? EMPTY_PRICES;
-            rows.push({
-              key,
-              card,
-              psaGrade: l.psa_grade,
-              prices,
-              roi: computeRoi(prices),
-            });
-          }
-        }
+      for (const row of summaryRows) {
+        const card = cardMap.get(row.card_id);
+        if (!card) continue;
+        const prices = rpcRowToPriceSummary(row);
+        rows.push({
+          key: `${row.card_id}:${row.psa_grade}`,
+          card,
+          psaGrade: row.psa_grade,
+          prices,
+          roi: computeRoi(prices),
+        });
       }
     }
 
@@ -400,5 +354,5 @@ export function useCardData(options: {
     setLoading(false);
   }
 
-  return { data, loading, error, availableTiers };
+  return { data, loading, error, availableTiers, refetch: () => fetchCards(true) };
 }
