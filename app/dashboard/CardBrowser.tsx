@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type SortingState } from "@tanstack/react-table";
-import { ChevronDown, Hash, Layers } from "lucide-react";
+import { ChevronDown, Hash, Layers, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -44,7 +44,7 @@ export default function CardBrowser() {
   ]);
   const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
 
-  const { data, loading, error, availableTiers } = useCardData({
+  const { data, loading, error, availableTiers, refetch } = useCardData({
     activeGame,
     psaMode,
     search,
@@ -103,6 +103,15 @@ export default function CardBrowser() {
             <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
           </TabsList>
         </Tabs>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={refetch}
+          disabled={loading}
+          className="shrink-0"
+        >
+          <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+        </Button>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {psaMode === "non-psa" && availableTiers.length > 0 && (
             <DropdownMenu>
