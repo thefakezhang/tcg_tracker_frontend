@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type SortingState } from "@tanstack/react-table";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Hash, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -18,7 +18,15 @@ import { useCardData, type CardRowData } from "./use-card-data";
 import { createColumns, PriceCell } from "./columns";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
-import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardAction,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { ImageOff } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 
@@ -182,53 +190,60 @@ export default function CardBrowser() {
             return (
               <Card
                 size="sm"
-                className="h-full cursor-pointer pt-0 transition-colors hover:bg-accent/50"
+                className="h-full cursor-pointer gap-0 !py-0 transition-colors hover:bg-accent/50"
                 onClick={() => setSelectedCard(row)}
               >
                 {row.card.image_url ? (
                   <img
                     src={row.card.image_url}
                     alt={row.card.regional_name}
-                    className="aspect-[2/3] w-full object-cover"
+                    className="aspect-[5/7] w-full object-cover"
                     loading="lazy"
                   />
                 ) : (
-                  <div className="flex aspect-[2/3] w-full items-center justify-center bg-muted">
+                  <div className="flex aspect-[5/7] w-full items-center justify-center bg-muted">
                     <ImageOff className="size-8 text-muted-foreground" />
                   </div>
                 )}
-                <CardContent className="flex flex-1 flex-col gap-2">
-                  <div>
-                    <div className="truncate font-medium leading-snug">{row.card.regional_name}</div>
-                    {misc && (
-                      <div className="truncate text-xs text-muted-foreground">{misc}</div>
-                    )}
-                  </div>
-                  <div className="space-y-0.5 text-xs text-muted-foreground">
-                    {cardNumber && (
-                      <div>{t("modal.number")}: {cardNumber}</div>
-                    )}
-                    <div>{t("modal.set")}: {row.card.set_code}</div>
-                  </div>
-                  <div className="mt-auto space-y-1 rounded-md bg-muted/50 px-2.5 py-2 text-xs">
-                    <div className="flex justify-between gap-2">
-                      <span className="shrink-0 text-muted-foreground">{t("column.lowestBuy")}</span>
-                      <div className="text-right">
-                        <PriceCell entry={buyEntry} />
-                      </div>
+                <CardHeader className="pt-1">
+                  <CardAction>
+                    <div className="flex flex-col items-end gap-1">
+                      {cardNumber && (
+                        <Badge variant="secondary" className="h-auto px-1.5 py-px">
+                          <Hash className="size-3" />
+                          {cardNumber}
+                        </Badge>
+                      )}
+                      <Badge variant="secondary" className="h-auto px-1.5 py-px">
+                        <Layers className="size-3" />
+                        {row.card.set_code}
+                      </Badge>
                     </div>
-                    <div className="flex justify-between gap-2">
-                      <span className="shrink-0 text-muted-foreground">{t("column.highestSell")}</span>
-                      <div className="text-right">
-                        <PriceCell entry={sellEntry} />
-                      </div>
+                  </CardAction>
+                  <CardTitle className="truncate text-lg">{row.card.regional_name}</CardTitle>
+                  {misc && (
+                    <CardDescription className="truncate text-xs">
+                      {misc}
+                    </CardDescription>
+                  )}
+                </CardHeader>
+                <CardFooter className="mt-auto flex-col gap-2 text-xs">
+                  <div className="grid w-full grid-cols-[1fr_auto_1fr] gap-2">
+                    <div className="space-y-1">
+                      <div className="text-muted-foreground">{t("column.lowestBuy")}</div>
+                      <PriceCell entry={buyEntry} badgeVariant="outline" />
                     </div>
-                    <div className="flex justify-between gap-2 border-t border-foreground/10 pt-1">
-                      <span className="text-muted-foreground">{t("column.roi")}</span>
-                      <span>{row.roi !== null ? `${Math.round(row.roi * 100) / 100}%` : "\u2014"}</span>
+                    <div className="w-px self-stretch bg-foreground/10" />
+                    <div className="space-y-1 text-right">
+                      <div className="text-muted-foreground">{t("column.highestSell")}</div>
+                      <PriceCell entry={sellEntry} align="right" badgeVariant="outline" />
                     </div>
                   </div>
-                </CardContent>
+                  <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
+                    <span className="text-muted-foreground">{t("column.roi")}</span>
+                    <span>{row.roi !== null ? `${Math.round(row.roi * 100) / 100}%` : "\u2014"}</span>
+                  </div>
+                </CardFooter>
               </Card>
             );
           },
