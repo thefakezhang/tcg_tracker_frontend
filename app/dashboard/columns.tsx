@@ -5,7 +5,7 @@ import { ArrowUp, ArrowDown } from "lucide-react";
 import { type CardRowData, type PriceEntry } from "./use-card-data";
 import { useCurrency } from "./CurrencyContext";
 
-function PriceCell({ entry }: { entry: PriceEntry | null }) {
+export function PriceCell({ entry }: { entry: PriceEntry | null }) {
   const { displayCurrency, convertPrice } = useCurrency();
   if (!entry) return <span>{"\u2014"}</span>;
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { type SortingState } from "@tanstack/react-table";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,9 +15,11 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
 import { useCardData, type CardRowData } from "./use-card-data";
-import { createColumns } from "./columns";
+import { createColumns, PriceCell } from "./columns";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
+import { Card, CardContent } from "@/components/ui/card";
+import { ImageOff } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 
 export default function CardBrowser() {
@@ -159,6 +161,79 @@ export default function CardBrowser() {
         onSortingChange={setSorting}
         columnVisibility={columnVisibility}
         onRowClick={setSelectedCard}
+        viewMode={viewMode}
+        renderGridItem={useCallback(
+          (row: CardRowData) => {
+            const misc =
+              row.card.misc_info && row.card.misc_info !== "UNKNOWN"
+                ? row.card.misc_info
+                : null;
+            const cardNumber =
+              row.card.card_number && row.card.card_number !== "UNKNOWN"
+                ? row.card.card_number
+                : null;
+            const buyEntry = showSecond
+              ? row.prices.secondLowestBuy
+              : row.prices.lowestBuy;
+            const sellEntry = showSecond
+              ? row.prices.secondHighestSell
+              : row.prices.highestSell;
+
+            return (
+              <Card
+                size="sm"
+                className="h-full cursor-pointer pt-0 transition-colors hover:bg-accent/50"
+                onClick={() => setSelectedCard(row)}
+              >
+                {row.card.image_url ? (
+                  <img
+                    src={row.card.image_url}
+                    alt={row.card.regional_name}
+                    className="aspect-[2/3] w-full object-cover"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="flex aspect-[2/3] w-full items-center justify-center bg-muted">
+                    <ImageOff className="size-8 text-muted-foreground" />
+                  </div>
+                )}
+                <CardContent className="flex flex-1 flex-col gap-2">
+                  <div>
+                    <div className="truncate font-medium leading-snug">{row.card.regional_name}</div>
+                    {misc && (
+                      <div className="truncate text-xs text-muted-foreground">{misc}</div>
+                    )}
+                  </div>
+                  <div className="space-y-0.5 text-xs text-muted-foreground">
+                    {cardNumber && (
+                      <div>{t("modal.number")}: {cardNumber}</div>
+                    )}
+                    <div>{t("modal.set")}: {row.card.set_code}</div>
+                  </div>
+                  <div className="mt-auto space-y-1 rounded-md bg-muted/50 px-2.5 py-2 text-xs">
+                    <div className="flex justify-between gap-2">
+                      <span className="shrink-0 text-muted-foreground">{t("column.lowestBuy")}</span>
+                      <div className="text-right">
+                        <PriceCell entry={buyEntry} />
+                      </div>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="shrink-0 text-muted-foreground">{t("column.highestSell")}</span>
+                      <div className="text-right">
+                        <PriceCell entry={sellEntry} />
+                      </div>
+                    </div>
+                    <div className="flex justify-between gap-2 border-t border-foreground/10 pt-1">
+                      <span className="text-muted-foreground">{t("column.roi")}</span>
+                      <span>{row.roi !== null ? `${Math.round(row.roi * 100) / 100}%` : "\u2014"}</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          },
+          [showSecond, t]
+        )}
       />
 
       <CardDetailModal
