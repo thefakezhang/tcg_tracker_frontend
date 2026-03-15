@@ -30,9 +30,11 @@ import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useGame } from "./GameContext";
 import { useCurrency } from "./CurrencyContext";
+import { Badge } from "@/components/ui/badge";
 import {
   type CardRowData,
   type MarketListing,
+  type LocationInfo,
   LISTINGS_TABLE_MAP,
   fetchRateMap,
   fetchLocationMap,
@@ -44,6 +46,7 @@ interface DetailListing {
   currencySymbol: string;
   currencyCode: string;
   locationName: string;
+  marketRegion: string | null;
   conditionLabel: string;
 }
 
@@ -62,7 +65,7 @@ export default function CardDetailModal({
   const { activeGame } = useGame();
   const [rawListings, setRawListings] = useState<MarketListing[]>([]);
   const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
-  const [locationMap, setLocationMap] = useState<Map<number, string>>(
+  const [locationMap, setLocationMap] = useState<Map<number, LocationInfo>>(
     new Map()
   );
   const [conditionsMap, setConditionsMap] = useState<Map<number, number>>(
@@ -136,11 +139,13 @@ export default function CardDetailModal({
         const tier = conditionsMap.get(l.condition);
         conditionLabel = tier != null ? `Tier ${tier}` : String(l.condition);
       }
+      const loc = locationMap.get(l.location_id);
       return {
         price: l.price,
         currencySymbol: l.currency_symbol,
         currencyCode: l.currency,
-        locationName: locationMap.get(l.location_id) ?? "",
+        locationName: loc?.name ?? "",
+        marketRegion: loc?.marketRegion ?? null,
         conditionLabel,
       };
     };
@@ -363,7 +368,16 @@ function ListingTable({
                   {symbol}
                   {price}
                 </TableCell>
-                <TableCell>{l.locationName}</TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1">
+                    <span>{l.locationName}</span>
+                    {l.marketRegion && (
+                      <Badge variant="secondary" className="h-auto px-1 py-px text-[10px]">
+                        {l.marketRegion}
+                      </Badge>
+                    )}
+                  </div>
+                </TableCell>
                 <TableCell>{l.conditionLabel}</TableCell>
               </TableRow>
             );

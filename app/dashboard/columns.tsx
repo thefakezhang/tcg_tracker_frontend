@@ -2,6 +2,7 @@
 
 import { ColumnDef } from "@tanstack/react-table";
 import { ArrowUp, ArrowDown } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { type CardRowData, type PriceEntry } from "./use-card-data";
 import { useCurrency } from "./CurrencyContext";
 
@@ -21,7 +22,14 @@ export function PriceCell({ entry }: { entry: PriceEntry | null }) {
     <div>
       <div>{symbol}{price}</div>
       {entry.locationName && (
-        <div className="text-xs text-muted-foreground">{entry.locationName}</div>
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <span>{entry.locationName}</span>
+          {entry.marketRegion && (
+            <Badge variant="secondary" className="h-auto px-1 py-px text-[10px]">
+              {entry.marketRegion}
+            </Badge>
+          )}
+        </div>
       )}
     </div>
   );

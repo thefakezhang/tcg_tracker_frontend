@@ -40,6 +40,7 @@ export interface PriceEntry {
   currencyCode: string;
   normalizedPrice: number;
   locationName: string;
+  marketRegion: string | null;
 }
 
 export interface PriceSummary {
@@ -67,7 +68,7 @@ const EMPTY_PRICES: PriceSummary = {
 function computePriceSummaries(
   listings: MarketListing[],
   rateMap: Map<string, number>,
-  locationMap: Map<number, string>,
+  locationMap: Map<number, LocationInfo>,
   keyFn: (l: MarketListing) => string
 ): Map<string, PriceSummary> {
   const grouped = new Map<string, MarketListing[]>();
@@ -91,13 +92,17 @@ function computePriceSummaries(
       .filter((l) => l.price_type === "Sell")
       .sort((a, b) => normalize(b) - normalize(a));
 
-    const toEntry = (l: MarketListing): PriceEntry => ({
-      price: l.price,
-      symbol: l.currency_symbol,
-      currencyCode: l.currency,
-      normalizedPrice: normalize(l),
-      locationName: locationMap.get(l.location_id) ?? "",
-    });
+    const toEntry = (l: MarketListing): PriceEntry => {
+      const loc = locationMap.get(l.location_id);
+      return {
+        price: l.price,
+        symbol: l.currency_symbol,
+        currencyCode: l.currency,
+        normalizedPrice: normalize(l),
+        locationName: loc?.name ?? "",
+        marketRegion: loc?.marketRegion ?? null,
+      };
+    };
 
     result.set(key, {
       lowestBuy: buys[0] ? toEntry(buys[0]) : null,
@@ -161,20 +166,28 @@ export async function fetchRateMap(
   return map;
 }
 
-let locationMapCache: Map<number, string> | null = null;
+export interface LocationInfo {
+  name: string;
+  marketRegion: string | null;
+}
+
+let locationMapCache: Map<number, LocationInfo> | null = null;
 
 export async function fetchLocationMap(
   supabase: ReturnType<typeof createClient>
-): Promise<Map<number, string>> {
+): Promise<Map<number, LocationInfo>> {
   if (locationMapCache) return locationMapCache;
 
   const { data: locations } = await supabase
     .from("locations")
-    .select("location_id, name");
+    .select("location_id, name, market_region");
 
-  const map = new Map<number, string>();
+  const map = new Map<number, LocationInfo>();
   for (const loc of locations ?? []) {
-    map.set(loc.location_id, loc.name);
+    map.set(loc.location_id, {
+      name: loc.name,
+      marketRegion: loc.market_region ?? null,
+    });
   }
   locationMapCache = map;
   return map;
