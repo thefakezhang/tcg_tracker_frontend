@@ -34,7 +34,12 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { ChevronsUpDown, Globe, ListChecks, LogOut, Sparkles, Squirrel } from "lucide-react";
+import { ChevronsUpDown, DollarSign, Globe, ListChecks, LogOut, Sparkles, Squirrel } from "lucide-react";
+import {
+  type DisplayCurrency,
+  useCurrency,
+  CURRENCY_LABELS,
+} from "./CurrencyContext";
 
 const GAME_ICONS: Record<Game, React.ReactNode> = {
   pokemon: <Squirrel className="size-4" />,
@@ -48,10 +53,12 @@ interface AppSidebarProps {
 }
 
 const LANGUAGES = Object.keys(LANGUAGE_LABELS) as Language[];
+const CURRENCIES = Object.keys(CURRENCY_LABELS) as DisplayCurrency[];
 
 export function AppSidebar({ user }: AppSidebarProps) {
   const { activeGame, setActiveGame } = useGame();
   const { language, setLanguage } = useLanguage();
+  const { displayCurrency, setDisplayCurrency } = useCurrency();
   const { t } = useTranslation();
   const router = useRouter();
 
@@ -131,6 +138,24 @@ export function AppSidebar({ user }: AppSidebarProps) {
                       {LANGUAGES.map((lang) => (
                         <DropdownMenuRadioItem key={lang} value={lang}>
                           {LANGUAGE_LABELS[lang]}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <DollarSign className="mr-2 size-4" />
+                    {t("sidebar.convertCurrency")}
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup
+                      value={displayCurrency}
+                      onValueChange={(v) => setDisplayCurrency(v as DisplayCurrency)}
+                    >
+                      {CURRENCIES.map((c) => (
+                        <DropdownMenuRadioItem key={c} value={c}>
+                          {CURRENCY_LABELS[c]}
                         </DropdownMenuRadioItem>
                       ))}
                     </DropdownMenuRadioGroup>
