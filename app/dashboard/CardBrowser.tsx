@@ -215,13 +215,13 @@ export default function CardBrowser() {
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
                   <div className="grid w-full grid-cols-[1fr_auto_1fr] gap-2">
                     <div className="space-y-1">
-                      <div className="text-muted-foreground">{t("column.highestBuy")}</div>
-                      <PriceCell entry={buyEntry} badgeVariant="outline" />
+                      <div className="text-muted-foreground">{t("column.lowestSell")}</div>
+                      <PriceCell entry={sellEntry} badgeVariant="outline" />
                     </div>
                     <div className="w-px self-stretch bg-foreground/10" />
                     <div className="space-y-1 text-right">
-                      <div className="text-muted-foreground">{t("column.lowestSell")}</div>
-                      <PriceCell entry={sellEntry} align="right" badgeVariant="outline" />
+                      <div className="text-muted-foreground">{t("column.highestBuy")}</div>
+                      <PriceCell entry={buyEntry} align="right" badgeVariant="outline" />
                     </div>
                   </div>
                   <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
