@@ -34,7 +34,21 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { ChevronsUpDown, DollarSign, Globe, ListChecks, LogOut, Sparkles, Squirrel } from "lucide-react";
+import { ChevronsUpDown, DollarSign, Globe, ListChecks, LogOut, Plus, ShoppingCart, Sparkles, Squirrel, Trash2 } from "lucide-react";
+import { useBuyList } from "./BuyListContext";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Field, FieldGroup } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { useState } from "react";
 import {
   type DisplayCurrency,
   useCurrency,
@@ -59,8 +73,12 @@ export function AppSidebar({ user }: AppSidebarProps) {
   const { activeGame, setActiveGame } = useGame();
   const { language, setLanguage } = useLanguage();
   const { displayCurrency, setDisplayCurrency } = useCurrency();
+  const { buylists, activeBuylistId, setActiveBuylistId, createBuylist, deleteBuylist } = useBuyList();
   const { t } = useTranslation();
   const router = useRouter();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newDescription, setNewDescription] = useState("");
 
   const displayName = user.name ?? user.email;
   const initials = displayName
@@ -95,8 +113,8 @@ export function AppSidebar({ user }: AppSidebarProps) {
               {GAMES.map((game) => (
                 <SidebarMenuItem key={game}>
                   <SidebarMenuButton
-                    isActive={activeGame === game}
-                    onClick={() => setActiveGame(game)}
+                    isActive={activeGame === game && activeBuylistId === null}
+                    onClick={() => { setActiveGame(game); setActiveBuylistId(null); }}
                   >
                     {GAME_ICONS[game]}
                     {t(`game.${game}` as TranslationKey)}
@@ -106,7 +124,74 @@ export function AppSidebar({ user }: AppSidebarProps) {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>{t("sidebar.buyLists")}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {buylists.map((bl) => (
+                <SidebarMenuItem key={bl.buylist_id}>
+                  <SidebarMenuButton
+                    isActive={activeBuylistId === bl.buylist_id}
+                    onClick={() => setActiveBuylistId(bl.buylist_id)}
+                  >
+                    <ShoppingCart className="size-4" />
+                    <span className="truncate">{bl.name}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => setCreateOpen(true)}>
+                  <Plus className="size-4" />
+                  {t("buyList.create")}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("buyList.create")}</DialogTitle>
+          </DialogHeader>
+          <FieldGroup>
+            <Field>
+              <Label htmlFor="buylist-name">{t("buyList.name")}</Label>
+              <Input
+                id="buylist-name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                autoFocus
+              />
+            </Field>
+            <Field>
+              <Label htmlFor="buylist-description">{t("buyList.description")}</Label>
+              <Textarea
+                id="buylist-description"
+                value={newDescription}
+                onChange={(e) => setNewDescription(e.target.value)}
+                rows={3}
+              />
+            </Field>
+          </FieldGroup>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              {t("buyList.cancel")}
+            </Button>
+            <Button
+              disabled={!newName.trim()}
+              onClick={async () => {
+                await createBuylist(newName.trim(), newDescription.trim() || null);
+                setNewName("");
+                setNewDescription("");
+                setCreateOpen(false);
+              }}
+            >
+              {t("buyList.save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>

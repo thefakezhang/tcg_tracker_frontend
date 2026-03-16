@@ -53,5 +53,16 @@ const ja: { [K in keyof typeof en]: string } = {
   "refresh.description": "すべての価格データをマーケットリスティングから再集計します。少し時間がかかる場合があります。",
   "refresh.cancel": "キャンセル",
   "refresh.confirm": "更新",
+  "sidebar.buyLists": "購入リスト",
+  "buyList.create": "購入リスト作成",
+  "buyList.name": "名前",
+  "buyList.description": "説明",
+  "buyList.cancel": "キャンセル",
+  "buyList.save": "保存",
+  "buyList.addTo": "購入リストに追加",
+  "buyList.added": "{name}に追加しました",
+  "buyList.empty": "この購入リストにカードはありません",
+  "buyList.delete": "削除",
+  "buyList.deleteConfirm": "この購入リストを削除しますか？",
 } as const;
 export default ja;

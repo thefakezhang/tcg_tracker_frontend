@@ -51,5 +51,16 @@ const en = {
   "refresh.description": "This will re-aggregate all price data from market listings. This may take a moment.",
   "refresh.cancel": "Cancel",
   "refresh.confirm": "Refresh",
+  "sidebar.buyLists": "Buy Lists",
+  "buyList.create": "Create Buy List",
+  "buyList.name": "Name",
+  "buyList.description": "Description",
+  "buyList.cancel": "Cancel",
+  "buyList.save": "Save",
+  "buyList.addTo": "Add to Buy List",
+  "buyList.added": "Added to {name}",
+  "buyList.empty": "No cards in this buy list",
+  "buyList.delete": "Delete",
+  "buyList.deleteConfirm": "Delete this buy list?",
 } as const;
 export default en;
