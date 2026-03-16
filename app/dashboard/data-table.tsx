@@ -8,7 +8,6 @@ import {
   flexRender,
   getCoreRowModel,
   getSortedRowModel,
-  getPaginationRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 import {
@@ -23,6 +22,15 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/lib/i18n";
 
+interface ServerPagination {
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
+}
+
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
@@ -30,10 +38,10 @@ interface DataTableProps<TData, TValue> {
   onSortingChange: (sorting: SortingState) => void;
   columnVisibility?: VisibilityState;
   loading?: boolean;
-  pagination?: boolean;
   onRowClick?: (row: TData) => void;
   viewMode?: "list" | "grid";
   renderGridItem?: (row: TData) => React.ReactNode;
+  serverPagination?: ServerPagination;
 }
 
 export function DataTable<TData, TValue>({
@@ -43,10 +51,10 @@ export function DataTable<TData, TValue>({
   sorting,
   onSortingChange,
   columnVisibility,
-  pagination = true,
   onRowClick,
   viewMode = "list",
   renderGridItem,
+  serverPagination,
 }: DataTableProps<TData, TValue>) {
   const { t } = useTranslation();
   const table = useReactTable({
@@ -63,11 +71,11 @@ export function DataTable<TData, TValue>({
     },
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: pagination ? getPaginationRowModel() : undefined,
-    initialState: {
-      pagination: { pageSize: 50 },
-    },
+    manualSorting: !!serverPagination,
+    manualPagination: !!serverPagination,
   });
+
+  const sp = serverPagination;
 
   return (
     <div>
@@ -165,14 +173,14 @@ export function DataTable<TData, TValue>({
           </Table>
         </div>
       )}
-      {pagination && (
+      {sp && (
         <div className="flex items-center justify-between py-4">
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">{t("dataTable.rowsPerPage")}</span>
             <select
               className="h-8 rounded-md border bg-background px-2 text-sm"
-              value={table.getState().pagination.pageSize}
-              onChange={(e) => table.setPageSize(Number(e.target.value))}
+              value={sp.pageSize}
+              onChange={(e) => sp.onPageSizeChange(Number(e.target.value))}
             >
               {[10, 20, 50, 100].map((size) => (
                 <option key={size} value={size}>
@@ -183,21 +191,21 @@ export function DataTable<TData, TValue>({
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">
-              {t("dataTable.pageOf", { current: table.getState().pagination.pageIndex + 1, total: table.getPageCount() })}
+              {t("dataTable.pageOf", { current: sp.page + 1, total: sp.totalPages })}
             </span>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}
+              onClick={() => sp.onPageChange(sp.page - 1)}
+              disabled={sp.page <= 0}
             >
               {t("dataTable.previous")}
             </Button>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
+              onClick={() => sp.onPageChange(sp.page + 1)}
+              disabled={sp.page >= sp.totalPages - 1}
             >
               {t("dataTable.next")}
             </Button>

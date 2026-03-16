@@ -4,9 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { type Game, type PsaMode } from "./GameContext";
 
-const TABLE_MAP: Record<Game, string> = {
+const CARD_TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_card_definitions",
   mtg: "mtg_card_definitions",
+};
+
+const SUMMARIES_TABLE_MAP: Record<Game, string> = {
+  pokemon: "pokemon_price_summaries",
+  mtg: "mtg_price_summaries",
 };
 
 export const LISTINGS_TABLE_MAP: Record<Game, string> = {
@@ -56,93 +61,7 @@ export interface CardRowData {
   roi: number | null;
 }
 
-const EMPTY_PRICES: PriceSummary = {
-  highestBuy: null,
-  lowestSell: null,
-};
-
-function computePriceSummaries(
-  listings: MarketListing[],
-  rateMap: Map<string, number>,
-  locationMap: Map<number, LocationInfo>,
-  keyFn: (l: MarketListing) => string
-): Map<string, PriceSummary> {
-  const grouped = new Map<string, MarketListing[]>();
-  for (const l of listings) {
-    const key = keyFn(l);
-    const arr = grouped.get(key) ?? [];
-    arr.push(l);
-    grouped.set(key, arr);
-  }
-
-  const result = new Map<string, PriceSummary>();
-  for (const [key, cardListings] of grouped) {
-    const normalize = (l: MarketListing) =>
-      l.price * (rateMap.get(l.currency) ?? 1);
-
-    const buys = cardListings
-      .filter((l) => l.price_type === "Buy")
-      .sort((a, b) => normalize(b) - normalize(a));
-
-    const sells = cardListings
-      .filter((l) => l.price_type === "Sell")
-      .sort((a, b) => normalize(a) - normalize(b));
-
-    const toEntry = (l: MarketListing): PriceEntry => {
-      const loc = locationMap.get(l.location_id);
-      return {
-        price: l.price,
-        symbol: l.currency_symbol,
-        currencyCode: l.currency,
-        normalizedPrice: normalize(l),
-        locationName: loc?.name ?? "",
-        marketRegion: loc?.marketRegion ?? null,
-      };
-    };
-
-    // Find the best cross-region buy/sell pair for arbitrage ROI.
-    // buys sorted desc, sells sorted asc by normalized price.
-    let bestRoi = -Infinity;
-    let bestBuy: MarketListing | null = null;
-    let bestSell: MarketListing | null = null;
-
-    for (const b of buys) {
-      const bRegion = locationMap.get(b.location_id)?.marketRegion ?? null;
-      for (const s of sells) {
-        const sRegion = locationMap.get(s.location_id)?.marketRegion ?? null;
-        if (bRegion === sRegion) continue;
-        const sellNorm = normalize(s);
-        if (sellNorm === 0) continue;
-        const roi = (normalize(b) - sellNorm) / sellNorm;
-        if (roi > bestRoi) {
-          bestRoi = roi;
-          bestBuy = b;
-          bestSell = s;
-        }
-        // For this buy, first cross-region sell is cheapest → best ROI
-        break;
-      }
-    }
-
-    result.set(key, {
-      highestBuy: bestBuy ? toEntry(bestBuy) : (buys[0] ? toEntry(buys[0]) : null),
-      lowestSell: bestSell ? toEntry(bestSell) : (sells[0] ? toEntry(sells[0]) : null),
-    });
-  }
-  return result;
-}
-
-export function computeRoi(prices: PriceSummary): number | null {
-  const { highestBuy, lowestSell } = prices;
-  if (!highestBuy || !lowestSell) return null;
-  // Only show ROI for cross-region arbitrage
-  if (highestBuy.marketRegion === lowestSell.marketRegion) return null;
-  const sell = lowestSell.normalizedPrice;
-  if (sell === 0) return null;
-  return ((highestBuy.normalizedPrice - sell) / sell) * 100;
-}
-
-// Cache exchange rates per session — they rarely change
+// Cache exchange rates per session
 let rateMapCache: Map<string, number> | null = null;
 
 // Cache conditions table: condition_id → tier
@@ -214,18 +133,92 @@ export async function fetchLocationMap(
   return map;
 }
 
+// Map sort column IDs from the table to summary table columns
+const SORT_COLUMN_MAP: Record<string, string> = {
+  roi: "roi",
+  lowestSell: "best_sell_normalized",
+  highestBuy: "best_buy_normalized",
+  psa_grade: "psa_grade",
+};
+
+interface SummaryRow {
+  card_id: number;
+  tier: number;
+  psa_grade: number;
+  best_buy_price: number | null;
+  best_buy_currency: string | null;
+  best_buy_symbol: string | null;
+  best_buy_location: string | null;
+  best_buy_region: string | null;
+  best_buy_normalized: number | null;
+  best_sell_price: number | null;
+  best_sell_currency: string | null;
+  best_sell_symbol: string | null;
+  best_sell_location: string | null;
+  best_sell_region: string | null;
+  best_sell_normalized: number | null;
+  roi: number | null;
+  // Joined card definition (keyed by the actual table name at runtime)
+  [key: string]: unknown;
+}
+
+function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRowData {
+  const cardDef = row[cardDefKey] as CardDefinition;
+
+  const highestBuy: PriceEntry | null =
+    row.best_buy_price != null
+      ? {
+          price: row.best_buy_price,
+          symbol: row.best_buy_symbol ?? "",
+          currencyCode: row.best_buy_currency ?? "",
+          normalizedPrice: row.best_buy_normalized ?? 0,
+          locationName: row.best_buy_location ?? "",
+          marketRegion: row.best_buy_region ?? null,
+        }
+      : null;
+
+  const lowestSell: PriceEntry | null =
+    row.best_sell_price != null
+      ? {
+          price: row.best_sell_price,
+          symbol: row.best_sell_symbol ?? "",
+          currencyCode: row.best_sell_currency ?? "",
+          normalizedPrice: row.best_sell_normalized ?? 0,
+          locationName: row.best_sell_location ?? "",
+          marketRegion: row.best_sell_region ?? null,
+        }
+      : null;
+
+  const prices: PriceSummary = { highestBuy, lowestSell };
+
+  return {
+    key: row.psa_grade > 0 ? `${row.card_id}:${row.psa_grade}` : String(row.card_id),
+    card: cardDef,
+    psaGrade: row.psa_grade > 0 ? row.psa_grade : undefined,
+    prices,
+    roi: row.roi ?? null,
+  };
+}
+
 export function useCardData(options: {
   activeGame: Game;
   psaMode: PsaMode;
   search: string;
   searchCardNumber: string;
   searchSetCode: string;
-  selectedTiers: number[];
+  selectedTier: number;
+  sortColumn: string;
+  sortAsc: boolean;
+  page: number;
+  pageSize: number;
 }): {
   data: CardRowData[];
   loading: boolean;
   error: string | null;
   availableTiers: number[];
+  totalCount: number;
+  refetch: () => void;
+  refresh: () => void;
 } {
   const {
     activeGame,
@@ -233,13 +226,17 @@ export function useCardData(options: {
     search,
     searchCardNumber,
     searchSetCode,
-    selectedTiers,
+    selectedTier,
+    sortColumn,
+    sortAsc,
+    page,
+    pageSize,
   } = options;
   const [data, setData] = useState<CardRowData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [availableTiers, setAvailableTiers] = useState<number[]>([]);
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -248,21 +245,10 @@ export function useCardData(options: {
   }, []);
 
   useEffect(() => {
-    setLoading(true);
+    fetchPage();
+  }, [activeGame, psaMode, search, searchCardNumber, searchSetCode, selectedTier, sortColumn, sortAsc, page, pageSize]);
 
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-
-    debounceRef.current = setTimeout(() => {
-      fetchCards();
-    }, 300);
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [activeGame, psaMode, search, searchCardNumber, searchSetCode, selectedTiers]);
-
-  async function fetchCards() {
-    // Cancel any in-flight request
+  async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
     const abort = new AbortController();
     abortRef.current = abort;
@@ -271,134 +257,96 @@ export function useCardData(options: {
     setError(null);
 
     const supabase = createClient();
+    const summariesTable = SUMMARIES_TABLE_MAP[activeGame];
+    const cardDefTable = CARD_TABLE_MAP[activeGame];
+
+    // Build query with joined card definitions
+    const selectStr = `*, ${cardDefTable}!inner(card_id, regional_name, set_code, card_number, misc_info, image_url)`;
 
     let query = supabase
-      .from(TABLE_MAP[activeGame])
-      .select("card_id, regional_name, set_code, card_number, misc_info, image_url");
+      .from(summariesTable)
+      .select(selectStr, { count: "exact" });
 
-    if (search.trim()) {
-      query = query.ilike("regional_name", `%${search.trim()}%`);
-    }
-    if (searchCardNumber.trim()) {
-      query = query.ilike("card_number", `%${searchCardNumber.trim()}%`);
-    }
-    if (searchSetCode.trim()) {
-      query = query.ilike("set_code", `%${searchSetCode.trim()}%`);
-    }
-
-    const { data: cards, error: cardsError } = await query;
-
-    if (abort.signal.aborted) return;
-
-    if (cardsError) {
-      setError(cardsError.message);
-      setData([]);
-      setLoading(false);
-      return;
-    }
-
-    const cardIds = (cards ?? []).map((c) => c.card_id);
-    if (cardIds.length === 0) {
-      setData([]);
-      setLoading(false);
-      return;
-    }
-
-    let listingsQuery = supabase
-      .from(LISTINGS_TABLE_MAP[activeGame])
-      .select(
-        "card_id, price_type, price, currency, psa_grade, condition, location_id, currencies(symbol)"
-      )
-      .in("card_id", cardIds);
-
+    // Filter by tier/psa
     if (psaMode === "non-psa") {
-      listingsQuery = listingsQuery.eq("psa_grade", 0);
+      query = query.eq("tier", selectedTier).eq("psa_grade", 0);
     } else {
-      listingsQuery = listingsQuery.gt("psa_grade", 0);
+      query = query.eq("tier", -1).gt("psa_grade", 0);
     }
 
-    const [{ data: listings }, rateMap, conditionsData, locationMap] = await Promise.all([
-      listingsQuery,
-      fetchRateMap(supabase),
-      fetchConditionsCache(supabase),
-      fetchLocationMap(supabase),
-    ] as const);
+    // Search filters on joined card_definitions
+    const s = search.trim();
+    const cn = searchCardNumber.trim();
+    const sc = searchSetCode.trim();
+    if (s) query = query.ilike(`${cardDefTable}.regional_name`, `%${s}%`);
+    if (cn) query = query.ilike(`${cardDefTable}.card_number`, `%${cn}%`);
+    if (sc) query = query.ilike(`${cardDefTable}.set_code`, `%${sc}%`);
+
+    // Sorting
+    const cardDefSortCols = ["regional_name", "card_number", "set_code"];
+    if (cardDefSortCols.includes(sortColumn)) {
+      query = query.order(sortColumn, {
+        ascending: sortAsc,
+        nullsFirst: false,
+        referencedTable: cardDefTable,
+      });
+    } else {
+      const dbCol = SORT_COLUMN_MAP[sortColumn] || sortColumn;
+      query = query.order(dbCol, { ascending: sortAsc, nullsFirst: false });
+    }
+
+    // Pagination
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+    query = query.range(from, to);
+
+    const { data: rows, error: queryError, count } = await query;
 
     if (abort.signal.aborted) return;
 
-    setAvailableTiers(conditionsData.tiers);
+    if (queryError) {
+      setError(queryError.message);
+      setData([]);
+      setTotalCount(0);
+      setLoading(false);
+      return;
+    }
 
-    const normalizedListings: MarketListing[] = (listings ?? []).map(
-      (l: Record<string, unknown>) => ({
-        card_id: l.card_id as number,
-        price_type: l.price_type as "Buy" | "Sell",
-        price: l.price as number,
-        currency: l.currency as string,
-        currency_symbol:
-          (l.currencies as { symbol: string } | null)?.symbol ?? "",
-        psa_grade: l.psa_grade as number,
-        condition: (l.condition as number | null) ?? null,
-        location_id: l.location_id as number,
-      })
+    const cardRows = ((rows ?? []) as unknown as SummaryRow[]).map((row) =>
+      summaryRowToCardRow(row, cardDefTable)
     );
 
-    const cardMap = new Map((cards ?? []).map((c) => [String(c.card_id), c]));
-
-    let rows: CardRowData[];
-
-    if (psaMode === "non-psa") {
-      const tierSet = new Set(selectedTiers);
-      const filteredListings = normalizedListings.filter((l) => {
-        if (l.condition == null) return true;
-        const tier = conditionsData.map.get(l.condition);
-        return tier != null && tierSet.has(tier);
-      });
-      const summaries = computePriceSummaries(
-        filteredListings,
-        rateMap,
-        locationMap,
-        (l) => String(l.card_id)
-      );
-      rows = (cards ?? []).map((c) => {
-        const prices = summaries.get(String(c.card_id)) ?? EMPTY_PRICES;
-        return {
-          key: String(c.card_id),
-          card: c,
-          prices,
-          roi: computeRoi(prices),
-        };
-      });
-    } else {
-      const summaries = computePriceSummaries(
-        normalizedListings,
-        rateMap,
-        locationMap,
-        (l) => `${l.card_id}:${l.psa_grade}`
-      );
-      const seen = new Set<string>();
-      rows = [];
-      for (const l of normalizedListings) {
-        const key = `${l.card_id}:${l.psa_grade}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          const card = cardMap.get(String(l.card_id));
-          if (card) {
-            const prices = summaries.get(key) ?? EMPTY_PRICES;
-            rows.push({
-              key,
-              card,
-              psaGrade: l.psa_grade,
-              prices,
-              roi: computeRoi(prices),
-            });
-          }
-        }
-      }
-    }
-
-    setData(rows);
+    setData(cardRows);
+    setTotalCount(count ?? 0);
     setLoading(false);
   }
 
-  return { data, loading, error, availableTiers };
+  async function refresh() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/aggregate-prices", { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error ?? `Refresh failed (${res.status})`);
+        setLoading(false);
+        return;
+      }
+    } catch (err) {
+      setError(String(err));
+      setLoading(false);
+      return;
+    }
+    await fetchPage();
+  }
+
+  return {
+    data,
+    loading,
+    error,
+    availableTiers,
+    totalCount,
+    refetch: () => fetchPage(),
+    refresh,
+  };
 }
