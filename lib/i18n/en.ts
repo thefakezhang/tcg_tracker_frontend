@@ -42,5 +42,9 @@ const en = {
   "modal.psaGrade": "PSA Grade",
   "modal.noListings": "No listings",
   "modal.loading": "Loading listings...",
+  "refresh.title": "Refresh Price Data",
+  "refresh.description": "This will re-aggregate all price data from market listings. This may take a moment.",
+  "refresh.cancel": "Cancel",
+  "refresh.confirm": "Refresh",
 } as const;
 export default en;

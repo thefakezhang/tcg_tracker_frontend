@@ -44,5 +44,9 @@ const ja: { [K in keyof typeof en]: string } = {
   "modal.psaGrade": "PSAグレード",
   "modal.noListings": "リスティングなし",
   "modal.loading": "リスティング読み込み中...",
+  "refresh.title": "価格データを更新",
+  "refresh.description": "すべての価格データをマーケットリスティングから再集計します。少し時間がかかる場合があります。",
+  "refresh.cancel": "キャンセル",
+  "refresh.confirm": "更新",
 } as const;
 export default ja;

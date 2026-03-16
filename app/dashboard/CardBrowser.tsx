@@ -1,15 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { type SortingState } from "@tanstack/react-table";
 import { ChevronDown, Hash, Layers, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGame } from "./GameContext";
@@ -37,33 +48,65 @@ export default function CardBrowser() {
   const [search, setSearch] = useState("");
   const [searchCardNumber, setSearchCardNumber] = useState("");
   const [searchSetCode, setSearchSetCode] = useState("");
-  const [selectedTiers, setSelectedTiers] = useState<number[]>([1]);
+  const [selectedTier, setSelectedTier] = useState(1);
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: "roi", desc: true },
-  ]);
+  const [sortColumn, setSortColumn] = useState("roi");
+  const [sortAsc, setSortAsc] = useState(false);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
   const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
 
-  const { data, loading, error, availableTiers, refetch } = useCardData({
-    activeGame,
-    psaMode,
-    search,
-    searchCardNumber,
-    searchSetCode,
-    selectedTiers,
-  });
+  const [refreshOpen, setRefreshOpen] = useState(false);
 
+  const { data, loading, error, availableTiers, totalCount, refetch, refresh } =
+    useCardData({
+      activeGame,
+      psaMode,
+      search,
+      searchCardNumber,
+      searchSetCode,
+      selectedTier,
+      sortColumn,
+      sortAsc,
+      page,
+      pageSize,
+    });
+
+  // Reset filters on game change
   useEffect(() => {
     setSearch("");
     setSearchCardNumber("");
     setSearchSetCode("");
-    setSelectedTiers([1]);
+    setSelectedTier(1);
+    setPage(0);
   }, [activeGame]);
+
+  // Reset page when filters change
+  useEffect(() => {
+    setPage(0);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
     return () => setHeaderActions(null);
   }, [setHeaderActions]);
+
+  const handleSortingChange = useCallback(
+    (sorting: { id: string; desc: boolean }[]) => {
+      if (sorting.length > 0) {
+        setSortColumn(sorting[0].id);
+        setSortAsc(!sorting[0].desc);
+      }
+    },
+    []
+  );
+
+  const sorting = useMemo(
+    () => [{ id: sortColumn, desc: !sortAsc }],
+    [sortColumn, sortAsc]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
   const columnVisibility = {
     psa_grade: psaMode === "psa",
@@ -103,15 +146,30 @@ export default function CardBrowser() {
             <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
           </TabsList>
         </Tabs>
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={refetch}
-          disabled={loading}
-          className="shrink-0"
-        >
-          <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
-        </Button>
+        <AlertDialog open={refreshOpen} onOpenChange={setRefreshOpen}>
+          <AlertDialogTrigger
+            render={
+              <Button
+                variant="outline"
+                size="icon"
+                disabled={loading}
+                className="shrink-0"
+              />
+            }
+          >
+            <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("refresh.title")}</AlertDialogTitle>
+              <AlertDialogDescription>{t("refresh.description")}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t("refresh.cancel")}</AlertDialogCancel>
+              <AlertDialogAction onClick={() => { setRefreshOpen(false); refresh(); }}>{t("refresh.confirm")}</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {psaMode === "non-psa" && availableTiers.length > 0 && (
             <DropdownMenu>
@@ -120,25 +178,20 @@ export default function CardBrowser() {
                   <Button variant="outline" className="shrink-0" />
                 }
               >
-                {t("cardBrowser.tierPrefix")}{selectedTiers.sort((a, b) => a - b).join(", ") || t("cardBrowser.tierNone")}
+                {t("cardBrowser.tierPrefix")}{selectedTier}
                 <ChevronDown className="ml-1 size-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent>
-                {availableTiers.map((tier) => (
-                  <DropdownMenuCheckboxItem
-                    key={tier}
-                    checked={selectedTiers.includes(tier)}
-                    onCheckedChange={(checked) => {
-                      setSelectedTiers((prev) =>
-                        checked
-                          ? [...prev, tier]
-                          : prev.filter((t) => t !== tier)
-                      );
-                    }}
-                  >
-                    {t("cardBrowser.tierItem", { tier })}
-                  </DropdownMenuCheckboxItem>
-                ))}
+                <DropdownMenuRadioGroup
+                  value={String(selectedTier)}
+                  onValueChange={(v) => setSelectedTier(Number(v))}
+                >
+                  {availableTiers.map((tier) => (
+                    <DropdownMenuRadioItem key={tier} value={String(tier)}>
+                      {t("cardBrowser.tierItem", { tier })}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -164,10 +217,18 @@ export default function CardBrowser() {
         data={data}
         loading={loading}
         sorting={sorting}
-        onSortingChange={setSorting}
+        onSortingChange={handleSortingChange}
         columnVisibility={columnVisibility}
         onRowClick={setSelectedCard}
         viewMode={viewMode}
+        serverPagination={{
+          page,
+          pageSize,
+          totalCount,
+          totalPages,
+          onPageChange: setPage,
+          onPageSizeChange: setPageSize,
+        }}
         renderGridItem={useCallback(
           (row: CardRowData) => {
             const misc =

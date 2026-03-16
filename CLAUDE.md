@@ -38,7 +38,7 @@ app/
     CardDetailModal.tsx   # Card detail dialog with buy/sell listing tables
     data-table.tsx        # Generic TanStack React Table wrapper
     columns.tsx           # Column definitions + PriceCell component
-    use-card-data.ts      # Data fetching hook + caching + price computation
+    use-card-data.ts      # Data fetching hook (paginated queries against pre-computed summary tables)
     GameContext.tsx        # Active game (pokemon/mtg) + PSA mode
     HeaderContext.tsx      # Dynamic header actions slot
     LanguageContext.tsx    # Language state (en/ja), localStorage persisted
@@ -61,6 +61,7 @@ supabase/
   config.toml             # Local Supabase dev config
   functions/
     update-exchange-rates/ # Deno edge function for rate updates
+    aggregate-prices/      # Deno edge function: pre-computes price summaries into DB tables
 ```
 
 ## Architecture & Patterns
@@ -85,10 +86,11 @@ Each context follows the same pattern:
 
 ### Data Fetching (`use-card-data.ts`)
 
-- `useCardData()` is the main hook. It fetches card definitions + market listings from Supabase, computes price summaries (lowest buy, highest sell, ROI), and returns `CardRowData[]`.
-- Filters: game, PSA mode, name search, card number, set code, selected tiers.
-- 300ms debounce on filter changes. AbortController cancels stale requests.
-- Three caches (module-level singletons, persist for the browser session):
+- `useCardData()` is the main hook. It queries pre-computed `{game}_price_summaries` tables with server-side pagination, sorting, and filtering. Joins card definitions via `!inner` foreign key.
+- Filters: game, PSA mode, name search, card number, set code, single selected tier.
+- AbortController cancels stale requests. No client-side caching needed (queries are fast paginated reads).
+- The `aggregate-prices` edge function pre-computes summaries from raw listings into `pokemon_price_summaries` / `mtg_price_summaries`. Invoke it to refresh data.
+- Three caches still exist for `CardDetailModal` use:
   - `rateMapCache` — exchange rates (currency → USD rate)
   - `conditionsCache` — condition_id → tier mapping + available tiers
   - `locationMapCache` — location_id → name
@@ -134,6 +136,7 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 | `exchange_rates` | from_currency, to_currency, rate |
 | `conditions` | condition_id, tier |
 | `locations` | location_id, name |
+| `pokemon_price_summaries` / `mtg_price_summaries` | card_id, tier (-1 for PSA), psa_grade, best_buy_*, best_sell_*, roi, updated_at |
 
 The listings tables have a foreign key to `currencies` — queries join via `currencies(symbol)`.
 
