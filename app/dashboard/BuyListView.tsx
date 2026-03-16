@@ -382,9 +382,6 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
 
   return (
     <div className="space-y-4">
-      {buylist?.description && (
-        <p className="text-sm text-muted-foreground">{buylist.description}</p>
-      )}
       <div className="flex items-center gap-2">
         <Tabs
           value={viewMode}

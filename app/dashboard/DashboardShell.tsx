@@ -1,6 +1,7 @@
 "use client";
 
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { GameProvider, useGame } from "./GameContext";
 import { HeaderProvider, useHeader } from "./HeaderContext";
 import { LanguageProvider } from "./LanguageContext";
@@ -20,14 +21,25 @@ function DashboardHeader() {
   const { activeBuylistId, buylists } = useBuyList();
   const { t } = useTranslation();
 
-  const title = activeBuylistId
-    ? buylists.find((b) => b.buylist_id === activeBuylistId)?.name ?? ""
-    : t(`game.${activeGame}` as TranslationKey);
+  const activeBuylist = activeBuylistId
+    ? buylists.find((b) => b.buylist_id === activeBuylistId)
+    : null;
+  const title = activeBuylist?.name ?? t(`game.${activeGame}` as TranslationKey);
+  const description = activeBuylist?.description;
 
   return (
     <header className="flex h-12 items-center border-b pl-5 pr-6">
       <SidebarTrigger />
-      <h1 className="ml-2 text-lg font-semibold">{title}</h1>
+      {description ? (
+        <Tooltip>
+          <TooltipTrigger render={<h1 className="ml-2 text-lg font-semibold cursor-default" />}>
+            {title}
+          </TooltipTrigger>
+          <TooltipContent>{description}</TooltipContent>
+        </Tooltip>
+      ) : (
+        <h1 className="ml-2 text-lg font-semibold">{title}</h1>
+      )}
       {headerActions && (
         <div className="ml-auto flex items-center gap-2">{headerActions}</div>
       )}

@@ -93,6 +93,7 @@ export default function CardDetailModal({
     if (open) {
       setActiveTab(initialPsaMode);
       setSelectedTiers([initialTier]);
+      setAddedTo(null);
     }
   }, [open, initialPsaMode, initialTier]);
 
