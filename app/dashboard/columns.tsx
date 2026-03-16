@@ -23,7 +23,7 @@ export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }:
       <div>{symbol}{price}</div>
       {entry.locationName && (
         <div className={`flex items-center gap-1 text-xs text-muted-foreground ${align === "right" ? "justify-end" : ""}`}>
-          <span>{entry.locationName}</span>
+          <span className="truncate">{entry.locationName}</span>
           {entry.marketRegion && (
             <Badge variant={badgeVariant} className="h-auto px-1 py-px text-[10px]">
               {entry.marketRegion}

@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
-import { useCardData, type CardRowData } from "./use-card-data";
+import { useCardData, type CardRowData, type RegionFilter } from "./use-card-data";
 import { createColumns, PriceCell } from "./columns";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
@@ -49,6 +49,9 @@ export default function CardBrowser() {
   const [searchCardNumber, setSearchCardNumber] = useState("");
   const [searchSetCode, setSearchSetCode] = useState("");
   const [selectedTier, setSelectedTier] = useState(1);
+  const [sellRegion, setSellRegion] = useState<RegionFilter>("all");
+  const [roiFloor, setRoiFloor] = useState<string>("");
+  const [roiCeiling, setRoiCeiling] = useState<string>("");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [sortColumn, setSortColumn] = useState("roi");
   const [sortAsc, setSortAsc] = useState(false);
@@ -66,6 +69,9 @@ export default function CardBrowser() {
       searchCardNumber,
       searchSetCode,
       selectedTier,
+      sellRegion,
+      roiFloor: roiFloor !== "" ? Number(roiFloor) : null,
+      roiCeiling: roiCeiling !== "" ? Number(roiCeiling) : null,
       sortColumn,
       sortAsc,
       page,
@@ -78,13 +84,16 @@ export default function CardBrowser() {
     setSearchCardNumber("");
     setSearchSetCode("");
     setSelectedTier(1);
+    setSellRegion("all");
+    setRoiFloor("");
+    setRoiCeiling("");
     setPage(0);
   }, [activeGame]);
 
   // Reset page when filters change
   useEffect(() => {
     setPage(0);
-  }, [search, searchCardNumber, searchSetCode, selectedTier, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -171,6 +180,40 @@ export default function CardBrowser() {
           </AlertDialogContent>
         </AlertDialog>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="outline" className="shrink-0" />
+              }
+            >
+              {sellRegion === "all" ? t("cardBrowser.regionAll") : sellRegion}
+              <ChevronDown className="ml-1 size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuRadioGroup
+                value={sellRegion}
+                onValueChange={(v) => setSellRegion(v as RegionFilter)}
+              >
+                <DropdownMenuRadioItem value="all">{t("cardBrowser.regionAll")}</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="NA">{t("cardBrowser.regionNA")}</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="JP">{t("cardBrowser.regionJP")}</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.roiFloor")}
+            value={roiFloor}
+            onChange={(e) => setRoiFloor(e.target.value)}
+            className="w-28"
+          />
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.roiCeiling")}
+            value={roiCeiling}
+            onChange={(e) => setRoiCeiling(e.target.value)}
+            className="w-28"
+          />
           {psaMode === "non-psa" && availableTiers.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -284,12 +327,12 @@ export default function CardBrowser() {
                 </CardHeader>
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
                   <div className="grid w-full grid-cols-[1fr_auto_1fr] gap-2">
-                    <div className="space-y-1">
+                    <div className="min-w-0 space-y-1">
                       <div className="text-muted-foreground">{t("column.lowestSell")}</div>
                       <PriceCell entry={sellEntry} badgeVariant="outline" />
                     </div>
                     <div className="w-px self-stretch bg-foreground/10" />
-                    <div className="space-y-1 text-right">
+                    <div className="min-w-0 space-y-1 text-right">
                       <div className="text-muted-foreground">{t("column.highestBuy")}</div>
                       <PriceCell entry={buyEntry} align="right" badgeVariant="outline" />
                     </div>
@@ -310,6 +353,8 @@ export default function CardBrowser() {
         card={selectedCard}
         open={!!selectedCard}
         onClose={() => setSelectedCard(null)}
+        initialPsaMode={psaMode}
+        initialTier={selectedTier}
       />
     </div>
   );

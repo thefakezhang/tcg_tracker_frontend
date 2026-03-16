@@ -200,6 +200,8 @@ function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRowData {
   };
 }
 
+export type RegionFilter = "all" | "NA" | "JP";
+
 export function useCardData(options: {
   activeGame: Game;
   psaMode: PsaMode;
@@ -207,6 +209,9 @@ export function useCardData(options: {
   searchCardNumber: string;
   searchSetCode: string;
   selectedTier: number;
+  sellRegion: RegionFilter;
+  roiFloor: number | null;
+  roiCeiling: number | null;
   sortColumn: string;
   sortAsc: boolean;
   page: number;
@@ -227,6 +232,9 @@ export function useCardData(options: {
     searchCardNumber,
     searchSetCode,
     selectedTier,
+    sellRegion,
+    roiFloor,
+    roiCeiling,
     sortColumn,
     sortAsc,
     page,
@@ -246,7 +254,7 @@ export function useCardData(options: {
 
   useEffect(() => {
     fetchPage();
-  }, [activeGame, psaMode, search, searchCardNumber, searchSetCode, selectedTier, sortColumn, sortAsc, page, pageSize]);
+  }, [activeGame, psaMode, search, searchCardNumber, searchSetCode, selectedTier, sellRegion, roiFloor, roiCeiling, sortColumn, sortAsc, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -278,9 +286,18 @@ export function useCardData(options: {
     const s = search.trim();
     const cn = searchCardNumber.trim();
     const sc = searchSetCode.trim();
-    if (s) query = query.ilike(`${cardDefTable}.regional_name`, `%${s}%`);
+    if (s) query = query.or(`regional_name.ilike.%${s}%,misc_info.ilike.%${s}%`, { referencedTable: cardDefTable });
     if (cn) query = query.ilike(`${cardDefTable}.card_number`, `%${cn}%`);
     if (sc) query = query.ilike(`${cardDefTable}.set_code`, `%${sc}%`);
+
+    // Region filter on sell side (displayed as "Lowest Buy")
+    if (sellRegion !== "all") {
+      query = query.eq("best_sell_region", sellRegion);
+    }
+
+    // ROI range filters
+    if (roiFloor != null) query = query.gte("roi", roiFloor);
+    if (roiCeiling != null) query = query.lte("roi", roiCeiling);
 
     // Sorting
     const cardDefSortCols = ["regional_name", "card_number", "set_code"];
