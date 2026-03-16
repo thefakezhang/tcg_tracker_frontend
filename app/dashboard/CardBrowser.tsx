@@ -327,12 +327,12 @@ export default function CardBrowser() {
                 </CardHeader>
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
                   <div className="grid w-full grid-cols-[1fr_auto_1fr] gap-2">
-                    <div className="space-y-1">
+                    <div className="min-w-0 space-y-1">
                       <div className="text-muted-foreground">{t("column.lowestSell")}</div>
                       <PriceCell entry={sellEntry} badgeVariant="outline" />
                     </div>
                     <div className="w-px self-stretch bg-foreground/10" />
-                    <div className="space-y-1 text-right">
+                    <div className="min-w-0 space-y-1 text-right">
                       <div className="text-muted-foreground">{t("column.highestBuy")}</div>
                       <PriceCell entry={buyEntry} align="right" badgeVariant="outline" />
                     </div>
