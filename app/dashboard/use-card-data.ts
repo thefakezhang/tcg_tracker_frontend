@@ -6,7 +6,7 @@ import { type Game, type PsaMode } from "./GameContext";
 
 const CARD_TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_card_definitions",
-  mtg: "mtg_card_definitions",
+  mtg: "mtg_card_definitions_v",
 };
 
 const SUMMARIES_TABLE_MAP: Record<Game, string> = {

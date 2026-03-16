@@ -120,7 +120,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
       const cardTable =
         game === "pokemon"
           ? "pokemon_card_definitions"
-          : "mtg_card_definitions";
+          : "mtg_card_definitions_v";
 
       const { data: entries } = await supabase
         .from(entryTable)
