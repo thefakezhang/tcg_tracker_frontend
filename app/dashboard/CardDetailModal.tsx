@@ -54,12 +54,16 @@ interface CardDetailModalProps {
   card: CardRowData | null;
   open: boolean;
   onClose: () => void;
+  initialPsaMode?: "non-psa" | "psa";
+  initialTier?: number;
 }
 
 export default function CardDetailModal({
   card,
   open,
   onClose,
+  initialPsaMode = "non-psa",
+  initialTier = 1,
 }: CardDetailModalProps) {
   const { t } = useTranslation();
   const { activeGame } = useGame();
@@ -72,9 +76,17 @@ export default function CardDetailModal({
     new Map()
   );
   const [availableTiers, setAvailableTiers] = useState<number[]>([]);
-  const [selectedTiers, setSelectedTiers] = useState<number[]>([1]);
+  const [selectedTiers, setSelectedTiers] = useState<number[]>([initialTier]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState("non-psa");
+  const [activeTab, setActiveTab] = useState<"non-psa" | "psa">(initialPsaMode);
+
+  // Sync modal state with table filters when opening
+  useEffect(() => {
+    if (open) {
+      setActiveTab(initialPsaMode);
+      setSelectedTiers([initialTier]);
+    }
+  }, [open, initialPsaMode, initialTier]);
 
   useEffect(() => {
     if (!card || !open) return;
@@ -242,7 +254,7 @@ export default function CardDetailModal({
             ))}
           </div>
         ) : (
-          <Tabs defaultValue="non-psa" onValueChange={(v) => setActiveTab(String(v))}>
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(String(v) as "non-psa" | "psa")}>
             <div className="flex items-center gap-2">
               <TabsList>
                 <TabsTrigger value="non-psa">

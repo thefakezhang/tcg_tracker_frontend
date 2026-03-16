@@ -353,6 +353,8 @@ export default function CardBrowser() {
         card={selectedCard}
         open={!!selectedCard}
         onClose={() => setSelectedCard(null)}
+        initialPsaMode={psaMode}
+        initialTier={selectedTier}
       />
     </div>
   );
