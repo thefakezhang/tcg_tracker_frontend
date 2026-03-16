@@ -31,11 +31,13 @@ app/
   auth/callback/route.ts  # Google OAuth callback
   dashboard/
     layout.tsx            # Auth guard, renders DashboardShell
-    page.tsx              # Renders CardBrowser
+    page.tsx              # Conditionally renders CardBrowser or BuyListView
     DashboardShell.tsx    # Context providers + sidebar + header
-    AppSidebar.tsx        # Navigation, game picker, user settings menu
+    AppSidebar.tsx        # Navigation, game picker, buy lists, user settings menu
     CardBrowser.tsx       # Search filters + data table + modal trigger
-    CardDetailModal.tsx   # Card detail dialog with buy/sell listing tables
+    CardDetailModal.tsx   # Card detail dialog with buy/sell listing tables + add to buy list
+    BuyListContext.tsx     # Buy list state + CRUD operations (fetch, create, delete, add/remove entries)
+    BuyListView.tsx       # Buy list card view (merges pokemon + mtg entries, list/grid with compact toggle)
     data-table.tsx        # Generic TanStack React Table wrapper
     columns.tsx           # Column definitions + PriceCell component
     use-card-data.ts      # Data fetching hook (paginated queries against pre-computed summary tables)
@@ -74,9 +76,10 @@ Providers wrap in this order inside `DashboardShell.tsx`:
 LanguageProvider
   CurrencyProvider
     GameProvider
-      HeaderProvider
-        SidebarProvider
-          AppSidebar + SidebarInset (header + main)
+      BuyListProvider
+        HeaderProvider
+          SidebarProvider
+            AppSidebar + SidebarInset (header + main)
 ```
 
 Each context follows the same pattern:
@@ -125,6 +128,18 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 - Displays buy/sell listings in side-by-side tables, separated by Non-PSA/PSA tabs.
 - Has its own tier filter dropdown.
 - Uses `useCurrency()` for price conversion in `ListingTable`.
+- "Add to Buy List" button (popover) lets users save cards to any buy list.
+
+### Buy Lists
+
+- `BuyListContext.tsx` manages buy list state and CRUD operations via Supabase.
+- Buy lists are cross-game — a single list can contain both Pokémon and MTG cards.
+- `BuyListView.tsx` fetches entries from both `pokemon_buylist_entries` and `mtg_buylist_entries`, joins to their respective summary/definition tables, and merges results client-side.
+- When clicking an entry in BuyListView, `setActiveGame` is called so CardDetailModal fetches from the correct game table.
+- Grid view has a compact toggle (default on) that hides price/ROI info on cards.
+- Buy list description is shown as a tooltip on the header title.
+- Sidebar shows all buy lists with a create dialog (uses Field/FieldGroup/Label pattern).
+- Clicking a game in sidebar clears `activeBuylistId` to return to CardBrowser.
 
 ## Database Schema (from Supabase)
 
@@ -137,6 +152,8 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 | `conditions` | condition_id, tier |
 | `locations` | location_id, name |
 | `pokemon_price_summaries` / `mtg_price_summaries` | card_id, tier (-1 for PSA), psa_grade, best_buy_*, best_sell_*, roi, updated_at |
+| `buylists` | buylist_id (PK), name, description, created_at, updated_at |
+| `pokemon_buylist_entries` / `mtg_buylist_entries` | entry_id (PK), buylist_id (FK→buylists), card_id (FK→*_card_definitions), psa_grade (0-10, default 0), notes, added_at |
 
 The listings tables have a foreign key to `currencies` — queries join via `currencies(symbol)`.
 

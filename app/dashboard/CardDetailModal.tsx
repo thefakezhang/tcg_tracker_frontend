@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, Hash, Layers } from "lucide-react";
+import { Check, ChevronDown, Hash, Layers, Plus } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -30,7 +30,13 @@ import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useGame } from "./GameContext";
 import { useCurrency } from "./CurrencyContext";
+import { useBuyList } from "./BuyListContext";
 import { Badge } from "@/components/ui/badge";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   type CardRowData,
   type MarketListing,
@@ -67,6 +73,8 @@ export default function CardDetailModal({
 }: CardDetailModalProps) {
   const { t } = useTranslation();
   const { activeGame } = useGame();
+  const { buylists, addToBuylist } = useBuyList();
+  const [addedTo, setAddedTo] = useState<string | null>(null);
   const [rawListings, setRawListings] = useState<MarketListing[]>([]);
   const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
   const [locationMap, setLocationMap] = useState<Map<number, LocationInfo>>(
@@ -85,6 +93,7 @@ export default function CardDetailModal({
     if (open) {
       setActiveTab(initialPsaMode);
       setSelectedTiers([initialTier]);
+      setAddedTo(null);
     }
   }, [open, initialPsaMode, initialTier]);
 
@@ -311,6 +320,49 @@ export default function CardDetailModal({
               />
             </TabsContent>
           </Tabs>
+        )}
+
+        {card && buylists.length > 0 && (
+          <div className="flex items-center justify-end gap-3 border-t pt-4">
+            {addedTo && (
+              <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                <Check className="size-4" />
+                {t("buyList.added", { name: addedTo })}
+              </span>
+            )}
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button />
+                }
+              >
+                <Plus className="size-4" />
+                {t("buyList.addTo")}
+              </PopoverTrigger>
+              <PopoverContent className="w-48 p-1" align="end">
+                {buylists.map((bl) => (
+                  <button
+                    key={bl.buylist_id}
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                    onClick={async () => {
+                      const psaGrade = activeTab === "psa" ? (card.psaGrade ?? 0) : 0;
+                      await addToBuylist(
+                        bl.buylist_id,
+                        activeGame,
+                        card.card.card_id,
+                        psaGrade,
+                        null
+                      );
+                      setAddedTo(bl.name);
+                      setTimeout(() => setAddedTo(null), 2000);
+                    }}
+                  >
+                    {bl.name}
+                  </button>
+                ))}
+              </PopoverContent>
+            </Popover>
+          </div>
         )}
       </DialogContent>
     </Dialog>
