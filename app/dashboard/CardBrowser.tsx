@@ -50,6 +50,8 @@ export default function CardBrowser() {
   const [searchSetCode, setSearchSetCode] = useState("");
   const [selectedTier, setSelectedTier] = useState(1);
   const [sellRegion, setSellRegion] = useState<RegionFilter>("all");
+  const [minBuyPrice, setMinBuyPrice] = useState<string>("");
+  const [minSellPrice, setMinSellPrice] = useState<string>("");
   const [roiFloor, setRoiFloor] = useState<string>("");
   const [roiCeiling, setRoiCeiling] = useState<string>("");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
@@ -70,6 +72,8 @@ export default function CardBrowser() {
       searchSetCode,
       selectedTier,
       sellRegion,
+      minBuyPrice: minBuyPrice !== "" ? Number(minBuyPrice) : null,
+      minSellPrice: minSellPrice !== "" ? Number(minSellPrice) : null,
       roiFloor: roiFloor !== "" ? Number(roiFloor) : null,
       roiCeiling: roiCeiling !== "" ? Number(roiCeiling) : null,
       sortColumn,
@@ -85,6 +89,8 @@ export default function CardBrowser() {
     setSearchSetCode("");
     setSelectedTier(1);
     setSellRegion("all");
+    setMinBuyPrice("");
+    setMinSellPrice("");
     setRoiFloor("");
     setRoiCeiling("");
     setPage(0);
@@ -93,7 +99,7 @@ export default function CardBrowser() {
   // Reset page when filters change
   useEffect(() => {
     setPage(0);
-  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -145,6 +151,56 @@ export default function CardBrowser() {
         />
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="outline" className="shrink-0" />
+            }
+          >
+            {sellRegion === "all" ? t("cardBrowser.regionAll") : sellRegion}
+            <ChevronDown className="ml-1 size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuRadioGroup
+              value={sellRegion}
+              onValueChange={(v) => setSellRegion(v as RegionFilter)}
+            >
+              <DropdownMenuRadioItem value="all">{t("cardBrowser.regionAll")}</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="NA">{t("cardBrowser.regionNA")}</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="JP">{t("cardBrowser.regionJP")}</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Input
+          type="number"
+          placeholder={t("cardBrowser.minBuyPrice")}
+          value={minBuyPrice}
+          onChange={(e) => setMinBuyPrice(e.target.value)}
+          className="min-w-0 flex-1"
+        />
+        <Input
+          type="number"
+          placeholder={t("cardBrowser.minSellPrice")}
+          value={minSellPrice}
+          onChange={(e) => setMinSellPrice(e.target.value)}
+          className="min-w-0 flex-1"
+        />
+        <Input
+          type="number"
+          placeholder={t("cardBrowser.roiFloor")}
+          value={roiFloor}
+          onChange={(e) => setRoiFloor(e.target.value)}
+          className="min-w-0 flex-1"
+        />
+        <Input
+          type="number"
+          placeholder={t("cardBrowser.roiCeiling")}
+          value={roiCeiling}
+          onChange={(e) => setRoiCeiling(e.target.value)}
+          className="min-w-0 flex-1"
+        />
+      </div>
+      <div className="flex items-center gap-2">
         <Tabs
           value={viewMode}
           onValueChange={(v) => setViewMode(String(v) as "list" | "grid")}
@@ -179,41 +235,7 @@ export default function CardBrowser() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button variant="outline" className="shrink-0" />
-              }
-            >
-              {sellRegion === "all" ? t("cardBrowser.regionAll") : sellRegion}
-              <ChevronDown className="ml-1 size-4" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuRadioGroup
-                value={sellRegion}
-                onValueChange={(v) => setSellRegion(v as RegionFilter)}
-              >
-                <DropdownMenuRadioItem value="all">{t("cardBrowser.regionAll")}</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="NA">{t("cardBrowser.regionNA")}</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="JP">{t("cardBrowser.regionJP")}</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Input
-            type="number"
-            placeholder={t("cardBrowser.roiFloor")}
-            value={roiFloor}
-            onChange={(e) => setRoiFloor(e.target.value)}
-            className="w-28"
-          />
-          <Input
-            type="number"
-            placeholder={t("cardBrowser.roiCeiling")}
-            value={roiCeiling}
-            onChange={(e) => setRoiCeiling(e.target.value)}
-            className="w-28"
-          />
+        <div className="ml-auto flex items-center gap-2">
           {psaMode === "non-psa" && availableTiers.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger

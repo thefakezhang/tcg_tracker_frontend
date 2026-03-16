@@ -47,6 +47,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardBrowser.regionAll": "全地域",
   "cardBrowser.regionNA": "NA",
   "cardBrowser.regionJP": "JP",
+  "cardBrowser.minBuyPrice": "最低買値 $",
+  "cardBrowser.minSellPrice": "最低売値 $",
   "cardBrowser.roiFloor": "ROI 下限 %",
   "cardBrowser.roiCeiling": "ROI 上限 %",
   "refresh.title": "価格データを更新",

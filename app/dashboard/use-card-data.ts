@@ -210,6 +210,8 @@ export function useCardData(options: {
   searchSetCode: string;
   selectedTier: number;
   sellRegion: RegionFilter;
+  minBuyPrice: number | null;
+  minSellPrice: number | null;
   roiFloor: number | null;
   roiCeiling: number | null;
   sortColumn: string;
@@ -233,6 +235,8 @@ export function useCardData(options: {
     searchSetCode,
     selectedTier,
     sellRegion,
+    minBuyPrice,
+    minSellPrice,
     roiFloor,
     roiCeiling,
     sortColumn,
@@ -254,7 +258,7 @@ export function useCardData(options: {
 
   useEffect(() => {
     fetchPage();
-  }, [activeGame, psaMode, search, searchCardNumber, searchSetCode, selectedTier, sellRegion, roiFloor, roiCeiling, sortColumn, sortAsc, page, pageSize]);
+  }, [activeGame, psaMode, search, searchCardNumber, searchSetCode, selectedTier, sellRegion, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -294,6 +298,10 @@ export function useCardData(options: {
     if (sellRegion !== "all") {
       query = query.eq("best_sell_region", sellRegion);
     }
+
+    // Min buy price filter (on normalized price for cross-currency comparison)
+    if (minBuyPrice != null) query = query.gte("best_sell_normalized", minBuyPrice);
+    if (minSellPrice != null) query = query.gte("best_buy_normalized", minSellPrice);
 
     // ROI range filters
     if (roiFloor != null) query = query.gte("roi", roiFloor);

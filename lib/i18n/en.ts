@@ -45,6 +45,8 @@ const en = {
   "cardBrowser.regionAll": "All Regions",
   "cardBrowser.regionNA": "NA",
   "cardBrowser.regionJP": "JP",
+  "cardBrowser.minBuyPrice": "Min buy $",
+  "cardBrowser.minSellPrice": "Min sell $",
   "cardBrowser.roiFloor": "ROI min %",
   "cardBrowser.roiCeiling": "ROI max %",
   "refresh.title": "Refresh Price Data",
