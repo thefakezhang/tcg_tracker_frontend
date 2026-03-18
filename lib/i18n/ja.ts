@@ -66,5 +66,9 @@ const ja: { [K in keyof typeof en]: string } = {
   "buyList.empty": "この購入リストにカードはありません",
   "buyList.delete": "削除",
   "buyList.deleteConfirm": "この購入リストを削除しますか？",
+  "buyList.removeFrom": "購入リストから削除",
+  "buyList.removeConfirm": "このカードを購入リストから削除しますか？",
+  "buyList.removeConfirmDesc": "この操作は元に戻せません。",
+  "buyList.remove": "削除",
 } as const;
 export default ja;

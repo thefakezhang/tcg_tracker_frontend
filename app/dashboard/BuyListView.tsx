@@ -425,6 +425,14 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
         card={selectedCard}
         open={!!selectedCard}
         onClose={() => setSelectedCard(null)}
+        onRemoveFromBuylist={
+          selectedCard
+            ? async () => {
+                await removeFromBuylist(selectedCard.game, selectedCard.entryId);
+                fetchEntries();
+              }
+            : undefined
+        }
       />
     </div>
   );
