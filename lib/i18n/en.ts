@@ -64,5 +64,9 @@ const en = {
   "buyList.empty": "No cards in this buy list",
   "buyList.delete": "Delete",
   "buyList.deleteConfirm": "Delete this buy list?",
+  "buyList.removeFrom": "Remove from Buy List",
+  "buyList.removeConfirm": "Remove this card from the buy list?",
+  "buyList.removeConfirmDesc": "This action cannot be undone.",
+  "buyList.remove": "Remove",
 } as const;
 export default en;

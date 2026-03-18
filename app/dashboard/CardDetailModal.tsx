@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, Hash, Layers, Plus } from "lucide-react";
+import { Check, ChevronDown, Hash, Layers, Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -38,6 +38,17 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   type CardRowData,
   type MarketListing,
   type LocationInfo,
@@ -62,6 +73,7 @@ interface CardDetailModalProps {
   onClose: () => void;
   initialPsaMode?: "non-psa" | "psa";
   initialTier?: number;
+  onRemoveFromBuylist?: () => Promise<void> | void;
 }
 
 export default function CardDetailModal({
@@ -70,6 +82,7 @@ export default function CardDetailModal({
   onClose,
   initialPsaMode = "non-psa",
   initialTier = 1,
+  onRemoveFromBuylist,
 }: CardDetailModalProps) {
   const { t } = useTranslation();
   const { activeGame } = useGame();
@@ -322,7 +335,7 @@ export default function CardDetailModal({
           </Tabs>
         )}
 
-        {card && buylists.length > 0 && (
+        {card && (buylists.length > 0 || onRemoveFromBuylist) && (
           <div className="flex items-center justify-end gap-3 border-t pt-4">
             {addedTo && (
               <span className="flex items-center gap-1 text-sm text-muted-foreground">
@@ -330,38 +343,69 @@ export default function CardDetailModal({
                 {t("buyList.added", { name: addedTo })}
               </span>
             )}
-            <Popover>
-              <PopoverTrigger
-                render={
-                  <Button />
-                }
-              >
-                <Plus className="size-4" />
-                {t("buyList.addTo")}
-              </PopoverTrigger>
-              <PopoverContent className="w-48 p-1" align="end">
-                {buylists.map((bl) => (
-                  <button
-                    key={bl.buylist_id}
-                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
-                    onClick={async () => {
-                      const psaGrade = activeTab === "psa" ? (card.psaGrade ?? 0) : 0;
-                      await addToBuylist(
-                        bl.buylist_id,
-                        activeGame,
-                        card.card.card_id,
-                        psaGrade,
-                        null
-                      );
-                      setAddedTo(bl.name);
-                      setTimeout(() => setAddedTo(null), 2000);
-                    }}
-                  >
-                    {bl.name}
-                  </button>
-                ))}
-              </PopoverContent>
-            </Popover>
+            {onRemoveFromBuylist && (
+              <AlertDialog>
+                <AlertDialogTrigger
+                  render={
+                    <Button variant="outline" />
+                  }
+                >
+                  <Trash2 className="size-4" />
+                  {t("buyList.removeFrom")}
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{t("buyList.removeConfirm")}</AlertDialogTitle>
+                    <AlertDialogDescription>{t("buyList.removeConfirmDesc")}</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t("buyList.cancel")}</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={async () => {
+                        await onRemoveFromBuylist();
+                        onClose();
+                      }}
+                    >
+                      {t("buyList.remove")}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+            {buylists.length > 0 && (
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button />
+                  }
+                >
+                  <Plus className="size-4" />
+                  {t("buyList.addTo")}
+                </PopoverTrigger>
+                <PopoverContent className="w-48 p-1" align="end">
+                  {buylists.map((bl) => (
+                    <button
+                      key={bl.buylist_id}
+                      className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                      onClick={async () => {
+                        const psaGrade = activeTab === "psa" ? (card.psaGrade ?? 0) : 0;
+                        await addToBuylist(
+                          bl.buylist_id,
+                          activeGame,
+                          card.card.card_id,
+                          psaGrade,
+                          null
+                        );
+                        setAddedTo(bl.name);
+                        setTimeout(() => setAddedTo(null), 2000);
+                      }}
+                    >
+                      {bl.name}
+                    </button>
+                  ))}
+                </PopoverContent>
+              </Popover>
+            )}
           </div>
         )}
       </DialogContent>
