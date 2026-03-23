@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { EyeOff, Eye, Hash, ImageOff, Layers, Trash2 } from "lucide-react";
+import { Download, EyeOff, Eye, Hash, ImageOff, Layers, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useHeader } from "./HeaderContext";
@@ -15,6 +15,7 @@ import {
 import { createColumns, PriceCell } from "./columns";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
+import ExportBuyListModal from "./ExportBuyListModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -101,6 +102,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
   const [sortColumn, setSortColumn] = useState("roi");
   const [sortAsc, setSortAsc] = useState(false);
   const [compact, setCompact] = useState(true);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const buylist = buylists.find((b) => b.buylist_id === buylistId);
 
@@ -225,33 +227,39 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
 
   useEffect(() => {
     setHeaderActions(
-      <AlertDialog>
-        <AlertDialogTrigger
-          render={
-            <Button variant="outline" size="sm" />
-          }
-        >
-          <Trash2 className="size-4 mr-1" />
-          {t("buyList.delete")}
-        </AlertDialogTrigger>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("buyList.deleteConfirm")}</AlertDialogTitle>
-            <AlertDialogDescription>{buylist?.name}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("buyList.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={async () => {
-                await deleteBuylist(buylistId);
-                setActiveBuylistId(null);
-              }}
-            >
-              {t("buyList.delete")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" onClick={() => setExportOpen(true)}>
+          <Download className="size-4 mr-1" />
+          {t("buyList.export")}
+        </Button>
+        <AlertDialog>
+          <AlertDialogTrigger
+            render={
+              <Button variant="outline" size="sm" />
+            }
+          >
+            <Trash2 className="size-4 mr-1" />
+            {t("buyList.delete")}
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("buyList.deleteConfirm")}</AlertDialogTitle>
+              <AlertDialogDescription>{buylist?.name}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t("buyList.cancel")}</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={async () => {
+                  await deleteBuylist(buylistId);
+                  setActiveBuylistId(null);
+                }}
+              >
+                {t("buyList.delete")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
     );
     return () => setHeaderActions(null);
   }, [setHeaderActions, buylistId, buylist?.name, deleteBuylist, setActiveBuylistId, t]);
@@ -433,6 +441,13 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
               }
             : undefined
         }
+      />
+
+      <ExportBuyListModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        cards={data}
+        buylistName={buylist?.name ?? "buylist"}
       />
     </div>
   );
