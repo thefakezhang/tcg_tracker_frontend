@@ -142,30 +142,36 @@ async function loadImageAsDataUrl(url: string): Promise<string | null> {
 }
 
 // Render text to a canvas image so the browser handles Unicode/CJK fonts
+// pdfAspect = width/height of the PDF slot this image will be placed into
 function renderTextImage(
   text: string,
   fontSizePx: number,
   color: string,
-  maxWidthPx: number
+  pdfAspect: number
 ): string {
   const scale = 3;
-  const canvas = document.createElement("canvas");
   const height = fontSizePx + 4;
-  canvas.width = maxWidthPx * scale;
+  const width = Math.round(height * pdfAspect);
+  const canvas = document.createElement("canvas");
+  canvas.width = width * scale;
   canvas.height = height * scale;
   const ctx = canvas.getContext("2d")!;
   ctx.scale(scale, scale);
-  ctx.font = `${fontSizePx}px system-ui, -apple-system, sans-serif`;
+  ctx.font = `600 ${fontSizePx}px "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif`;
   ctx.fillStyle = color;
   ctx.textBaseline = "top";
+  ctx.textAlign = "center";
 
-  let display = text;
-  while (ctx.measureText(display + "...").width > maxWidthPx && display.length > 1) {
-    display = display.slice(0, -1);
+  // Shrink font to fit if needed
+  let currentSize = fontSizePx;
+  const minSize = 6;
+  while (ctx.measureText(text).width > width && currentSize > minSize) {
+    currentSize -= 0.5;
+    ctx.font = `600 ${currentSize}px "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif`;
   }
-  if (display.length < text.length) display += "...";
 
-  ctx.fillText(display, 0, 1);
+  const yOffset = (height - currentSize) / 2;
+  ctx.fillText(text, width / 2, yOffset);
   return canvas.toDataURL("image/png");
 }
 
@@ -184,7 +190,11 @@ async function generatePdf(cards: CardRowData[], buylistName: string) {
   const CARD_W = (PAGE_W - 2 * MARGIN - (COLS - 1) * GAP) / COLS;
   const IMG_ASPECT = 5 / 7;
   const IMG_H = CARD_W / IMG_ASPECT;
-  const TEXT_H = 10;
+  const NAME_H = 3.5;
+  const META_H = 2.8;
+  const TEXT_PAD_TOP = 1.2;
+  const TEXT_PAD_BOTTOM = 0.5;
+  const TEXT_H = TEXT_PAD_TOP + NAME_H + META_H + TEXT_PAD_BOTTOM;
   const CARD_H = IMG_H + TEXT_H;
   const CARD_R = 1.2;
 
@@ -201,7 +211,9 @@ async function generatePdf(cards: CardRowData[], buylistName: string) {
   const images = await Promise.all(imagePromises);
 
   // Pre-render all text labels to canvas images (handles CJK/Unicode)
-  const TEXT_W_PX = 200; // canvas pixel width for text rendering
+  const textW = CARD_W - 1.5;
+  const nameAspect = textW / NAME_H;
+  const metaAspect = textW / META_H;
   const textImages = cards.map((card) => {
     const cardNumber =
       card.card.card_number && card.card.card_number !== "UNKNOWN"
@@ -216,7 +228,7 @@ async function generatePdf(cards: CardRowData[], buylistName: string) {
       card.card.regional_name,
       14,
       "rgb(251,251,251)", // --foreground
-      TEXT_W_PX
+      nameAspect
     );
 
     const metaParts: string[] = [card.card.set_code];
@@ -226,7 +238,7 @@ async function generatePdf(cards: CardRowData[], buylistName: string) {
       metaParts.join(" \u00B7 "),
       10,
       "rgb(161,161,176)", // --muted-foreground
-      TEXT_W_PX
+      metaAspect
     );
 
     return { nameImg, metaImg };
@@ -281,10 +293,9 @@ async function generatePdf(cards: CardRowData[], buylistName: string) {
 
       // Draw text labels (rendered via canvas for Unicode support)
       const { nameImg, metaImg } = textImages[i];
-      const textW = CARD_W - 1.5;
       try {
-        pdf.addImage(nameImg, "PNG", x + 0.75, y + IMG_H + 0.5, textW, 3.5);
-        pdf.addImage(metaImg, "PNG", x + 0.75, y + IMG_H + 4.5, textW, 2.8);
+        pdf.addImage(nameImg, "PNG", x + 0.75, y + IMG_H + TEXT_PAD_TOP, textW, NAME_H);
+        pdf.addImage(metaImg, "PNG", x + 0.75, y + IMG_H + TEXT_PAD_TOP + NAME_H, textW, META_H);
       } catch {
         // text rendering fallback — skip
       }
