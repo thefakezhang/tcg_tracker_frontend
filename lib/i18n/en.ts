@@ -68,5 +68,9 @@ const en = {
   "buyList.removeConfirm": "Remove this card from the buy list?",
   "buyList.removeConfirmDesc": "This action cannot be undone.",
   "buyList.remove": "Remove",
+  "buyList.export": "Export",
+  "buyList.exportTitle": "Export Buy List",
+  "buyList.exportDescription": "Drag cards to reorder, then export as PDF.",
+  "buyList.exportConfirm": "Download PDF",
 } as const;
 export default en;
