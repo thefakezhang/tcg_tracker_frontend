@@ -20,6 +20,7 @@ import { restrictToParentElement } from "@dnd-kit/modifiers";
 import { Download, GripVertical, Hash, ImageOff, Layers } from "lucide-react";
 import jsPDF from "jspdf";
 import { useTranslation } from "@/lib/i18n";
+import { useCurrency } from "./CurrencyContext";
 import { type CardRowData } from "./use-card-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -181,7 +182,15 @@ const CARD_BG = { r: 46, g: 46, b: 54 };   // --card oklch(0.21 0.006 285.885)
 const SECONDARY = { r: 60, g: 60, b: 68 }; // --secondary oklch(0.274 0.006 286.033)
 const BORDER = { r: 255, g: 255, b: 255, a: 0.1 }; // --border white/10%
 
-async function generatePdf(cards: CardRowData[], buylistName: string) {
+interface PdfCard extends CardRowData {
+  targetPriceUsd?: number | null;
+}
+
+async function generatePdf(
+  cards: PdfCard[],
+  buylistName: string,
+  formatTargetPrice: (usd: number | null | undefined) => string | null
+) {
   const COLS = 6;
   const PAGE_W = 210; // A4 portrait width mm
   const PAGE_H = 297; // A4 portrait height mm
@@ -192,9 +201,11 @@ async function generatePdf(cards: CardRowData[], buylistName: string) {
   const IMG_H = CARD_W / IMG_ASPECT;
   const NAME_H = 3.5;
   const META_H = 2.8;
+  const PRICE_GAP = 1;
+  const PRICE_H = 3.2;
   const TEXT_PAD_TOP = 1.2;
   const TEXT_PAD_BOTTOM = 0.5;
-  const TEXT_H = TEXT_PAD_TOP + NAME_H + META_H + TEXT_PAD_BOTTOM;
+  const TEXT_H = TEXT_PAD_TOP + NAME_H + META_H + PRICE_GAP + PRICE_H + TEXT_PAD_BOTTOM;
   const CARD_H = IMG_H + TEXT_H;
   const CARD_R = 1.2;
 
@@ -214,6 +225,7 @@ async function generatePdf(cards: CardRowData[], buylistName: string) {
   const textW = CARD_W - 1.5;
   const nameAspect = textW / NAME_H;
   const metaAspect = textW / META_H;
+  const priceAspect = textW / PRICE_H;
   const textImages = cards.map((card) => {
     const cardNumber =
       card.card.card_number && card.card.card_number !== "UNKNOWN"
@@ -241,7 +253,17 @@ async function generatePdf(cards: CardRowData[], buylistName: string) {
       metaAspect
     );
 
-    return { nameImg, metaImg };
+    const priceText = formatTargetPrice((card as PdfCard).targetPriceUsd);
+    const priceImg = priceText
+      ? renderTextImage(
+          priceText,
+          12,
+          "rgb(251,251,251)", // --foreground
+          priceAspect
+        )
+      : null;
+
+    return { nameImg, metaImg, priceImg };
   });
 
   const totalPages = Math.ceil(cards.length / (COLS * ROWS_PER_PAGE));
@@ -292,10 +314,13 @@ async function generatePdf(cards: CardRowData[], buylistName: string) {
       }
 
       // Draw text labels (rendered via canvas for Unicode support)
-      const { nameImg, metaImg } = textImages[i];
+      const { nameImg, metaImg, priceImg } = textImages[i];
       try {
         pdf.addImage(nameImg, "PNG", x + 0.75, y + IMG_H + TEXT_PAD_TOP, textW, NAME_H);
         pdf.addImage(metaImg, "PNG", x + 0.75, y + IMG_H + TEXT_PAD_TOP + NAME_H, textW, META_H);
+        if (priceImg) {
+          pdf.addImage(priceImg, "PNG", x + 0.75, y + IMG_H + TEXT_PAD_TOP + NAME_H + META_H + PRICE_GAP, textW, PRICE_H);
+        }
       } catch {
         // text rendering fallback — skip
       }
@@ -312,6 +337,7 @@ export default function ExportBuyListModal({
   buylistName,
 }: ExportBuyListModalProps) {
   const { t } = useTranslation();
+  const { displayCurrency, convertPrice } = useCurrency();
   const [orderedCards, setOrderedCards] = useState<CardRowData[]>([]);
   const [generating, setGenerating] = useState(false);
 
@@ -342,14 +368,26 @@ export default function ExportBuyListModal({
     []
   );
 
+  const formatTargetPrice = useCallback(
+    (usd: number | null | undefined): string | null => {
+      if (usd == null) return null;
+      if (displayCurrency !== "none") {
+        const converted = convertPrice(usd, "USD");
+        return `${converted.symbol}${converted.price}`;
+      }
+      return `$${usd.toFixed(2)}`;
+    },
+    [displayCurrency, convertPrice]
+  );
+
   const handleExport = useCallback(async () => {
     setGenerating(true);
     try {
-      await generatePdf(orderedCards, buylistName);
+      await generatePdf(orderedCards, buylistName, formatTargetPrice);
     } finally {
       setGenerating(false);
     }
-  }, [orderedCards, buylistName]);
+  }, [orderedCards, buylistName, formatTargetPrice]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>

@@ -154,3 +154,27 @@ export function createColumns(t: TranslateFn): ColumnDef<CardRowData>[] {
     },
   ];
 }
+
+export function TargetPriceCell({ value }: { value: number | null }) {
+  const { displayCurrency, convertPrice } = useCurrency();
+  if (value == null) return <span>{"\u2014"}</span>;
+  if (displayCurrency !== "none") {
+    const converted = convertPrice(value, "USD");
+    return <span>{converted.symbol}{converted.price}</span>;
+  }
+  return <span>${value.toFixed(2)}</span>;
+}
+
+export function createBuylistColumns(t: TranslateFn): ColumnDef<CardRowData>[] {
+  return [
+    ...createColumns(t),
+    {
+      id: "targetPrice",
+      accessorFn: (row) => (row as CardRowData & { targetPriceUsd?: number | null }).targetPriceUsd ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.targetPrice")} />,
+      cell: ({ getValue }) => <TargetPriceCell value={(getValue() as number | undefined) ?? null} />,
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+  ];
+}

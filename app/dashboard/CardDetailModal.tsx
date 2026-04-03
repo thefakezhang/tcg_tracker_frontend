@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, Hash, Layers, Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Check, ChevronDown, DollarSign, Hash, Layers, LoaderCircle, Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -32,6 +32,7 @@ import { useGame } from "./GameContext";
 import { useCurrency } from "./CurrencyContext";
 import { useBuyList } from "./BuyListContext";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -57,6 +58,12 @@ import {
   fetchLocationMap,
   fetchConditionsCache,
 } from "./use-card-data";
+import type { Game } from "./GameContext";
+
+const BUYLIST_ENTRY_TABLE: Record<Game, string> = {
+  pokemon: "pokemon_buylist_entries",
+  mtg: "mtg_buylist_entries",
+};
 
 interface DetailListing {
   price: number;
@@ -74,6 +81,10 @@ interface CardDetailModalProps {
   initialPsaMode?: "non-psa" | "psa";
   initialTier?: number;
   onRemoveFromBuylist?: () => Promise<void> | void;
+  entryGame?: Game;
+  entryId?: number;
+  targetPriceUsd?: number | null;
+  onTargetPriceChange?: (entryId: number, price: number | null) => void;
 }
 
 export default function CardDetailModal({
@@ -83,6 +94,10 @@ export default function CardDetailModal({
   initialPsaMode = "non-psa",
   initialTier = 1,
   onRemoveFromBuylist,
+  entryGame,
+  entryId,
+  targetPriceUsd,
+  onTargetPriceChange,
 }: CardDetailModalProps) {
   const { t } = useTranslation();
   const { activeGame } = useGame();
@@ -100,6 +115,26 @@ export default function CardDetailModal({
   const [selectedTiers, setSelectedTiers] = useState<number[]>([initialTier]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"non-psa" | "psa">(initialPsaMode);
+  const [targetPrice, setTargetPrice] = useState<string>("");
+  const [savingTargetPrice, setSavingTargetPrice] = useState(false);
+
+  const saveTargetPrice = useCallback(async () => {
+    if (!entryGame || entryId == null || savingTargetPrice) return;
+    const parsed = targetPrice === "" ? null : Number(targetPrice);
+    if (parsed != null && (isNaN(parsed) || parsed < 0)) return;
+    setSavingTargetPrice(true);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from(BUYLIST_ENTRY_TABLE[entryGame])
+      .update({ target_price_usd: parsed })
+      .eq("entry_id", entryId);
+    if (error) {
+      console.error("Failed to save target price:", error);
+    } else {
+      onTargetPriceChange?.(entryId, parsed);
+    }
+    setSavingTargetPrice(false);
+  }, [entryGame, entryId, targetPrice, savingTargetPrice, onTargetPriceChange]);
 
   // Sync modal state with table filters when opening
   useEffect(() => {
@@ -107,8 +142,9 @@ export default function CardDetailModal({
       setActiveTab(initialPsaMode);
       setSelectedTiers([initialTier]);
       setAddedTo(null);
+      setTargetPrice(targetPriceUsd != null ? String(targetPriceUsd) : "");
     }
-  }, [open, initialPsaMode, initialTier]);
+  }, [open, initialPsaMode, initialTier, targetPriceUsd]);
 
   useEffect(() => {
     if (!card || !open) return;
@@ -337,6 +373,42 @@ export default function CardDetailModal({
 
         {card && (buylists.length > 0 || onRemoveFromBuylist) && (
           <div className="flex items-center justify-end gap-3 border-t pt-4">
+            {onRemoveFromBuylist && entryGame && entryId != null && (
+              <div className="mr-auto flex items-center gap-2">
+                <label className="text-sm text-muted-foreground whitespace-nowrap">
+                  {t("buyList.targetPrice")}
+                </label>
+                <div className="relative">
+                  <DollarSign className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className="w-28 pl-7"
+                    value={targetPrice}
+                    onChange={(e) => setTargetPrice(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        saveTargetPrice();
+                      }
+                    }}
+                  />
+                </div>
+                <Button
+                  size="icon"
+                  className="size-8"
+                  disabled={savingTargetPrice}
+                  onClick={saveTargetPrice}
+                >
+                  {savingTargetPrice ? (
+                    <LoaderCircle className="size-4 animate-spin" />
+                  ) : (
+                    <Check className="size-4" />
+                  )}
+                </Button>
+              </div>
+            )}
             {addedTo && (
               <span className="flex items-center gap-1 text-sm text-muted-foreground">
                 <Check className="size-4" />
