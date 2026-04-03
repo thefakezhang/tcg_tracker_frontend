@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, ChevronDown, DollarSign, Hash, Layers, LoaderCircle, Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
@@ -117,6 +117,24 @@ export default function CardDetailModal({
   const [activeTab, setActiveTab] = useState<"non-psa" | "psa">(initialPsaMode);
   const [targetPrice, setTargetPrice] = useState<string>("");
   const [savingTargetPrice, setSavingTargetPrice] = useState(false);
+
+  const saveTargetPrice = useCallback(async () => {
+    if (!entryGame || entryId == null || savingTargetPrice) return;
+    const parsed = targetPrice === "" ? null : Number(targetPrice);
+    if (parsed != null && (isNaN(parsed) || parsed < 0)) return;
+    setSavingTargetPrice(true);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from(BUYLIST_ENTRY_TABLE[entryGame])
+      .update({ target_price_usd: parsed })
+      .eq("entry_id", entryId);
+    if (error) {
+      console.error("Failed to save target price:", error);
+    } else {
+      onTargetPriceChange?.(entryId, parsed);
+    }
+    setSavingTargetPrice(false);
+  }, [entryGame, entryId, targetPrice, savingTargetPrice, onTargetPriceChange]);
 
   // Sync modal state with table filters when opening
   useEffect(() => {
@@ -369,26 +387,19 @@ export default function CardDetailModal({
                     className="w-28 pl-7"
                     value={targetPrice}
                     onChange={(e) => setTargetPrice(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        saveTargetPrice();
+                      }
+                    }}
                   />
                 </div>
                 <Button
                   size="icon"
                   className="size-8"
                   disabled={savingTargetPrice}
-                  onClick={async () => {
-                    const parsed = targetPrice === "" ? null : Number(targetPrice);
-                    if (parsed != null && (isNaN(parsed) || parsed < 0)) return;
-                    setSavingTargetPrice(true);
-                    const supabase = createClient();
-                    const { error } = await supabase
-                      .from(BUYLIST_ENTRY_TABLE[entryGame])
-                      .update({ target_price_usd: parsed })
-                      .eq("entry_id", entryId);
-                    if (!error) {
-                      onTargetPriceChange?.(entryId, parsed);
-                    }
-                    setSavingTargetPrice(false);
-                  }}
+                  onClick={saveTargetPrice}
                 >
                   {savingTargetPrice ? (
                     <LoaderCircle className="size-4 animate-spin" />
