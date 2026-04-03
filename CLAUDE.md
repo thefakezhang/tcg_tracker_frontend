@@ -153,7 +153,7 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 | `locations` | location_id, name |
 | `pokemon_price_summaries` / `mtg_price_summaries` | card_id, tier (-1 for PSA), psa_grade, best_buy_*, best_sell_*, roi, updated_at |
 | `buylists` | buylist_id (PK), name, description, created_at, updated_at |
-| `pokemon_buylist_entries` / `mtg_buylist_entries` | entry_id (PK), buylist_id (FK→buylists), card_id (FK→*_card_definitions), psa_grade (0-10, default 0), notes, added_at |
+| `pokemon_buylist_entries` / `mtg_buylist_entries` | entry_id (PK), buylist_id (FK→buylists), card_id (FK→*_card_definitions), psa_grade (0-10, default 0), target_price_usd (numeric, nullable), notes, added_at |
 
 The listings tables have a foreign key to `currencies` — queries join via `currencies(symbol)`.
 

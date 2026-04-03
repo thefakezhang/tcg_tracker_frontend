@@ -375,7 +375,7 @@ export default function ExportBuyListModal({
         const converted = convertPrice(usd, "USD");
         return `${converted.symbol}${converted.price}`;
       }
-      return `$${usd}`;
+      return `$${usd.toFixed(2)}`;
     },
     [displayCurrency, convertPrice]
   );

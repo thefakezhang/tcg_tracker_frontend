@@ -162,7 +162,7 @@ export function TargetPriceCell({ value }: { value: number | null }) {
     const converted = convertPrice(value, "USD");
     return <span>{converted.symbol}{converted.price}</span>;
   }
-  return <span>${value}</span>;
+  return <span>${value.toFixed(2)}</span>;
 }
 
 export function createBuylistColumns(t: TranslateFn): ColumnDef<CardRowData>[] {

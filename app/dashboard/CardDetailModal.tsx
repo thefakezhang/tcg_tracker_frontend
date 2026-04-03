@@ -376,14 +376,17 @@ export default function CardDetailModal({
                   className="size-8"
                   disabled={savingTargetPrice}
                   onClick={async () => {
+                    const parsed = targetPrice === "" ? null : Number(targetPrice);
+                    if (parsed != null && (isNaN(parsed) || parsed < 0)) return;
                     setSavingTargetPrice(true);
-                    const parsed = targetPrice === "" ? null : parseFloat(targetPrice);
                     const supabase = createClient();
-                    await supabase
+                    const { error } = await supabase
                       .from(BUYLIST_ENTRY_TABLE[entryGame])
                       .update({ target_price_usd: parsed })
                       .eq("entry_id", entryId);
-                    onTargetPriceChange?.(entryId, parsed);
+                    if (!error) {
+                      onTargetPriceChange?.(entryId, parsed);
+                    }
                     setSavingTargetPrice(false);
                   }}
                 >
