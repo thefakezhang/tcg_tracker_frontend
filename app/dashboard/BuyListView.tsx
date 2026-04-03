@@ -12,7 +12,7 @@ import {
   type CardDefinition,
   type PriceEntry,
 } from "./use-card-data";
-import { createColumns, PriceCell } from "./columns";
+import { createBuylistColumns, PriceCell, TargetPriceCell } from "./columns";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
 import ExportBuyListModal from "./ExportBuyListModal";
@@ -46,6 +46,7 @@ interface BuyListViewProps {
 interface BuylistEntryRow extends CardRowData {
   game: Game;
   entryId: number;
+  targetPriceUsd: number | null;
 }
 
 interface SummaryRow {
@@ -126,7 +127,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
 
       const { data: entries } = await supabase
         .from(entryTable)
-        .select("entry_id, card_id, psa_grade")
+        .select("entry_id, card_id, psa_grade, target_price_usd")
         .eq("buylist_id", buylistId);
 
       if (!entries || entries.length === 0) continue;
@@ -198,6 +199,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
             roi: null,
             game,
             entryId,
+            targetPriceUsd: (entry.target_price_usd as number | null) ?? null,
           });
           continue;
         }
@@ -213,6 +215,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
           roi: summary?.roi ?? null,
           game,
           entryId,
+          targetPriceUsd: (entry.target_price_usd as number | null) ?? null,
         });
       }
     }
@@ -279,7 +282,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
     [sortColumn, sortAsc]
   );
 
-  const columns = useMemo(() => createColumns(t), [t]);
+  const columns = useMemo(() => createBuylistColumns(t), [t]);
 
   const { setActiveGame } = useGame();
 
@@ -380,6 +383,12 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
                     : "\u2014"}
                 </span>
               </div>
+              <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
+                <span className="text-muted-foreground">
+                  {t("column.targetPrice")}
+                </span>
+                <TargetPriceCell value={entry.targetPriceUsd} />
+              </div>
             </CardFooter>
           )}
         </Card>
@@ -433,6 +442,19 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
         card={selectedCard}
         open={!!selectedCard}
         onClose={() => setSelectedCard(null)}
+        entryGame={selectedCard?.game}
+        entryId={selectedCard?.entryId}
+        targetPriceUsd={selectedCard?.targetPriceUsd}
+        onTargetPriceChange={(eid, price) => {
+          setData((prev) =>
+            prev.map((row) =>
+              row.entryId === eid ? { ...row, targetPriceUsd: price } : row
+            )
+          );
+          setSelectedCard((prev) =>
+            prev && prev.entryId === eid ? { ...prev, targetPriceUsd: price } : prev
+          );
+        }}
         onRemoveFromBuylist={
           selectedCard
             ? async () => {

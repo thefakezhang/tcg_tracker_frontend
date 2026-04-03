@@ -74,5 +74,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "buyList.exportTitle": "購入リストをエクスポート",
   "buyList.exportDescription": "カードをドラッグして並べ替え、PDFとしてエクスポートします。",
   "buyList.exportConfirm": "PDFをダウンロード",
+  "column.targetPrice": "目標価格",
+  "buyList.targetPrice": "目標価格 (USD)",
 } as const;
 export default ja;

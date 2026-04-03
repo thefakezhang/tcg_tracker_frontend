@@ -72,5 +72,7 @@ const en = {
   "buyList.exportTitle": "Export Buy List",
   "buyList.exportDescription": "Drag cards to reorder, then export as PDF.",
   "buyList.exportConfirm": "Download PDF",
+  "column.targetPrice": "Target",
+  "buyList.targetPrice": "Target Price (USD)",
 } as const;
 export default en;
