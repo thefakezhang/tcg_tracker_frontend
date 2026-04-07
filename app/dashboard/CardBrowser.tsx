@@ -25,7 +25,8 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
-import { useCardData, type CardRowData, type RegionFilter } from "./use-card-data";
+import { useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
+import { useLanguage } from "./LanguageContext";
 import { createColumns, PriceCell } from "./columns";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
@@ -43,6 +44,7 @@ import { useTranslation } from "@/lib/i18n";
 
 export default function CardBrowser() {
   const { t } = useTranslation();
+  const { language } = useLanguage();
   const { activeGame, psaMode, setPsaMode } = useGame();
   const { setHeaderActions } = useHeader();
   const [search, setSearch] = useState("");
@@ -278,7 +280,7 @@ export default function CardBrowser() {
       )}
 
       <DataTable
-        columns={useMemo(() => createColumns(t), [t])}
+        columns={useMemo(() => createColumns(t, language), [t, language])}
         data={data}
         loading={loading}
         sorting={sorting}
@@ -316,7 +318,7 @@ export default function CardBrowser() {
                 {row.card.image_url ? (
                   <img
                     src={row.card.image_url}
-                    alt={row.card.regional_name}
+                    alt={getCardDisplayName(row.card, language)}
                     className="aspect-[5/7] w-full object-cover"
                     loading="lazy"
                   />
@@ -340,7 +342,7 @@ export default function CardBrowser() {
                       </Badge>
                     </div>
                   </CardAction>
-                  <CardTitle className="truncate text-lg">{row.card.regional_name}</CardTitle>
+                  <CardTitle className="truncate text-lg">{getCardDisplayName(row.card, language)}</CardTitle>
                   {misc && (
                     <CardDescription className="truncate text-xs">
                       {misc}

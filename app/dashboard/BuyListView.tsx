@@ -11,7 +11,10 @@ import {
   type CardRowData,
   type CardDefinition,
   type PriceEntry,
+  cardDefCols,
+  getCardDisplayName,
 } from "./use-card-data";
+import { useLanguage } from "./LanguageContext";
 import { createBuylistColumns, PriceCell, TargetPriceCell } from "./columns";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
@@ -91,6 +94,7 @@ function summaryToPrice(
 
 export default function BuyListView({ buylistId }: BuyListViewProps) {
   const { t } = useTranslation();
+  const { language } = useLanguage();
   const { setHeaderActions } = useHeader();
   const { buylists, deleteBuylist, removeFromBuylist, setActiveBuylistId } =
     useBuyList();
@@ -139,7 +143,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
       const { data: summaries } = await supabase
         .from(summaryTable)
         .select(
-          `*, ${cardTable}!inner(card_id, regional_name, set_code, card_number, misc_info, image_url)`
+          `*, ${cardTable}!inner(${cardDefCols(game)})`
         )
         .in("card_id", cardIds);
 
@@ -180,13 +184,13 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
           // Card definition not found via summary, fetch directly
           const { data: directCard } = await supabase
             .from(cardTable)
-            .select("card_id, regional_name, set_code, card_number, misc_info, image_url")
+            .select(cardDefCols(game))
             .eq("card_id", cardId)
             .single();
 
           results.push({
             key: `${game}:${entryId}`,
-            card: (directCard as CardDefinition) ?? {
+            card: (directCard as unknown as CardDefinition) ?? {
               card_id: cardId,
               regional_name: "Unknown",
               set_code: "",
@@ -282,7 +286,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
     [sortColumn, sortAsc]
   );
 
-  const columns = useMemo(() => createBuylistColumns(t), [t]);
+  const columns = useMemo(() => createBuylistColumns(t, language), [t, language]);
 
   const { setActiveGame } = useGame();
 
@@ -318,7 +322,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
           {row.card.image_url ? (
             <img
               src={row.card.image_url}
-              alt={row.card.regional_name}
+              alt={getCardDisplayName(row.card, language)}
               className="aspect-[5/7] w-full object-cover"
               loading="lazy"
             />
@@ -343,7 +347,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
               </div>
             </CardAction>
             <CardTitle className="truncate text-lg">
-              {row.card.regional_name}
+              {getCardDisplayName(row.card, language)}
             </CardTitle>
             {misc && (
               <CardDescription className="truncate text-xs">
@@ -394,7 +398,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
         </Card>
       );
     },
-    [t, setActiveGame, compact]
+    [t, setActiveGame, compact, language]
   );
 
   return (

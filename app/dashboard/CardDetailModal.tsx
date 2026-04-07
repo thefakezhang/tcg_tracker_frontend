@@ -57,7 +57,9 @@ import {
   fetchRateMap,
   fetchLocationMap,
   fetchConditionsCache,
+  getCardDisplayName,
 } from "./use-card-data";
+import { useLanguage } from "./LanguageContext";
 import type { Game } from "./GameContext";
 
 const BUYLIST_ENTRY_TABLE: Record<Game, string> = {
@@ -100,6 +102,7 @@ export default function CardDetailModal({
   onTargetPriceChange,
 }: CardDetailModalProps) {
   const { t } = useTranslation();
+  const { language } = useLanguage();
   const { activeGame } = useGame();
   const { buylists, addToBuylist } = useBuyList();
   const [addedTo, setAddedTo] = useState<string | null>(null);
@@ -271,12 +274,12 @@ export default function CardDetailModal({
             {def.image_url && (
               <img
                 src={def.image_url}
-                alt={def.regional_name}
+                alt={getCardDisplayName(def, language)}
                 className="h-64 w-auto rounded-md object-contain shrink-0"
               />
             )}
             <div className="flex min-w-0 flex-col gap-1">
-              <DialogTitle className="text-lg">{def.regional_name}</DialogTitle>
+              <DialogTitle className="text-lg">{getCardDisplayName(def, language)}</DialogTitle>
               {misc && (
                 <DialogDescription className="text-xs">
                   {misc}
