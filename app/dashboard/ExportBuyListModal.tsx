@@ -21,7 +21,8 @@ import { Download, GripVertical, Hash, ImageOff, Layers } from "lucide-react";
 import jsPDF from "jspdf";
 import { useTranslation } from "@/lib/i18n";
 import { useCurrency } from "./CurrencyContext";
-import { type CardRowData } from "./use-card-data";
+import { type CardRowData, getCardDisplayName } from "./use-card-data";
+import { useLanguage, type Language } from "./LanguageContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,7 +48,7 @@ interface ExportBuyListModalProps {
   buylistName: string;
 }
 
-function SortableCard({ card }: { card: CardRowData }) {
+function SortableCard({ card, language }: { card: CardRowData; language: Language }) {
   const {
     attributes,
     listeners,
@@ -85,7 +86,7 @@ function SortableCard({ card }: { card: CardRowData }) {
         {card.card.image_url ? (
           <img
             src={card.card.image_url}
-            alt={card.card.regional_name}
+            alt={getCardDisplayName(card.card, language)}
             className="aspect-[5/7] w-full object-cover"
             loading="lazy"
           />
@@ -110,7 +111,7 @@ function SortableCard({ card }: { card: CardRowData }) {
             </div>
           </CardAction>
           <CardTitle className="truncate text-lg">
-            {card.card.regional_name}
+            {getCardDisplayName(card.card, language)}
           </CardTitle>
           {misc && (
             <CardDescription className="truncate text-xs">
@@ -189,7 +190,8 @@ interface PdfCard extends CardRowData {
 async function generatePdf(
   cards: PdfCard[],
   buylistName: string,
-  formatTargetPrice: (usd: number | null | undefined) => string | null
+  formatTargetPrice: (usd: number | null | undefined) => string | null,
+  language: Language
 ) {
   const COLS = 6;
   const PAGE_W = 210; // A4 portrait width mm
@@ -237,7 +239,7 @@ async function generatePdf(
         : null;
 
     const nameImg = renderTextImage(
-      card.card.regional_name,
+      getCardDisplayName(card.card, language),
       14,
       "rgb(251,251,251)", // --foreground
       nameAspect
@@ -337,6 +339,7 @@ export default function ExportBuyListModal({
   buylistName,
 }: ExportBuyListModalProps) {
   const { t } = useTranslation();
+  const { language } = useLanguage();
   const { displayCurrency, convertPrice } = useCurrency();
   const [orderedCards, setOrderedCards] = useState<CardRowData[]>([]);
   const [generating, setGenerating] = useState(false);
@@ -383,7 +386,7 @@ export default function ExportBuyListModal({
   const handleExport = useCallback(async () => {
     setGenerating(true);
     try {
-      await generatePdf(orderedCards, buylistName, formatTargetPrice);
+      await generatePdf(orderedCards, buylistName, formatTargetPrice, language);
     } finally {
       setGenerating(false);
     }
@@ -409,7 +412,7 @@ export default function ExportBuyListModal({
             >
               <div className="grid grid-cols-6 gap-2">
                 {orderedCards.map((card) => (
-                  <SortableCard key={card.key} card={card} />
+                  <SortableCard key={card.key} card={card} language={language} />
                 ))}
               </div>
             </SortableContext>

@@ -3,8 +3,9 @@
 import { ColumnDef } from "@tanstack/react-table";
 import { ArrowUp, ArrowDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { type CardRowData, type PriceEntry } from "./use-card-data";
+import { type CardRowData, type PriceEntry, getCardDisplayName } from "./use-card-data";
 import { useCurrency } from "./CurrencyContext";
+import { type Language } from "./LanguageContext";
 
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
   const { displayCurrency, convertPrice } = useCurrency();
@@ -79,18 +80,18 @@ function nullsLastNumber(
 
 type TranslateFn = (key: import("@/lib/i18n").TranslationKey) => string;
 
-export function createColumns(t: TranslateFn): ColumnDef<CardRowData>[] {
+export function createColumns(t: TranslateFn, language: Language = "en"): ColumnDef<CardRowData>[] {
   return [
     {
       id: "regional_name",
-      accessorFn: (row) => row.card.regional_name,
+      accessorFn: (row) => getCardDisplayName(row.card, language),
       header: ({ column }) => <SortableHeader column={column} label={t("column.name")} />,
       cell: ({ row }) => {
         const card = row.original.card;
         const misc = card.misc_info && card.misc_info !== "UNKNOWN" ? card.misc_info : null;
         return (
           <div>
-            <div>{card.regional_name}</div>
+            <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
           </div>
         );
@@ -165,9 +166,9 @@ export function TargetPriceCell({ value }: { value: number | null }) {
   return <span>${value.toFixed(2)}</span>;
 }
 
-export function createBuylistColumns(t: TranslateFn): ColumnDef<CardRowData>[] {
+export function createBuylistColumns(t: TranslateFn, language: Language = "en"): ColumnDef<CardRowData>[] {
   return [
-    ...createColumns(t),
+    ...createColumns(t, language),
     {
       id: "targetPrice",
       accessorFn: (row) => (row as CardRowData & { targetPriceUsd?: number | null }).targetPriceUsd ?? undefined,

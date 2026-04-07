@@ -22,10 +22,28 @@ export const LISTINGS_TABLE_MAP: Record<Game, string> = {
 export interface CardDefinition {
   card_id: string;
   regional_name: string;
+  english_name?: string | null;
   set_code: string;
   card_number: string | null;
   misc_info: string | null;
   image_url: string | null;
+}
+
+export function getCardDisplayName(
+  card: Pick<CardDefinition, "regional_name" | "english_name">,
+  language: "en" | "ja"
+): string {
+  if (language === "en" && card.english_name) return card.english_name;
+  return card.regional_name;
+}
+
+export const POKEMON_CARD_DEF_COLS =
+  "card_id, regional_name, english_name, set_code, card_number, misc_info, image_url";
+export const MTG_CARD_DEF_COLS =
+  "card_id, regional_name, set_code, card_number, misc_info, image_url";
+
+export function cardDefCols(game: Game): string {
+  return game === "pokemon" ? POKEMON_CARD_DEF_COLS : MTG_CARD_DEF_COLS;
 }
 
 export interface MarketListing {
@@ -273,7 +291,7 @@ export function useCardData(options: {
     const cardDefTable = CARD_TABLE_MAP[activeGame];
 
     // Build query with joined card definitions
-    const selectStr = `*, ${cardDefTable}!inner(card_id, regional_name, set_code, card_number, misc_info, image_url)`;
+    const selectStr = `*, ${cardDefTable}!inner(${cardDefCols(activeGame)})`;
 
     let query = supabase
       .from(summariesTable)
@@ -290,7 +308,13 @@ export function useCardData(options: {
     const s = search.trim();
     const cn = searchCardNumber.trim();
     const sc = searchSetCode.trim();
-    if (s) query = query.or(`regional_name.ilike.%${s}%,misc_info.ilike.%${s}%`, { referencedTable: cardDefTable });
+    if (s) {
+      const orFilter =
+        activeGame === "pokemon"
+          ? `regional_name.ilike.%${s}%,english_name.ilike.%${s}%,misc_info.ilike.%${s}%`
+          : `regional_name.ilike.%${s}%,misc_info.ilike.%${s}%`;
+      query = query.or(orFilter, { referencedTable: cardDefTable });
+    }
     if (cn) query = query.ilike(`${cardDefTable}.card_number`, `%${cn}%`);
     if (sc) query = query.ilike(`${cardDefTable}.set_code`, `%${sc}%`);
 
