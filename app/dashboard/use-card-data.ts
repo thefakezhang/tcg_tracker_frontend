@@ -309,10 +309,12 @@ export function useCardData(options: {
     const cn = searchCardNumber.trim();
     const sc = searchSetCode.trim();
     if (s) {
+      // Escape characters that have meaning in PostgREST or-filters
+      const safe = s.replace(/[,()*]/g, " ");
       const orFilter =
         activeGame === "pokemon"
-          ? `regional_name.ilike.%${s}%,english_name.ilike.%${s}%,misc_info.ilike.%${s}%`
-          : `regional_name.ilike.%${s}%,misc_info.ilike.%${s}%`;
+          ? `regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,misc_info.ilike.%${safe}%`
+          : `regional_name.ilike.%${safe}%,misc_info.ilike.%${safe}%`;
       query = query.or(orFilter, { referencedTable: cardDefTable });
     }
     if (cn) query = query.ilike(`${cardDefTable}.card_number`, `%${cn}%`);

@@ -145,7 +145,8 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 
 | Table | Key Columns |
 |-------|-------------|
-| `pokemon_card_definitions` / `mtg_card_definitions` | card_id, regional_name, set_code, card_number, misc_info, image_url |
+| `pokemon_card_definitions` | card_id, regional_name, english_name, set_code, card_number, misc_info, image_url |
+| `mtg_card_definitions` | card_id, regional_name, set_code, card_number, misc_info, image_url |
 | `pokemon_market_listings` / `mtg_market_listings` | card_id, price_type (Buy/Sell), price, currency, psa_grade, condition, location_id |
 | `currencies` | code (PK), symbol |
 | `exchange_rates` | from_currency, to_currency, rate |
