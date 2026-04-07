@@ -48,7 +48,15 @@ interface ExportBuyListModalProps {
   buylistName: string;
 }
 
-function SortableCard({ card, language }: { card: CardRowData; language: Language }) {
+function SortableCard({
+  card,
+  language,
+  targetPriceText,
+}: {
+  card: CardRowData;
+  language: Language;
+  targetPriceText: string | null;
+}) {
   const {
     attributes,
     listeners,
@@ -119,7 +127,12 @@ function SortableCard({ card, language }: { card: CardRowData; language: Languag
             </CardDescription>
           )}
         </CardHeader>
-        <div className="pb-1" />
+        {targetPriceText && (
+          <div className="px-3 truncate text-center text-xs text-foreground">
+            {targetPriceText}
+          </div>
+        )}
+        <div className="pb-0.5" />
       </Card>
     </div>
   );
@@ -412,7 +425,14 @@ export default function ExportBuyListModal({
             >
               <div className="grid grid-cols-6 gap-2">
                 {orderedCards.map((card) => (
-                  <SortableCard key={card.key} card={card} language={language} />
+                  <SortableCard
+                    key={card.key}
+                    card={card}
+                    language={language}
+                    targetPriceText={formatTargetPrice(
+                      (card as PdfCard).targetPriceUsd
+                    )}
+                  />
                 ))}
               </div>
             </SortableContext>
