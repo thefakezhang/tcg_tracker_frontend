@@ -207,8 +207,8 @@ async function generatePdf(
   language: Language
 ) {
   const COLS = 6;
+  const ROWS_PER_PAGE = 4;
   const PAGE_W = 210; // A4 portrait width mm
-  const PAGE_H = 297; // A4 portrait height mm
   const MARGIN = 8;
   const GAP = 3;
   const CARD_W = (PAGE_W - 2 * MARGIN - (COLS - 1) * GAP) / COLS;
@@ -224,11 +224,9 @@ async function generatePdf(
   const CARD_H = IMG_H + TEXT_H;
   const CARD_R = 1.2;
 
-  const ROWS_PER_PAGE = Math.floor(
-    (PAGE_H - 2 * MARGIN + GAP) / (CARD_H + GAP)
-  );
+  const PAGE_H = 2 * MARGIN + ROWS_PER_PAGE * CARD_H + (ROWS_PER_PAGE - 1) * GAP;
 
-  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: [PAGE_W, PAGE_H] });
 
   // Pre-load all card images via proxy
   const imagePromises = cards.map((c) =>
