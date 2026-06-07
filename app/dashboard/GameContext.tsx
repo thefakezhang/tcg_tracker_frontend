@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState } from "react";
 
-export type Game = "pokemon" | "mtg";
+export type Game = "pokemon" | "mtg" | "pokemon_sealed";
 export type PsaMode = "non-psa" | "psa";
 
 interface GameContextValue {

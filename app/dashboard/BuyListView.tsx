@@ -16,8 +16,14 @@ import {
 } from "./use-card-data";
 import { useLanguage } from "./LanguageContext";
 import { createBuylistColumns, PriceCell, TargetPriceCell } from "./columns";
+import {
+  sealedRowToCardRow,
+  type SealedRowData,
+  type SealedSummaryRow,
+} from "./use-sealed-data";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
+import SealedDetailModal from "./SealedDetailModal";
 import ExportBuyListModal from "./ExportBuyListModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,6 +56,11 @@ interface BuylistEntryRow extends CardRowData {
   game: Game;
   entryId: number;
   targetPriceUsd: number | null;
+  // Sealed-only dimensions (present when game === "pokemon_sealed")
+  productType?: string;
+  sealedCondition?: string;
+  variantEdition?: string;
+  language?: string;
 }
 
 interface SummaryRow {
@@ -224,6 +235,80 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
       }
     }
 
+    // Sealed products: separate entry table keyed on
+    // product_id + sealed_condition + variant_edition (not card_id + psa_grade).
+    {
+      const { data: entries } = await supabase
+        .from("pokemon_sealed_buylist_entries")
+        .select("entry_id, product_id, sealed_condition, variant_edition, target_price_usd")
+        .eq("buylist_id", buylistId);
+
+      if (entries && entries.length > 0) {
+        const productIds = entries.map(
+          (e: Record<string, unknown>) => e.product_id as number
+        );
+        const { data: summaries } = await supabase
+          .from("pokemon_sealed_summaries_v")
+          .select("*")
+          .in("card_id", productIds);
+
+        const summaryMap = new Map<string, SealedSummaryRow>();
+        for (const s of (summaries ?? []) as unknown as SealedSummaryRow[]) {
+          summaryMap.set(`${s.card_id}:${s.sealed_condition}:${s.variant_edition}`, s);
+        }
+
+        for (const entry of entries as Record<string, unknown>[]) {
+          const productId = entry.product_id as number;
+          const cond = entry.sealed_condition as string;
+          const ed = entry.variant_edition as string;
+          const entryId = entry.entry_id as number;
+          const summary = summaryMap.get(`${productId}:${cond}:${ed}`);
+
+          let base: SealedRowData;
+          if (summary) {
+            base = sealedRowToCardRow(summary);
+          } else {
+            // No current summary for that variant (e.g. no listings); fall back
+            // to the product definition with empty prices.
+            const { data: directProduct } = await supabase
+              .from("pokemon_sealed_products")
+              .select(
+                "product_id, name, english_name, set_code, misc_info, image_url, product_type, language"
+              )
+              .eq("product_id", productId)
+              .single();
+            const p = directProduct as Record<string, unknown> | null;
+            base = {
+              key: `${productId}:${cond}:${ed}`,
+              card: {
+                card_id: String(productId),
+                regional_name: (p?.name as string) ?? "Unknown",
+                english_name: (p?.english_name as string | null) ?? null,
+                set_code: (p?.set_code as string) ?? "",
+                card_number: null,
+                misc_info: (p?.misc_info as string | null) ?? null,
+                image_url: (p?.image_url as string | null) ?? null,
+              },
+              prices: { highestBuy: null, lowestSell: null },
+              roi: null,
+              productType: (p?.product_type as string) ?? "other",
+              sealedCondition: cond,
+              variantEdition: ed,
+              language: (p?.language as string) ?? "en",
+            };
+          }
+
+          results.push({
+            ...base,
+            key: `pokemon_sealed:${entryId}`,
+            game: "pokemon_sealed",
+            entryId,
+            targetPriceUsd: (entry.target_price_usd as number | null) ?? null,
+          });
+        }
+      }
+    }
+
     setData(results);
     setLoading(false);
   }, [buylistId]);
@@ -295,6 +380,20 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
     setActiveGame(entry.game);
     setSelectedCard(entry);
   }, [setActiveGame]);
+
+  const handleTargetPriceChange = useCallback(
+    (eid: number, price: number | null) => {
+      setData((prev) =>
+        prev.map((row) =>
+          row.entryId === eid ? { ...row, targetPriceUsd: price } : row
+        )
+      );
+      setSelectedCard((prev) =>
+        prev && prev.entryId === eid ? { ...prev, targetPriceUsd: price } : prev
+      );
+    },
+    []
+  );
 
   const renderGridItem = useCallback(
     (row: CardRowData) => {
@@ -442,32 +541,48 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
         />
       )}
 
-      <CardDetailModal
-        card={selectedCard}
-        open={!!selectedCard}
-        onClose={() => setSelectedCard(null)}
-        entryGame={selectedCard?.game}
-        entryId={selectedCard?.entryId}
-        targetPriceUsd={selectedCard?.targetPriceUsd}
-        onTargetPriceChange={(eid, price) => {
-          setData((prev) =>
-            prev.map((row) =>
-              row.entryId === eid ? { ...row, targetPriceUsd: price } : row
-            )
-          );
-          setSelectedCard((prev) =>
-            prev && prev.entryId === eid ? { ...prev, targetPriceUsd: price } : prev
-          );
-        }}
-        onRemoveFromBuylist={
-          selectedCard
-            ? async () => {
-                await removeFromBuylist(selectedCard.game, selectedCard.entryId);
-                fetchEntries();
-              }
-            : undefined
-        }
-      />
+      {selectedCard?.game === "pokemon_sealed" ? (
+        <SealedDetailModal
+          card={{
+            ...selectedCard,
+            productType: selectedCard.productType ?? "",
+            sealedCondition: selectedCard.sealedCondition ?? "",
+            variantEdition: selectedCard.variantEdition ?? "",
+            language: selectedCard.language ?? "en",
+          }}
+          open={!!selectedCard}
+          onClose={() => setSelectedCard(null)}
+          entryId={selectedCard?.entryId}
+          targetPriceUsd={selectedCard?.targetPriceUsd}
+          onTargetPriceChange={handleTargetPriceChange}
+          onRemoveFromBuylist={
+            selectedCard
+              ? async () => {
+                  await removeFromBuylist(selectedCard.game, selectedCard.entryId);
+                  fetchEntries();
+                }
+              : undefined
+          }
+        />
+      ) : (
+        <CardDetailModal
+          card={selectedCard}
+          open={!!selectedCard}
+          onClose={() => setSelectedCard(null)}
+          entryGame={selectedCard?.game}
+          entryId={selectedCard?.entryId}
+          targetPriceUsd={selectedCard?.targetPriceUsd}
+          onTargetPriceChange={handleTargetPriceChange}
+          onRemoveFromBuylist={
+            selectedCard
+              ? async () => {
+                  await removeFromBuylist(selectedCard.game, selectedCard.entryId);
+                  fetchEntries();
+                }
+              : undefined
+          }
+        />
+      )}
 
       <ExportBuyListModal
         open={exportOpen}

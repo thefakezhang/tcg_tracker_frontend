@@ -34,7 +34,7 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { ChevronsUpDown, DollarSign, Globe, ListChecks, LogOut, Plus, ShoppingCart, Sparkles, Squirrel, Trash2 } from "lucide-react";
+import { ChevronsUpDown, DollarSign, Globe, ListChecks, LogOut, Package, Plus, ShoppingCart, Sparkles, Squirrel, Trash2 } from "lucide-react";
 import { useBuyList } from "./BuyListContext";
 import {
   Dialog,
@@ -58,9 +58,10 @@ import {
 const GAME_ICONS: Record<Game, React.ReactNode> = {
   pokemon: <Squirrel className="size-4" />,
   mtg: <Sparkles className="size-4" />,
+  pokemon_sealed: <Package className="size-4" />,
 };
 
-const GAMES: Game[] = ["pokemon", "mtg"];
+const GAMES: Game[] = ["pokemon", "mtg", "pokemon_sealed"];
 
 interface AppSidebarProps {
   user: { email: string; name?: string };

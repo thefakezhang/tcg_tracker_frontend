@@ -214,6 +214,7 @@ buy/sell/price/location keys). Product-type labels: `sealed.type.booster_box` et
 |------|--------|
 | `supabase/functions/aggregate-prices/index.ts` | **+** `computeAndInsertSealed()` + call |
 | `tcg_tracker` backend `000059_*` migrations | **+** `_v` / `_best_v` views (dev up+down, prod up-only) |
+| `tcg_tracker` backend `000060_*` migrations | **+** RLS read/CRUD policies for sealed products / listings / buylist_entries (dev up+down, prod up-only) |
 | `app/dashboard/GameContext.tsx` | extend `Game` union |
 | `app/dashboard/AppSidebar.tsx` | sealed icon + `GAMES` entry |
 | `app/dashboard/page.tsx` | route `pokemon_sealed` → `SealedBrowser` |
@@ -243,8 +244,15 @@ buy/sell/price/location keys). Product-type labels: `sealed.type.booster_box` et
 3. `npx tsc --noEmit` and `npm run build` — no type/build errors.
 4. `npm run dev` → open **Sealed** tab: grid + list render; Condition / Edition / Region dropdowns
    change the shown variant/price; search, sort, pagination, currency conversion work.
-5. Open a product → **SealedDetailModal** shows buy/sell listings; "Add to Buy List" succeeds
-   (verify RLS allows the insert) and writes to `pokemon_sealed_buylist_entries`.
+5. **User runs the `000060` RLS-policies migration** (required, see below). Then open a product →
+   **SealedDetailModal** shows buy/sell listings; "Add to Buy List" succeeds and writes to
+   `pokemon_sealed_buylist_entries`.
+
+> **RLS gotcha (found during build):** 000050 enabled RLS on every sealed table but only gave
+> `pokemon_sealed_price_summaries` a policy. The browse tab works (views bypass RLS as their owner),
+> but the detail modal + buy-list read the raw `pokemon_sealed_market_listings` /
+> `pokemon_sealed_products` / `pokemon_sealed_buylist_entries` tables, which are deny-all until
+> migration `000060` adds permissive policies.
 6. Open that buy list → the sealed entry appears alongside card entries; target price edits persist;
    **Export PDF** includes the sealed product.
 7. Switching Sealed ↔ Pokémon ↔ MTG and game ↔ buy list leaves no stale state.

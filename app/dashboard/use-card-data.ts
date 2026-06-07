@@ -4,19 +4,25 @@ import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { type Game, type PsaMode } from "./GameContext";
 
+// Sealed entries point at the sealed tables/views for type-exhaustiveness; the
+// sealed tab uses its own hook (use-sealed-data.ts), so the card path here never
+// runs with "pokemon_sealed".
 const CARD_TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_card_definitions",
   mtg: "mtg_card_definitions_v",
+  pokemon_sealed: "pokemon_sealed_products",
 };
 
 const SUMMARIES_TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_price_summaries",
   mtg: "mtg_price_summaries",
+  pokemon_sealed: "pokemon_sealed_summaries_v",
 };
 
 export const LISTINGS_TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_market_listings",
   mtg: "mtg_market_listings",
+  pokemon_sealed: "pokemon_sealed_market_listings",
 };
 
 export interface CardDefinition {
