@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, DollarSign, Hash, Layers, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronDown, DollarSign, ExternalLink, Hash, Layers, LoaderCircle, Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -75,6 +75,7 @@ interface DetailListing {
   locationName: string;
   marketRegion: string | null;
   conditionLabel: string;
+  listingUrl: string | null;
 }
 
 interface CardDetailModalProps {
@@ -163,7 +164,7 @@ export default function CardDetailModal({
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
             .select(
-              "card_id, price_type, price, currency, psa_grade, condition, location_id, currencies(symbol)"
+              "card_id, price_type, price, currency, psa_grade, condition, location_id, listing_url, currencies(symbol)"
             )
             .eq("card_id", card!.card.card_id),
           fetchRateMap(supabase),
@@ -184,6 +185,7 @@ export default function CardDetailModal({
           psa_grade: l.psa_grade as number,
           condition: (l.condition as number | null) ?? null,
           location_id: l.location_id as number,
+          listing_url: (l.listing_url as string | null) ?? null,
         })
       );
 
@@ -221,6 +223,7 @@ export default function CardDetailModal({
         locationName: loc?.name ?? "",
         marketRegion: loc?.marketRegion ?? null,
         conditionLabel,
+        listingUrl: l.listing_url,
       };
     };
 
@@ -566,7 +569,20 @@ function ListingTable({
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1.5">
-                    <span>{l.locationName}</span>
+                    {l.listingUrl ? (
+                      <a
+                        href={l.listingUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {l.locationName}
+                        <ExternalLink className="size-3 shrink-0" />
+                      </a>
+                    ) : (
+                      <span>{l.locationName}</span>
+                    )}
                     {l.marketRegion && (
                       <Badge variant="secondary" className="h-auto px-1.5 py-px text-xs">
                         {l.marketRegion}

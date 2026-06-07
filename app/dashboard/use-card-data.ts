@@ -61,6 +61,7 @@ export interface MarketListing {
   psa_grade: number;
   condition: number | null;
   location_id: number;
+  listing_url: string | null;
 }
 
 export interface PriceEntry {
