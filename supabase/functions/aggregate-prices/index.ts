@@ -54,6 +54,15 @@ serve(async () => {
         results[game] = totalRows;
       }
 
+      // Sealed Pokémon products: one summary row per
+      // (product_id, sealed_condition, variant_edition). Distinct from cards
+      // (no PSA grade, no condition tier), so it uses its own compute path.
+      results["pokemon_sealed"] = await computeAndInsertSealed(
+        conn,
+        "pokemon_sealed_market_listings",
+        "pokemon_sealed_price_summaries"
+      );
+
       return new Response(
         JSON.stringify({ success: true, rows: results }),
         { status: 200, headers: { "Content-Type": "application/json" } }
@@ -247,5 +256,173 @@ async function computeAndInsert(
   `;
 
   const result = await conn.queryObject(query, [tiers]);
+  return result.rowCount ?? 0;
+}
+
+async function computeAndInsertSealed(
+  // deno-lint-ignore no-explicit-any
+  conn: any,
+  listingsTable: string,
+  summariesTable: string
+): Promise<number> {
+  // Sealed products have no PSA grade or condition tier; identity is
+  // (product_id, sealed_condition, variant_edition). Mirror the card pipeline
+  // with that 3-column grouping key and no tier/PSA filtering.
+  await conn.queryObject(`TRUNCATE ${summariesTable}`);
+
+  const query = `
+    WITH filtered_listings AS (
+      SELECT
+        ml.product_id,
+        ml.sealed_condition,
+        ml.variant_edition,
+        ml.price_type,
+        ml.price,
+        ml.currency,
+        c.symbol AS currency_symbol,
+        ml.location_id,
+        l.name AS location_name,
+        l.market_region,
+        ml.price * COALESCE(er.rate, 1) AS normalized_price
+      FROM ${listingsTable} ml
+      JOIN currencies c ON c.code = ml.currency
+      JOIN locations l ON l.location_id = ml.location_id
+      LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
+    ),
+    buys AS (
+      SELECT *,
+        ROW_NUMBER() OVER (
+          PARTITION BY product_id, sealed_condition, variant_edition
+          ORDER BY normalized_price DESC
+        ) AS buy_rank
+      FROM filtered_listings
+      WHERE price_type = 'Buy'
+    ),
+    sells AS (
+      SELECT *,
+        ROW_NUMBER() OVER (
+          PARTITION BY product_id, sealed_condition, variant_edition
+          ORDER BY normalized_price ASC
+        ) AS sell_rank
+      FROM filtered_listings
+      WHERE price_type = 'Sell'
+    ),
+    cross_region_pairs AS (
+      SELECT DISTINCT ON (b.product_id, b.sealed_condition, b.variant_edition)
+        b.product_id,
+        b.sealed_condition,
+        b.variant_edition,
+        b.price AS buy_price,
+        b.currency AS buy_currency,
+        b.currency_symbol AS buy_symbol,
+        b.location_name AS buy_location,
+        b.market_region AS buy_region,
+        b.normalized_price AS buy_normalized,
+        s.price AS sell_price,
+        s.currency AS sell_currency,
+        s.currency_symbol AS sell_symbol,
+        s.location_name AS sell_location,
+        s.market_region AS sell_region,
+        s.normalized_price AS sell_normalized
+      FROM buys b
+      JOIN sells s ON s.product_id = b.product_id
+        AND s.sealed_condition = b.sealed_condition
+        AND s.variant_edition = b.variant_edition
+      WHERE b.market_region IS DISTINCT FROM s.market_region
+        AND s.normalized_price > 0
+      ORDER BY
+        b.product_id,
+        b.sealed_condition,
+        b.variant_edition,
+        (b.normalized_price - s.normalized_price) / s.normalized_price DESC
+    ),
+    best_buys AS (
+      SELECT * FROM buys WHERE buy_rank = 1
+    ),
+    best_sells AS (
+      SELECT * FROM sells WHERE sell_rank = 1
+    ),
+    all_groups AS (
+      SELECT DISTINCT product_id, sealed_condition, variant_edition
+      FROM filtered_listings
+    ),
+    final AS (
+      SELECT
+        g.product_id,
+        g.sealed_condition,
+        g.variant_edition,
+        COALESCE(cr.buy_price, bb.price) AS best_buy_price,
+        COALESCE(cr.buy_currency, bb.currency) AS best_buy_currency,
+        COALESCE(cr.buy_symbol, bb.currency_symbol) AS best_buy_symbol,
+        COALESCE(cr.buy_location, bb.location_name) AS best_buy_location,
+        COALESCE(cr.buy_region, bb.market_region) AS best_buy_region,
+        COALESCE(cr.buy_normalized, bb.normalized_price) AS best_buy_normalized,
+        COALESCE(cr.sell_price, bs.price) AS best_sell_price,
+        COALESCE(cr.sell_currency, bs.currency) AS best_sell_currency,
+        COALESCE(cr.sell_symbol, bs.currency_symbol) AS best_sell_symbol,
+        COALESCE(cr.sell_location, bs.location_name) AS best_sell_location,
+        COALESCE(cr.sell_region, bs.market_region) AS best_sell_region,
+        COALESCE(cr.sell_normalized, bs.normalized_price) AS best_sell_normalized
+      FROM all_groups g
+      LEFT JOIN cross_region_pairs cr ON cr.product_id = g.product_id
+        AND cr.sealed_condition = g.sealed_condition
+        AND cr.variant_edition = g.variant_edition
+      LEFT JOIN best_buys bb ON bb.product_id = g.product_id
+        AND bb.sealed_condition = g.sealed_condition
+        AND bb.variant_edition = g.variant_edition
+      LEFT JOIN best_sells bs ON bs.product_id = g.product_id
+        AND bs.sealed_condition = g.sealed_condition
+        AND bs.variant_edition = g.variant_edition
+    )
+    INSERT INTO ${summariesTable} (
+      product_id, sealed_condition, variant_edition,
+      best_buy_price, best_buy_currency, best_buy_symbol, best_buy_location, best_buy_region, best_buy_normalized,
+      best_sell_price, best_sell_currency, best_sell_symbol, best_sell_location, best_sell_region, best_sell_normalized,
+      roi, updated_at
+    )
+    SELECT
+      f.product_id,
+      f.sealed_condition,
+      f.variant_edition,
+      f.best_buy_price,
+      f.best_buy_currency,
+      f.best_buy_symbol,
+      f.best_buy_location,
+      f.best_buy_region,
+      f.best_buy_normalized,
+      f.best_sell_price,
+      f.best_sell_currency,
+      f.best_sell_symbol,
+      f.best_sell_location,
+      f.best_sell_region,
+      f.best_sell_normalized,
+      CASE
+        WHEN f.best_buy_normalized IS NOT NULL
+          AND f.best_sell_normalized IS NOT NULL
+          AND f.best_sell_normalized > 0
+          AND COALESCE(f.best_buy_region, '') IS DISTINCT FROM COALESCE(f.best_sell_region, '')
+        THEN (f.best_buy_normalized - f.best_sell_normalized) / f.best_sell_normalized * 100
+        ELSE NULL
+      END,
+      now()
+    FROM final f
+    ON CONFLICT (product_id, sealed_condition, variant_edition) DO UPDATE SET
+      best_buy_price = EXCLUDED.best_buy_price,
+      best_buy_currency = EXCLUDED.best_buy_currency,
+      best_buy_symbol = EXCLUDED.best_buy_symbol,
+      best_buy_location = EXCLUDED.best_buy_location,
+      best_buy_region = EXCLUDED.best_buy_region,
+      best_buy_normalized = EXCLUDED.best_buy_normalized,
+      best_sell_price = EXCLUDED.best_sell_price,
+      best_sell_currency = EXCLUDED.best_sell_currency,
+      best_sell_symbol = EXCLUDED.best_sell_symbol,
+      best_sell_location = EXCLUDED.best_sell_location,
+      best_sell_region = EXCLUDED.best_sell_region,
+      best_sell_normalized = EXCLUDED.best_sell_normalized,
+      roi = EXCLUDED.roi,
+      updated_at = EXCLUDED.updated_at;
+  `;
+
+  const result = await conn.queryObject(query);
   return result.rowCount ?? 0;
 }

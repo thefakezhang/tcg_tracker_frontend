@@ -4,6 +4,7 @@ import { ColumnDef } from "@tanstack/react-table";
 import { ArrowUp, ArrowDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { type CardRowData, type PriceEntry, getCardDisplayName } from "./use-card-data";
+import { conditionLabel, editionLabel, productTypeLabel } from "./use-sealed-data";
 import { useCurrency } from "./CurrencyContext";
 import { type Language } from "./LanguageContext";
 
@@ -164,6 +165,97 @@ export function TargetPriceCell({ value }: { value: number | null }) {
     return <span>{converted.symbol}{converted.price}</span>;
   }
   return <span>${value.toFixed(2)}</span>;
+}
+
+type SealedExtras = {
+  productType?: string;
+  sealedCondition?: string;
+  variantEdition?: string;
+};
+
+export function createSealedColumns(
+  t: TranslateFn,
+  language: Language = "en"
+): ColumnDef<CardRowData>[] {
+  return [
+    {
+      id: "regional_name",
+      accessorFn: (row) => getCardDisplayName(row.card, language),
+      header: ({ column }) => <SortableHeader column={column} label={t("column.name")} />,
+      cell: ({ row }) => {
+        const card = row.original.card;
+        const misc = card.misc_info && card.misc_info !== "UNKNOWN" ? card.misc_info : null;
+        return (
+          <div>
+            <div>{getCardDisplayName(card, language)}</div>
+            {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
+          </div>
+        );
+      },
+      size: 400,
+      meta: { className: "w-[40%]" },
+    },
+    {
+      id: "productType",
+      accessorFn: (row) => (row as CardRowData & SealedExtras).productType ?? null,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.productType")} />,
+      cell: ({ getValue }) => {
+        const v = getValue() as string | null;
+        return v ? productTypeLabel(t, v) : "—";
+      },
+    },
+    {
+      id: "edition",
+      accessorFn: (row) => (row as CardRowData & SealedExtras).variantEdition ?? null,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.edition")} />,
+      cell: ({ getValue }) => {
+        const v = getValue() as string | null;
+        return v ? editionLabel(t, v) : "—";
+      },
+    },
+    {
+      id: "condition",
+      accessorFn: (row) => (row as CardRowData & SealedExtras).sealedCondition ?? null,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.condition")} />,
+      cell: ({ getValue }) => {
+        const v = getValue() as string | null;
+        return v ? conditionLabel(t, v) : "—";
+      },
+    },
+    {
+      id: "set_code",
+      accessorFn: (row) => {
+        const v = row.card.set_code;
+        return v && v !== "UNKNOWN" ? v : null;
+      },
+      header: ({ column }) => <SortableHeader column={column} label={t("column.setCode")} />,
+      cell: ({ getValue }) => (getValue() as string | null) ?? "—",
+    },
+    {
+      id: "lowestSell",
+      accessorFn: (row) => row.prices.lowestSell?.normalizedPrice ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.lowestSell")} />,
+      cell: ({ row }) => <PriceCell entry={row.original.prices.lowestSell} />,
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+    {
+      id: "highestBuy",
+      accessorFn: (row) => row.prices.highestBuy?.normalizedPrice ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.highestBuy")} />,
+      cell: ({ row }) => <PriceCell entry={row.original.prices.highestBuy} />,
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+    {
+      id: "roi",
+      accessorFn: (row) => row.roi ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.roi")} />,
+      cell: ({ getValue }) => formatRoi((getValue() as number | undefined) ?? null),
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+  ];
 }
 
 export function createBuylistColumns(t: TranslateFn, language: Language = "en"): ColumnDef<CardRowData>[] {
