@@ -33,6 +33,10 @@ export interface CardDefinition {
   card_number: string | null;
   misc_info: string | null;
   image_url: string | null;
+  // MTG-only (from mtg_card_definitions_v); undefined for Pokémon.
+  is_foil?: boolean | null;
+  foil_type?: string | null;
+  language?: string | null;
 }
 
 export function getCardDisplayName(
@@ -46,7 +50,7 @@ export function getCardDisplayName(
 export const POKEMON_CARD_DEF_COLS =
   "card_id, regional_name, english_name, set_code, card_number, misc_info, image_url";
 export const MTG_CARD_DEF_COLS =
-  "card_id, regional_name, set_code, card_number, misc_info, image_url";
+  "card_id, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language";
 
 export function cardDefCols(game: Game): string {
   return game === "pokemon" ? POKEMON_CARD_DEF_COLS : MTG_CARD_DEF_COLS;
@@ -321,7 +325,7 @@ export function useCardData(options: {
       const orFilter =
         activeGame === "pokemon"
           ? `regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,misc_info.ilike.%${safe}%`
-          : `regional_name.ilike.%${safe}%,misc_info.ilike.%${safe}%`;
+          : `regional_name.ilike.%${safe}%,misc_info.ilike.%${safe}%,foil_type.ilike.%${safe}%,language.ilike.%${safe}%`;
       query = query.or(orFilter, { referencedTable: cardDefTable });
     }
     if (cn) query = query.ilike(`${cardDefTable}.card_number`, `%${cn}%`);
@@ -341,7 +345,7 @@ export function useCardData(options: {
     if (roiCeiling != null) query = query.lte("roi", roiCeiling);
 
     // Sorting
-    const cardDefSortCols = ["regional_name", "card_number", "set_code"];
+    const cardDefSortCols = ["regional_name", "card_number", "set_code", "foil_type", "language"];
     if (cardDefSortCols.includes(sortColumn)) {
       query = query.order(sortColumn, {
         ascending: sortAsc,

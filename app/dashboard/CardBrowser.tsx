@@ -27,7 +27,7 @@ import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
 import { useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
 import { useLanguage } from "./LanguageContext";
-import { createColumns, PriceCell } from "./columns";
+import { createColumns, createMtgColumns, PriceCell } from "./columns";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
 import { Badge } from "@/components/ui/badge";
@@ -96,7 +96,9 @@ export default function CardBrowser() {
     setRoiFloor("");
     setRoiCeiling("");
     setPage(0);
-  }, [activeGame]);
+    // MTG isn't PSA-graded — keep it in non-PSA (condition) mode.
+    if (activeGame === "mtg") setPsaMode("non-psa");
+  }, [activeGame, setPsaMode]);
 
   // Reset page when filters change
   useEffect(() => {
@@ -262,16 +264,18 @@ export default function CardBrowser() {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          <Tabs
-            value={psaMode === "psa" ? "psa" : "non-psa"}
-            onValueChange={(v) => setPsaMode(String(v) === "psa" ? "psa" : "non-psa")}
-            className="shrink-0"
-          >
-            <TabsList>
-              <TabsTrigger value="non-psa">{t("modal.tabNonPsa")}</TabsTrigger>
-              <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
-            </TabsList>
-          </Tabs>
+          {activeGame !== "mtg" && (
+            <Tabs
+              value={psaMode === "psa" ? "psa" : "non-psa"}
+              onValueChange={(v) => setPsaMode(String(v) === "psa" ? "psa" : "non-psa")}
+              className="shrink-0"
+            >
+              <TabsList>
+                <TabsTrigger value="non-psa">{t("modal.tabNonPsa")}</TabsTrigger>
+                <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
         </div>
       </div>
 
@@ -280,7 +284,13 @@ export default function CardBrowser() {
       )}
 
       <DataTable
-        columns={useMemo(() => createColumns(t, language), [t, language])}
+        columns={useMemo(
+          () =>
+            activeGame === "mtg"
+              ? createMtgColumns(t, language)
+              : createColumns(t, language),
+          [t, language, activeGame],
+        )}
         data={data}
         loading={loading}
         sorting={sorting}
