@@ -27,7 +27,7 @@ import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
 import { useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
 import { useLanguage } from "./LanguageContext";
-import { createColumns, PriceCell } from "./columns";
+import { createColumns, createMtgColumns, PriceCell } from "./columns";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
 import { Badge } from "@/components/ui/badge";
@@ -280,7 +280,13 @@ export default function CardBrowser() {
       )}
 
       <DataTable
-        columns={useMemo(() => createColumns(t, language), [t, language])}
+        columns={useMemo(
+          () =>
+            activeGame === "mtg"
+              ? createMtgColumns(t, language)
+              : createColumns(t, language),
+          [t, language, activeGame],
+        )}
         data={data}
         loading={loading}
         sorting={sorting}

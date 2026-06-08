@@ -157,6 +157,101 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
   ];
 }
 
+// Foil display for MTG: STANDARD prints show Foil/Non-foil (from is_foil); any
+// special foil treatment shows its raw foil_type value (e.g. サージ, エッチング).
+function mtgFoilLabel(card: CardRowData["card"], t: TranslateFn): string {
+  const ft = card.foil_type;
+  if (!ft) return "—";
+  if (ft === "STANDARD") return card.is_foil ? t("foil.foil") : t("foil.nonFoil");
+  return ft;
+}
+
+// MTG-specific browse columns: Name, Set, Card Number, Foil Type, Language, then
+// the price columns. No PSA column (MTG cards aren't PSA-graded).
+export function createMtgColumns(
+  t: TranslateFn,
+  language: Language = "en",
+): ColumnDef<CardRowData>[] {
+  return [
+    {
+      id: "regional_name",
+      accessorFn: (row) => getCardDisplayName(row.card, language),
+      header: ({ column }) => <SortableHeader column={column} label={t("column.name")} />,
+      cell: ({ row }) => {
+        const card = row.original.card;
+        const misc = card.misc_info && card.misc_info !== "UNKNOWN" ? card.misc_info : null;
+        return (
+          <div>
+            <div>{getCardDisplayName(card, language)}</div>
+            {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
+          </div>
+        );
+      },
+      size: 400,
+      meta: { className: "w-[40%]" },
+    },
+    {
+      id: "set_code",
+      accessorFn: (row) => row.card.set_code,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.setCode")} />,
+    },
+    {
+      id: "card_number",
+      accessorFn: (row) => {
+        const v = row.card.card_number;
+        return v && v !== "UNKNOWN" ? v : null;
+      },
+      header: ({ column }) => (
+        <SortableHeader column={column} label={t("column.cardNumber")} />
+      ),
+      cell: ({ getValue }) => {
+        const v = getValue() as string | null;
+        return v && v !== "UNKNOWN" ? v : "—";
+      },
+    },
+    {
+      id: "foil_type",
+      accessorFn: (row) => row.card.foil_type ?? null,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.foilType")} />,
+      cell: ({ row }) => mtgFoilLabel(row.original.card, t),
+    },
+    {
+      id: "language",
+      accessorFn: (row) => row.card.language ?? null,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.language")} />,
+      cell: ({ getValue }) => (getValue() as string | null) ?? "—",
+    },
+    {
+      id: "lowestSell",
+      accessorFn: (row) => row.prices.lowestSell?.normalizedPrice ?? undefined,
+      header: ({ column }) => (
+        <SortableHeader column={column} label={t("column.lowestSell")} />
+      ),
+      cell: ({ row }) => <PriceCell entry={row.original.prices.lowestSell} />,
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+    {
+      id: "highestBuy",
+      accessorFn: (row) => row.prices.highestBuy?.normalizedPrice ?? undefined,
+      header: ({ column }) => (
+        <SortableHeader column={column} label={t("column.highestBuy")} />
+      ),
+      cell: ({ row }) => <PriceCell entry={row.original.prices.highestBuy} />,
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+    {
+      id: "roi",
+      accessorFn: (row) => row.roi ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.roi")} />,
+      cell: ({ getValue }) => formatRoi((getValue() as number | undefined) ?? null),
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+  ];
+}
+
 export function TargetPriceCell({ value }: { value: number | null }) {
   const { displayCurrency, convertPrice } = useCurrency();
   if (value == null) return <span>{"\u2014"}</span>;
