@@ -325,7 +325,9 @@ export default function CardDetailModal({
                 <TabsTrigger value="non-psa">
                   {t("modal.tabNonPsa")}
                 </TabsTrigger>
-                <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
+                {activeGame !== "mtg" && (
+                  <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
+                )}
               </TabsList>
 
               {activeTab === "non-psa" && availableTiers.length > 0 && (
@@ -367,14 +369,16 @@ export default function CardDetailModal({
                 t={t}
               />
             </TabsContent>
-            <TabsContent value="psa">
-              <ListingTables
-                buy={buyPsa}
-                sell={sellPsa}
-                conditionHeader={t("modal.psaGrade")}
-                t={t}
-              />
-            </TabsContent>
+            {activeGame !== "mtg" && (
+              <TabsContent value="psa">
+                <ListingTables
+                  buy={buyPsa}
+                  sell={sellPsa}
+                  conditionHeader={t("modal.psaGrade")}
+                  t={t}
+                />
+              </TabsContent>
+            )}
           </Tabs>
         )}
 

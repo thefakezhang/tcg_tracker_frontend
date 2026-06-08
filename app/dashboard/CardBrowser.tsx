@@ -96,7 +96,9 @@ export default function CardBrowser() {
     setRoiFloor("");
     setRoiCeiling("");
     setPage(0);
-  }, [activeGame]);
+    // MTG isn't PSA-graded — keep it in non-PSA (condition) mode.
+    if (activeGame === "mtg") setPsaMode("non-psa");
+  }, [activeGame, setPsaMode]);
 
   // Reset page when filters change
   useEffect(() => {
@@ -262,16 +264,18 @@ export default function CardBrowser() {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          <Tabs
-            value={psaMode === "psa" ? "psa" : "non-psa"}
-            onValueChange={(v) => setPsaMode(String(v) === "psa" ? "psa" : "non-psa")}
-            className="shrink-0"
-          >
-            <TabsList>
-              <TabsTrigger value="non-psa">{t("modal.tabNonPsa")}</TabsTrigger>
-              <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
-            </TabsList>
-          </Tabs>
+          {activeGame !== "mtg" && (
+            <Tabs
+              value={psaMode === "psa" ? "psa" : "non-psa"}
+              onValueChange={(v) => setPsaMode(String(v) === "psa" ? "psa" : "non-psa")}
+              className="shrink-0"
+            >
+              <TabsList>
+                <TabsTrigger value="non-psa">{t("modal.tabNonPsa")}</TabsTrigger>
+                <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
         </div>
       </div>
 
