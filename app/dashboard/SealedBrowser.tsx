@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, Hash, Layers, RefreshCw } from "lucide-react";
+import { ChevronDown, ImageOff, Layers, Package, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -23,13 +23,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useGame } from "./GameContext";
-import { useHeader } from "./HeaderContext";
-import { useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
-import { useLanguage } from "./LanguageContext";
-import { createColumns, createMtgColumns, PriceCell } from "./columns";
-import { DataTable } from "./data-table";
-import CardDetailModal from "./CardDetailModal";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -39,18 +32,33 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { ImageOff } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
+import { useHeader } from "./HeaderContext";
+import { useLanguage } from "./LanguageContext";
+import { type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
+import {
+  useSealedData,
+  conditionLabel,
+  editionLabel,
+  productTypeLabel,
+  SEALED_CONDITIONS,
+  SEALED_EDITIONS,
+  type SealedCondition,
+  type SealedEdition,
+  type SealedRowData,
+} from "./use-sealed-data";
+import { createSealedColumns, PriceCell } from "./columns";
+import { DataTable } from "./data-table";
+import SealedDetailModal from "./SealedDetailModal";
 
-export default function CardBrowser() {
+export default function SealedBrowser() {
   const { t } = useTranslation();
   const { language } = useLanguage();
-  const { activeGame, psaMode, setPsaMode } = useGame();
   const { setHeaderActions } = useHeader();
   const [search, setSearch] = useState("");
-  const [searchCardNumber, setSearchCardNumber] = useState("");
   const [searchSetCode, setSearchSetCode] = useState("");
-  const [selectedTier, setSelectedTier] = useState(1);
+  const [condition, setCondition] = useState<SealedCondition>("best");
+  const [edition, setEdition] = useState<SealedEdition>("best");
   const [sellRegion, setSellRegion] = useState<RegionFilter>("all");
   const [minBuyPrice, setMinBuyPrice] = useState<string>("");
   const [minSellPrice, setMinSellPrice] = useState<string>("");
@@ -61,49 +69,29 @@ export default function CardBrowser() {
   const [sortAsc, setSortAsc] = useState(false);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
-  const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
-
+  const [selectedCard, setSelectedCard] = useState<SealedRowData | null>(null);
   const [refreshOpen, setRefreshOpen] = useState(false);
 
-  const { data, loading, error, availableTiers, totalCount, refetch, refresh } =
-    useCardData({
-      activeGame,
-      psaMode,
-      search,
-      searchCardNumber,
-      searchSetCode,
-      selectedTier,
-      sellRegion,
-      minBuyPrice: minBuyPrice !== "" ? Number(minBuyPrice) : null,
-      minSellPrice: minSellPrice !== "" ? Number(minSellPrice) : null,
-      roiFloor: roiFloor !== "" ? Number(roiFloor) : null,
-      roiCeiling: roiCeiling !== "" ? Number(roiCeiling) : null,
-      sortColumn,
-      sortAsc,
-      page,
-      pageSize,
-    });
-
-  // Reset filters on game change
-  useEffect(() => {
-    setSearch("");
-    setSearchCardNumber("");
-    setSearchSetCode("");
-    setSelectedTier(1);
-    setSellRegion("all");
-    setMinBuyPrice("");
-    setMinSellPrice("");
-    setRoiFloor("");
-    setRoiCeiling("");
-    setPage(0);
-    // MTG isn't PSA-graded — keep it in non-PSA (condition) mode.
-    if (activeGame === "mtg") setPsaMode("non-psa");
-  }, [activeGame, setPsaMode]);
+  const { data, loading, error, totalCount, refresh } = useSealedData({
+    search,
+    searchSetCode,
+    condition,
+    edition,
+    sellRegion,
+    minBuyPrice: minBuyPrice !== "" ? Number(minBuyPrice) : null,
+    minSellPrice: minSellPrice !== "" ? Number(minSellPrice) : null,
+    roiFloor: roiFloor !== "" ? Number(roiFloor) : null,
+    roiCeiling: roiCeiling !== "" ? Number(roiCeiling) : null,
+    sortColumn,
+    sortAsc,
+    page,
+    pageSize,
+  });
 
   // Reset page when filters change
   useEffect(() => {
     setPage(0);
-  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchSetCode, condition, edition, sellRegion, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -127,25 +115,22 @@ export default function CardBrowser() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
-  const columnVisibility = {
-    psa_grade: psaMode === "psa",
-  };
+  const conditionTriggerLabel =
+    condition === "best"
+      ? t("sealedBrowser.conditionBest")
+      : conditionLabel(t, condition);
+  const editionTriggerLabel =
+    edition === "best" ? t("sealedBrowser.editionBest") : editionLabel(t, edition);
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <Input
           type="text"
           placeholder={t("cardBrowser.namePlaceholder")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="col-span-2"
-        />
-        <Input
-          type="text"
-          placeholder={t("cardBrowser.cardNumberPlaceholder")}
-          value={searchCardNumber}
-          onChange={(e) => setSearchCardNumber(e.target.value)}
         />
         <Input
           type="text"
@@ -156,11 +141,43 @@ export default function CardBrowser() {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button variant="outline" className="shrink-0" />
-            }
-          >
+          <DropdownMenuTrigger render={<Button variant="outline" className="shrink-0" />}>
+            {t("sealedBrowser.conditionPrefix")}{conditionTriggerLabel}
+            <ChevronDown className="ml-1 size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuRadioGroup
+              value={condition}
+              onValueChange={(v) => setCondition(v as SealedCondition)}
+            >
+              {SEALED_CONDITIONS.map((c) => (
+                <DropdownMenuRadioItem key={c} value={c}>
+                  {c === "best" ? t("sealedBrowser.conditionBest") : conditionLabel(t, c)}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="outline" className="shrink-0" />}>
+            {t("sealedBrowser.editionPrefix")}{editionTriggerLabel}
+            <ChevronDown className="ml-1 size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuRadioGroup
+              value={edition}
+              onValueChange={(v) => setEdition(v as SealedEdition)}
+            >
+              {SEALED_EDITIONS.map((e) => (
+                <DropdownMenuRadioItem key={e} value={e}>
+                  {e === "best" ? t("sealedBrowser.editionBest") : editionLabel(t, e)}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="outline" className="shrink-0" />}>
             {sellRegion === "all" ? t("cardBrowser.regionAll") : sellRegion}
             <ChevronDown className="ml-1 size-4" />
           </DropdownMenuTrigger>
@@ -218,12 +235,7 @@ export default function CardBrowser() {
         <AlertDialog open={refreshOpen} onOpenChange={setRefreshOpen}>
           <AlertDialogTrigger
             render={
-              <Button
-                variant="outline"
-                size="icon"
-                disabled={loading}
-                className="shrink-0"
-              />
+              <Button variant="outline" size="icon" disabled={loading} className="shrink-0" />
             }
           >
             <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
@@ -239,44 +251,6 @@ export default function CardBrowser() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-        <div className="ml-auto flex items-center gap-2">
-          {psaMode === "non-psa" && availableTiers.length > 0 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button variant="outline" className="shrink-0" />
-                }
-              >
-                {t("cardBrowser.tierPrefix")}{selectedTier}
-                <ChevronDown className="ml-1 size-4" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                <DropdownMenuRadioGroup
-                  value={String(selectedTier)}
-                  onValueChange={(v) => setSelectedTier(Number(v))}
-                >
-                  {availableTiers.map((tier) => (
-                    <DropdownMenuRadioItem key={tier} value={String(tier)}>
-                      {t("cardBrowser.tierItem", { tier })}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          {activeGame !== "mtg" && (
-            <Tabs
-              value={psaMode === "psa" ? "psa" : "non-psa"}
-              onValueChange={(v) => setPsaMode(String(v) === "psa" ? "psa" : "non-psa")}
-              className="shrink-0"
-            >
-              <TabsList>
-                <TabsTrigger value="non-psa">{t("modal.tabNonPsa")}</TabsTrigger>
-                <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          )}
-        </div>
       </div>
 
       {error && (
@@ -284,19 +258,12 @@ export default function CardBrowser() {
       )}
 
       <DataTable
-        columns={useMemo(
-          () =>
-            activeGame === "mtg"
-              ? createMtgColumns(t, language)
-              : createColumns(t, language),
-          [t, language, activeGame],
-        )}
-        data={data}
+        columns={useMemo(() => createSealedColumns(t, language), [t, language])}
+        data={data as CardRowData[]}
         loading={loading}
         sorting={sorting}
         onSortingChange={handleSortingChange}
-        columnVisibility={columnVisibility}
-        onRowClick={setSelectedCard}
+        onRowClick={(row) => setSelectedCard(row as SealedRowData)}
         viewMode={viewMode}
         serverPagination={{
           page,
@@ -307,14 +274,15 @@ export default function CardBrowser() {
           onPageSizeChange: setPageSize,
         }}
         renderGridItem={useCallback(
-          (row: CardRowData) => {
+          (cardRow: CardRowData) => {
+            const row = cardRow as SealedRowData;
             const misc =
               row.card.misc_info && row.card.misc_info !== "UNKNOWN"
                 ? row.card.misc_info
                 : null;
-            const cardNumber =
-              row.card.card_number && row.card.card_number !== "UNKNOWN"
-                ? row.card.card_number
+            const setCode =
+              row.card.set_code && row.card.set_code !== "UNKNOWN"
+                ? row.card.set_code
                 : null;
             const buyEntry = row.prices.highestBuy;
             const sellEntry = row.prices.lowestSell;
@@ -340,24 +308,23 @@ export default function CardBrowser() {
                 <CardHeader className="pt-1">
                   <CardAction>
                     <div className="flex flex-col items-end gap-1">
-                      {cardNumber && (
+                      <Badge variant="secondary" className="h-auto px-1.5 py-px">
+                        <Package className="size-3" />
+                        {productTypeLabel(t, row.productType)}
+                      </Badge>
+                      {setCode && (
                         <Badge variant="secondary" className="h-auto px-1.5 py-px">
-                          <Hash className="size-3" />
-                          {cardNumber}
+                          <Layers className="size-3" />
+                          {setCode}
                         </Badge>
                       )}
-                      <Badge variant="secondary" className="h-auto px-1.5 py-px">
-                        <Layers className="size-3" />
-                        {row.card.set_code}
-                      </Badge>
                     </div>
                   </CardAction>
                   <CardTitle className="truncate text-lg">{getCardDisplayName(row.card, language)}</CardTitle>
-                  {misc && (
-                    <CardDescription className="truncate text-xs">
-                      {misc}
-                    </CardDescription>
-                  )}
+                  <CardDescription className="truncate text-xs">
+                    {editionLabel(t, row.variantEdition)} · {conditionLabel(t, row.sealedCondition)}
+                    {misc ? ` · ${misc}` : ""}
+                  </CardDescription>
                 </CardHeader>
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
                   <div className="grid w-full grid-cols-[1fr_auto_1fr] gap-2">
@@ -373,22 +340,20 @@ export default function CardBrowser() {
                   </div>
                   <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
                     <span className="text-muted-foreground">{t("column.roi")}</span>
-                    <span>{row.roi !== null ? `${Math.round(row.roi * 100) / 100}%` : "\u2014"}</span>
+                    <span>{row.roi !== null ? `${Math.round(row.roi * 100) / 100}%` : "—"}</span>
                   </div>
                 </CardFooter>
               </Card>
             );
           },
-          [t]
+          [t, language]
         )}
       />
 
-      <CardDetailModal
+      <SealedDetailModal
         card={selectedCard}
         open={!!selectedCard}
         onClose={() => setSelectedCard(null)}
-        initialPsaMode={psaMode}
-        initialTier={selectedTier}
       />
     </div>
   );

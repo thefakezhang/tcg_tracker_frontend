@@ -4,19 +4,25 @@ import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { type Game, type PsaMode } from "./GameContext";
 
+// Sealed entries point at the sealed tables/views for type-exhaustiveness; the
+// sealed tab uses its own hook (use-sealed-data.ts), so the card path here never
+// runs with "pokemon_sealed".
 const CARD_TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_card_definitions",
   mtg: "mtg_card_definitions_v",
+  pokemon_sealed: "pokemon_sealed_products",
 };
 
 const SUMMARIES_TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_price_summaries",
   mtg: "mtg_price_summaries",
+  pokemon_sealed: "pokemon_sealed_summaries_v",
 };
 
 export const LISTINGS_TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_market_listings",
   mtg: "mtg_market_listings",
+  pokemon_sealed: "pokemon_sealed_market_listings",
 };
 
 export interface CardDefinition {
@@ -27,6 +33,10 @@ export interface CardDefinition {
   card_number: string | null;
   misc_info: string | null;
   image_url: string | null;
+  // MTG-only (from mtg_card_definitions_v); undefined for Pokémon.
+  is_foil?: boolean | null;
+  foil_type?: string | null;
+  language?: string | null;
 }
 
 export function getCardDisplayName(
@@ -40,7 +50,7 @@ export function getCardDisplayName(
 export const POKEMON_CARD_DEF_COLS =
   "card_id, regional_name, english_name, set_code, card_number, misc_info, image_url";
 export const MTG_CARD_DEF_COLS =
-  "card_id, regional_name, set_code, card_number, misc_info, image_url";
+  "card_id, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language";
 
 export function cardDefCols(game: Game): string {
   return game === "pokemon" ? POKEMON_CARD_DEF_COLS : MTG_CARD_DEF_COLS;
@@ -55,6 +65,7 @@ export interface MarketListing {
   psa_grade: number;
   condition: number | null;
   location_id: number;
+  listing_url: string | null;
 }
 
 export interface PriceEntry {
@@ -314,7 +325,7 @@ export function useCardData(options: {
       const orFilter =
         activeGame === "pokemon"
           ? `regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,misc_info.ilike.%${safe}%`
-          : `regional_name.ilike.%${safe}%,misc_info.ilike.%${safe}%`;
+          : `regional_name.ilike.%${safe}%,misc_info.ilike.%${safe}%,foil_type.ilike.%${safe}%,language.ilike.%${safe}%`;
       query = query.or(orFilter, { referencedTable: cardDefTable });
     }
     if (cn) query = query.ilike(`${cardDefTable}.card_number`, `%${cn}%`);
@@ -334,7 +345,7 @@ export function useCardData(options: {
     if (roiCeiling != null) query = query.lte("roi", roiCeiling);
 
     // Sorting
-    const cardDefSortCols = ["regional_name", "card_number", "set_code"];
+    const cardDefSortCols = ["regional_name", "card_number", "set_code", "foil_type", "language"];
     if (cardDefSortCols.includes(sortColumn)) {
       query = query.order(sortColumn, {
         ascending: sortAsc,

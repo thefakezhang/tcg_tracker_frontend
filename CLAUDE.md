@@ -41,7 +41,10 @@ app/
     data-table.tsx        # Generic TanStack React Table wrapper
     columns.tsx           # Column definitions + PriceCell component
     use-card-data.ts      # Data fetching hook (paginated queries against pre-computed summary tables)
-    GameContext.tsx        # Active game (pokemon/mtg) + PSA mode
+    use-sealed-data.ts    # Sealed-product data hook + product→CardRowData adapter (parallel to use-card-data)
+    SealedBrowser.tsx     # Sealed tab browser (condition/edition/region dropdowns; no PSA/tier)
+    SealedDetailModal.tsx # Sealed product detail dialog (raw sealed listings + add to buy list)
+    GameContext.tsx        # Active game (pokemon/mtg/pokemon_sealed) + PSA mode
     HeaderContext.tsx      # Dynamic header actions slot
     LanguageContext.tsx    # Language state (en/ja), localStorage persisted
     CurrencyContext.tsx    # Display currency (none/USD/JPY), localStorage persisted
@@ -141,6 +144,31 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 - Sidebar shows all buy lists with a create dialog (uses Field/FieldGroup/Label pattern).
 - Clicking a game in sidebar clears `activeBuylistId` to return to CardBrowser.
 
+### Sealed Products (Pokémon)
+
+The **Sealed** tab is a parallel path to the card browser (`Game` union includes `"pokemon_sealed"`),
+sharing all generic presentation components (`DataTable`, `PriceCell`, `CurrencyContext`) but with its
+own data hook and modal, because sealed products differ structurally from cards:
+
+- Identity is `product_id` (not `card_id`); the variant axis is `sealed_condition`
+  (`shrink`/`no_shrink`/`standard`) × `variant_edition` (`1ed`/`unlimited`/`standard`) — **no PSA, no
+  tier**. There is no `card_number`; products add `product_type` and `language`.
+- `useSealedData` (`use-sealed-data.ts`) queries two DB **views** that alias the sealed tables into the
+  card column shape: `pokemon_sealed_summaries_v` (one row per product×condition×edition) and
+  `pokemon_sealed_summaries_best_v` (`DISTINCT ON (product_id)`, highest ROI — used when both variant
+  dropdowns are "Best", giving one row per product). `sealedRowToCardRow()` adapts a row to
+  `SealedRowData extends CardRowData`.
+- `page.tsx` routes `activeGame === "pokemon_sealed"` to `SealedBrowser`. Buy lists are cross-game:
+  `pokemon_sealed_buylist_entries` is the third entry table, merged in `BuyListView` and keyed on
+  `product_id + sealed_condition + variant_edition`; `BuyListView` opens `SealedDetailModal` for sealed
+  entries. `addToBuylist` takes an optional `{ sealedCondition, variantEdition }` for sealed inserts.
+- The `aggregate-prices` edge function's `computeAndInsertSealed()` populates
+  `pokemon_sealed_price_summaries` (same buy/sell/ROI + cross-region logic as cards).
+- **RLS note:** the views run as their owner and bypass base-table RLS, so browse works regardless. But
+  `SealedDetailModal`/buy-list features read the **raw** `pokemon_sealed_market_listings` /
+  `pokemon_sealed_products` / `pokemon_sealed_buylist_entries` tables, which need permissive policies
+  (backend migration `000060`). The Pokémon card analogs are simply RLS-off.
+
 ## Database Schema (from Supabase)
 
 | Table | Key Columns |
@@ -155,6 +183,13 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 | `pokemon_price_summaries` / `mtg_price_summaries` | card_id, tier (-1 for PSA), psa_grade, best_buy_*, best_sell_*, roi, updated_at |
 | `buylists` | buylist_id (PK), name, description, created_at, updated_at |
 | `pokemon_buylist_entries` / `mtg_buylist_entries` | entry_id (PK), buylist_id (FK→buylists), card_id (FK→*_card_definitions), psa_grade (0-10, default 0), target_price_usd (numeric, nullable), notes, added_at |
+| `pokemon_sealed_products` | product_id (PK), name, english_name, set_code, variant_edition, product_type, language, misc_info, image_url |
+| `pokemon_sealed_market_listings` | product_id, location_id, price_type (Buy/Sell), price, currency, sealed_condition, variant_edition, listing_url, seller_text |
+| `pokemon_sealed_price_summaries` | (product_id, sealed_condition, variant_edition) PK, best_buy_*, best_sell_*, roi, updated_at |
+| `pokemon_sealed_summaries_v` / `_best_v` (views) | flat card-shaped projection of summaries+products; `_best_v` = DISTINCT ON product (best ROI) |
+| `pokemon_sealed_buylist_entries` | entry_id (PK), buylist_id (FK→buylists), product_id (FK→pokemon_sealed_products), sealed_condition, variant_edition, target_price_usd, notes, added_at |
+
+Sealed enums: `sealed_condition_enum` (shrink/no_shrink/standard), `sealed_edition_enum` (1ed/unlimited/standard).
 
 The listings tables have a foreign key to `currencies` — queries join via `currencies(symbol)`.
 

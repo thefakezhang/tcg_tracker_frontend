@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
-import { type Game } from "../GameContext";
+type CardGame = "pokemon" | "mtg";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/table";
 
 interface Holding {
-  game: Game;
+  game: CardGame;
   card_id: number;
   name: string;
   set_code: string;
@@ -29,7 +29,7 @@ interface Holding {
 
 interface SaleRow {
   sale_id: number;
-  game: Game;
+  game: CardGame;
   sold_at: string;
   quantity: number;
   gross_usd: number;
@@ -38,7 +38,7 @@ interface SaleRow {
   margin_usd: number;
 }
 
-const SALE_TABLE: Record<Game, string> = { pokemon: "pokemon_sales", mtg: "mtg_sales" };
+const SALE_TABLE: Record<CardGame, string> = { pokemon: "pokemon_sales", mtg: "mtg_sales" };
 
 // Holdings are global (FIFO pools by SKU across trips); the trip P&L picks up
 // whichever layers a sale consumes. This tab is the place to record sales.
@@ -64,7 +64,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const fetchSales = useCallback(async () => {
     const supabase = createClient();
     const out: SaleRow[] = [];
-    for (const game of ["pokemon", "mtg"] as Game[]) {
+    for (const game of ["pokemon", "mtg"] as CardGame[]) {
       const { data } = await supabase
         .from(SALE_TABLE[game])
         .select("sale_id, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd")

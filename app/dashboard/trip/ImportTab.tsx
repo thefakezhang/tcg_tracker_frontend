@@ -5,8 +5,11 @@ import { Plus, Trash2, Check } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useCardData, getCardDisplayName } from "../use-card-data";
-import { type Game } from "../GameContext";
 import { useLanguage } from "../LanguageContext";
+
+// Trip card lots only cover the two card games (sealed products have their own
+// tables and are out of scope here), so this is narrower than the app's Game type.
+type CardGame = "pokemon" | "mtg";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,7 +39,7 @@ interface Cond {
 
 interface LotLine {
   line_id: number;
-  game: Game;
+  game: CardGame;
   card_id: number;
   condition_id: number;
   psa_grade: number;
@@ -46,7 +49,7 @@ interface LotLine {
   name: string;
 }
 
-const LINE_TABLE: Record<Game, string> = {
+const LINE_TABLE: Record<CardGame, string> = {
   pokemon: "pokemon_lot_lines",
   mtg: "mtg_lot_lines",
 };
@@ -68,7 +71,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
   const [cFx, setCFx] = useState("0.0067");
 
   // add-card search state
-  const [searchGame, setSearchGame] = useState<Game>("pokemon");
+  const [searchGame, setSearchGame] = useState<CardGame>("pokemon");
   const [search, setSearch] = useState("");
 
   const fetchLots = useCallback(async () => {
@@ -94,7 +97,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
   const fetchLines = useCallback(async (lotId: number) => {
     const supabase = createClient();
     const out: LotLine[] = [];
-    for (const game of ["pokemon", "mtg"] as Game[]) {
+    for (const game of ["pokemon", "mtg"] as CardGame[]) {
       const { data } = await supabase
         .from(LINE_TABLE[game])
         .select("line_id, card_id, condition_id, psa_grade, quantity, price_override_usd, allocated_cost_usd")
@@ -214,7 +217,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
               <div className="flex gap-2">
                 <select
                   value={searchGame}
-                  onChange={(e) => setSearchGame(e.target.value as Game)}
+                  onChange={(e) => setSearchGame(e.target.value as CardGame)}
                   className="rounded-md border bg-background px-2 text-sm"
                 >
                   <option value="pokemon">Pokémon</option>

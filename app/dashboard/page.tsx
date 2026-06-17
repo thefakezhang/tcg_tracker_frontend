@@ -1,15 +1,18 @@
 "use client";
 
 import CardBrowser from "./CardBrowser";
+import SealedBrowser from "./SealedBrowser";
 import BuyListView from "./BuyListView";
 import TripDashboard from "./TripDashboard";
 import TripsOverview from "./TripsOverview";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
+import { useGame } from "./GameContext";
 
 function DashboardContent() {
   const { activeBuylistId } = useBuyList();
   const { activeTripId } = useTrips();
+  const { activeGame } = useGame();
   if (activeTripId === 0) {
     return <TripsOverview key="trips-overview" />;
   }
@@ -18,6 +21,9 @@ function DashboardContent() {
   }
   if (activeBuylistId) {
     return <BuyListView key={`buylist-${activeBuylistId}`} buylistId={activeBuylistId} />;
+  }
+  if (activeGame === "pokemon_sealed") {
+    return <SealedBrowser key="sealed" />;
   }
   return <CardBrowser key="browser" />;
 }

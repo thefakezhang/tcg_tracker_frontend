@@ -23,7 +23,8 @@ interface BuyListContextValue {
     game: Game,
     cardId: string,
     psaGrade: number,
-    notes: string | null
+    notes: string | null,
+    sealed?: { sealedCondition: string; variantEdition: string }
   ) => Promise<void>;
   removeFromBuylist: (game: Game, entryId: number) => Promise<void>;
 }
@@ -33,6 +34,7 @@ const BuyListContext = createContext<BuyListContextValue | null>(null);
 const ENTRY_TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_buylist_entries",
   mtg: "mtg_buylist_entries",
+  pokemon_sealed: "pokemon_sealed_buylist_entries",
 };
 
 export function BuyListProvider({ children }: { children: React.ReactNode }) {
@@ -67,6 +69,7 @@ export function BuyListProvider({ children }: { children: React.ReactNode }) {
       // Delete entries first
       await supabase.from("pokemon_buylist_entries").delete().eq("buylist_id", buylistId);
       await supabase.from("mtg_buylist_entries").delete().eq("buylist_id", buylistId);
+      await supabase.from("pokemon_sealed_buylist_entries").delete().eq("buylist_id", buylistId);
       await supabase.from("buylists").delete().eq("buylist_id", buylistId);
       if (activeBuylistId === buylistId) setActiveBuylistId(null);
       await fetchBuylists();
@@ -80,12 +83,23 @@ export function BuyListProvider({ children }: { children: React.ReactNode }) {
       game: Game,
       cardId: string,
       psaGrade: number,
-      notes: string | null
+      notes: string | null,
+      sealed?: { sealedCondition: string; variantEdition: string }
     ) => {
       const supabase = createClient();
-      await supabase
-        .from(ENTRY_TABLE_MAP[game])
-        .insert({ buylist_id: buylistId, card_id: cardId, psa_grade: psaGrade, notes });
+      // Sealed entries key on product_id + sealed_condition + variant_edition
+      // instead of card_id + psa_grade.
+      const row =
+        game === "pokemon_sealed"
+          ? {
+              buylist_id: buylistId,
+              product_id: cardId,
+              sealed_condition: sealed?.sealedCondition,
+              variant_edition: sealed?.variantEdition,
+              notes,
+            }
+          : { buylist_id: buylistId, card_id: cardId, psa_grade: psaGrade, notes };
+      await supabase.from(ENTRY_TABLE_MAP[game]).insert(row);
     },
     []
   );
