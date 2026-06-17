@@ -34,8 +34,9 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { ChevronsUpDown, DollarSign, Globe, ListChecks, LogOut, Package, Plus, ShoppingCart, Sparkles, Squirrel, Trash2 } from "lucide-react";
+import { ChevronsUpDown, DollarSign, Globe, ListChecks, LogOut, Luggage, Map, Package, Plus, ShoppingCart, Sparkles, Squirrel, Trash2 } from "lucide-react";
 import { useBuyList } from "./BuyListContext";
+import { useTrips } from "./TripContext";
 import {
   Dialog,
   DialogContent,
@@ -74,12 +75,17 @@ export function AppSidebar({ user }: AppSidebarProps) {
   const { activeGame, setActiveGame } = useGame();
   const { language, setLanguage } = useLanguage();
   const { displayCurrency, setDisplayCurrency } = useCurrency();
-  const { buylists, activeBuylistId, setActiveBuylistId, createBuylist, deleteBuylist } = useBuyList();
+  const { buylists, activeBuylistId, setActiveBuylistId, createBuylist } = useBuyList();
+  const { trips, activeTripId, setActiveTripId, createTrip } = useTrips();
   const { t } = useTranslation();
   const router = useRouter();
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
+  const [tripOpen, setTripOpen] = useState(false);
+  const [tripName, setTripName] = useState("");
+  const [tripStart, setTripStart] = useState("");
+  const [tripEnd, setTripEnd] = useState("");
 
   const displayName = user.name ?? user.email;
   const initials = displayName
@@ -114,8 +120,8 @@ export function AppSidebar({ user }: AppSidebarProps) {
               {GAMES.map((game) => (
                 <SidebarMenuItem key={game}>
                   <SidebarMenuButton
-                    isActive={activeGame === game && activeBuylistId === null}
-                    onClick={() => { setActiveGame(game); setActiveBuylistId(null); }}
+                    isActive={activeGame === game && activeBuylistId === null && activeTripId === null}
+                    onClick={() => { setActiveGame(game); setActiveBuylistId(null); setActiveTripId(null); }}
                   >
                     {GAME_ICONS[game]}
                     {t(`game.${game}` as TranslationKey)}
@@ -133,7 +139,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 <SidebarMenuItem key={bl.buylist_id}>
                   <SidebarMenuButton
                     isActive={activeBuylistId === bl.buylist_id}
-                    onClick={() => setActiveBuylistId(bl.buylist_id)}
+                    onClick={() => { setActiveBuylistId(bl.buylist_id); setActiveTripId(null); }}
                   >
                     <ShoppingCart className="size-4" />
                     <span className="truncate">{bl.name}</span>
@@ -144,6 +150,39 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 <SidebarMenuButton onClick={() => setCreateOpen(true)}>
                   <Plus className="size-4" />
                   {t("buyList.create")}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>{t("sidebar.trips")}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeTripId === 0}
+                  onClick={() => { setActiveTripId(0); setActiveBuylistId(null); }}
+                >
+                  <Map className="size-4" />
+                  {t("trips.overviewTitle")}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              {trips.map((tr) => (
+                <SidebarMenuItem key={tr.trip_id}>
+                  <SidebarMenuButton
+                    isActive={activeTripId === tr.trip_id}
+                    onClick={() => { setActiveTripId(tr.trip_id); setActiveBuylistId(null); }}
+                  >
+                    <Luggage className="size-4" />
+                    <span className="truncate">{tr.name}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => setTripOpen(true)}>
+                  <Plus className="size-4" />
+                  {t("trips.create")}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
@@ -189,6 +228,40 @@ export function AppSidebar({ user }: AppSidebarProps) {
               }}
             >
               {t("buyList.save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={tripOpen} onOpenChange={setTripOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("trips.create")}</DialogTitle>
+          </DialogHeader>
+          <FieldGroup>
+            <Field>
+              <Label htmlFor="trip-name">{t("trips.name")}</Label>
+              <Input id="trip-name" value={tripName} onChange={(e) => setTripName(e.target.value)} autoFocus />
+            </Field>
+            <Field>
+              <Label htmlFor="trip-start">{t("trips.startedAt")}</Label>
+              <Input id="trip-start" type="date" value={tripStart} onChange={(e) => setTripStart(e.target.value)} />
+            </Field>
+            <Field>
+              <Label htmlFor="trip-end">{t("trips.endedAt")}</Label>
+              <Input id="trip-end" type="date" value={tripEnd} onChange={(e) => setTripEnd(e.target.value)} />
+            </Field>
+          </FieldGroup>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTripOpen(false)}>{t("trips.cancel")}</Button>
+            <Button
+              disabled={!tripName.trim()}
+              onClick={async () => {
+                await createTrip(tripName.trim(), tripStart || null, tripEnd || null, null);
+                setTripName(""); setTripStart(""); setTripEnd("");
+                setTripOpen(false);
+              }}
+            >
+              {t("trips.save")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -7,6 +7,7 @@ import { HeaderProvider, useHeader } from "./HeaderContext";
 import { LanguageProvider } from "./LanguageContext";
 import { CurrencyProvider } from "./CurrencyContext";
 import { BuyListProvider, useBuyList } from "./BuyListContext";
+import { TripProvider, useTrips } from "./TripContext";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { AppSidebar } from "./AppSidebar";
 
@@ -19,12 +20,17 @@ function DashboardHeader() {
   const { activeGame } = useGame();
   const { headerActions } = useHeader();
   const { activeBuylistId, buylists } = useBuyList();
+  const { activeTripId, trips } = useTrips();
   const { t } = useTranslation();
 
+  const activeTrip = activeTripId
+    ? trips.find((tr) => tr.trip_id === activeTripId)
+    : null;
   const activeBuylist = activeBuylistId
     ? buylists.find((b) => b.buylist_id === activeBuylistId)
     : null;
-  const title = activeBuylist?.name ?? t(`game.${activeGame}` as TranslationKey);
+  const title =
+    activeTrip?.name ?? activeBuylist?.name ?? t(`game.${activeGame}` as TranslationKey);
   const description = activeBuylist?.description;
 
   return (
@@ -53,6 +59,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
       <CurrencyProvider>
       <GameProvider>
         <BuyListProvider>
+        <TripProvider>
         <HeaderProvider>
           <SidebarProvider>
             <AppSidebar user={user} />
@@ -62,6 +69,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
             </SidebarInset>
           </SidebarProvider>
         </HeaderProvider>
+        </TripProvider>
         </BuyListProvider>
       </GameProvider>
       </CurrencyProvider>

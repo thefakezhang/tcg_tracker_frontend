@@ -3,12 +3,22 @@
 import CardBrowser from "./CardBrowser";
 import SealedBrowser from "./SealedBrowser";
 import BuyListView from "./BuyListView";
+import TripDashboard from "./TripDashboard";
+import TripsOverview from "./TripsOverview";
 import { useBuyList } from "./BuyListContext";
+import { useTrips } from "./TripContext";
 import { useGame } from "./GameContext";
 
 function DashboardContent() {
   const { activeBuylistId } = useBuyList();
+  const { activeTripId } = useTrips();
   const { activeGame } = useGame();
+  if (activeTripId === 0) {
+    return <TripsOverview key="trips-overview" />;
+  }
+  if (activeTripId) {
+    return <TripDashboard key={`trip-${activeTripId}`} tripId={activeTripId} />;
+  }
   if (activeBuylistId) {
     return <BuyListView key={`buylist-${activeBuylistId}`} buylistId={activeBuylistId} />;
   }
