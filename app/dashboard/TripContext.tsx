@@ -24,6 +24,10 @@ interface TripContextValue {
     endedAt: string | null,
     notes: string | null
   ) => Promise<void>;
+  updateTrip: (
+    tripId: number,
+    fields: Partial<Pick<Trip, "name" | "started_at" | "ended_at" | "status" | "notes">>
+  ) => Promise<void>;
   deleteTrip: (tripId: number) => Promise<void>;
 }
 
@@ -66,6 +70,18 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     [fetchTrips]
   );
 
+  const updateTrip = useCallback(
+    async (
+      tripId: number,
+      fields: Partial<Pick<Trip, "name" | "started_at" | "ended_at" | "status" | "notes">>
+    ) => {
+      const supabase = createClient();
+      await supabase.from("trips").update(fields).eq("trip_id", tripId);
+      await fetchTrips();
+    },
+    [fetchTrips]
+  );
+
   const deleteTrip = useCallback(
     async (tripId: number) => {
       const supabase = createClient();
@@ -86,6 +102,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         setActiveTripId,
         fetchTrips,
         createTrip,
+        updateTrip,
         deleteTrip,
       }}
     >
