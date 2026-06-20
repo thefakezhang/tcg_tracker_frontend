@@ -209,7 +209,9 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     const n = usd / lotFx;
     return lotCcy === "JPY" ? Math.round(n) : Math.round(n * 100) / 100;
   };
-  const fromNative = (native: number) => Math.round(native * lotFx * 100) / 100;
+  // Keep 6 decimals so the native->USD->native round-trip is exact (the stored
+  // column is NUMERIC(18,6)); finalize still rounds allocation to cents.
+  const fromNative = (native: number) => Math.round(native * lotFx * 1e6) / 1e6;
 
   // Search the card CATALOG directly (not price summaries), so every card is
   // findable — cards you buy in Japan often have no price-summary row.
