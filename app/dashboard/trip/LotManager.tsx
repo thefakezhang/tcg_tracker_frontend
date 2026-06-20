@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Check, Pencil, Upload } from "lucide-react";
+import { Plus, Trash2, Check, Pencil, Upload, ImageOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { useCardData, getCardDisplayName } from "../use-card-data";
@@ -22,6 +22,8 @@ import { Field, FieldGroup } from "@/components/ui/field";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
 import { CollectrImportDialog } from "./CollectrImportDialog";
 
 type CardGame = "pokemon" | "mtg";
@@ -55,7 +57,11 @@ interface LotLine {
   sealedLabel?: string;
   price_override_usd: number | null;
   allocated_cost_usd: number;
-  name: string;
+  regionalName: string;
+  englishName: string | null;
+  setCode: string;
+  cardNumber: string | null;
+  imageUrl: string | null;
 }
 
 const LINE_TABLE: Record<CardGame, string> = {
@@ -81,6 +87,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const [conditions, setConditions] = useState<Cond[]>([]);
   const [csvOpen, setCsvOpen] = useState(false);
   const [delLotOpen, setDelLotOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
 
   // lot-header dialog (create + edit share fields; editingLotId === null => create)
   const [lotDialogOpen, setLotDialogOpen] = useState(false);
@@ -127,17 +134,21 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       const rows = (data as { line_id: number; card_id: number; condition_id: number; quantity: number; price_override_usd: number | null; allocated_cost_usd: number }[]) ?? [];
       if (rows.length === 0) continue;
       const nameTable = game === "pokemon" ? "pokemon_card_definitions" : "mtg_card_definitions_v";
-      const { data: defs } = await supabase
-        .from(nameTable).select("card_id, regional_name, set_code, card_number").in("card_id", rows.map((r) => r.card_id));
-      const nameMap = new Map<number, string>();
-      for (const d of (defs as { card_id: number; regional_name: string; set_code: string; card_number: string | null }[]) ?? []) {
-        nameMap.set(d.card_id, `${d.regional_name} · ${d.set_code} ${d.card_number ?? ""}`.trim());
+      const cols = game === "pokemon"
+        ? "card_id, regional_name, english_name, set_code, card_number, image_url"
+        : "card_id, regional_name, set_code, card_number, image_url";
+      const { data: defs } = await supabase.from(nameTable).select(cols).in("card_id", rows.map((r) => r.card_id));
+      const defMap = new Map<number, { regionalName: string; englishName: string | null; setCode: string; cardNumber: string | null; imageUrl: string | null }>();
+      for (const d of (defs as unknown as { card_id: number; regional_name: string; english_name?: string | null; set_code: string; card_number: string | null; image_url: string | null }[]) ?? []) {
+        defMap.set(d.card_id, { regionalName: d.regional_name, englishName: d.english_name ?? null, setCode: d.set_code, cardNumber: d.card_number, imageUrl: d.image_url });
       }
       for (const r of rows) {
+        const d = defMap.get(r.card_id);
         out.push({
           line_id: r.line_id, table: LINE_TABLE[game], kind: "single", quantity: r.quantity,
-          condition_id: r.condition_id, price_override_usd: r.price_override_usd,
-          allocated_cost_usd: r.allocated_cost_usd, name: nameMap.get(r.card_id) ?? `#${r.card_id}`,
+          condition_id: r.condition_id, price_override_usd: r.price_override_usd, allocated_cost_usd: r.allocated_cost_usd,
+          regionalName: d?.regionalName ?? `#${r.card_id}`, englishName: d?.englishName ?? null,
+          setCode: d?.setCode ?? "", cardNumber: d?.cardNumber ?? null, imageUrl: d?.imageUrl ?? null,
         });
       }
     }
@@ -148,16 +159,18 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     const srows = (sealedRows as { line_id: number; product_id: number; sealed_condition: string; variant_edition: string; quantity: number; price_override_usd: number | null; allocated_cost_usd: number }[]) ?? [];
     if (srows.length > 0) {
       const { data: prods } = await supabase
-        .from("pokemon_sealed_products").select("product_id, name, set_code").in("product_id", srows.map((r) => r.product_id));
-      const pMap = new Map<number, string>();
-      for (const p of (prods as { product_id: number; name: string; set_code: string }[]) ?? []) {
-        pMap.set(p.product_id, `${p.name} · ${p.set_code}`);
+        .from("pokemon_sealed_products").select("product_id, name, set_code, image_url").in("product_id", srows.map((r) => r.product_id));
+      const pMap = new Map<number, { name: string; setCode: string; imageUrl: string | null }>();
+      for (const p of (prods as { product_id: number; name: string; set_code: string; image_url: string | null }[]) ?? []) {
+        pMap.set(p.product_id, { name: p.name, setCode: p.set_code, imageUrl: p.image_url });
       }
       for (const r of srows) {
+        const p = pMap.get(r.product_id);
         out.push({
           line_id: r.line_id, table: SEALED_TABLE, kind: "sealed", quantity: r.quantity,
           sealedLabel: `${r.sealed_condition}/${r.variant_edition}`, price_override_usd: r.price_override_usd,
-          allocated_cost_usd: r.allocated_cost_usd, name: pMap.get(r.product_id) ?? `#${r.product_id}`,
+          allocated_cost_usd: r.allocated_cost_usd, regionalName: p?.name ?? `#${r.product_id}`, englishName: null,
+          setCode: p?.setCode ?? "", cardNumber: null, imageUrl: p?.imageUrl ?? null,
         });
       }
     }
@@ -182,6 +195,10 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
 
   const lot = lots.find((l) => l.lot_id === selectedLot) ?? null;
   const defaultCondition = conditions.find((c) => c.code === "NM")?.condition_id ?? conditions[0]?.condition_id;
+
+  // Language-aware display name (English when set + available, else regional).
+  const lineLabel = (ln: LotLine) =>
+    getCardDisplayName({ regional_name: ln.regionalName, english_name: ln.englishName }, language);
 
   const { data: searchResults } = useCardData({
     activeGame: searchGame, psaMode: "non-psa", search, searchCardNumber: "", searchSetCode: "",
@@ -378,6 +395,48 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
             <p className="text-sm text-muted-foreground">{t("trips.lotFinalizedNote")}</p>
           )}
 
+          <div className="flex items-center justify-between">
+            <Label className="text-sm font-semibold">{t("trips.lotLines")}</Label>
+            <Tabs value={viewMode} onValueChange={(v) => setViewMode(String(v) as "list" | "grid")}>
+              <TabsList>
+                <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
+                <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+
+          {viewMode === "grid" ? (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {lines.map((ln) => (
+                <Card key={`${ln.table}-${ln.line_id}`} size="sm" className="gap-0 overflow-hidden !py-0">
+                  {ln.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={ln.imageUrl} alt={lineLabel(ln)} loading="lazy" className="aspect-[5/7] w-full object-cover" />
+                  ) : (
+                    <div className="flex aspect-[5/7] w-full items-center justify-center bg-muted">
+                      <ImageOff className="size-8 text-muted-foreground" />
+                    </div>
+                  )}
+                  <CardContent className="space-y-1 p-2">
+                    <div className="truncate text-xs font-medium">{lineLabel(ln)}</div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {ln.setCode}{ln.kind === "sealed" ? ` · ${ln.sealedLabel}` : ""}
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span>×{ln.quantity}</span>
+                      <span>{lot.lines_imported ? `$${ln.allocated_cost_usd}` : (ln.price_override_usd != null ? `$${ln.price_override_usd}` : "—")}</span>
+                    </div>
+                    {!lot.lines_imported && (
+                      <Button variant="ghost" size="sm" className="h-6 w-full" onClick={() => removeLine(ln)}>
+                        <Trash2 className="size-3" />
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+              {lines.length === 0 && <p className="col-span-full text-sm text-muted-foreground">{t("trips.empty")}</p>}
+            </div>
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -392,7 +451,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
             <TableBody>
               {lines.map((ln) => (
                 <TableRow key={`${ln.table}-${ln.line_id}`}>
-                  <TableCell className="truncate max-w-[280px]">{ln.name}</TableCell>
+                  <TableCell className="truncate max-w-[280px]">{lineLabel(ln)} · {ln.setCode}</TableCell>
                   <TableCell>
                     {lot.lines_imported ? ln.quantity : (
                       <Input type="number" defaultValue={ln.quantity} className="h-8 w-16"
@@ -432,6 +491,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
               )}
             </TableBody>
           </Table>
+          )}
 
           {!lot.lines_imported && lines.length > 0 && (
             <Button onClick={finalize}>
