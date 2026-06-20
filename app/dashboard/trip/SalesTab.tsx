@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { Undo2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
-type CardGame = "pokemon" | "mtg";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,50 +15,62 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Field, FieldGroup } from "@/components/ui/field";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 
+type CardGame = "pokemon" | "mtg";
+
+// inventory_holdings_v rows now carry item_type + leg + sealed keys.
 interface Holding {
-  game: CardGame;
-  card_id: number;
+  game: string; // 'pokemon' | 'mtg' | 'pokemon_sealed'
+  item_type: "single" | "sealed";
+  leg: string; // 'import' | 'export'
+  card_id: number | null;
+  product_id: number | null;
   name: string;
   set_code: string;
-  condition_id: number;
-  psa_grade: number;
+  condition_id: number | null;
+  psa_grade: number | null;
+  sealed_condition: string | null;
+  variant_edition: string | null;
   qty_on_hand: number;
   avg_cost_usd: number;
   total_cost_usd: number;
 }
 
 interface SaleRow {
+  key: string;
+  kind: "single" | "sealed";
+  game: string;
   sale_id: number;
-  game: CardGame;
-  card_id: number;
-  condition_id: number;
-  psa_grade: number;
+  card_id: number | null;
+  product_id: number | null;
+  condition_id: number | null;
+  psa_grade: number | null;
+  sealed_condition: string | null;
+  variant_edition: string | null;
   name: string;
   sold_at: string;
   quantity: number;
   gross_usd: number;
-  fees_usd: number;
   cogs_usd: number;
   margin_usd: number;
 }
 
-const SALE_TABLE: Record<CardGame, string> = { pokemon: "pokemon_sales", mtg: "mtg_sales" };
 const DEF_TABLE: Record<CardGame, string> = { pokemon: "pokemon_card_definitions", mtg: "mtg_card_definitions_v" };
 
-// Holdings are global (FIFO pools by SKU across trips); the trip P&L picks up
-// whichever layers a sale consumes. This tab is the place to record sales.
 export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const { t } = useTranslation();
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [sel, setSel] = useState<Holding | null>(null);
   const [qty, setQty] = useState("1");
-  const [gross, setGross] = useState("");
+  const [currency, setCurrency] = useState("USD");
+  const [proceeds, setProceeds] = useState("");
+  const [fx, setFx] = useState("0.0067");
   const [fees, setFees] = useState("0");
   const [soldAt, setSoldAt] = useState(new Date().toISOString().slice(0, 10));
 
@@ -67,7 +78,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     const supabase = createClient();
     const { data } = await supabase
       .from("inventory_holdings_v")
-      .select("game, card_id, name, set_code, condition_id, psa_grade, qty_on_hand, avg_cost_usd, total_cost_usd")
+      .select("game, item_type, leg, card_id, product_id, name, set_code, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd")
       .order("total_cost_usd", { ascending: false });
     setHoldings((data as Holding[]) ?? []);
   }, []);
@@ -75,24 +86,44 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const fetchSales = useCallback(async () => {
     const supabase = createClient();
     const out: SaleRow[] = [];
+    // card sales
     for (const game of ["pokemon", "mtg"] as CardGame[]) {
       const { data } = await supabase
-        .from(SALE_TABLE[game])
-        .select("sale_id, card_id, condition_id, psa_grade, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd")
-        .order("sold_at", { ascending: false })
-        .limit(50);
-      const rows = (data as Omit<SaleRow, "game" | "name">[]) ?? [];
+        .from(`${game}_sales`)
+        .select("sale_id, card_id, condition_id, psa_grade, sold_at, quantity, gross_usd, cogs_usd, margin_usd")
+        .order("sold_at", { ascending: false }).limit(50);
+      const rows = (data as { sale_id: number; card_id: number; condition_id: number; psa_grade: number; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number }[]) ?? [];
       if (rows.length === 0) continue;
-      const ids = [...new Set(rows.map((r) => r.card_id))];
       const { data: defs } = await supabase
-        .from(DEF_TABLE[game])
-        .select("card_id, regional_name, set_code, card_number")
-        .in("card_id", ids);
+        .from(DEF_TABLE[game]).select("card_id, regional_name, set_code, card_number").in("card_id", [...new Set(rows.map((r) => r.card_id))]);
       const nameMap = new Map<number, string>();
       for (const d of (defs as { card_id: number; regional_name: string; set_code: string; card_number: string | null }[]) ?? []) {
         nameMap.set(d.card_id, `${d.regional_name} · ${d.set_code} ${d.card_number ?? ""}`.trim());
       }
-      for (const r of rows) out.push({ ...r, game, name: nameMap.get(r.card_id) ?? `#${r.card_id}` });
+      for (const r of rows) out.push({
+        key: `${game}-${r.sale_id}`, kind: "single", game, sale_id: r.sale_id, card_id: r.card_id,
+        product_id: null, condition_id: r.condition_id, psa_grade: r.psa_grade, sealed_condition: null,
+        variant_edition: null, name: nameMap.get(r.card_id) ?? `#${r.card_id}`, sold_at: r.sold_at,
+        quantity: r.quantity, gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
+      });
+    }
+    // sealed sales
+    const { data: sdata } = await supabase
+      .from("pokemon_sealed_sales")
+      .select("sale_id, product_id, sealed_condition, variant_edition, sold_at, quantity, gross_usd, cogs_usd, margin_usd")
+      .order("sold_at", { ascending: false }).limit(50);
+    const srows = (sdata as { sale_id: number; product_id: number; sealed_condition: string; variant_edition: string; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number }[]) ?? [];
+    if (srows.length > 0) {
+      const { data: prods } = await supabase
+        .from("pokemon_sealed_products").select("product_id, name, set_code").in("product_id", [...new Set(srows.map((r) => r.product_id))]);
+      const pMap = new Map<number, string>();
+      for (const p of (prods as { product_id: number; name: string; set_code: string }[]) ?? []) pMap.set(p.product_id, `${p.name} · ${p.set_code}`);
+      for (const r of srows) out.push({
+        key: `sealed-${r.sale_id}`, kind: "sealed", game: "pokemon_sealed", sale_id: r.sale_id, card_id: null,
+        product_id: r.product_id, condition_id: null, psa_grade: null, sealed_condition: r.sealed_condition,
+        variant_edition: r.variant_edition, name: pMap.get(r.product_id) ?? `#${r.product_id}`, sold_at: r.sold_at,
+        quantity: r.quantity, gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
+      });
     }
     out.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1));
     setSales(out);
@@ -100,31 +131,57 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
 
   useEffect(() => { fetchHoldings(); fetchSales(); }, [fetchHoldings, fetchSales]);
 
+  function openSale(h: Holding) {
+    setSel(h);
+    setQty("1"); setProceeds(""); setFees("0");
+    setCurrency(h.leg === "export" ? "JPY" : "USD");
+  }
+
   async function recordSale() {
     if (!sel) return;
     const supabase = createClient();
-    const { error } = await supabase.rpc("record_sale", {
-      p_game: sel.game, p_card_id: sel.card_id, p_condition_id: sel.condition_id,
-      p_psa_grade: sel.psa_grade, p_quantity: Number(qty), p_gross_usd: Number(gross),
-      p_fees_usd: Number(fees) || 0, p_sold_at: soldAt,
-    });
+    const isExport = sel.leg === "export";
+    const native = isExport && currency.toUpperCase() !== "USD";
+    const grossUsd = native ? Math.round(Number(proceeds) * Number(fx) * 100) / 100 : Number(proceeds);
+    const common = {
+      p_quantity: Number(qty), p_gross_usd: native ? 0 : grossUsd, p_fees_usd: Number(fees) || 0,
+      p_sold_at: soldAt, p_leg: sel.leg,
+      p_orig_currency: native ? currency.toUpperCase() : null,
+      p_proceeds_orig: native ? Number(proceeds) : null,
+      p_fx_rate: native ? Number(fx) : 1,
+    };
+    const { error } = sel.item_type === "sealed"
+      ? await supabase.rpc("record_sealed_sale", {
+          p_product_id: sel.product_id, p_sealed_condition: sel.sealed_condition,
+          p_variant_edition: sel.variant_edition, ...common,
+        })
+      : await supabase.rpc("record_sale", {
+          p_game: sel.game, p_card_id: sel.card_id, p_condition_id: sel.condition_id,
+          p_psa_grade: sel.psa_grade ?? 0, ...common,
+        });
     if (error) { alert(error.message); return; }
-    setSel(null); setGross(""); setFees("0"); setQty("1");
+    setSel(null);
     await fetchHoldings(); await fetchSales();
   }
 
-  // Void = reverse a sale: restores the consumed FIFO layers and books a negating
-  // entry (accounting-correct — sales aren't hard-deleted).
   async function voidSale(s: SaleRow) {
     const supabase = createClient();
-    const { error } = await supabase.rpc("record_sale", {
-      p_game: s.game, p_card_id: s.card_id, p_condition_id: s.condition_id,
-      p_psa_grade: s.psa_grade, p_quantity: -Math.abs(s.quantity), p_gross_usd: 0, p_fees_usd: 0,
+    const common = {
+      p_quantity: -Math.abs(s.quantity), p_gross_usd: 0, p_fees_usd: 0,
       p_sold_at: new Date().toISOString().slice(0, 10), p_reverses_sale_id: s.sale_id,
-    });
+    };
+    const { error } = s.kind === "sealed"
+      ? await supabase.rpc("record_sealed_sale", {
+          p_product_id: s.product_id, p_sealed_condition: s.sealed_condition, p_variant_edition: s.variant_edition, ...common,
+        })
+      : await supabase.rpc("record_sale", {
+          p_game: s.game, p_card_id: s.card_id, p_condition_id: s.condition_id, p_psa_grade: s.psa_grade ?? 0, ...common,
+        });
     if (error) { alert(error.message); return; }
     await fetchHoldings(); await fetchSales();
   }
+
+  const native = sel?.leg === "export" && currency.toUpperCase() !== "USD";
 
   return (
     <div className="space-y-4">
@@ -133,7 +190,8 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>{t("trips.card")}</TableHead>
+            <TableHead>{t("trips.item")}</TableHead>
+            <TableHead className="w-16">{t("trips.leg")}</TableHead>
             <TableHead className="w-20">{t("trips.qty")}</TableHead>
             <TableHead className="w-24">{t("trips.avgCost")}</TableHead>
             <TableHead className="w-24" />
@@ -141,19 +199,22 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         </TableHeader>
         <TableBody>
           {holdings.map((h) => (
-            <TableRow key={`${h.game}-${h.card_id}-${h.condition_id}-${h.psa_grade}`}>
-              <TableCell className="truncate max-w-[280px]">{h.name} · {h.set_code}</TableCell>
+            <TableRow key={`${h.game}-${h.card_id ?? h.product_id}-${h.condition_id ?? h.sealed_condition}-${h.psa_grade ?? h.variant_edition}-${h.leg}`}>
+              <TableCell className="truncate max-w-[260px]">
+                {h.name} · {h.set_code}
+                {h.item_type === "sealed" && <span className="text-muted-foreground"> ({h.sealed_condition}/{h.variant_edition})</span>}
+                {h.psa_grade ? <span className="text-muted-foreground"> PSA {h.psa_grade}</span> : ""}
+              </TableCell>
+              <TableCell><Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge></TableCell>
               <TableCell>{h.qty_on_hand}</TableCell>
               <TableCell>${h.avg_cost_usd}</TableCell>
               <TableCell>
-                <Button size="sm" variant="outline" onClick={() => { setSel(h); setQty("1"); }}>
-                  {t("trips.recordSale")}
-                </Button>
+                <Button size="sm" variant="outline" onClick={() => openSale(h)}>{t("trips.recordSale")}</Button>
               </TableCell>
             </TableRow>
           ))}
           {holdings.length === 0 && (
-            <TableRow><TableCell colSpan={4} className="text-muted-foreground">{t("trips.empty")}</TableCell></TableRow>
+            <TableRow><TableCell colSpan={5} className="text-muted-foreground">{t("trips.empty")}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>
@@ -162,7 +223,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>{t("trips.card")}</TableHead>
+            <TableHead>{t("trips.item")}</TableHead>
             <TableHead className="w-24">{t("trips.month")}</TableHead>
             <TableHead className="w-12">{t("trips.qty")}</TableHead>
             <TableHead className="w-20">{t("trips.saleGross")}</TableHead>
@@ -173,7 +234,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         </TableHeader>
         <TableBody>
           {sales.map((s) => (
-            <TableRow key={`${s.game}-${s.sale_id}`}>
+            <TableRow key={s.key}>
               <TableCell className="truncate max-w-[240px]">{s.name}</TableCell>
               <TableCell>{s.sold_at}</TableCell>
               <TableCell>{s.quantity}</TableCell>
@@ -213,8 +274,21 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           <FieldGroup>
             <Field><Label>{t("trips.saleQty")}</Label>
               <Input type="number" value={qty} onChange={(e) => setQty(e.target.value)} /></Field>
-            <Field><Label>{t("trips.saleGross")}</Label>
-              <Input type="number" value={gross} onChange={(e) => setGross(e.target.value)} autoFocus /></Field>
+            {sel?.leg === "export" && (
+              <Field><Label>{t("trips.saleCurrency")}</Label>
+                <Input value={currency} onChange={(e) => setCurrency(e.target.value)} /></Field>
+            )}
+            <Field><Label>{native ? t("trips.saleProceedsOrig") : t("trips.saleGross")}</Label>
+              <Input type="number" value={proceeds} onChange={(e) => setProceeds(e.target.value)} autoFocus /></Field>
+            {native && (
+              <>
+                <Field><Label>{t("trips.saleFx")}</Label>
+                  <Input type="number" value={fx} onChange={(e) => setFx(e.target.value)} /></Field>
+                <p className="text-xs text-muted-foreground">
+                  {t("trips.usdComputed", { usd: (Number(proceeds) * Number(fx) || 0).toFixed(2) })}
+                </p>
+              </>
+            )}
             <Field><Label>{t("trips.saleFees")}</Label>
               <Input type="number" value={fees} onChange={(e) => setFees(e.target.value)} /></Field>
             <Field><Label>{t("trips.month")}</Label>
@@ -222,7 +296,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           </FieldGroup>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSel(null)}>{t("trips.cancel")}</Button>
-            <Button disabled={!gross} onClick={recordSale}>{t("trips.recordSale")}</Button>
+            <Button disabled={!proceeds} onClick={recordSale}>{t("trips.recordSale")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

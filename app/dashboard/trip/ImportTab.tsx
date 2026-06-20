@@ -1,14 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Check, Pencil } from "lucide-react";
+import { Plus, Trash2, Check, Pencil, Upload } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useCardData, getCardDisplayName } from "../use-card-data";
 import { useLanguage } from "../LanguageContext";
+import { useLotPicker } from "../LotPickerContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -16,13 +18,13 @@ import { Field, FieldGroup } from "@/components/ui/field";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { CollectrImportDialog } from "./CollectrImportDialog";
 
-// Trip card lots only cover the two card games (sealed products have their own
-// tables and are out of scope here), so this is narrower than the app's Game type.
 type CardGame = "pokemon" | "mtg";
 
 interface Lot {
   lot_id: number;
+  leg: string;
   acquired_at: string;
   shop_label: string | null;
   orig_currency: string;
@@ -38,13 +40,14 @@ interface Cond {
   display_name: string | null;
 }
 
+// One row unifies card singles and sealed products; `table` says where to write.
 interface LotLine {
   line_id: number;
-  game: CardGame;
-  card_id: number;
-  condition_id: number;
-  psa_grade: number;
+  table: string;
+  kind: "single" | "sealed";
   quantity: number;
+  condition_id?: number;
+  sealedLabel?: string;
   price_override_usd: number | null;
   allocated_cost_usd: number;
   name: string;
@@ -54,14 +57,17 @@ const LINE_TABLE: Record<CardGame, string> = {
   pokemon: "pokemon_lot_lines",
   mtg: "mtg_lot_lines",
 };
+const SEALED_TABLE = "pokemon_sealed_lot_lines";
 
 export default function ImportTab({ tripId }: { tripId: number }) {
   const { t } = useTranslation();
   const { language } = useLanguage();
+  const { refresh: refreshOpenLots } = useLotPicker();
   const [lots, setLots] = useState<Lot[]>([]);
   const [selectedLot, setSelectedLot] = useState<number | null>(null);
   const [lines, setLines] = useState<LotLine[]>([]);
   const [conditions, setConditions] = useState<Cond[]>([]);
+  const [csvOpen, setCsvOpen] = useState(false);
 
   // lot-header dialog (create + edit share fields; editingLotId === null => create)
   const [lotDialogOpen, setLotDialogOpen] = useState(false);
@@ -71,6 +77,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
   const [cCurrency, setCCurrency] = useState("JPY");
   const [cTotal, setCTotal] = useState("");
   const [cFx, setCFx] = useState("0.0067");
+  const [cLeg, setCLeg] = useState("import");
 
   // add-card search state
   const [searchGame, setSearchGame] = useState<CardGame>("pokemon");
@@ -80,7 +87,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
     const supabase = createClient();
     const { data } = await supabase
       .from("acquisition_lots")
-      .select("lot_id, acquired_at, shop_label, orig_currency, total_cost_orig, fx_rate_used, total_cost_usd, lines_imported")
+      .select("lot_id, leg, acquired_at, shop_label, orig_currency, total_cost_orig, fx_rate_used, total_cost_usd, lines_imported")
       .eq("trip_id", tripId)
       .order("acquired_at", { ascending: true });
     setLots((data as Lot[]) ?? []);
@@ -99,34 +106,61 @@ export default function ImportTab({ tripId }: { tripId: number }) {
   const fetchLines = useCallback(async (lotId: number) => {
     const supabase = createClient();
     const out: LotLine[] = [];
+    // card singles
     for (const game of ["pokemon", "mtg"] as CardGame[]) {
       const { data } = await supabase
         .from(LINE_TABLE[game])
-        .select("line_id, card_id, condition_id, psa_grade, quantity, price_override_usd, allocated_cost_usd")
+        .select("line_id, card_id, condition_id, quantity, price_override_usd, allocated_cost_usd")
         .eq("lot_id", lotId);
-      const rows = (data as Omit<LotLine, "game" | "name">[]) ?? [];
+      const rows = (data as { line_id: number; card_id: number; condition_id: number; quantity: number; price_override_usd: number | null; allocated_cost_usd: number }[]) ?? [];
       if (rows.length === 0) continue;
-      const ids = rows.map((r) => r.card_id);
       const nameTable = game === "pokemon" ? "pokemon_card_definitions" : "mtg_card_definitions_v";
       const { data: defs } = await supabase
-        .from(nameTable)
-        .select("card_id, regional_name, set_code, card_number")
-        .in("card_id", ids);
+        .from(nameTable).select("card_id, regional_name, set_code, card_number").in("card_id", rows.map((r) => r.card_id));
       const nameMap = new Map<number, string>();
       for (const d of (defs as { card_id: number; regional_name: string; set_code: string; card_number: string | null }[]) ?? []) {
         nameMap.set(d.card_id, `${d.regional_name} · ${d.set_code} ${d.card_number ?? ""}`.trim());
       }
       for (const r of rows) {
-        out.push({ ...r, game, name: nameMap.get(r.card_id) ?? `#${r.card_id}` });
+        out.push({
+          line_id: r.line_id, table: LINE_TABLE[game], kind: "single", quantity: r.quantity,
+          condition_id: r.condition_id, price_override_usd: r.price_override_usd,
+          allocated_cost_usd: r.allocated_cost_usd, name: nameMap.get(r.card_id) ?? `#${r.card_id}`,
+        });
+      }
+    }
+    // sealed products
+    const { data: sealedRows } = await supabase
+      .from(SEALED_TABLE)
+      .select("line_id, product_id, sealed_condition, variant_edition, quantity, price_override_usd, allocated_cost_usd")
+      .eq("lot_id", lotId);
+    const srows = (sealedRows as { line_id: number; product_id: number; sealed_condition: string; variant_edition: string; quantity: number; price_override_usd: number | null; allocated_cost_usd: number }[]) ?? [];
+    if (srows.length > 0) {
+      const { data: prods } = await supabase
+        .from("pokemon_sealed_products").select("product_id, name, set_code").in("product_id", srows.map((r) => r.product_id));
+      const pMap = new Map<number, string>();
+      for (const p of (prods as { product_id: number; name: string; set_code: string }[]) ?? []) {
+        pMap.set(p.product_id, `${p.name} · ${p.set_code}`);
+      }
+      for (const r of srows) {
+        out.push({
+          line_id: r.line_id, table: SEALED_TABLE, kind: "sealed", quantity: r.quantity,
+          sealedLabel: `${r.sealed_condition}/${r.variant_edition}`, price_override_usd: r.price_override_usd,
+          allocated_cost_usd: r.allocated_cost_usd, name: pMap.get(r.product_id) ?? `#${r.product_id}`,
+        });
       }
     }
     setLines(out);
   }, []);
 
+  const reloadLot = useCallback(async (lotId: number) => {
+    await fetchLines(lotId);
+    await refreshOpenLots();
+  }, [fetchLines, refreshOpenLots]);
+
   useEffect(() => { fetchLots(); fetchConditions(); }, [fetchLots, fetchConditions]);
   useEffect(() => { if (selectedLot) fetchLines(selectedLot); else setLines([]); }, [selectedLot, fetchLines]);
 
-  // Auto-select a lot so the "add cards" panel is visible without an extra click.
   useEffect(() => {
     if (selectedLot === null && lots.length > 0) {
       const draft = lots.find((l) => !l.lines_imported);
@@ -146,7 +180,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
   function openCreate() {
     setEditingLotId(null);
     setCDate(new Date().toISOString().slice(0, 10));
-    setCShop(""); setCCurrency("JPY"); setCTotal(""); setCFx("0.0067");
+    setCShop(""); setCCurrency("JPY"); setCTotal(""); setCFx("0.0067"); setCLeg("import");
     setLotDialogOpen(true);
   }
   function openEditLot(l: Lot) {
@@ -156,6 +190,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
     setCCurrency(l.orig_currency);
     setCTotal(String(l.total_cost_orig));
     setCFx(String(l.fx_rate_used));
+    setCLeg(l.leg);
     setLotDialogOpen(true);
   }
 
@@ -164,7 +199,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
     const fx = Number(cFx) || 1;
     const totalOrig = Number(cTotal) || 0;
     const payload = {
-      acquired_at: cDate, shop_label: cShop || null,
+      leg: cLeg, acquired_at: cDate, shop_label: cShop || null,
       orig_currency: cCurrency.toUpperCase(), total_cost_orig: totalOrig,
       fx_rate_used: fx, total_cost_usd: Math.round(totalOrig * fx * 100) / 100,
     };
@@ -177,6 +212,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
         .from("acquisition_lots").insert({ trip_id: tripId, ...payload }).select("lot_id").single();
       setLotDialogOpen(false);
       await fetchLots();
+      await refreshOpenLots();
       if (data) setSelectedLot((data as { lot_id: number }).lot_id);
     }
   }
@@ -185,22 +221,21 @@ export default function ImportTab({ tripId }: { tripId: number }) {
     if (!selectedLot || !defaultCondition) return;
     const supabase = createClient();
     await supabase.from(LINE_TABLE[searchGame]).insert({
-      lot_id: selectedLot, card_id: cardId, condition_id: defaultCondition,
-      psa_grade: 0, quantity: 1,
+      lot_id: selectedLot, card_id: cardId, condition_id: defaultCondition, psa_grade: 0, quantity: 1,
     });
-    await fetchLines(selectedLot);
+    await reloadLot(selectedLot);
   }
 
   async function updateLine(line: LotLine, patch: Partial<Pick<LotLine, "quantity" | "condition_id" | "price_override_usd">>) {
     const supabase = createClient();
-    await supabase.from(LINE_TABLE[line.game]).update(patch).eq("line_id", line.line_id);
-    if (selectedLot) await fetchLines(selectedLot);
+    await supabase.from(line.table).update(patch).eq("line_id", line.line_id);
+    if (selectedLot) await reloadLot(selectedLot);
   }
 
   async function removeLine(line: LotLine) {
     const supabase = createClient();
-    await supabase.from(LINE_TABLE[line.game]).delete().eq("line_id", line.line_id);
-    if (selectedLot) await fetchLines(selectedLot);
+    await supabase.from(line.table).delete().eq("line_id", line.line_id);
+    if (selectedLot) await reloadLot(selectedLot);
   }
 
   async function finalize() {
@@ -209,7 +244,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
     const { error } = await supabase.rpc("finalize_acquisition_lot", { p_lot_id: selectedLot });
     if (error) { alert(error.message); return; }
     await fetchLots();
-    await fetchLines(selectedLot);
+    await reloadLot(selectedLot);
   }
 
   return (
@@ -228,7 +263,10 @@ export default function ImportTab({ tripId }: { tripId: number }) {
             onClick={() => setSelectedLot(l.lot_id)}
             className={`rounded-md border px-3 py-2 text-left text-sm ${selectedLot === l.lot_id ? "border-primary bg-accent" : "hover:bg-accent/50"}`}
           >
-            <div className="font-medium">{l.shop_label || l.acquired_at}</div>
+            <div className="flex items-center gap-1.5 font-medium">
+              {l.shop_label || l.acquired_at}
+              <Badge variant="secondary" className="text-[10px]">{t(l.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge>
+            </div>
             <div className="text-xs text-muted-foreground">
               {l.orig_currency} {l.total_cost_orig} → ${l.total_cost_usd}
               {l.lines_imported ? ` · ${t("trips.finalized")}` : ""}
@@ -247,9 +285,14 @@ export default function ImportTab({ tripId }: { tripId: number }) {
           <div className="flex items-center justify-between">
             <div className="font-medium">{lot.shop_label || lot.acquired_at}</div>
             {!lot.lines_imported && (
-              <Button variant="outline" size="sm" onClick={() => openEditLot(lot)}>
-                <Pencil className="size-4 mr-1" />{t("trips.editLot")}
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setCsvOpen(true)}>
+                  <Upload className="size-4 mr-1" />{t("trips.importCsv")}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => openEditLot(lot)}>
+                  <Pencil className="size-4 mr-1" />{t("trips.editLot")}
+                </Button>
+              </div>
             )}
           </div>
 
@@ -308,7 +351,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
             </TableHeader>
             <TableBody>
               {lines.map((ln) => (
-                <TableRow key={`${ln.game}-${ln.line_id}`}>
+                <TableRow key={`${ln.table}-${ln.line_id}`}>
                   <TableCell className="truncate max-w-[280px]">{ln.name}</TableCell>
                   <TableCell>
                     {lot.lines_imported ? ln.quantity : (
@@ -317,12 +360,16 @@ export default function ImportTab({ tripId }: { tripId: number }) {
                     )}
                   </TableCell>
                   <TableCell>
-                    {lot.lines_imported ? (conditions.find((c) => c.condition_id === ln.condition_id)?.code ?? ln.condition_id) : (
-                      <select defaultValue={ln.condition_id} className="h-8 rounded-md border bg-background px-1 text-sm"
-                        onChange={(e) => updateLine(ln, { condition_id: Number(e.target.value) })}>
-                        {conditions.map((c) => <option key={c.condition_id} value={c.condition_id}>{c.code}</option>)}
-                      </select>
-                    )}
+                    {ln.kind === "sealed"
+                      ? <span className="text-xs text-muted-foreground">{ln.sealedLabel}</span>
+                      : lot.lines_imported
+                        ? (conditions.find((c) => c.condition_id === ln.condition_id)?.code ?? ln.condition_id)
+                        : (
+                          <select defaultValue={ln.condition_id} className="h-8 rounded-md border bg-background px-1 text-sm"
+                            onChange={(e) => updateLine(ln, { condition_id: Number(e.target.value) })}>
+                            {conditions.map((c) => <option key={c.condition_id} value={c.condition_id}>{c.code}</option>)}
+                          </select>
+                        )}
                   </TableCell>
                   <TableCell>
                     {lot.lines_imported ? (ln.price_override_usd ?? "—") : (
@@ -358,6 +405,12 @@ export default function ImportTab({ tripId }: { tripId: number }) {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader><DialogTitle>{editingLotId ? t("trips.editLot") : t("trips.newLot")}</DialogTitle></DialogHeader>
           <FieldGroup>
+            <Field><Label>{t("trips.leg")}</Label>
+              <select value={cLeg} onChange={(e) => setCLeg(e.target.value)}
+                className="h-9 rounded-md border bg-background px-2 text-sm">
+                <option value="import">{t("trips.legImport")}</option>
+                <option value="export">{t("trips.legExport")}</option>
+              </select></Field>
             <Field><Label>{t("trips.lotDate")}</Label>
               <Input type="date" value={cDate} onChange={(e) => setCDate(e.target.value)} /></Field>
             <Field><Label>{t("trips.lotShop")}</Label>
@@ -378,6 +431,15 @@ export default function ImportTab({ tripId }: { tripId: number }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {lot && !lot.lines_imported && (
+        <CollectrImportDialog
+          open={csvOpen}
+          onClose={() => setCsvOpen(false)}
+          lotId={lot.lot_id}
+          onImported={() => reloadLot(lot.lot_id)}
+        />
+      )}
     </div>
   );
 }
