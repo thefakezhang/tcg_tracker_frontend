@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Plus, Trash2, Check, Pencil, Upload, ImageOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
-import { useCardData, getCardDisplayName } from "../use-card-data";
+import { getCardDisplayName, useDebouncedValue } from "../use-card-data";
 import { useLanguage } from "../LanguageContext";
 import { useLotPicker } from "../LotPickerContext";
 import { Button } from "@/components/ui/button";
@@ -211,11 +211,36 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   };
   const fromNative = (native: number) => Math.round(native * lotFx * 100) / 100;
 
-  const { data: searchResults } = useCardData({
-    activeGame: searchGame, psaMode: "non-psa", search, searchCardNumber: "", searchSetCode: "",
-    selectedTier: 1, sellRegion: "all", minBuyPrice: null, minSellPrice: null,
-    roiFloor: null, roiCeiling: null, sortColumn: "roi", sortAsc: false, page: 0, pageSize: 20,
-  });
+  // Search the card CATALOG directly (not price summaries), so every card is
+  // findable — cards you buy in Japan often have no price-summary row.
+  interface SearchHit { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string | null; }
+  const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
+  const dSearch = useDebouncedValue(search, 300);
+  useEffect(() => {
+    const s = dSearch.trim();
+    if (!s) { setSearchResults([]); return; }
+    const supabase = createClient();
+    const safe = s.replace(/[,()*]/g, " ");
+    const ac = new AbortController();
+    (async () => {
+      let hits: SearchHit[] = [];
+      if (searchGame === "pokemon") {
+        const { data } = await supabase.from("pokemon_card_definitions")
+          .select("card_id, regional_name, english_name, set_code, card_number")
+          .or(`regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,card_number.ilike.%${safe}%`)
+          .limit(25).abortSignal(ac.signal);
+        hits = (data as SearchHit[]) ?? [];
+      } else {
+        const { data } = await supabase.from("mtg_card_definitions_v")
+          .select("card_id, regional_name, set_code, card_number")
+          .or(`regional_name.ilike.%${safe}%,card_number.ilike.%${safe}%`)
+          .limit(25).abortSignal(ac.signal);
+        hits = ((data as Omit<SearchHit, "english_name">[]) ?? []).map((d) => ({ ...d, english_name: null }));
+      }
+      setSearchResults(hits);
+    })().catch(() => { /* aborted / superseded */ });
+    return () => ac.abort();
+  }, [dSearch, searchGame]);
 
   function openCreate() {
     setEditingLotId(null);
@@ -401,11 +426,13 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                 <div className="max-h-56 overflow-auto rounded-md border bg-background">
                   {searchResults.map((r) => (
                     <button
-                      key={r.key}
-                      onClick={() => addLine(Number(r.card.card_id))}
+                      key={r.card_id}
+                      onClick={() => addLine(r.card_id)}
                       className="flex w-full items-center justify-between px-2 py-1.5 text-left text-sm hover:bg-accent"
                     >
-                      <span className="truncate">{getCardDisplayName(r.card, language)} · {r.card.set_code}</span>
+                      <span className="truncate">
+                        {getCardDisplayName({ regional_name: r.regional_name, english_name: r.english_name }, language)} · {r.set_code}{r.card_number ? ` ${r.card_number}` : ""}
+                      </span>
                       <Plus className="size-4 shrink-0" />
                     </button>
                   ))}
