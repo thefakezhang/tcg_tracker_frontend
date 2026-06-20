@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Undo2, ImageOff, ChevronUp, ChevronDown } from "lucide-react";
+import { Undo2, ImageOff, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useLanguage } from "../LanguageContext";
@@ -233,6 +233,16 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     if (sortCol === col) setSortAsc((a) => !a);
     else { setSortCol(col); setSortAsc(true); }
   }
+  const sortHead = (col: "name" | "leg" | "qty" | "avg", lbl: string, className?: string) => (
+    <TableHead className={className}>
+      <button className="flex items-center gap-1 hover:text-foreground" onClick={() => setSort(col)}>
+        {lbl}
+        {sortCol === col
+          ? (sortAsc ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />)
+          : <ChevronsUpDown className="size-3.5 opacity-40" />}
+      </button>
+    </TableHead>
+  );
   const sorted = useMemo(() => {
     if (!sortCol) return holdings;
     const dir = sortAsc ? 1 : -1;
@@ -346,10 +356,10 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         <TableHeader>
           <TableRow>
             <TableHead className="w-8" />
-            <TableHead><button className="flex items-center gap-1" onClick={() => setSort("name")}>{t("trips.item")}{sortCol === "name" && (sortAsc ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />)}</button></TableHead>
-            <TableHead className="w-16"><button className="flex items-center gap-1" onClick={() => setSort("leg")}>{t("trips.leg")}{sortCol === "leg" && (sortAsc ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />)}</button></TableHead>
-            <TableHead className="w-20"><button className="flex items-center gap-1" onClick={() => setSort("qty")}>{t("trips.qty")}{sortCol === "qty" && (sortAsc ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />)}</button></TableHead>
-            <TableHead className="w-24"><button className="flex items-center gap-1" onClick={() => setSort("avg")}>{t("trips.avgCost")}{sortCol === "avg" && (sortAsc ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />)}</button></TableHead>
+            {sortHead("name", t("trips.item"))}
+            {sortHead("leg", t("trips.leg"), "w-16")}
+            {sortHead("qty", t("trips.qty"), "w-20")}
+            {sortHead("avg", t("trips.avgCost"), "w-24")}
             <TableHead className="w-24" />
           </TableRow>
         </TableHeader>
