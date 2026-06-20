@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { useTrips } from "./TripContext";
-import { useLotPicker } from "./LotPickerContext";
+import { useLotPicker, type OpenLot } from "./LotPickerContext";
 
 interface Cond {
   condition_id: number;
@@ -56,18 +56,23 @@ export function AddToLotPopover(props: AddToLotProps) {
     [trips, t]
   );
 
-  async function add(lotId: number, label: string) {
+  async function add(lot: OpenLot, label: string) {
     const n = Math.max(1, Math.floor(Number(qty) || 1));
-    const ov = override.trim() === "" ? null : Number(override);
+    // The override is entered in the chosen lot's currency; convert to the
+    // stored USD via that lot's FX rate (USD lots pass through unchanged).
+    const ovNative = override.trim() === "" ? null : Number(override);
+    const ov = ovNative == null ? null
+      : lot.orig_currency === "USD" ? ovNative
+      : Math.round(ovNative * (lot.fx_rate_used || 1) * 100) / 100;
     if (props.mode === "single") {
       if (!conditionId) return;
       await addCardLine({
-        lotId, game: props.game, cardId: props.cardId, conditionId,
+        lotId: lot.lot_id, game: props.game, cardId: props.cardId, conditionId,
         psaGrade: props.psaGrade, quantity: n, overrideUsd: ov,
       });
     } else {
       await addSealedLine({
-        lotId, productId: props.productId, sealedCondition: props.sealedCondition,
+        lotId: lot.lot_id, productId: props.productId, sealedCondition: props.sealedCondition,
         variantEdition: props.variantEdition, quantity: n, overrideUsd: ov,
       });
     }
@@ -106,7 +111,7 @@ export function AddToLotPopover(props: AddToLotProps) {
         <div>
           <Label className="text-xs">{t("trips.overrideOptional")}</Label>
           <Input
-            type="number" placeholder={t("trips.overridePlaceholder")} value={override}
+            type="number" placeholder={t("trips.overrideLotCcy")} value={override}
             onChange={(e) => setOverride(e.target.value)} className="h-8"
           />
         </div>
@@ -121,10 +126,11 @@ export function AddToLotPopover(props: AddToLotProps) {
                 return (
                   <button
                     key={l.lot_id}
-                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent text-left"
-                    onClick={() => add(l.lot_id, label)}
+                    className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent text-left"
+                    onClick={() => add(l, label)}
                   >
-                    {label}
+                    <span className="truncate">{label}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{l.orig_currency}</span>
                   </button>
                 );
               })}
