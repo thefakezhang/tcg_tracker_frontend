@@ -13,6 +13,11 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Field, FieldGroup } from "@/components/ui/field";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -75,6 +80,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const [lines, setLines] = useState<LotLine[]>([]);
   const [conditions, setConditions] = useState<Cond[]>([]);
   const [csvOpen, setCsvOpen] = useState(false);
+  const [delLotOpen, setDelLotOpen] = useState(false);
 
   // lot-header dialog (create + edit share fields; editingLotId === null => create)
   const [lotDialogOpen, setLotDialogOpen] = useState(false);
@@ -252,6 +258,21 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     await reloadLot(selectedLot);
   }
 
+  async function deleteLot(lotId: number) {
+    // Close the confirm dialog before the async work: deleting clears the
+    // selection, which unmounts this panel (and the dialog) — closing first
+    // lets base-ui release the pointer-events lock so the page stays clickable.
+    setDelLotOpen(false);
+    const supabase = createClient();
+    // Lot lines cascade on delete; the DB blocks deletion of a lot whose lines
+    // have already been sold (sale layers reference them), surfaced here.
+    const { error } = await supabase.from("acquisition_lots").delete().eq("lot_id", lotId);
+    if (error) { alert(error.message); return; }
+    setSelectedLot(null);
+    await fetchLots();
+    await refreshOpenLots();
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -286,16 +307,33 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
         <div className="space-y-3 rounded-md border p-3">
           <div className="flex items-center justify-between">
             <div className="font-medium">{lot.shop_label || lot.acquired_at}</div>
-            {!lot.lines_imported && (
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setCsvOpen(true)}>
-                  <Upload className="size-4 mr-1" />{t("trips.importCsv")}
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => openEditLot(lot)}>
-                  <Pencil className="size-4 mr-1" />{t("trips.editLot")}
-                </Button>
-              </div>
-            )}
+            <div className="flex gap-2">
+              {!lot.lines_imported && (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => setCsvOpen(true)}>
+                    <Upload className="size-4 mr-1" />{t("trips.importCsv")}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => openEditLot(lot)}>
+                    <Pencil className="size-4 mr-1" />{t("trips.editLot")}
+                  </Button>
+                </>
+              )}
+              <AlertDialog open={delLotOpen} onOpenChange={setDelLotOpen}>
+                <AlertDialogTrigger render={<Button variant="outline" size="sm" />}>
+                  <Trash2 className="size-4" />
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{t("trips.deleteLot")}</AlertDialogTitle>
+                    <AlertDialogDescription>{t("trips.deleteLotConfirm")}</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t("trips.cancel")}</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => deleteLot(lot.lot_id)}>{t("trips.delete")}</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           </div>
 
           {!lot.lines_imported ? (

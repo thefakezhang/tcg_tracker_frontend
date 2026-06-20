@@ -181,6 +181,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.statusClosed": "完了",
   "trips.saveChanges": "変更を保存",
   "trips.editLot": "ロットを編集",
+  "trips.deleteLot": "ロットを削除",
+  "trips.deleteLotConfirm": "このロットとカードを削除しますか？売上が記録された確定済みロットは削除できません。",
   "trips.addCardsHeading": "このロットにカードを追加",
   "trips.searchHint": "カード名を入力して検索し、結果をクリックして追加します。",
   "trips.noResults": "一致なし — 別の名前をお試しください。",
