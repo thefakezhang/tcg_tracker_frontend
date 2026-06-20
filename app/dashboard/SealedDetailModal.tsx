@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
+import { AddToLotPopover } from "./AddToLotPopover";
 import { useCurrency } from "./CurrencyContext";
 import { useBuyList } from "./BuyListContext";
 import { Badge } from "@/components/ui/badge";
@@ -439,6 +440,12 @@ export default function SealedDetailModal({
                 </PopoverContent>
               </Popover>
             )}
+            <AddToLotPopover
+              mode="sealed"
+              productId={card.card.card_id}
+              sealedCondition={condition === "all" ? card.sealedCondition : condition}
+              variantEdition={edition === "all" ? card.variantEdition : edition}
+            />
           </div>
         )}
       </DialogContent>

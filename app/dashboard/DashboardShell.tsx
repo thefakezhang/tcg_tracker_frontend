@@ -8,6 +8,7 @@ import { LanguageProvider } from "./LanguageContext";
 import { CurrencyProvider } from "./CurrencyContext";
 import { BuyListProvider, useBuyList } from "./BuyListContext";
 import { TripProvider, useTrips } from "./TripContext";
+import { LotPickerProvider } from "./LotPickerContext";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { AppSidebar } from "./AppSidebar";
 
@@ -60,6 +61,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
       <GameProvider>
         <BuyListProvider>
         <TripProvider>
+        <LotPickerProvider>
         <HeaderProvider>
           <SidebarProvider>
             <AppSidebar user={user} />
@@ -69,6 +71,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
             </SidebarInset>
           </SidebarProvider>
         </HeaderProvider>
+        </LotPickerProvider>
         </TripProvider>
         </BuyListProvider>
       </GameProvider>

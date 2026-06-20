@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
+import { AddToLotPopover } from "./AddToLotPopover";
 import { useGame } from "./GameContext";
 import { useCurrency } from "./CurrencyContext";
 import { useBuyList } from "./BuyListContext";
@@ -489,6 +490,12 @@ export default function CardDetailModal({
                 </PopoverContent>
               </Popover>
             )}
+            <AddToLotPopover
+              mode="single"
+              game={activeGame as "pokemon" | "mtg"}
+              cardId={card.card.card_id}
+              psaGrade={activeTab === "psa" ? (card.psaGrade ?? 0) : 0}
+            />
           </div>
         )}
       </DialogContent>
