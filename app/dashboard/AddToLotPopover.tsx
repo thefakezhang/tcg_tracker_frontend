@@ -64,7 +64,7 @@ export function AddToLotPopover(props: AddToLotProps) {
     const ovNative = override.trim() === "" ? null : Number(override);
     const ov = ovNative == null ? null
       : lot.orig_currency === "USD" ? ovNative
-      : Math.round(ovNative * (lot.fx_rate_used || 1) * 100) / 100;
+      : Math.round(ovNative * (lot.fx_rate_used || 1) * 1e6) / 1e6;
     if (props.mode === "single") {
       if (!conditionId) return;
       await addCardLine({
