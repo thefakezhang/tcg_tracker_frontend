@@ -31,6 +31,7 @@ export function AddToLotPopover(props: AddToLotProps) {
   const [override, setOverride] = useState("");
   const [conditions, setConditions] = useState<Cond[]>([]);
   const [conditionId, setConditionId] = useState<number | null>(null);
+  const [grade, setGrade] = useState(String(props.mode === "single" ? props.psaGrade : 0));
   const [addedTo, setAddedTo] = useState<string | null>(null);
 
   useEffect(() => {
@@ -68,7 +69,7 @@ export function AddToLotPopover(props: AddToLotProps) {
       if (!conditionId) return;
       await addCardLine({
         lotId: lot.lot_id, game: props.game, cardId: props.cardId, conditionId,
-        psaGrade: props.psaGrade, quantity: n, overrideUsd: ov,
+        psaGrade: Math.max(0, Math.floor(Number(grade) || 0)), quantity: n, overrideUsd: ov,
       });
     } else {
       await addSealedLine({
@@ -94,18 +95,25 @@ export function AddToLotPopover(props: AddToLotProps) {
             <Input type="number" min={1} value={qty} onChange={(e) => setQty(e.target.value)} className="h-8" />
           </div>
           {props.mode === "single" && (
-            <div className="flex-1">
-              <Label className="text-xs">{t("trips.condition")}</Label>
-              <select
-                value={conditionId ?? ""}
-                onChange={(e) => setConditionId(Number(e.target.value))}
-                className="h-8 w-full rounded-md border bg-background px-2 text-sm"
-              >
-                {conditions.map((c) => (
-                  <option key={c.condition_id} value={c.condition_id}>{c.code}</option>
-                ))}
-              </select>
-            </div>
+            <>
+              <div className="flex-1">
+                <Label className="text-xs">{t("trips.condition")}</Label>
+                <select
+                  value={conditionId ?? ""}
+                  onChange={(e) => setConditionId(Number(e.target.value))}
+                  className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+                >
+                  {conditions.map((c) => (
+                    <option key={c.condition_id} value={c.condition_id}>{c.code}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="w-16">
+                <Label className="text-xs">{t("trips.psaGrade")}</Label>
+                <Input type="number" min={0} max={10} value={grade}
+                  onChange={(e) => setGrade(e.target.value)} className="h-8" />
+              </div>
+            </>
           )}
         </div>
         <div>
