@@ -108,6 +108,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.colNet": "純利益",
   "trips.colRoi": "ROI %",
   "trips.importLots": "仕入れロット",
+  "trips.exportLots": "輸出ロット（日本へ持ち込み）",
   "trips.newLot": "新規ロット",
   "trips.lotDate": "購入日",
   "trips.lotShop": "店舗",
