@@ -87,11 +87,14 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
       const supabase = createClient();
       // export_goods / export_good_sales / trip_expenses cascade via FK;
       // acquisition_lots.trip_id is ON DELETE SET NULL (inventory history kept).
+      // Navigation away from a deleted trip is the caller's responsibility so it
+      // can be deferred until the confirm dialog has fully closed (otherwise the
+      // dashboard + dialog unmount mid-close and base-ui leaves the body's
+      // pointer-events lock on, freezing the page until a refresh).
       await supabase.from("trips").delete().eq("trip_id", tripId);
-      if (activeTripId === tripId) setActiveTripId(null);
       await fetchTrips();
     },
-    [fetchTrips, activeTripId]
+    [fetchTrips]
   );
 
   return (

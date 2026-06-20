@@ -32,6 +32,7 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
   const trip = trips.find((tr) => tr.trip_id === tripId);
 
   const [editOpen, setEditOpen] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
   const [name, setName] = useState("");
   const [startedAt, setStartedAt] = useState("");
   const [endedAt, setEndedAt] = useState("");
@@ -55,7 +56,7 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
           <Button variant="outline" size="sm" onClick={openEdit}>
             <Pencil className="size-4 mr-1" />{t("trips.edit")}
           </Button>
-          <AlertDialog>
+          <AlertDialog open={delOpen} onOpenChange={setDelOpen}>
             <AlertDialogTrigger render={<Button variant="outline" size="sm" />}>
               <Trash2 className="size-4" />
             </AlertDialogTrigger>
@@ -66,7 +67,16 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>{t("trips.cancel")}</AlertDialogCancel>
-                <AlertDialogAction onClick={async () => { await deleteTrip(tripId); setActiveTripId(0); }}>
+                <AlertDialogAction
+                  onClick={async () => {
+                    // Close the dialog first, then delete and navigate on a later
+                    // tick — so base-ui has committed the close and released the
+                    // body pointer-events lock before this dashboard unmounts.
+                    setDelOpen(false);
+                    await deleteTrip(tripId);
+                    setTimeout(() => setActiveTripId(0), 0);
+                  }}
+                >
                   {t("trips.delete")}
                 </AlertDialogAction>
               </AlertDialogFooter>
