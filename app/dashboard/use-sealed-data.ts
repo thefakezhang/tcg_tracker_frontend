@@ -7,6 +7,7 @@ import {
   type CardRowData,
   type PriceEntry,
   type RegionFilter,
+  useDebouncedValue,
 } from "./use-card-data";
 
 export const SEALED_SUMMARY_VIEW = "pokemon_sealed_summaries_v";
@@ -197,12 +198,15 @@ export function useSealedData(options: {
   const [totalCount, setTotalCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
+  const dSearch = useDebouncedValue(search, 300);
+  const dSetCode = useDebouncedValue(searchSetCode, 300);
+
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    search,
-    searchSetCode,
+    dSearch,
+    dSetCode,
     condition,
     edition,
     sellRegion,
@@ -231,10 +235,10 @@ export function useSealedData(options: {
         ? SEALED_SUMMARY_BEST_VIEW
         : SEALED_SUMMARY_VIEW;
 
-    let query = supabase.from(target).select("*", { count: "exact" });
+    let query = supabase.from(target).select("*", { count: "estimated" });
 
-    const s = search.trim();
-    const sc = searchSetCode.trim();
+    const s = dSearch.trim();
+    const sc = dSetCode.trim();
     if (s) {
       const safe = s.replace(/[,()*]/g, " ");
       query = query.or(
@@ -254,9 +258,20 @@ export function useSealedData(options: {
     query = query.order(dbCol, { ascending: sortAsc, nullsFirst: false });
 
     const from = page * pageSize;
-    query = query.range(from, from + pageSize - 1);
+    query = query.range(from, from + pageSize - 1).abortSignal(abort.signal);
 
-    const { data: rows, error: queryError, count } = await query;
+    let rows: unknown[] | null = null;
+    let queryError: { message: string } | null = null;
+    let count: number | null = null;
+    try {
+      const res = await query;
+      rows = res.data;
+      queryError = res.error;
+      count = res.count;
+    } catch (e) {
+      if (abort.signal.aborted) return;
+      queryError = { message: String(e) };
+    }
 
     if (abort.signal.aborted) return;
 
