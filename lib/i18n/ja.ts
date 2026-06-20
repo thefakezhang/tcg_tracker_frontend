@@ -121,6 +121,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.qty": "数量",
   "trips.condition": "状態",
   "trips.override": "原価上書き (USD)",
+  "trips.overrideCcy": "原価上書き ({ccy})",
   "trips.finalize": "ロットを確定",
   "trips.finalized": "確定済み",
   "trips.allocatedCost": "配賦原価",

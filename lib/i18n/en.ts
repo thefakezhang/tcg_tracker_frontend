@@ -119,6 +119,7 @@ const en = {
   "trips.qty": "Qty",
   "trips.condition": "Condition",
   "trips.override": "Cost override (USD)",
+  "trips.overrideCcy": "Cost override ({ccy})",
   "trips.finalize": "Finalize lot",
   "trips.finalized": "Finalized",
   "trips.allocatedCost": "Allocated cost",

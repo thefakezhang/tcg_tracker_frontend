@@ -200,6 +200,16 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const lineLabel = (ln: LotLine) =>
     getCardDisplayName({ regional_name: ln.regionalName, english_name: ln.englishName }, language);
 
+  // Per-line cost override is stored in USD, but entered in the lot's buying
+  // currency (e.g. JPY for a JP import lot), converted via the lot's FX rate.
+  const lotCcy = lot?.orig_currency ?? "USD";
+  const lotFx = lot?.fx_rate_used || 1;
+  const toNative = (usd: number) => {
+    const n = usd / lotFx;
+    return lotCcy === "JPY" ? Math.round(n) : Math.round(n * 100) / 100;
+  };
+  const fromNative = (native: number) => Math.round(native * lotFx * 100) / 100;
+
   const { data: searchResults } = useCardData({
     activeGame: searchGame, psaMode: "non-psa", search, searchCardNumber: "", searchSetCode: "",
     selectedTier: 1, sellRegion: "all", minBuyPrice: null, minSellPrice: null,
@@ -424,7 +434,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                     </div>
                     <div className="flex items-center justify-between text-xs">
                       <span>×{ln.quantity}</span>
-                      <span>{lot.lines_imported ? `$${ln.allocated_cost_usd}` : (ln.price_override_usd != null ? `$${ln.price_override_usd}` : "—")}</span>
+                      <span>{lot.lines_imported ? `$${ln.allocated_cost_usd}` : (ln.price_override_usd != null ? `${toNative(ln.price_override_usd)} ${lotCcy}` : "—")}</span>
                     </div>
                     {!lot.lines_imported && (
                       <Button variant="ghost" size="sm" className="h-6 w-full" onClick={() => removeLine(ln)}>
@@ -443,7 +453,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                 <TableHead>{t("trips.lotLines")}</TableHead>
                 <TableHead className="w-20">{t("trips.qty")}</TableHead>
                 <TableHead className="w-32">{t("trips.condition")}</TableHead>
-                <TableHead className="w-32">{t("trips.override")}</TableHead>
+                <TableHead className="w-32">{t("trips.overrideCcy", { ccy: lotCcy })}</TableHead>
                 {lot.lines_imported && <TableHead className="w-28">{t("trips.allocatedCost")}</TableHead>}
                 <TableHead className="w-10" />
               </TableRow>
@@ -471,9 +481,9 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                         )}
                   </TableCell>
                   <TableCell>
-                    {lot.lines_imported ? (ln.price_override_usd ?? "—") : (
-                      <Input type="number" defaultValue={ln.price_override_usd ?? ""} placeholder="—" className="h-8 w-20"
-                        onBlur={(e) => updateLine(ln, { price_override_usd: e.target.value === "" ? null : Number(e.target.value) })} />
+                    {lot.lines_imported ? (ln.price_override_usd != null ? toNative(ln.price_override_usd) : "—") : (
+                      <Input type="number" defaultValue={ln.price_override_usd != null ? toNative(ln.price_override_usd) : ""} placeholder="—" className="h-8 w-20"
+                        onBlur={(e) => updateLine(ln, { price_override_usd: e.target.value === "" ? null : fromNative(Number(e.target.value)) })} />
                     )}
                   </TableCell>
                   {lot.lines_imported && <TableCell>${ln.allocated_cost_usd}</TableCell>}
