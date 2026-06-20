@@ -179,6 +179,8 @@ const en = {
   "trips.statusClosed": "Closed",
   "trips.saveChanges": "Save changes",
   "trips.editLot": "Edit lot",
+  "trips.deleteLot": "Delete lot",
+  "trips.deleteLotConfirm": "Delete this lot and its cards? Finalized lots with recorded sales can't be deleted.",
   "trips.addCardsHeading": "Add cards to this lot",
   "trips.searchHint": "Type a card name to search, then click a result to add it.",
   "trips.noResults": "No matches — try a different name.",
