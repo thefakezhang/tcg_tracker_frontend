@@ -5,6 +5,7 @@ import SealedBrowser from "./SealedBrowser";
 import BuyListView from "./BuyListView";
 import TripDashboard from "./TripDashboard";
 import TripsOverview from "./TripsOverview";
+import InventoryView from "./InventoryView";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
 import { useGame } from "./GameContext";
@@ -15,6 +16,9 @@ function DashboardContent() {
   const { activeGame } = useGame();
   if (activeTripId === 0) {
     return <TripsOverview key="trips-overview" />;
+  }
+  if (activeTripId === -1) {
+    return <InventoryView key="inventory" />;
   }
   if (activeTripId) {
     return <TripDashboard key={`trip-${activeTripId}`} tripId={activeTripId} />;

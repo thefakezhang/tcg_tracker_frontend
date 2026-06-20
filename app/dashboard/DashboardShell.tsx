@@ -31,7 +31,9 @@ function DashboardHeader() {
     ? buylists.find((b) => b.buylist_id === activeBuylistId)
     : null;
   const title =
-    activeTrip?.name ?? activeBuylist?.name ?? t(`game.${activeGame}` as TranslationKey);
+    activeTripId === -1
+      ? t("inventory.title")
+      : activeTrip?.name ?? activeBuylist?.name ?? t(`game.${activeGame}` as TranslationKey);
   const description = activeBuylist?.description;
 
   return (
