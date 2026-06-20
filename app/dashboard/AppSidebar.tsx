@@ -34,7 +34,7 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { ChevronsUpDown, DollarSign, Globe, ListChecks, LogOut, Luggage, Map, Package, Plus, ShoppingCart, Sparkles, Squirrel, Trash2 } from "lucide-react";
+import { Boxes, ChevronsUpDown, DollarSign, Globe, ListChecks, LogOut, Luggage, Map, Package, Plus, ShoppingCart, Sparkles, Squirrel, Trash2 } from "lucide-react";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
 import {
@@ -166,6 +166,15 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 >
                   <Map className="size-4" />
                   {t("trips.overviewTitle")}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeTripId === -1}
+                  onClick={() => { setActiveTripId(-1); setActiveBuylistId(null); }}
+                >
+                  <Boxes className="size-4" />
+                  {t("inventory.title")}
                 </SidebarMenuButton>
               </SidebarMenuItem>
               {trips.map((tr) => (
