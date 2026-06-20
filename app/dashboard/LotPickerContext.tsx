@@ -11,6 +11,8 @@ export interface OpenLot {
   leg: string; // 'import' | 'export'
   shop_label: string | null;
   acquired_at: string;
+  orig_currency: string;
+  fx_rate_used: number;
 }
 
 type CardGame = "pokemon" | "mtg";
@@ -56,7 +58,7 @@ export function LotPickerProvider({ children }: { children: React.ReactNode }) {
     const supabase = createClient();
     const { data } = await supabase
       .from("acquisition_lots")
-      .select("lot_id, trip_id, leg, shop_label, acquired_at")
+      .select("lot_id, trip_id, leg, shop_label, acquired_at, orig_currency, fx_rate_used")
       .eq("lines_imported", false)
       .order("acquired_at", { ascending: false });
     setOpenLots((data as OpenLot[]) ?? []);

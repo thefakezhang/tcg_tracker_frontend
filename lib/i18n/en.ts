@@ -198,6 +198,7 @@ const en = {
   "trips.addedToLot": "Added to {lot}",
   "trips.overrideOptional": "Cost override (optional)",
   "trips.overridePlaceholder": "per-unit USD",
+  "trips.overrideLotCcy": "per-unit, in lot's currency",
   "trips.noOpenLots": "No open lots — create one in a trip first.",
   "trips.item": "Item",
   "trips.sealed": "Sealed",

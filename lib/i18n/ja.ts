@@ -200,6 +200,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.addedToLot": "{lot} に追加しました",
   "trips.overrideOptional": "原価指定（任意）",
   "trips.overridePlaceholder": "単価 USD",
+  "trips.overrideLotCcy": "単価（ロットの通貨）",
   "trips.noOpenLots": "未確定のロットがありません。まずトリップで作成してください。",
   "trips.item": "商品",
   "trips.sealed": "未開封",
