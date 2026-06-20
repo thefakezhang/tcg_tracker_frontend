@@ -73,6 +73,14 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [fx, setFx] = useState("0.0067");
   const [fees, setFees] = useState("0");
   const [soldAt, setSoldAt] = useState(new Date().toISOString().slice(0, 10));
+  // Lot sale: pick several holdings, enter one total.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [lotOpen, setLotOpen] = useState(false);
+  const [lotGross, setLotGross] = useState("");
+  const [lotFees, setLotFees] = useState("0");
+  const [lotCurrency, setLotCurrency] = useState("USD");
+  const [lotFx, setLotFx] = useState("0.0067");
+  const [lotDate, setLotDate] = useState(new Date().toISOString().slice(0, 10));
 
   const fetchHoldings = useCallback(async () => {
     const supabase = createClient();
@@ -183,13 +191,72 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
 
   const native = sel?.leg === "export" && currency.toUpperCase() !== "USD";
 
+  // ---- lot sale ----
+  const holdingKey = (h: Holding) =>
+    `${h.game}-${h.card_id ?? h.product_id}-${h.condition_id ?? h.sealed_condition}-${h.psa_grade ?? h.variant_edition}-${h.leg}`;
+  const selectedHoldings = holdings.filter((h) => selected.has(holdingKey(h)));
+  const selectedLeg = selectedHoldings[0]?.leg ?? null;
+
+  function toggle(h: Holding) {
+    const k = holdingKey(h);
+    setSelected((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  }
+  function openLot() {
+    setLotGross(""); setLotFees("0"); setLotDate(new Date().toISOString().slice(0, 10));
+    setLotCurrency(selectedLeg === "export" ? "JPY" : "USD"); setLotFx("0.0067");
+    setLotOpen(true);
+  }
+
+  // Split a total across items by weight, exact to the cent (largest remainder).
+  function allocate(total: number, weights: number[]): number[] {
+    const cents = Math.round((Number(total) || 0) * 100);
+    let ws = weights, tw = ws.reduce((a, b) => a + b, 0);
+    if (tw <= 0) { ws = weights.map(() => 1); tw = ws.length; }
+    const raw = ws.map((w) => (cents * w) / tw);
+    const base = raw.map(Math.floor);
+    const rem = cents - base.reduce((a, b) => a + b, 0);
+    const order = raw.map((r, i) => ({ i, frac: r - Math.floor(r) })).sort((a, b) => b.frac - a.frac);
+    for (let k = 0; k < rem; k++) base[order[k].i]++;
+    return base.map((c) => c / 100);
+  }
+
+  async function recordLotSale() {
+    const items = selectedHoldings;
+    if (items.length === 0) return;
+    const supabase = createClient();
+    const weights = items.map((h) => Number(h.avg_cost_usd) * h.qty_on_hand);
+    const grossAlloc = allocate(Number(lotGross), weights);
+    const feesAlloc = allocate(Number(lotFees) || 0, weights);
+    const isNative = selectedLeg === "export" && lotCurrency.toUpperCase() !== "USD";
+    const payload = items.map((h, idx) => ({
+      kind: h.item_type, game: h.game, card_id: h.card_id, condition_id: h.condition_id, psa_grade: h.psa_grade ?? 0,
+      product_id: h.product_id, sealed_condition: h.sealed_condition, variant_edition: h.variant_edition,
+      quantity: h.qty_on_hand, gross: grossAlloc[idx], fees: feesAlloc[idx],
+    }));
+    const { error } = await supabase.rpc("record_lot_sale", {
+      p_items: payload, p_sold_at: lotDate, p_leg: selectedLeg,
+      p_orig_currency: isNative ? lotCurrency.toUpperCase() : null,
+      p_fx_rate: isNative ? Number(lotFx) : 1,
+    });
+    if (error) { alert(error.message); return; }
+    setLotOpen(false); setSelected(new Set());
+    await fetchHoldings(); await fetchSales();
+  }
+  const lotNative = selectedLeg === "export" && lotCurrency.toUpperCase() !== "USD";
+
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-semibold">{t("trips.recordSale")}</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold">{t("trips.recordSale")}</h2>
+        {selected.size > 0 && (
+          <Button size="sm" onClick={openLot}>{t("trips.sellLot", { n: selected.size })}</Button>
+        )}
+      </div>
 
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8" />
             <TableHead>{t("trips.item")}</TableHead>
             <TableHead className="w-16">{t("trips.leg")}</TableHead>
             <TableHead className="w-20">{t("trips.qty")}</TableHead>
@@ -199,7 +266,12 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         </TableHeader>
         <TableBody>
           {holdings.map((h) => (
-            <TableRow key={`${h.game}-${h.card_id ?? h.product_id}-${h.condition_id ?? h.sealed_condition}-${h.psa_grade ?? h.variant_edition}-${h.leg}`}>
+            <TableRow key={holdingKey(h)}>
+              <TableCell>
+                <input type="checkbox" checked={selected.has(holdingKey(h))}
+                  disabled={selectedLeg !== null && h.leg !== selectedLeg}
+                  onChange={() => toggle(h)} title={t("trips.sellLotHint")} />
+              </TableCell>
               <TableCell className="truncate max-w-[260px]">
                 {h.name} · {h.set_code}
                 {h.item_type === "sealed" && <span className="text-muted-foreground"> ({h.sealed_condition}/{h.variant_edition})</span>}
@@ -214,7 +286,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
             </TableRow>
           ))}
           {holdings.length === 0 && (
-            <TableRow><TableCell colSpan={5} className="text-muted-foreground">{t("trips.empty")}</TableCell></TableRow>
+            <TableRow><TableCell colSpan={6} className="text-muted-foreground">{t("trips.empty")}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>
@@ -297,6 +369,45 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           <DialogFooter>
             <Button variant="outline" onClick={() => setSel(null)}>{t("trips.cancel")}</Button>
             <Button disabled={!proceeds} onClick={recordSale}>{t("trips.recordSale")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={lotOpen} onOpenChange={(o) => !o && setLotOpen(false)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>{t("trips.lotSaleTitle", { n: selectedHoldings.length })}</DialogTitle></DialogHeader>
+          <div className="max-h-40 overflow-auto rounded-md border text-sm">
+            {selectedHoldings.map((h) => (
+              <div key={holdingKey(h)} className="flex items-center justify-between px-2 py-1">
+                <span className="truncate">{h.name}{h.psa_grade ? ` · PSA ${h.psa_grade}` : ""}{h.item_type === "sealed" ? ` · ${h.sealed_condition}/${h.variant_edition}` : ""}</span>
+                <span className="shrink-0 text-muted-foreground">×{h.qty_on_hand}</span>
+              </div>
+            ))}
+          </div>
+          <FieldGroup>
+            {selectedLeg === "export" && (
+              <Field><Label>{t("trips.saleCurrency")}</Label>
+                <Input value={lotCurrency} onChange={(e) => setLotCurrency(e.target.value)} /></Field>
+            )}
+            <Field><Label>{lotNative ? t("trips.saleProceedsOrig") : t("trips.lotProceeds")}</Label>
+              <Input type="number" value={lotGross} onChange={(e) => setLotGross(e.target.value)} autoFocus /></Field>
+            {lotNative && (
+              <>
+                <Field><Label>{t("trips.saleFx")}</Label>
+                  <Input type="number" value={lotFx} onChange={(e) => setLotFx(e.target.value)} /></Field>
+                <p className="text-xs text-muted-foreground">
+                  {t("trips.usdComputed", { usd: (Number(lotGross) * Number(lotFx) || 0).toFixed(2) })}
+                </p>
+              </>
+            )}
+            <Field><Label>{t("trips.saleFees")}</Label>
+              <Input type="number" value={lotFees} onChange={(e) => setLotFees(e.target.value)} /></Field>
+            <Field><Label>{t("trips.month")}</Label>
+              <Input type="date" value={lotDate} onChange={(e) => setLotDate(e.target.value)} /></Field>
+          </FieldGroup>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLotOpen(false)}>{t("trips.cancel")}</Button>
+            <Button disabled={!lotGross} onClick={recordLotSale}>{t("trips.recordSale")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
