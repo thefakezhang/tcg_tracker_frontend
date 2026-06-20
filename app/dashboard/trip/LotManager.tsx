@@ -101,6 +101,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   // add-card search state
   const [searchGame, setSearchGame] = useState<CardGame>("pokemon");
   const [search, setSearch] = useState("");
+  const [searchGrade, setSearchGrade] = useState("0"); // PSA grade for added lines (0 = raw)
 
   const fetchLots = useCallback(async () => {
     const supabase = createClient();
@@ -259,7 +260,8 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     if (!selectedLot || !defaultCondition) return;
     const supabase = createClient();
     await supabase.from(LINE_TABLE[searchGame]).insert({
-      lot_id: selectedLot, card_id: cardId, condition_id: defaultCondition, psa_grade: 0, quantity: 1,
+      lot_id: selectedLot, card_id: cardId, condition_id: defaultCondition,
+      psa_grade: Math.max(0, Math.floor(Number(searchGrade) || 0)), quantity: 1,
     });
     await reloadLot(selectedLot);
   }
@@ -381,7 +383,16 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                   onChange={(e) => setSearch(e.target.value)}
                   className="flex-1"
                 />
+                <div className="flex items-center gap-1">
+                  <Label className="text-xs text-muted-foreground">{t("trips.psaGrade")}</Label>
+                  <Input type="number" min={0} max={10} value={searchGrade}
+                    onChange={(e) => setSearchGrade(e.target.value)} className="h-9 w-14"
+                    title={t("trips.psaGradeHint")} />
+                </div>
               </div>
+              {Number(searchGrade) > 0 && (
+                <p className="text-xs text-muted-foreground">{t("trips.addingAsGrade", { grade: searchGrade })}</p>
+              )}
               {!search && <p className="text-xs text-muted-foreground">{t("trips.searchHint")}</p>}
               {search && searchResults.length === 0 && (
                 <p className="text-xs text-muted-foreground">{t("trips.noResults")}</p>
