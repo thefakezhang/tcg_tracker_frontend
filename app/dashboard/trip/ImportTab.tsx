@@ -1,15 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Check } from "lucide-react";
+import { Plus, Trash2, Check, Pencil } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useCardData, getCardDisplayName } from "../use-card-data";
 import { useLanguage } from "../LanguageContext";
-
-// Trip card lots only cover the two card games (sealed products have their own
-// tables and are out of scope here), so this is narrower than the app's Game type.
-type CardGame = "pokemon" | "mtg";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,12 +17,17 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 
+// Trip card lots only cover the two card games (sealed products have their own
+// tables and are out of scope here), so this is narrower than the app's Game type.
+type CardGame = "pokemon" | "mtg";
+
 interface Lot {
   lot_id: number;
   acquired_at: string;
   shop_label: string | null;
   orig_currency: string;
   total_cost_orig: number;
+  fx_rate_used: number;
   total_cost_usd: number;
   lines_imported: boolean;
 }
@@ -62,8 +63,9 @@ export default function ImportTab({ tripId }: { tripId: number }) {
   const [lines, setLines] = useState<LotLine[]>([]);
   const [conditions, setConditions] = useState<Cond[]>([]);
 
-  // create-lot dialog state
-  const [createOpen, setCreateOpen] = useState(false);
+  // lot-header dialog (create + edit share fields; editingLotId === null => create)
+  const [lotDialogOpen, setLotDialogOpen] = useState(false);
+  const [editingLotId, setEditingLotId] = useState<number | null>(null);
   const [cDate, setCDate] = useState(new Date().toISOString().slice(0, 10));
   const [cShop, setCShop] = useState("");
   const [cCurrency, setCCurrency] = useState("JPY");
@@ -78,7 +80,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
     const supabase = createClient();
     const { data } = await supabase
       .from("acquisition_lots")
-      .select("lot_id, acquired_at, shop_label, orig_currency, total_cost_orig, total_cost_usd, lines_imported")
+      .select("lot_id, acquired_at, shop_label, orig_currency, total_cost_orig, fx_rate_used, total_cost_usd, lines_imported")
       .eq("trip_id", tripId)
       .order("acquired_at", { ascending: true });
     setLots((data as Lot[]) ?? []);
@@ -104,7 +106,6 @@ export default function ImportTab({ tripId }: { tripId: number }) {
         .eq("lot_id", lotId);
       const rows = (data as Omit<LotLine, "game" | "name">[]) ?? [];
       if (rows.length === 0) continue;
-      // resolve names
       const ids = rows.map((r) => r.card_id);
       const nameTable = game === "pokemon" ? "pokemon_card_definitions" : "mtg_card_definitions_v";
       const { data: defs } = await supabase
@@ -125,6 +126,14 @@ export default function ImportTab({ tripId }: { tripId: number }) {
   useEffect(() => { fetchLots(); fetchConditions(); }, [fetchLots, fetchConditions]);
   useEffect(() => { if (selectedLot) fetchLines(selectedLot); else setLines([]); }, [selectedLot, fetchLines]);
 
+  // Auto-select a lot so the "add cards" panel is visible without an extra click.
+  useEffect(() => {
+    if (selectedLot === null && lots.length > 0) {
+      const draft = lots.find((l) => !l.lines_imported);
+      setSelectedLot((draft ?? lots[lots.length - 1]).lot_id);
+    }
+  }, [lots, selectedLot]);
+
   const lot = lots.find((l) => l.lot_id === selectedLot) ?? null;
   const defaultCondition = conditions.find((c) => c.code === "NM")?.condition_id ?? conditions[0]?.condition_id;
 
@@ -134,23 +143,42 @@ export default function ImportTab({ tripId }: { tripId: number }) {
     roiFloor: null, roiCeiling: null, sortColumn: "roi", sortAsc: false, page: 0, pageSize: 20,
   });
 
-  async function createLot() {
+  function openCreate() {
+    setEditingLotId(null);
+    setCDate(new Date().toISOString().slice(0, 10));
+    setCShop(""); setCCurrency("JPY"); setCTotal(""); setCFx("0.0067");
+    setLotDialogOpen(true);
+  }
+  function openEditLot(l: Lot) {
+    setEditingLotId(l.lot_id);
+    setCDate(l.acquired_at);
+    setCShop(l.shop_label ?? "");
+    setCCurrency(l.orig_currency);
+    setCTotal(String(l.total_cost_orig));
+    setCFx(String(l.fx_rate_used));
+    setLotDialogOpen(true);
+  }
+
+  async function saveLot() {
     const supabase = createClient();
     const fx = Number(cFx) || 1;
     const totalOrig = Number(cTotal) || 0;
-    const { data } = await supabase
-      .from("acquisition_lots")
-      .insert({
-        trip_id: tripId, acquired_at: cDate, shop_label: cShop || null,
-        orig_currency: cCurrency.toUpperCase(), total_cost_orig: totalOrig,
-        fx_rate_used: fx, total_cost_usd: Math.round(totalOrig * fx * 100) / 100,
-      })
-      .select("lot_id")
-      .single();
-    setCreateOpen(false);
-    setCShop(""); setCTotal("");
-    await fetchLots();
-    if (data) setSelectedLot((data as { lot_id: number }).lot_id);
+    const payload = {
+      acquired_at: cDate, shop_label: cShop || null,
+      orig_currency: cCurrency.toUpperCase(), total_cost_orig: totalOrig,
+      fx_rate_used: fx, total_cost_usd: Math.round(totalOrig * fx * 100) / 100,
+    };
+    if (editingLotId) {
+      await supabase.from("acquisition_lots").update(payload).eq("lot_id", editingLotId);
+      setLotDialogOpen(false);
+      await fetchLots();
+    } else {
+      const { data } = await supabase
+        .from("acquisition_lots").insert({ trip_id: tripId, ...payload }).select("lot_id").single();
+      setLotDialogOpen(false);
+      await fetchLots();
+      if (data) setSelectedLot((data as { lot_id: number }).lot_id);
+    }
   }
 
   async function addLine(cardId: number) {
@@ -188,7 +216,7 @@ export default function ImportTab({ tripId }: { tripId: number }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">{t("trips.importLots")}</h2>
-        <Button size="sm" onClick={() => setCreateOpen(true)}>
+        <Button size="sm" onClick={openCreate}>
           <Plus className="size-4 mr-1" />{t("trips.newLot")}
         </Button>
       </div>
@@ -210,10 +238,24 @@ export default function ImportTab({ tripId }: { tripId: number }) {
         {lots.length === 0 && <p className="text-sm text-muted-foreground">{t("trips.noLots")}</p>}
       </div>
 
+      {lots.length > 0 && !lot && (
+        <p className="text-sm text-muted-foreground">{t("trips.selectLotHint")}</p>
+      )}
+
       {lot && (
         <div className="space-y-3 rounded-md border p-3">
-          {!lot.lines_imported && (
-            <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="font-medium">{lot.shop_label || lot.acquired_at}</div>
+            {!lot.lines_imported && (
+              <Button variant="outline" size="sm" onClick={() => openEditLot(lot)}>
+                <Pencil className="size-4 mr-1" />{t("trips.editLot")}
+              </Button>
+            )}
+          </div>
+
+          {!lot.lines_imported ? (
+            <div className="space-y-2 rounded-md bg-muted/40 p-3">
+              <Label className="text-sm font-semibold">{t("trips.addCardsHeading")}</Label>
               <div className="flex gap-2">
                 <select
                   value={searchGame}
@@ -227,10 +269,15 @@ export default function ImportTab({ tripId }: { tripId: number }) {
                   placeholder={t("trips.searchCards")}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
+                  className="flex-1"
                 />
               </div>
-              {search && (
-                <div className="max-h-48 overflow-auto rounded-md border">
+              {!search && <p className="text-xs text-muted-foreground">{t("trips.searchHint")}</p>}
+              {search && searchResults.length === 0 && (
+                <p className="text-xs text-muted-foreground">{t("trips.noResults")}</p>
+              )}
+              {search && searchResults.length > 0 && (
+                <div className="max-h-56 overflow-auto rounded-md border bg-background">
                   {searchResults.map((r) => (
                     <button
                       key={r.key}
@@ -244,6 +291,8 @@ export default function ImportTab({ tripId }: { tripId: number }) {
                 </div>
               )}
             </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t("trips.lotFinalizedNote")}</p>
           )}
 
           <Table>
@@ -291,6 +340,9 @@ export default function ImportTab({ tripId }: { tripId: number }) {
                   </TableCell>
                 </TableRow>
               ))}
+              {lines.length === 0 && (
+                <TableRow><TableCell colSpan={lot.lines_imported ? 6 : 5} className="text-muted-foreground">{t("trips.empty")}</TableCell></TableRow>
+              )}
             </TableBody>
           </Table>
 
@@ -302,9 +354,9 @@ export default function ImportTab({ tripId }: { tripId: number }) {
         </div>
       )}
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={lotDialogOpen} onOpenChange={setLotDialogOpen}>
         <DialogContent className="sm:max-w-sm">
-          <DialogHeader><DialogTitle>{t("trips.newLot")}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editingLotId ? t("trips.editLot") : t("trips.newLot")}</DialogTitle></DialogHeader>
           <FieldGroup>
             <Field><Label>{t("trips.lotDate")}</Label>
               <Input type="date" value={cDate} onChange={(e) => setCDate(e.target.value)} /></Field>
@@ -321,8 +373,8 @@ export default function ImportTab({ tripId }: { tripId: number }) {
             </p>
           </FieldGroup>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>{t("trips.cancel")}</Button>
-            <Button disabled={!cTotal} onClick={createLot}>{t("trips.save")}</Button>
+            <Button variant="outline" onClick={() => setLotDialogOpen(false)}>{t("trips.cancel")}</Button>
+            <Button disabled={!cTotal} onClick={saveLot}>{editingLotId ? t("trips.saveChanges") : t("trips.save")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
