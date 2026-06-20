@@ -106,6 +106,7 @@ const en = {
   "trips.colNet": "Net",
   "trips.colRoi": "ROI %",
   "trips.importLots": "Acquisition Lots",
+  "trips.exportLots": "Export Lots (carry to Japan)",
   "trips.newLot": "New Lot",
   "trips.lotDate": "Purchase date",
   "trips.lotShop": "Shop",
