@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Undo2, ImageOff } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Undo2, ImageOff, ChevronUp, ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useLanguage } from "../LanguageContext";
@@ -89,6 +89,8 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [lotDate, setLotDate] = useState(new Date().toISOString().slice(0, 10));
   const [lotQty, setLotQty] = useState<Record<string, string>>({});
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const [sortCol, setSortCol] = useState<"name" | "leg" | "qty" | "avg" | null>(null);
+  const [sortAsc, setSortAsc] = useState(true);
   const { language } = useLanguage();
 
   const fetchHoldings = useCallback(async () => {
@@ -227,6 +229,21 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const label = (h: Holding) => getCardDisplayName({ regional_name: h.name, english_name: h.englishName }, language);
   const qtyOf = (h: Holding) => Math.max(1, Math.min(h.qty_on_hand, Math.floor(Number(lotQty[holdingKey(h)]) || h.qty_on_hand)));
 
+  function setSort(col: "name" | "leg" | "qty" | "avg") {
+    if (sortCol === col) setSortAsc((a) => !a);
+    else { setSortCol(col); setSortAsc(true); }
+  }
+  const sorted = useMemo(() => {
+    if (!sortCol) return holdings;
+    const dir = sortAsc ? 1 : -1;
+    const val = (h: Holding): string | number =>
+      sortCol === "name" ? getCardDisplayName({ regional_name: h.name, english_name: h.englishName }, language).toLowerCase()
+      : sortCol === "leg" ? h.leg
+      : sortCol === "qty" ? h.qty_on_hand
+      : Number(h.avg_cost_usd);
+    return [...holdings].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
+  }, [holdings, sortCol, sortAsc, language]);
+
   function toggle(h: Holding) {
     const k = holdingKey(h);
     setSelected((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
@@ -296,7 +313,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
 
       {viewMode === "grid" ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
-          {holdings.map((h) => {
+          {sorted.map((h) => {
             const disabled = selectedLeg !== null && h.leg !== selectedLeg;
             return (
               <Card key={holdingKey(h)} size="sm" className={`gap-0 overflow-hidden !py-0 ${selected.has(holdingKey(h)) ? "ring-2 ring-primary" : ""}`}>
@@ -329,15 +346,15 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         <TableHeader>
           <TableRow>
             <TableHead className="w-8" />
-            <TableHead>{t("trips.item")}</TableHead>
-            <TableHead className="w-16">{t("trips.leg")}</TableHead>
-            <TableHead className="w-20">{t("trips.qty")}</TableHead>
-            <TableHead className="w-24">{t("trips.avgCost")}</TableHead>
+            <TableHead><button className="flex items-center gap-1" onClick={() => setSort("name")}>{t("trips.item")}{sortCol === "name" && (sortAsc ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />)}</button></TableHead>
+            <TableHead className="w-16"><button className="flex items-center gap-1" onClick={() => setSort("leg")}>{t("trips.leg")}{sortCol === "leg" && (sortAsc ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />)}</button></TableHead>
+            <TableHead className="w-20"><button className="flex items-center gap-1" onClick={() => setSort("qty")}>{t("trips.qty")}{sortCol === "qty" && (sortAsc ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />)}</button></TableHead>
+            <TableHead className="w-24"><button className="flex items-center gap-1" onClick={() => setSort("avg")}>{t("trips.avgCost")}{sortCol === "avg" && (sortAsc ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />)}</button></TableHead>
             <TableHead className="w-24" />
           </TableRow>
         </TableHeader>
         <TableBody>
-          {holdings.map((h) => (
+          {sorted.map((h) => (
             <TableRow key={holdingKey(h)}>
               <TableCell>
                 <input type="checkbox" checked={selected.has(holdingKey(h))}
