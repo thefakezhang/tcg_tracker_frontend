@@ -7,11 +7,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import AccountingRollupView from "../AccountingRollupView";
 
 interface Pnl {
-  export_revenue_usd: number;
-  export_profit_usd: number;
   import_lot_cost_usd: number;
   import_realized_margin_usd: number;
   import_unrealized_cost_usd: number;
+  export_lot_cost_usd: number;
+  export_realized_margin_usd: number;
+  export_unrealized_cost_usd: number;
   expenses_usd: number;
   realized_net_usd: number;
 }
@@ -44,12 +45,14 @@ export default function PnlTab({ tripId }: { tripId: number }) {
       <div>
         <h2 className="mb-3 text-base font-semibold">{t("trips.pnlTitle")}</h2>
         {pnl && (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <Stat label={t("trips.exportProfit")} value={pnl.export_profit_usd} />
-            <Stat label={t("trips.importLotCost")} value={pnl.import_lot_cost_usd} />
-            <Stat label={t("trips.importRealized")} value={pnl.import_realized_margin_usd} />
-            <Stat label={t("trips.importUnrealized")} value={pnl.import_unrealized_cost_usd} />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label={t("trips.importCost")} value={pnl.import_lot_cost_usd} />
+            <Stat label={t("trips.importMargin")} value={pnl.import_realized_margin_usd} />
+            <Stat label={t("trips.importUnsold")} value={pnl.import_unrealized_cost_usd} />
             <Stat label={t("trips.expenses")} value={pnl.expenses_usd} />
+            <Stat label={t("trips.exportCost")} value={pnl.export_lot_cost_usd} />
+            <Stat label={t("trips.exportMargin")} value={pnl.export_realized_margin_usd} />
+            <Stat label={t("trips.exportUnsold")} value={pnl.export_unrealized_cost_usd} />
             <Stat label={t("trips.netProfit")} value={pnl.realized_net_usd} />
           </div>
         )}
