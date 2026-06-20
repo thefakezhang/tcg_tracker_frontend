@@ -231,6 +231,17 @@ function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRowData {
 
 export type RegionFilter = "all" | "NA" | "JP";
 
+// Debounce free-text inputs so we fire one query after typing settles, not one
+// per keystroke (each query is an ilike over a joined table — expensive).
+export function useDebouncedValue<T>(value: T, ms: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(id);
+  }, [value, ms]);
+  return debounced;
+}
+
 export function useCardData(options: {
   activeGame: Game;
   psaMode: PsaMode;
@@ -280,6 +291,10 @@ export function useCardData(options: {
   const [totalCount, setTotalCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
+  const dSearch = useDebouncedValue(search, 300);
+  const dCardNumber = useDebouncedValue(searchCardNumber, 300);
+  const dSetCode = useDebouncedValue(searchSetCode, 300);
+
   useEffect(() => {
     const supabase = createClient();
     fetchConditionsCache(supabase).then((c) => setAvailableTiers(c.tiers));
@@ -287,7 +302,8 @@ export function useCardData(options: {
 
   useEffect(() => {
     fetchPage();
-  }, [activeGame, psaMode, search, searchCardNumber, searchSetCode, selectedTier, sellRegion, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, page, pageSize]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -306,7 +322,7 @@ export function useCardData(options: {
 
     let query = supabase
       .from(summariesTable)
-      .select(selectStr, { count: "exact" });
+      .select(selectStr, { count: "estimated" });
 
     // Filter by tier/psa
     if (psaMode === "non-psa") {
@@ -315,10 +331,10 @@ export function useCardData(options: {
       query = query.eq("tier", -1).gt("psa_grade", 0);
     }
 
-    // Search filters on joined card_definitions
-    const s = search.trim();
-    const cn = searchCardNumber.trim();
-    const sc = searchSetCode.trim();
+    // Search filters on joined card_definitions (debounced values)
+    const s = dSearch.trim();
+    const cn = dCardNumber.trim();
+    const sc = dSetCode.trim();
     if (s) {
       // Escape characters that have meaning in PostgREST or-filters
       const safe = s.replace(/[,()*]/g, " ");
@@ -360,9 +376,21 @@ export function useCardData(options: {
     // Pagination
     const from = page * pageSize;
     const to = from + pageSize - 1;
-    query = query.range(from, to);
+    query = query.range(from, to).abortSignal(abort.signal);
 
-    const { data: rows, error: queryError, count } = await query;
+    let rows: unknown[] | null = null;
+    let queryError: { message: string } | null = null;
+    let count: number | null = null;
+    try {
+      const res = await query;
+      rows = res.data;
+      queryError = res.error;
+      count = res.count;
+    } catch (e) {
+      // Superseded by a newer query (abort) — drop silently.
+      if (abort.signal.aborted) return;
+      queryError = { message: String(e) };
+    }
 
     if (abort.signal.aborted) return;
 
