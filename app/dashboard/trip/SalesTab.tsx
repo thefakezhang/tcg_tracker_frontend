@@ -1,9 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Undo2 } from "lucide-react";
+import { Undo2, ImageOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
+import { useLanguage } from "../LanguageContext";
+import { getCardDisplayName } from "../use-card-data";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -39,6 +43,8 @@ interface Holding {
   qty_on_hand: number;
   avg_cost_usd: number;
   total_cost_usd: number;
+  imageUrl: string | null;
+  englishName: string | null;
 }
 
 interface SaleRow {
@@ -81,6 +87,9 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [lotCurrency, setLotCurrency] = useState("USD");
   const [lotFx, setLotFx] = useState("0.0067");
   const [lotDate, setLotDate] = useState(new Date().toISOString().slice(0, 10));
+  const [lotQty, setLotQty] = useState<Record<string, string>>({});
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const { language } = useLanguage();
 
   const fetchHoldings = useCallback(async () => {
     const supabase = createClient();
@@ -88,7 +97,26 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       .from("inventory_holdings_v")
       .select("game, item_type, leg, card_id, product_id, name, set_code, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd")
       .order("total_cost_usd", { ascending: false });
-    setHoldings((data as Holding[]) ?? []);
+    const rows = ((data as Omit<Holding, "imageUrl" | "englishName">[]) ?? []).map((h) => ({ ...h, imageUrl: null as string | null, englishName: null as string | null }));
+    // batch-fetch image_url (+ english_name for pokemon) for grid view
+    const ids = (g: string, key: "card_id" | "product_id") => rows.filter((r) => r.game === g).map((r) => r[key]!).filter(Boolean);
+    const fetchDefs = async (table: string, idCol: string, list: number[], cols: string) => {
+      const m = new Map<number, { image_url: string | null; english_name?: string | null }>();
+      if (list.length === 0) return m;
+      const { data: defs } = await supabase.from(table).select(cols).in(idCol, list);
+      for (const d of (defs as unknown as Record<string, unknown>[]) ?? []) m.set(d[idCol] as number, { image_url: (d.image_url as string) ?? null, english_name: (d.english_name as string) ?? null });
+      return m;
+    };
+    const [pkm, mtg, sealed] = await Promise.all([
+      fetchDefs("pokemon_card_definitions", "card_id", ids("pokemon", "card_id"), "card_id, image_url, english_name"),
+      fetchDefs("mtg_card_definitions_v", "card_id", ids("mtg", "card_id"), "card_id, image_url"),
+      fetchDefs("pokemon_sealed_products", "product_id", ids("pokemon_sealed", "product_id"), "product_id, image_url"),
+    ]);
+    for (const r of rows) {
+      const hit = r.game === "pokemon" ? pkm.get(r.card_id!) : r.game === "mtg" ? mtg.get(r.card_id!) : sealed.get(r.product_id!);
+      if (hit) { r.imageUrl = hit.image_url; r.englishName = hit.english_name ?? null; }
+    }
+    setHoldings(rows);
   }, []);
 
   const fetchSales = useCallback(async () => {
@@ -196,12 +224,17 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     `${h.game}-${h.card_id ?? h.product_id}-${h.condition_id ?? h.sealed_condition}-${h.psa_grade ?? h.variant_edition}-${h.leg}`;
   const selectedHoldings = holdings.filter((h) => selected.has(holdingKey(h)));
   const selectedLeg = selectedHoldings[0]?.leg ?? null;
+  const label = (h: Holding) => getCardDisplayName({ regional_name: h.name, english_name: h.englishName }, language);
+  const qtyOf = (h: Holding) => Math.max(1, Math.min(h.qty_on_hand, Math.floor(Number(lotQty[holdingKey(h)]) || h.qty_on_hand)));
 
   function toggle(h: Holding) {
     const k = holdingKey(h);
     setSelected((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   }
   function openLot() {
+    const q: Record<string, string> = {};
+    for (const h of selectedHoldings) q[holdingKey(h)] = String(h.qty_on_hand);
+    setLotQty(q);
     setLotGross(""); setLotFees("0"); setLotDate(new Date().toISOString().slice(0, 10));
     setLotCurrency(selectedLeg === "export" ? "JPY" : "USD"); setLotFx("0.0067");
     setLotOpen(true);
@@ -224,14 +257,14 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     const items = selectedHoldings;
     if (items.length === 0) return;
     const supabase = createClient();
-    const weights = items.map((h) => Number(h.avg_cost_usd) * h.qty_on_hand);
+    const weights = items.map((h) => Number(h.avg_cost_usd) * qtyOf(h));
     const grossAlloc = allocate(Number(lotGross), weights);
     const feesAlloc = allocate(Number(lotFees) || 0, weights);
     const isNative = selectedLeg === "export" && lotCurrency.toUpperCase() !== "USD";
     const payload = items.map((h, idx) => ({
       kind: h.item_type, game: h.game, card_id: h.card_id, condition_id: h.condition_id, psa_grade: h.psa_grade ?? 0,
       product_id: h.product_id, sealed_condition: h.sealed_condition, variant_edition: h.variant_edition,
-      quantity: h.qty_on_hand, gross: grossAlloc[idx], fees: feesAlloc[idx],
+      quantity: qtyOf(h), gross: grossAlloc[idx], fees: feesAlloc[idx],
     }));
     const { error } = await supabase.rpc("record_lot_sale", {
       p_items: payload, p_sold_at: lotDate, p_leg: selectedLeg,
@@ -246,13 +279,52 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h2 className="text-base font-semibold">{t("trips.recordSale")}</h2>
-        {selected.size > 0 && (
-          <Button size="sm" onClick={openLot}>{t("trips.sellLot", { n: selected.size })}</Button>
-        )}
+        <div className="flex items-center gap-2">
+          {selected.size > 0 && (
+            <Button size="sm" onClick={openLot}>{t("trips.sellLot", { n: selected.size })}</Button>
+          )}
+          <Tabs value={viewMode} onValueChange={(v) => setViewMode(String(v) as "list" | "grid")}>
+            <TabsList>
+              <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
+              <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
       </div>
 
+      {viewMode === "grid" ? (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+          {holdings.map((h) => {
+            const disabled = selectedLeg !== null && h.leg !== selectedLeg;
+            return (
+              <Card key={holdingKey(h)} size="sm" className={`gap-0 overflow-hidden !py-0 ${selected.has(holdingKey(h)) ? "ring-2 ring-primary" : ""}`}>
+                <div className="relative">
+                  {h.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={h.imageUrl} alt={label(h)} loading="lazy" className="aspect-[5/7] w-full object-cover" />
+                  ) : (
+                    <div className="flex aspect-[5/7] w-full items-center justify-center bg-muted"><ImageOff className="size-8 text-muted-foreground" /></div>
+                  )}
+                  <input type="checkbox" checked={selected.has(holdingKey(h))} disabled={disabled}
+                    onChange={() => toggle(h)} title={t("trips.sellLotHint")} className="absolute left-1 top-1 size-4" />
+                </div>
+                <CardContent className="space-y-1 p-2">
+                  <div className="truncate text-xs font-medium">{label(h)}</div>
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge>
+                    <span className="truncate">{h.item_type === "sealed" ? `${h.sealed_condition}/${h.variant_edition}` : h.psa_grade ? `PSA ${h.psa_grade}` : ""}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs"><span>×{h.qty_on_hand}</span><span>${h.avg_cost_usd}</span></div>
+                  <Button size="sm" variant="outline" className="h-6 w-full" onClick={() => openSale(h)}>{t("trips.recordSale")}</Button>
+                </CardContent>
+              </Card>
+            );
+          })}
+          {holdings.length === 0 && <p className="col-span-full text-sm text-muted-foreground">{t("trips.empty")}</p>}
+        </div>
+      ) : (
       <Table>
         <TableHeader>
           <TableRow>
@@ -273,7 +345,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                   onChange={() => toggle(h)} title={t("trips.sellLotHint")} />
               </TableCell>
               <TableCell className="truncate max-w-[260px]">
-                {h.name} · {h.set_code}
+                {label(h)} · {h.set_code}
                 {h.item_type === "sealed" && <span className="text-muted-foreground"> ({h.sealed_condition}/{h.variant_edition})</span>}
                 {h.psa_grade ? <span className="text-muted-foreground"> PSA {h.psa_grade}</span> : ""}
               </TableCell>
@@ -290,6 +362,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           )}
         </TableBody>
       </Table>
+      )}
 
       <h3 className="text-sm font-semibold">{t("trips.salesHistory")}</h3>
       <Table>
@@ -376,11 +449,15 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       <Dialog open={lotOpen} onOpenChange={(o) => !o && setLotOpen(false)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>{t("trips.lotSaleTitle", { n: selectedHoldings.length })}</DialogTitle></DialogHeader>
-          <div className="max-h-40 overflow-auto rounded-md border text-sm">
+          <div className="max-h-44 space-y-1 overflow-auto rounded-md border p-1 text-sm">
             {selectedHoldings.map((h) => (
-              <div key={holdingKey(h)} className="flex items-center justify-between px-2 py-1">
-                <span className="truncate">{h.name}{h.psa_grade ? ` · PSA ${h.psa_grade}` : ""}{h.item_type === "sealed" ? ` · ${h.sealed_condition}/${h.variant_edition}` : ""}</span>
-                <span className="shrink-0 text-muted-foreground">×{h.qty_on_hand}</span>
+              <div key={holdingKey(h)} className="flex items-center gap-2 px-1 py-0.5">
+                <span className="flex-1 truncate">{label(h)}{h.psa_grade ? ` · PSA ${h.psa_grade}` : ""}{h.item_type === "sealed" ? ` · ${h.sealed_condition}/${h.variant_edition}` : ""}</span>
+                <Input type="number" min={1} max={h.qty_on_hand}
+                  value={lotQty[holdingKey(h)] ?? String(h.qty_on_hand)}
+                  onChange={(e) => setLotQty((p) => ({ ...p, [holdingKey(h)]: e.target.value }))}
+                  className="h-7 w-16" />
+                <span className="shrink-0 text-xs text-muted-foreground">/ {h.qty_on_hand}</span>
               </div>
             ))}
           </div>
