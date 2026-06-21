@@ -80,7 +80,7 @@ export function DataTable<TData, TValue>({
   return (
     <div>
       {viewMode === "grid" && renderGridItem ? (
-        loading ? (
+        loading && table.getRowModel().rows.length === 0 ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
             {Array.from({ length: 10 }).map((_, i) => (
               <div key={i} className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
@@ -132,7 +132,7 @@ export function DataTable<TData, TValue>({
               ))}
             </TableHeader>
             <TableBody>
-              {loading ? (
+              {loading && table.getRowModel().rows.length === 0 ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i}>
                     {columns.map((_, j) => (
