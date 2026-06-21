@@ -33,6 +33,7 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
 
   const [editOpen, setEditOpen] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
+  const [tab, setTab] = useState("import");
   const [name, setName] = useState("");
   const [startedAt, setStartedAt] = useState("");
   const [endedAt, setEndedAt] = useState("");
@@ -85,7 +86,10 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
         </div>
       </div>
 
-      <Tabs defaultValue="import" className="space-y-4">
+      {/* Controlled + lazy: only the active tab mounts, so opening a trip
+          fires one tab's queries instead of all five at once (which overloaded
+          the connection and left sections intermittently blank). */}
+      <Tabs value={tab} onValueChange={(v) => setTab(String(v))} className="space-y-4">
         <TabsList>
           <TabsTrigger value="export">{t("trips.tabExport")}</TabsTrigger>
           <TabsTrigger value="import">{t("trips.tabImport")}</TabsTrigger>
@@ -93,11 +97,11 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
           <TabsTrigger value="expenses">{t("trips.tabExpenses")}</TabsTrigger>
           <TabsTrigger value="pnl">{t("trips.tabPnl")}</TabsTrigger>
         </TabsList>
-        <TabsContent value="export"><ExportTab tripId={tripId} /></TabsContent>
-        <TabsContent value="import"><ImportTab tripId={tripId} /></TabsContent>
-        <TabsContent value="sales"><SalesTab tripId={tripId} /></TabsContent>
-        <TabsContent value="expenses"><ExpensesTab tripId={tripId} /></TabsContent>
-        <TabsContent value="pnl"><PnlTab tripId={tripId} /></TabsContent>
+        <TabsContent value="export">{tab === "export" && <ExportTab tripId={tripId} />}</TabsContent>
+        <TabsContent value="import">{tab === "import" && <ImportTab tripId={tripId} />}</TabsContent>
+        <TabsContent value="sales">{tab === "sales" && <SalesTab tripId={tripId} />}</TabsContent>
+        <TabsContent value="expenses">{tab === "expenses" && <ExpensesTab tripId={tripId} />}</TabsContent>
+        <TabsContent value="pnl">{tab === "pnl" && <PnlTab tripId={tripId} />}</TabsContent>
       </Tabs>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
