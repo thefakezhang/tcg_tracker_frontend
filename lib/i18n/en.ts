@@ -140,6 +140,8 @@ const en = {
   "trips.saleQty": "Quantity",
   "trips.saleCogs": "COGS",
   "trips.saleMargin": "Margin",
+  "trips.saleMarginPct": "Margin %",
+  "trips.sortBy": "Sort",
   "trips.salesHistory": "Sales",
   "trips.exportGoods": "Export Goods",
   "trips.addGood": "Add good",

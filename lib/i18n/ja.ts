@@ -142,6 +142,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.saleQty": "数量",
   "trips.saleCogs": "売上原価",
   "trips.saleMargin": "粗利",
+  "trips.saleMarginPct": "粗利率",
+  "trips.sortBy": "並び替え",
   "trips.salesHistory": "販売履歴",
   "trips.exportGoods": "輸出商品",
   "trips.addGood": "商品を追加",
