@@ -4,7 +4,6 @@ import { useCallback, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
-import { useLotPicker } from "../LotPickerContext";
 import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
@@ -60,7 +59,6 @@ export function CollectrImportDialog({
   onImported: () => void;
 }) {
   const { t } = useTranslation();
-  const { addCardLine } = useLotPicker();
   const [busy, setBusy] = useState(false);
   const [rows, setRows] = useState<PreviewRow[]>([]);
   const [skipped, setSkipped] = useState(0);
@@ -135,17 +133,21 @@ export function CollectrImportDialog({
   }, [t]);
 
   async function confirmImport() {
-    setBusy(true);
+    setBusy(true); setError(null);
     const supabase = createClient();
     const { data: cond } = await supabase
       .from("conditions").select("condition_id").eq("standard", "tcgplayer").eq("code", "NM").single();
     const conditionId = (cond as { condition_id: number } | null)?.condition_id ?? 1;
     const chosen = rows.filter((r) => r.include && r.cardId);
-    for (const r of chosen) {
-      await addCardLine({
-        lotId, game: "pokemon", cardId: r.cardId!, conditionId,
-        psaGrade: r.grade, quantity: r.qty, marketValueUsd: r.marketUsd || null,
-      });
+    const payload = chosen.map((r) => ({
+      lot_id: lotId, card_id: r.cardId, condition_id: conditionId, psa_grade: r.grade,
+      quantity: r.qty, price_override_usd: null, market_value_usd: r.marketUsd || null,
+    }));
+    // Bulk insert (chunked) — one request per ~500 rows instead of one per card,
+    // so it's fast and effectively all-or-nothing rather than a slow, partial loop.
+    for (let i = 0; i < payload.length; i += 500) {
+      const { error: insErr } = await supabase.from("pokemon_lot_lines").insert(payload.slice(i, i + 500));
+      if (insErr) { setBusy(false); setError(insErr.message); return; }
     }
     setBusy(false);
     setDone(chosen.length);
@@ -156,7 +158,7 @@ export function CollectrImportDialog({
   const includeCount = rows.filter((r) => r.include && r.cardId).length;
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t("trips.csvImportTitle")}</DialogTitle>
@@ -223,7 +225,7 @@ export function CollectrImportDialog({
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>{done !== null ? t("trips.cancel") : t("trips.cancel")}</Button>
+          <Button variant="outline" disabled={busy} onClick={onClose}>{t("trips.cancel")}</Button>
           {done === null && (
             <Button disabled={busy || includeCount === 0} onClick={confirmImport}>
               {t("trips.csvAddLines", { n: includeCount })}
