@@ -64,6 +64,7 @@ interface SaleRow {
   gross_usd: number;
   cogs_usd: number;
   margin_usd: number;
+  imageUrl: string | null;
 }
 
 const DEF_TABLE: Record<CardGame, string> = { pokemon: "pokemon_card_definitions", mtg: "mtg_card_definitions_v" };
@@ -90,7 +91,9 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [lotQty, setLotQty] = useState<Record<string, string>>({});
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [sortCol, setSortCol] = useState<"name" | "leg" | "qty" | "avg" | null>(null);
+  const [hSortCol, setHSortCol] = useState<"name" | "date" | "qty" | "gross" | "cogs" | "margin" | null>("date");
   const [sortAsc, setSortAsc] = useState(true);
+  const [hSortAsc, setHSortAsc] = useState(false);
   const { language } = useLanguage();
 
   const fetchHoldings = useCallback(async () => {
@@ -133,16 +136,19 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       const rows = (data as { sale_id: number; card_id: number; condition_id: number; psa_grade: number; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number }[]) ?? [];
       if (rows.length === 0) continue;
       const { data: defs } = await supabase
-        .from(DEF_TABLE[game]).select("card_id, regional_name, set_code, card_number").in("card_id", [...new Set(rows.map((r) => r.card_id))]);
+        .from(DEF_TABLE[game]).select("card_id, regional_name, set_code, card_number, image_url").in("card_id", [...new Set(rows.map((r) => r.card_id))]);
       const nameMap = new Map<number, string>();
-      for (const d of (defs as { card_id: number; regional_name: string; set_code: string; card_number: string | null }[]) ?? []) {
+      const imgMap = new Map<number, string | null>();
+      for (const d of (defs as { card_id: number; regional_name: string; set_code: string; card_number: string | null; image_url: string | null }[]) ?? []) {
         nameMap.set(d.card_id, `${d.regional_name} · ${d.set_code} ${d.card_number ?? ""}`.trim());
+        imgMap.set(d.card_id, d.image_url);
       }
       for (const r of rows) out.push({
         key: `${game}-${r.sale_id}`, kind: "single", game, sale_id: r.sale_id, card_id: r.card_id,
         product_id: null, condition_id: r.condition_id, psa_grade: r.psa_grade, sealed_condition: null,
         variant_edition: null, name: nameMap.get(r.card_id) ?? `#${r.card_id}`, sold_at: r.sold_at,
         quantity: r.quantity, gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
+        imageUrl: imgMap.get(r.card_id) ?? null,
       });
     }
     // sealed sales
@@ -153,14 +159,18 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     const srows = (sdata as { sale_id: number; product_id: number; sealed_condition: string; variant_edition: string; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number }[]) ?? [];
     if (srows.length > 0) {
       const { data: prods } = await supabase
-        .from("pokemon_sealed_products").select("product_id, name, set_code").in("product_id", [...new Set(srows.map((r) => r.product_id))]);
+        .from("pokemon_sealed_products").select("product_id, name, set_code, image_url").in("product_id", [...new Set(srows.map((r) => r.product_id))]);
       const pMap = new Map<number, string>();
-      for (const p of (prods as { product_id: number; name: string; set_code: string }[]) ?? []) pMap.set(p.product_id, `${p.name} · ${p.set_code}`);
+      const pImg = new Map<number, string | null>();
+      for (const p of (prods as { product_id: number; name: string; set_code: string; image_url: string | null }[]) ?? []) {
+        pMap.set(p.product_id, `${p.name} · ${p.set_code}`); pImg.set(p.product_id, p.image_url);
+      }
       for (const r of srows) out.push({
         key: `sealed-${r.sale_id}`, kind: "sealed", game: "pokemon_sealed", sale_id: r.sale_id, card_id: null,
         product_id: r.product_id, condition_id: null, psa_grade: null, sealed_condition: r.sealed_condition,
         variant_edition: r.variant_edition, name: pMap.get(r.product_id) ?? `#${r.product_id}`, sold_at: r.sold_at,
         quantity: r.quantity, gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
+        imageUrl: pImg.get(r.product_id) ?? null,
       });
     }
     out.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1));
@@ -253,6 +263,50 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       : Number(h.avg_cost_usd);
     return [...holdings].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
   }, [holdings, sortCol, sortAsc, language]);
+
+  type HCol = "name" | "date" | "qty" | "gross" | "cogs" | "margin";
+  function setHSort(col: HCol) {
+    if (hSortCol === col) setHSortAsc((a) => !a);
+    else { setHSortCol(col); setHSortAsc(true); }
+  }
+  const hHead = (col: HCol, lbl: string, className?: string) => (
+    <TableHead className={className}>
+      <button className="flex items-center gap-1 hover:text-foreground" onClick={() => setHSort(col)}>
+        {lbl}
+        {hSortCol === col
+          ? (hSortAsc ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />)
+          : <ChevronsUpDown className="size-3.5 opacity-40" />}
+      </button>
+    </TableHead>
+  );
+  const sortedSales = useMemo(() => {
+    if (!hSortCol) return sales;
+    const dir = hSortAsc ? 1 : -1;
+    const val = (s: SaleRow): string | number =>
+      hSortCol === "name" ? s.name.toLowerCase()
+      : hSortCol === "date" ? s.sold_at
+      : hSortCol === "qty" ? s.quantity
+      : hSortCol === "gross" ? Number(s.gross_usd)
+      : hSortCol === "cogs" ? Number(s.cogs_usd)
+      : Number(s.margin_usd);
+    return [...sales].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
+  }, [sales, hSortCol, hSortAsc]);
+
+  const voidButton = (s: SaleRow) => s.quantity > 0 ? (
+    <AlertDialog>
+      <AlertDialogTrigger render={<Button variant="ghost" size="icon" className="size-7" />}><Undo2 className="size-4" /></AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("trips.void")}</AlertDialogTitle>
+          <AlertDialogDescription>{t("trips.voidConfirm")}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t("trips.cancel")}</AlertDialogCancel>
+          <AlertDialogAction onClick={() => voidSale(s)}>{t("trips.void")}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  ) : null;
 
   function toggle(h: Holding) {
     const k = holdingKey(h);
@@ -392,20 +446,43 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       )}
 
       <h3 className="text-sm font-semibold">{t("trips.salesHistory")}</h3>
+      {viewMode === "grid" ? (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+          {sortedSales.map((s) => (
+            <Card key={s.key} size="sm" className="gap-0 overflow-hidden !py-0">
+              {s.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={s.imageUrl} alt={s.name} loading="lazy" className="aspect-[5/7] w-full object-cover" />
+              ) : (
+                <div className="flex aspect-[5/7] w-full items-center justify-center bg-muted"><ImageOff className="size-8 text-muted-foreground" /></div>
+              )}
+              <CardContent className="space-y-1 p-2">
+                <div className="truncate text-xs font-medium">{s.name}</div>
+                <div className="text-xs text-muted-foreground">{s.sold_at} · ×{s.quantity}</div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className={s.margin_usd < 0 ? "text-destructive" : ""}>${s.margin_usd}</span>
+                  {voidButton(s)}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+          {sortedSales.length === 0 && <p className="col-span-full text-sm text-muted-foreground">{t("trips.empty")}</p>}
+        </div>
+      ) : (
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>{t("trips.item")}</TableHead>
-            <TableHead className="w-24">{t("trips.month")}</TableHead>
-            <TableHead className="w-12">{t("trips.qty")}</TableHead>
-            <TableHead className="w-20">{t("trips.saleGross")}</TableHead>
-            <TableHead className="w-20">{t("trips.saleCogs")}</TableHead>
-            <TableHead className="w-20">{t("trips.saleMargin")}</TableHead>
+            {hHead("name", t("trips.item"))}
+            {hHead("date", t("trips.month"), "w-24")}
+            {hHead("qty", t("trips.qty"), "w-12")}
+            {hHead("gross", t("trips.saleGross"), "w-20")}
+            {hHead("cogs", t("trips.saleCogs"), "w-20")}
+            {hHead("margin", t("trips.saleMargin"), "w-20")}
             <TableHead className="w-12" />
           </TableRow>
         </TableHeader>
         <TableBody>
-          {sales.map((s) => (
+          {sortedSales.map((s) => (
             <TableRow key={s.key}>
               <TableCell className="truncate max-w-[240px]">{s.name}</TableCell>
               <TableCell>{s.sold_at}</TableCell>
@@ -413,32 +490,15 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
               <TableCell>${s.gross_usd}</TableCell>
               <TableCell>${s.cogs_usd}</TableCell>
               <TableCell className={s.margin_usd < 0 ? "text-destructive" : ""}>${s.margin_usd}</TableCell>
-              <TableCell>
-                {s.quantity > 0 && (
-                  <AlertDialog>
-                    <AlertDialogTrigger render={<Button variant="ghost" size="icon" className="size-7" />}>
-                      <Undo2 className="size-4" />
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>{t("trips.void")}</AlertDialogTitle>
-                        <AlertDialogDescription>{t("trips.voidConfirm")}</AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>{t("trips.cancel")}</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => voidSale(s)}>{t("trips.void")}</AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                )}
-              </TableCell>
+              <TableCell>{voidButton(s)}</TableCell>
             </TableRow>
           ))}
-          {sales.length === 0 && (
+          {sortedSales.length === 0 && (
             <TableRow><TableCell colSpan={7} className="text-muted-foreground">{t("trips.empty")}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>
+      )}
 
       <Dialog open={!!sel} onOpenChange={(o) => !o && setSel(null)}>
         <DialogContent className="sm:max-w-sm">

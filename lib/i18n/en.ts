@@ -124,6 +124,7 @@ const en = {
   "trips.override": "Cost override (USD)",
   "trips.overrideCcy": "Cost override ({ccy})",
   "trips.finalize": "Finalize lot",
+  "trips.undoFinalize": "Undo finalize",
   "trips.finalized": "Finalized",
   "trips.allocatedCost": "Allocated cost",
   "trips.removeLine": "Remove",

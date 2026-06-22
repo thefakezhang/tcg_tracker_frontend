@@ -126,6 +126,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.override": "原価上書き (USD)",
   "trips.overrideCcy": "原価上書き ({ccy})",
   "trips.finalize": "ロットを確定",
+  "trips.undoFinalize": "確定を取り消す",
   "trips.finalized": "確定済み",
   "trips.allocatedCost": "配賦原価",
   "trips.removeLine": "削除",
