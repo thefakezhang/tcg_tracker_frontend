@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Check, Pencil, Upload, ImageOff, RotateCcw } from "lucide-react";
+import { Plus, Trash2, Check, Pencil, Upload, ImageOff, RotateCcw, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { getCardDisplayName, useDebouncedValue } from "../use-card-data";
 import { useLanguage } from "../LanguageContext";
 import { useLotPicker } from "../LotPickerContext";
+import { useSaving } from "@/lib/use-saving";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -79,6 +80,7 @@ const LEG_DEFAULTS: Record<Leg, { currency: string; fx: string }> = {
 
 export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }) {
   const { t } = useTranslation();
+  const { saving, save } = useSaving();
   const { language } = useLanguage();
   const { refresh: refreshOpenLots } = useLotPicker();
   const [lots, setLots] = useState<Lot[]>([]);
@@ -270,16 +272,23 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       fx_rate_used: fx, total_cost_usd: Math.round(totalOrig * fx * 100) / 100,
     };
     if (editingLotId) {
-      await supabase.from("acquisition_lots").update(payload).eq("lot_id", editingLotId);
+      const ok = await save(() => supabase.from("acquisition_lots").update(payload).eq("lot_id", editingLotId));
+      if (!ok) return;
       setLotDialogOpen(false);
       await fetchLots();
     } else {
-      const { data } = await supabase
-        .from("acquisition_lots").insert({ trip_id: tripId, ...payload }).select("lot_id").single();
+      let newId: number | undefined;
+      const ok = await save(async () => {
+        const { data, error } = await supabase
+          .from("acquisition_lots").insert({ trip_id: tripId, ...payload }).select("lot_id").single();
+        if (data) newId = (data as { lot_id: number }).lot_id;
+        return { error };
+      });
+      if (!ok) return;
       setLotDialogOpen(false);
       await fetchLots();
       await refreshOpenLots();
-      if (data) setSelectedLot((data as { lot_id: number }).lot_id);
+      if (newId) setSelectedLot(newId);
     }
   }
 
@@ -591,7 +600,9 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           </FieldGroup>
           <DialogFooter>
             <Button variant="outline" onClick={() => setLotDialogOpen(false)}>{t("trips.cancel")}</Button>
-            <Button disabled={!cTotal} onClick={saveLot}>{editingLotId ? t("trips.saveChanges") : t("trips.save")}</Button>
+            <Button disabled={!cTotal || saving} onClick={saveLot}>
+              {saving ? <Loader2 className="size-4 animate-spin" /> : (editingLotId ? t("trips.saveChanges") : t("trips.save"))}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

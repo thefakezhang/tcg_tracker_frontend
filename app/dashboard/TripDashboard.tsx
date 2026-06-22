@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2, Loader2 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Field, FieldGroup } from "@/components/ui/field";
 import { Badge } from "@/components/ui/badge";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
+import { useSaving } from "@/lib/use-saving";
 import { useTrips } from "./TripContext";
 import ImportTab from "./trip/ImportTab";
 import SalesTab from "./trip/SalesTab";
@@ -28,6 +29,7 @@ const STATUSES = ["planning", "active", "closed"] as const;
 
 export default function TripDashboard({ tripId }: { tripId: number }) {
   const { t } = useTranslation();
+  const { saving, save } = useSaving();
   const { trips, updateTrip, deleteTrip, setActiveTripId } = useTrips();
   const trip = trips.find((tr) => tr.trip_id === tripId);
 
@@ -124,16 +126,16 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
             </Field>
           </FieldGroup>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditOpen(false)}>{t("trips.cancel")}</Button>
-            <Button disabled={!name.trim()} onClick={async () => {
-              await updateTrip(tripId, {
+            <Button variant="outline" disabled={saving} onClick={() => setEditOpen(false)}>{t("trips.cancel")}</Button>
+            <Button disabled={!name.trim() || saving} onClick={async () => {
+              const ok = await save(() => updateTrip(tripId, {
                 name: name.trim(),
                 started_at: startedAt || null,
                 ended_at: endedAt || null,
                 status,
-              });
-              setEditOpen(false);
-            }}>{t("trips.saveChanges")}</Button>
+              }));
+              if (ok) setEditOpen(false);
+            }}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

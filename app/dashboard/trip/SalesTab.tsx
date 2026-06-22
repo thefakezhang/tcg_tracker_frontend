@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Undo2, ImageOff, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
+import { Undo2, ImageOff, ChevronUp, ChevronDown, ChevronsUpDown, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
+import { useSaving } from "@/lib/use-saving";
 import { useLanguage } from "../LanguageContext";
 import { getCardDisplayName } from "../use-card-data";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -72,6 +73,7 @@ const DEF_TABLE: Record<CardGame, string> = { pokemon: "pokemon_card_definitions
 
 export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const { t } = useTranslation();
+  const { saving, save } = useSaving();
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [sel, setSel] = useState<Holding | null>(null);
@@ -201,16 +203,16 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       p_proceeds_orig: native ? Number(proceeds) : null,
       p_fx_rate: native ? Number(fx) : 1,
     };
-    const { error } = sel.item_type === "sealed"
-      ? await supabase.rpc("record_sealed_sale", {
+    const ok = await save(() => sel.item_type === "sealed"
+      ? supabase.rpc("record_sealed_sale", {
           p_product_id: sel.product_id, p_sealed_condition: sel.sealed_condition,
           p_variant_edition: sel.variant_edition, ...common,
         })
-      : await supabase.rpc("record_sale", {
+      : supabase.rpc("record_sale", {
           p_game: sel.game, p_card_id: sel.card_id, p_condition_id: sel.condition_id,
           p_psa_grade: sel.psa_grade ?? 0, ...common,
-        });
-    if (error) { alert(error.message); return; }
+        }));
+    if (!ok) return;
     setSel(null);
     await fetchHoldings(); await fetchSales();
   }
@@ -351,12 +353,12 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       product_id: h.product_id, sealed_condition: h.sealed_condition, variant_edition: h.variant_edition,
       quantity: qtyOf(h), gross: grossAlloc[idx], fees: feesAlloc[idx],
     }));
-    const { error } = await supabase.rpc("record_lot_sale", {
+    const ok = await save(() => supabase.rpc("record_lot_sale", {
       p_items: payload, p_sold_at: lotDate, p_leg: selectedLeg,
       p_orig_currency: isNative ? lotCurrency.toUpperCase() : null,
       p_fx_rate: isNative ? Number(lotFx) : 1,
-    });
-    if (error) { alert(error.message); return; }
+    }));
+    if (!ok) return;
     setLotOpen(false); setSelected(new Set());
     await fetchHoldings(); await fetchSales();
   }
@@ -572,7 +574,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           </FieldGroup>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSel(null)}>{t("trips.cancel")}</Button>
-            <Button disabled={!proceeds} onClick={recordSale}>{t("trips.recordSale")}</Button>
+            <Button disabled={!proceeds || saving} onClick={recordSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.recordSale")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -615,7 +617,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           </FieldGroup>
           <DialogFooter>
             <Button variant="outline" onClick={() => setLotOpen(false)}>{t("trips.cancel")}</Button>
-            <Button disabled={!lotGross} onClick={recordLotSale}>{t("trips.recordSale")}</Button>
+            <Button disabled={!lotGross || saving} onClick={recordLotSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.recordSale")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -34,9 +34,10 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Boxes, ChevronsUpDown, DollarSign, Globe, ListChecks, LogOut, Luggage, Map, Package, Plus, ShoppingCart, Sparkles, Squirrel, Trash2 } from "lucide-react";
+import { Boxes, ChevronsUpDown, DollarSign, Globe, ListChecks, Loader2, LogOut, Luggage, Map, Package, Plus, ShoppingCart, Sparkles, Squirrel, Trash2 } from "lucide-react";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
+import { useSaving } from "@/lib/use-saving";
 import {
   Dialog,
   DialogContent,
@@ -78,6 +79,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
   const { buylists, activeBuylistId, setActiveBuylistId, createBuylist } = useBuyList();
   const { trips, activeTripId, setActiveTripId, createTrip } = useTrips();
   const { t } = useTranslation();
+  const { saving, save } = useSaving();
   const router = useRouter();
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -261,16 +263,17 @@ export function AppSidebar({ user }: AppSidebarProps) {
             </Field>
           </FieldGroup>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setTripOpen(false)}>{t("trips.cancel")}</Button>
+            <Button variant="outline" disabled={saving} onClick={() => setTripOpen(false)}>{t("trips.cancel")}</Button>
             <Button
-              disabled={!tripName.trim()}
+              disabled={!tripName.trim() || saving}
               onClick={async () => {
-                await createTrip(tripName.trim(), tripStart || null, tripEnd || null, null);
+                const ok = await save(() => createTrip(tripName.trim(), tripStart || null, tripEnd || null, null));
+                if (!ok) return;
                 setTripName(""); setTripStart(""); setTripEnd("");
                 setTripOpen(false);
               }}
             >
-              {t("trips.save")}
+              {saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
