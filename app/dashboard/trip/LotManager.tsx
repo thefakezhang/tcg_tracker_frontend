@@ -308,7 +308,14 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   async function finalize() {
     if (!selectedLot) return;
     const supabase = createClient();
-    const { error } = await supabase.rpc("finalize_acquisition_lot", { p_lot_id: selectedLot });
+    const isNet = (m?: string) => !!m && /networkerror|failed to fetch|load failed/i.test(m);
+    let { error } = await supabase.rpc("finalize_acquisition_lot", { p_lot_id: selectedLot });
+    if (error && isNet(error.message)) {
+      // Transient network failure — finalize is safe to re-run (it errors
+      // harmlessly if the first attempt actually committed).
+      ({ error } = await supabase.rpc("finalize_acquisition_lot", { p_lot_id: selectedLot }));
+      if (error && /already finalized/i.test(error.message)) error = null;
+    }
     if (error) { alert(error.message); return; }
     await fetchLots();
     await reloadLot(selectedLot);
