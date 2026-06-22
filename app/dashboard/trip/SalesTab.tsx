@@ -67,6 +67,8 @@ interface SaleRow {
   margin_usd: number;
   marginPct: number; // margin / gross * 100
   imageUrl: string | null;
+  sale_group: number | null; // shared id for cards sold together as a lot
+  reverted: boolean;         // an undo (negative) row already references this sale
 }
 
 const DEF_TABLE: Record<CardGame, string> = { pokemon: "pokemon_card_definitions", mtg: "mtg_card_definitions_v" };
@@ -97,6 +99,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [hSortCol, setHSortCol] = useState<"name" | "date" | "qty" | "gross" | "cogs" | "margin" | "marginPct" | null>("date");
   const [sortAsc, setSortAsc] = useState(true);
   const [hSortAsc, setHSortAsc] = useState(false);
+  const [groupBy, setGroupBy] = useState<"sale" | "card">("sale");
   const { language } = useLanguage();
 
   const fetchHoldings = useCallback(async () => {
@@ -130,54 +133,64 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const fetchSales = useCallback(async () => {
     const supabase = createClient();
     const out: SaleRow[] = [];
+    // Keys of originals that already have an undo (negative) row referencing
+    // them — so we can hide the revert button and never double-reverse.
+    const revertedKeys = new Set<string>();
     // card sales
     for (const game of ["pokemon", "mtg"] as CardGame[]) {
       const { data } = await supabase
         .from(`${game}_sales`)
-        .select("sale_id, card_id, condition_id, psa_grade, sold_at, quantity, gross_usd, cogs_usd, margin_usd")
-        .order("sold_at", { ascending: false }).limit(50);
-      const rows = (data as { sale_id: number; card_id: number; condition_id: number; psa_grade: number; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number }[]) ?? [];
-      if (rows.length === 0) continue;
+        .select("sale_id, card_id, condition_id, psa_grade, sold_at, quantity, gross_usd, cogs_usd, margin_usd, sale_group, reverses_sale_id")
+        .order("sold_at", { ascending: false }).limit(100);
+      const rows = (data as { sale_id: number; card_id: number; condition_id: number; psa_grade: number; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number; sale_group: number | null; reverses_sale_id: number | null }[]) ?? [];
+      // A negative row is an undo — record which original it cancels, then drop
+      // it from the displayed history (it's an accounting artifact, not a sale).
+      for (const r of rows) if (r.reverses_sale_id != null) revertedKeys.add(`${game}-${r.reverses_sale_id}`);
+      const originals = rows.filter((r) => r.reverses_sale_id == null);
+      if (originals.length === 0) continue;
       const { data: defs } = await supabase
-        .from(DEF_TABLE[game]).select("card_id, regional_name, set_code, card_number, image_url").in("card_id", [...new Set(rows.map((r) => r.card_id))]);
+        .from(DEF_TABLE[game]).select("card_id, regional_name, set_code, card_number, image_url").in("card_id", [...new Set(originals.map((r) => r.card_id))]);
       const nameMap = new Map<number, string>();
       const imgMap = new Map<number, string | null>();
       for (const d of (defs as { card_id: number; regional_name: string; set_code: string; card_number: string | null; image_url: string | null }[]) ?? []) {
         nameMap.set(d.card_id, `${d.regional_name} · ${d.set_code} ${d.card_number ?? ""}`.trim());
         imgMap.set(d.card_id, d.image_url);
       }
-      for (const r of rows) out.push({
+      for (const r of originals) out.push({
         key: `${game}-${r.sale_id}`, kind: "single", game, sale_id: r.sale_id, card_id: r.card_id,
         product_id: null, condition_id: r.condition_id, psa_grade: r.psa_grade, sealed_condition: null,
         variant_edition: null, name: nameMap.get(r.card_id) ?? `#${r.card_id}`, sold_at: r.sold_at,
         quantity: r.quantity, gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
         marginPct: r.gross_usd ? Math.round((r.margin_usd / r.gross_usd) * 1000) / 10 : 0,
-        imageUrl: imgMap.get(r.card_id) ?? null,
+        imageUrl: imgMap.get(r.card_id) ?? null, sale_group: r.sale_group, reverted: false,
       });
     }
     // sealed sales
     const { data: sdata } = await supabase
       .from("pokemon_sealed_sales")
-      .select("sale_id, product_id, sealed_condition, variant_edition, sold_at, quantity, gross_usd, cogs_usd, margin_usd")
-      .order("sold_at", { ascending: false }).limit(50);
-    const srows = (sdata as { sale_id: number; product_id: number; sealed_condition: string; variant_edition: string; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number }[]) ?? [];
-    if (srows.length > 0) {
+      .select("sale_id, product_id, sealed_condition, variant_edition, sold_at, quantity, gross_usd, cogs_usd, margin_usd, sale_group, reverses_sale_id")
+      .order("sold_at", { ascending: false }).limit(100);
+    const srows = (sdata as { sale_id: number; product_id: number; sealed_condition: string; variant_edition: string; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number; sale_group: number | null; reverses_sale_id: number | null }[]) ?? [];
+    for (const r of srows) if (r.reverses_sale_id != null) revertedKeys.add(`sealed-${r.reverses_sale_id}`);
+    const sorigs = srows.filter((r) => r.reverses_sale_id == null);
+    if (sorigs.length > 0) {
       const { data: prods } = await supabase
-        .from("pokemon_sealed_products").select("product_id, name, set_code, image_url").in("product_id", [...new Set(srows.map((r) => r.product_id))]);
+        .from("pokemon_sealed_products").select("product_id, name, set_code, image_url").in("product_id", [...new Set(sorigs.map((r) => r.product_id))]);
       const pMap = new Map<number, string>();
       const pImg = new Map<number, string | null>();
       for (const p of (prods as { product_id: number; name: string; set_code: string; image_url: string | null }[]) ?? []) {
         pMap.set(p.product_id, `${p.name} · ${p.set_code}`); pImg.set(p.product_id, p.image_url);
       }
-      for (const r of srows) out.push({
+      for (const r of sorigs) out.push({
         key: `sealed-${r.sale_id}`, kind: "sealed", game: "pokemon_sealed", sale_id: r.sale_id, card_id: null,
         product_id: r.product_id, condition_id: null, psa_grade: null, sealed_condition: r.sealed_condition,
         variant_edition: r.variant_edition, name: pMap.get(r.product_id) ?? `#${r.product_id}`, sold_at: r.sold_at,
         quantity: r.quantity, gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
         marginPct: r.gross_usd ? Math.round((r.margin_usd / r.gross_usd) * 1000) / 10 : 0,
-        imageUrl: pImg.get(r.product_id) ?? null,
+        imageUrl: pImg.get(r.product_id) ?? null, sale_group: r.sale_group, reverted: false,
       });
     }
+    for (const o of out) o.reverted = revertedKeys.has(o.key);
     out.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1));
     setSales(out);
   }, []);
@@ -217,20 +230,44 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     await fetchHoldings(); await fetchSales();
   }
 
-  async function voidSale(s: SaleRow) {
+  // One reversal RPC. Caller is responsible for skipping already-reverted
+  // sales; the backend (unique index on reverses_sale_id) is the hard guard.
+  function reverseOne(s: SaleRow) {
     const supabase = createClient();
     const common = {
       p_quantity: -Math.abs(s.quantity), p_gross_usd: 0, p_fees_usd: 0,
       p_sold_at: new Date().toISOString().slice(0, 10), p_reverses_sale_id: s.sale_id,
     };
-    const { error } = s.kind === "sealed"
-      ? await supabase.rpc("record_sealed_sale", {
+    return s.kind === "sealed"
+      ? supabase.rpc("record_sealed_sale", {
           p_product_id: s.product_id, p_sealed_condition: s.sealed_condition, p_variant_edition: s.variant_edition, ...common,
         })
-      : await supabase.rpc("record_sale", {
+      : supabase.rpc("record_sale", {
           p_game: s.game, p_card_id: s.card_id, p_condition_id: s.condition_id, p_psa_grade: s.psa_grade ?? 0, ...common,
         });
-    if (error) { alert(error.message); return; }
+  }
+
+  async function voidSale(s: SaleRow) {
+    if (s.reverted || saving) return;
+    const ok = await save(() => reverseOne(s));
+    if (!ok) return;
+    await fetchHoldings(); await fetchSales();
+  }
+
+  // Revert every not-yet-reverted line of a lot in one click (sequentially, in
+  // a single saving session so the button stays disabled the whole time).
+  async function revertGroup(items: SaleRow[]) {
+    if (saving) return;
+    const todo = items.filter((i) => !i.reverted);
+    if (todo.length === 0) return;
+    const ok = await save(async () => {
+      for (const it of todo) {
+        const { error } = await reverseOne(it);
+        if (error) return { error };
+      }
+      return { error: null };
+    });
+    if (!ok) return;
     await fetchHoldings(); await fetchSales();
   }
 
@@ -298,21 +335,53 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     return [...sales].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
   }, [sales, hSortCol, hSortAsc]);
 
-  const voidButton = (s: SaleRow) => s.quantity > 0 ? (
-    <AlertDialog>
-      <AlertDialogTrigger render={<Button variant="ghost" size="icon" className="size-7" />}><Undo2 className="size-4" /></AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{t("trips.void")}</AlertDialogTitle>
-          <AlertDialogDescription>{t("trips.voidConfirm")}</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>{t("trips.cancel")}</AlertDialogCancel>
-          <AlertDialogAction onClick={() => voidSale(s)}>{t("trips.void")}</AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  ) : null;
+  // Group sales into events: a lot (shared sale_group) collapses to one row;
+  // singles are their own event. Preserves the sorted order via first-seen.
+  type SaleEvent = {
+    gid: string; items: SaleRow[]; sold_at: string;
+    qty: number; gross: number; cogs: number; margin: number; marginPct: number;
+    reverted: boolean; isLot: boolean;
+  };
+  const saleEvents = useMemo<SaleEvent[]>(() => {
+    const map = new Map<string, SaleRow[]>();
+    for (const s of sortedSales) {
+      const gid = s.sale_group != null ? `g${s.sale_group}` : `s${s.key}`;
+      const arr = map.get(gid);
+      if (arr) arr.push(s); else map.set(gid, [s]);
+    }
+    return [...map.entries()].map(([gid, items]) => {
+      const gross = items.reduce((a, i) => a + Number(i.gross_usd), 0);
+      const margin = items.reduce((a, i) => a + Number(i.margin_usd), 0);
+      return {
+        gid, items, sold_at: items[0].sold_at,
+        qty: items.reduce((a, i) => a + i.quantity, 0),
+        gross, cogs: items.reduce((a, i) => a + Number(i.cogs_usd), 0), margin,
+        marginPct: gross ? Math.round((margin / gross) * 1000) / 10 : 0,
+        reverted: items.every((i) => i.reverted),
+        isLot: items.length > 1,
+      };
+    });
+  }, [sortedSales]);
+
+  const voidButton = (s: SaleRow) => {
+    if (s.reverted) return <span className="text-xs text-muted-foreground">{t("trips.reverted")}</span>;
+    if (s.quantity <= 0) return null;
+    return (
+      <AlertDialog>
+        <AlertDialogTrigger render={<Button variant="ghost" size="icon" className="size-7" disabled={saving} />}><Undo2 className="size-4" /></AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("trips.void")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("trips.voidConfirm")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("trips.cancel")}</AlertDialogCancel>
+            <AlertDialogAction disabled={saving} onClick={() => voidSale(s)}>{t("trips.void")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    );
+  };
 
   function toggle(h: Holding) {
     const k = holdingKey(h);
@@ -467,6 +536,12 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">{t("trips.salesHistory")}</h3>
         <div className="flex items-center gap-2">
+          <Tabs value={groupBy} onValueChange={(v) => setGroupBy(String(v) as "sale" | "card")}>
+            <TabsList>
+              <TabsTrigger value="sale">{t("trips.bySale")}</TabsTrigger>
+              <TabsTrigger value="card">{t("trips.byCard")}</TabsTrigger>
+            </TabsList>
+          </Tabs>
           <div className="flex items-center gap-1">
             <select value={hSortCol ?? "date"} onChange={(e) => setHSortCol(e.target.value as HCol)}
               className="h-8 rounded-md border bg-background px-2 text-xs" aria-label={t("trips.sortBy")}>
@@ -482,15 +557,71 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
               {hSortAsc ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
             </Button>
           </div>
-          <Tabs value={viewMode} onValueChange={(v) => setViewMode(String(v) as "list" | "grid")}>
-            <TabsList>
-              <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
-              <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
-            </TabsList>
-          </Tabs>
+          {groupBy === "card" && (
+            <Tabs value={viewMode} onValueChange={(v) => setViewMode(String(v) as "list" | "grid")}>
+              <TabsList>
+                <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
+                <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
         </div>
       </div>
-      {viewMode === "grid" ? (
+      {groupBy === "sale" ? (
+        <div className="space-y-2">
+          {saleEvents.map((ev) => (
+            <Card key={ev.gid} size="sm">
+              <CardContent className="space-y-2 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">
+                      {ev.isLot ? t("trips.lotItems", { n: ev.items.length }) : ev.items[0].name}
+                    </div>
+                    <div className="text-xs text-muted-foreground">{ev.sold_at} · ×{ev.qty}</div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3 text-sm">
+                    <span className="tabular-nums">${ev.gross.toFixed(0)}</span>
+                    <span className={`tabular-nums ${ev.margin < 0 ? "text-destructive" : ""}`}>${ev.margin.toFixed(0)} · {ev.marginPct}%</span>
+                    {ev.reverted ? (
+                      <span className="text-xs text-muted-foreground">{t("trips.reverted")}</span>
+                    ) : (
+                      <AlertDialog>
+                        <AlertDialogTrigger render={<Button variant="ghost" size="sm" disabled={saving} />}>
+                          <Undo2 className="size-4 mr-1" />{t("trips.revertLot")}
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>{t("trips.revertLot")}</AlertDialogTitle>
+                            <AlertDialogDescription>{t("trips.revertLotConfirm")}</AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>{t("trips.cancel")}</AlertDialogCancel>
+                            <AlertDialogAction disabled={saving} onClick={() => revertGroup(ev.items)}>{t("trips.revertLot")}</AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
+                  </div>
+                </div>
+                {ev.isLot && (
+                  <div className="space-y-1 border-t pt-2">
+                    {ev.items.map((s) => (
+                      <div key={s.key} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="truncate text-muted-foreground">{s.name} ×{s.quantity}</span>
+                        <span className="flex shrink-0 items-center gap-2">
+                          <span className={s.margin_usd < 0 ? "text-destructive" : ""}>${s.margin_usd}</span>
+                          {voidButton(s)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+          {saleEvents.length === 0 && <p className="text-sm text-muted-foreground">{t("trips.empty")}</p>}
+        </div>
+      ) : viewMode === "grid" ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
           {sortedSales.map((s) => (
             <Card key={s.key} size="sm" className="gap-0 overflow-hidden !py-0">
