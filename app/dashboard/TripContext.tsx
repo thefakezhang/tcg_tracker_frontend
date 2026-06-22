@@ -58,13 +58,14 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
       notes: string | null
     ) => {
       const supabase = createClient();
-      await supabase.from("trips").insert({
+      const { error } = await supabase.from("trips").insert({
         name,
         started_at: startedAt,
         ended_at: endedAt,
         notes,
         status: "active",
       });
+      if (error) throw error;
       await fetchTrips();
     },
     [fetchTrips]
@@ -76,7 +77,8 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
       fields: Partial<Pick<Trip, "name" | "started_at" | "ended_at" | "status" | "notes">>
     ) => {
       const supabase = createClient();
-      await supabase.from("trips").update(fields).eq("trip_id", tripId);
+      const { error } = await supabase.from("trips").update(fields).eq("trip_id", tripId);
+      if (error) throw error;
       await fetchTrips();
     },
     [fetchTrips]

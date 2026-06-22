@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
+import { useSaving } from "@/lib/use-saving";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +28,7 @@ interface Expense {
 
 export default function ExpensesTab({ tripId }: { tripId: number }) {
   const { t } = useTranslation();
+  const { saving, save } = useSaving();
   const [rows, setRows] = useState<Expense[]>([]);
   const [open, setOpen] = useState(false);
   const [desc, setDesc] = useState("");
@@ -52,11 +54,12 @@ export default function ExpensesTab({ tripId }: { tripId: number }) {
     const supabase = createClient();
     const fxn = Number(fx) || 1;
     const a = Number(amt) || 0;
-    await supabase.from("trip_expenses").insert({
+    const ok = await save(() => supabase.from("trip_expenses").insert({
       trip_id: tripId, description: desc, category: cat || null, incurred_at: date,
       orig_currency: cur.toUpperCase(), amount_orig: a, fx_rate_used: fxn,
       amount_usd: Math.round(a * fxn * 100) / 100,
-    });
+    }));
+    if (!ok) return;
     setOpen(false); setDesc(""); setCat(""); setAmt("");
     await fetchRows();
   }
@@ -127,8 +130,10 @@ export default function ExpensesTab({ tripId }: { tripId: number }) {
               <Input type="number" value={fx} onChange={(e) => setFx(e.target.value)} /></Field>
           </FieldGroup>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>{t("trips.cancel")}</Button>
-            <Button disabled={!desc || !amt} onClick={addExpense}>{t("trips.save")}</Button>
+            <Button variant="outline" disabled={saving} onClick={() => setOpen(false)}>{t("trips.cancel")}</Button>
+            <Button disabled={!desc || !amt || saving} onClick={addExpense}>
+              {saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.save")}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
