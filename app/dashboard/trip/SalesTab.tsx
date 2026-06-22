@@ -64,6 +64,7 @@ interface SaleRow {
   gross_usd: number;
   cogs_usd: number;
   margin_usd: number;
+  marginPct: number; // margin / gross * 100
   imageUrl: string | null;
 }
 
@@ -91,7 +92,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [lotQty, setLotQty] = useState<Record<string, string>>({});
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [sortCol, setSortCol] = useState<"name" | "leg" | "qty" | "avg" | null>(null);
-  const [hSortCol, setHSortCol] = useState<"name" | "date" | "qty" | "gross" | "cogs" | "margin" | null>("date");
+  const [hSortCol, setHSortCol] = useState<"name" | "date" | "qty" | "gross" | "cogs" | "margin" | "marginPct" | null>("date");
   const [sortAsc, setSortAsc] = useState(true);
   const [hSortAsc, setHSortAsc] = useState(false);
   const { language } = useLanguage();
@@ -148,6 +149,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         product_id: null, condition_id: r.condition_id, psa_grade: r.psa_grade, sealed_condition: null,
         variant_edition: null, name: nameMap.get(r.card_id) ?? `#${r.card_id}`, sold_at: r.sold_at,
         quantity: r.quantity, gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
+        marginPct: r.gross_usd ? Math.round((r.margin_usd / r.gross_usd) * 1000) / 10 : 0,
         imageUrl: imgMap.get(r.card_id) ?? null,
       });
     }
@@ -170,6 +172,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         product_id: r.product_id, condition_id: null, psa_grade: null, sealed_condition: r.sealed_condition,
         variant_edition: r.variant_edition, name: pMap.get(r.product_id) ?? `#${r.product_id}`, sold_at: r.sold_at,
         quantity: r.quantity, gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
+        marginPct: r.gross_usd ? Math.round((r.margin_usd / r.gross_usd) * 1000) / 10 : 0,
         imageUrl: pImg.get(r.product_id) ?? null,
       });
     }
@@ -264,7 +267,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     return [...holdings].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
   }, [holdings, sortCol, sortAsc, language]);
 
-  type HCol = "name" | "date" | "qty" | "gross" | "cogs" | "margin";
+  type HCol = "name" | "date" | "qty" | "gross" | "cogs" | "margin" | "marginPct";
   function setHSort(col: HCol) {
     if (hSortCol === col) setHSortAsc((a) => !a);
     else { setHSortCol(col); setHSortAsc(true); }
@@ -288,7 +291,8 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       : hSortCol === "qty" ? s.quantity
       : hSortCol === "gross" ? Number(s.gross_usd)
       : hSortCol === "cogs" ? Number(s.cogs_usd)
-      : Number(s.margin_usd);
+      : hSortCol === "margin" ? Number(s.margin_usd)
+      : Number(s.marginPct);
     return [...sales].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
   }, [sales, hSortCol, hSortAsc]);
 
@@ -366,6 +370,19 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           {selected.size > 0 && (
             <Button size="sm" onClick={openLot}>{t("trips.sellLot", { n: selected.size })}</Button>
           )}
+          <div className="flex items-center gap-1">
+            <select value={sortCol ?? ""} onChange={(e) => setSortCol((e.target.value || null) as typeof sortCol)}
+              className="h-8 rounded-md border bg-background px-2 text-xs" aria-label={t("trips.sortBy")}>
+              <option value="">{t("trips.sortBy")}…</option>
+              <option value="name">{t("trips.item")}</option>
+              <option value="leg">{t("trips.leg")}</option>
+              <option value="qty">{t("trips.qty")}</option>
+              <option value="avg">{t("trips.avgCost")}</option>
+            </select>
+            <Button variant="outline" size="icon" className="size-8" onClick={() => setSortAsc((a) => !a)} aria-label={t("trips.sortBy")}>
+              {sortAsc ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+            </Button>
+          </div>
           <Tabs value={viewMode} onValueChange={(v) => setViewMode(String(v) as "list" | "grid")}>
             <TabsList>
               <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
@@ -445,7 +462,32 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       </Table>
       )}
 
-      <h3 className="text-sm font-semibold">{t("trips.salesHistory")}</h3>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">{t("trips.salesHistory")}</h3>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <select value={hSortCol ?? "date"} onChange={(e) => setHSortCol(e.target.value as HCol)}
+              className="h-8 rounded-md border bg-background px-2 text-xs" aria-label={t("trips.sortBy")}>
+              <option value="date">{t("trips.month")}</option>
+              <option value="name">{t("trips.item")}</option>
+              <option value="qty">{t("trips.qty")}</option>
+              <option value="gross">{t("trips.saleGross")}</option>
+              <option value="cogs">{t("trips.saleCogs")}</option>
+              <option value="margin">{t("trips.saleMargin")}</option>
+              <option value="marginPct">{t("trips.saleMarginPct")}</option>
+            </select>
+            <Button variant="outline" size="icon" className="size-8" onClick={() => setHSortAsc((a) => !a)} aria-label={t("trips.sortBy")}>
+              {hSortAsc ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+            </Button>
+          </div>
+          <Tabs value={viewMode} onValueChange={(v) => setViewMode(String(v) as "list" | "grid")}>
+            <TabsList>
+              <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
+              <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+      </div>
       {viewMode === "grid" ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
           {sortedSales.map((s) => (
@@ -460,7 +502,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                 <div className="truncate text-xs font-medium">{s.name}</div>
                 <div className="text-xs text-muted-foreground">{s.sold_at} · ×{s.quantity}</div>
                 <div className="flex items-center justify-between text-xs">
-                  <span className={s.margin_usd < 0 ? "text-destructive" : ""}>${s.margin_usd}</span>
+                  <span className={s.margin_usd < 0 ? "text-destructive" : ""}>${s.margin_usd} · {s.marginPct}%</span>
                   {voidButton(s)}
                 </div>
               </CardContent>
@@ -478,6 +520,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
             {hHead("gross", t("trips.saleGross"), "w-20")}
             {hHead("cogs", t("trips.saleCogs"), "w-20")}
             {hHead("margin", t("trips.saleMargin"), "w-20")}
+            {hHead("marginPct", t("trips.saleMarginPct"), "w-20")}
             <TableHead className="w-12" />
           </TableRow>
         </TableHeader>
@@ -490,11 +533,12 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
               <TableCell>${s.gross_usd}</TableCell>
               <TableCell>${s.cogs_usd}</TableCell>
               <TableCell className={s.margin_usd < 0 ? "text-destructive" : ""}>${s.margin_usd}</TableCell>
+              <TableCell className={s.margin_usd < 0 ? "text-destructive" : ""}>{s.marginPct}%</TableCell>
               <TableCell>{voidButton(s)}</TableCell>
             </TableRow>
           ))}
           {sortedSales.length === 0 && (
-            <TableRow><TableCell colSpan={7} className="text-muted-foreground">{t("trips.empty")}</TableCell></TableRow>
+            <TableRow><TableCell colSpan={8} className="text-muted-foreground">{t("trips.empty")}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>
