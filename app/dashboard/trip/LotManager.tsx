@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Check, Pencil, Upload, ImageOff } from "lucide-react";
+import { Plus, Trash2, Check, Pencil, Upload, ImageOff, RotateCcw } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { getCardDisplayName, useDebouncedValue } from "../use-card-data";
@@ -314,6 +314,15 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     await reloadLot(selectedLot);
   }
 
+  async function unfinalize() {
+    if (!selectedLot) return;
+    const supabase = createClient();
+    const { error } = await supabase.rpc("unfinalize_acquisition_lot", { p_lot_id: selectedLot });
+    if (error) { alert(error.message); return; } // e.g. "void those sales first"
+    await fetchLots();
+    await reloadLot(selectedLot);
+  }
+
   async function deleteLot(lotId: number) {
     // Close the confirm dialog before the async work: deleting clears the
     // selection, which unmounts this panel (and the dialog) — closing first
@@ -364,7 +373,11 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           <div className="flex items-center justify-between">
             <div className="font-medium">{lot.shop_label || lot.acquired_at}</div>
             <div className="flex gap-2">
-              {!lot.lines_imported && (
+              {lot.lines_imported ? (
+                <Button variant="outline" size="sm" onClick={unfinalize}>
+                  <RotateCcw className="size-4 mr-1" />{t("trips.undoFinalize")}
+                </Button>
+              ) : (
                 <>
                   <Button variant="outline" size="sm" onClick={() => setCsvOpen(true)}>
                     <Upload className="size-4 mr-1" />{t("trips.importCsv")}
