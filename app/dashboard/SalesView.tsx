@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
+import { useSupabaseQuery, QueryError } from "./use-query";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -17,6 +19,7 @@ const DEF_TABLE: Record<CardGame, string> = {
   pokemon: "pokemon_card_definitions",
   mtg: "mtg_card_definitions_v",
 };
+const PAGE = 300; // sales per source table per fetch; "Load more" raises it
 
 interface Sale {
   key: string;
@@ -35,62 +38,73 @@ interface Sale {
 const legOf = (orig_currency: string | null): "import" | "export" =>
   orig_currency && orig_currency.toUpperCase() !== "USD" ? "export" : "import";
 
-export default function SalesView() {
-  const { t } = useTranslation();
-  const [sales, setSales] = useState<Sale[]>([]);
-  const [leg, setLeg] = useState<"all" | "import" | "export">("all");
-  const [loading, setLoading] = useState(true);
+const SEL = "sale_id, sold_at, quantity, gross_usd, cogs_usd, margin_usd, sale_group, reverses_sale_id, orig_currency";
 
-  const fetchSales = useCallback(async () => {
-    setLoading(true);
-    const supabase = createClient();
-    const out: Sale[] = [];
-    const revertedKeys = new Set<string>();
-    for (const game of ["pokemon", "mtg"] as CardGame[]) {
-      const { data } = await supabase
-        .from(`${game}_sales`)
-        .select("sale_id, card_id, sold_at, quantity, gross_usd, cogs_usd, margin_usd, sale_group, reverses_sale_id, orig_currency")
-        .order("sold_at", { ascending: false }).limit(500);
-      const rows = (data as { sale_id: number; card_id: number; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number; sale_group: number | null; reverses_sale_id: number | null; orig_currency: string | null }[]) ?? [];
-      for (const r of rows) if (r.reverses_sale_id != null) revertedKeys.add(`${game}-${r.reverses_sale_id}`);
-      const origs = rows.filter((r) => r.reverses_sale_id == null);
-      if (origs.length === 0) continue;
-      const { data: defs } = await supabase
-        .from(DEF_TABLE[game]).select("card_id, regional_name, set_code, card_number").in("card_id", [...new Set(origs.map((r) => r.card_id))]);
-      const nameMap = new Map<number, string>();
+type RawCard = { sale_id: number; card_id: number; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number; sale_group: number | null; reverses_sale_id: number | null; orig_currency: string | null };
+type RawSealed = Omit<RawCard, "card_id"> & { product_id: number };
+
+async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncated: boolean }> {
+  const supabase = createClient();
+  // The three source tables in parallel.
+  const [pk, mtg, sealed] = await Promise.all([
+    supabase.from("pokemon_sales").select(`card_id, ${SEL}`).order("sold_at", { ascending: false }).limit(limit),
+    supabase.from("mtg_sales").select(`card_id, ${SEL}`).order("sold_at", { ascending: false }).limit(limit),
+    supabase.from("pokemon_sealed_sales").select(`product_id, ${SEL}`).order("sold_at", { ascending: false }).limit(limit),
+  ]);
+  for (const r of [pk, mtg, sealed]) if (r.error) throw r.error; // surface read failures (don't blank silently)
+
+  const out: Sale[] = [];
+  const reverted = new Set<string>();
+  let truncated = false;
+
+  for (const [game, res] of [["pokemon", pk], ["mtg", mtg]] as const) {
+    const rows = (res.data as RawCard[]) ?? [];
+    if (rows.length >= limit) truncated = true;
+    for (const r of rows) if (r.reverses_sale_id != null) reverted.add(`${game}-${r.reverses_sale_id}`);
+    const origs = rows.filter((r) => r.reverses_sale_id == null);
+    const ids = [...new Set(origs.map((r) => r.card_id))];
+    const nameMap = new Map<number, string>();
+    if (ids.length) {
+      const { data: defs } = await supabase.from(DEF_TABLE[game]).select("card_id, regional_name, set_code, card_number").in("card_id", ids);
       for (const d of (defs as { card_id: number; regional_name: string; set_code: string; card_number: string | null }[]) ?? []) {
         nameMap.set(d.card_id, `${d.regional_name} · ${d.set_code} ${d.card_number ?? ""}`.trim());
       }
-      for (const r of origs) out.push({
-        key: `${game}-${r.sale_id}`, name: nameMap.get(r.card_id) ?? `#${r.card_id}`,
-        leg: legOf(r.orig_currency), sold_at: r.sold_at, quantity: r.quantity,
-        gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd, sale_group: r.sale_group,
-      });
     }
-    const { data: sdata } = await supabase
-      .from("pokemon_sealed_sales")
-      .select("sale_id, product_id, sold_at, quantity, gross_usd, cogs_usd, margin_usd, sale_group, reverses_sale_id, orig_currency")
-      .order("sold_at", { ascending: false }).limit(500);
-    const srows = (sdata as { sale_id: number; product_id: number; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number; sale_group: number | null; reverses_sale_id: number | null; orig_currency: string | null }[]) ?? [];
-    for (const r of srows) if (r.reverses_sale_id != null) revertedKeys.add(`sealed-${r.reverses_sale_id}`);
-    const sorigs = srows.filter((r) => r.reverses_sale_id == null);
-    if (sorigs.length > 0) {
-      const { data: prods } = await supabase
-        .from("pokemon_sealed_products").select("product_id, name, set_code").in("product_id", [...new Set(sorigs.map((r) => r.product_id))]);
-      const pMap = new Map<number, string>();
-      for (const p of (prods as { product_id: number; name: string; set_code: string }[]) ?? []) pMap.set(p.product_id, `${p.name} · ${p.set_code}`);
-      for (const r of sorigs) out.push({
-        key: `sealed-${r.sale_id}`, name: pMap.get(r.product_id) ?? `#${r.product_id}`,
-        leg: legOf(r.orig_currency), sold_at: r.sold_at, quantity: r.quantity,
-        gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd, sale_group: r.sale_group,
-      });
-    }
-    out.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1));
-    setSales(out);
-    setLoading(false);
-  }, []);
+    for (const r of origs) out.push({
+      key: `${game}-${r.sale_id}`, name: nameMap.get(r.card_id) ?? `#${r.card_id}`,
+      leg: legOf(r.orig_currency), sold_at: r.sold_at, quantity: r.quantity,
+      gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd, sale_group: r.sale_group,
+    });
+  }
 
-  useEffect(() => { fetchSales(); }, [fetchSales]);
+  const srows = (sealed.data as RawSealed[]) ?? [];
+  if (srows.length >= limit) truncated = true;
+  for (const r of srows) if (r.reverses_sale_id != null) reverted.add(`sealed-${r.reverses_sale_id}`);
+  const sorigs = srows.filter((r) => r.reverses_sale_id == null);
+  if (sorigs.length > 0) {
+    const { data: prods } = await supabase.from("pokemon_sealed_products").select("product_id, name, set_code").in("product_id", [...new Set(sorigs.map((r) => r.product_id))]);
+    const pMap = new Map<number, string>();
+    for (const p of (prods as { product_id: number; name: string; set_code: string }[]) ?? []) pMap.set(p.product_id, `${p.name} · ${p.set_code}`);
+    for (const r of sorigs) out.push({
+      key: `sealed-${r.sale_id}`, name: pMap.get(r.product_id) ?? `#${r.product_id}`,
+      leg: legOf(r.orig_currency), sold_at: r.sold_at, quantity: r.quantity,
+      gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd, sale_group: r.sale_group,
+    });
+  }
+
+  // Reverted sales drop out entirely (the revert undid them).
+  const live = out.filter((o) => !reverted.has(o.key));
+  live.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1));
+  return { sales: live, truncated };
+}
+
+export default function SalesView() {
+  const { t } = useTranslation();
+  const [leg, setLeg] = useState<"all" | "import" | "export">("all");
+  const [limit, setLimit] = useState(PAGE);
+  const { data, error, isLoading, retry } = useSupabaseQuery(
+    ["global-sales", limit], () => fetchGlobalSales(limit));
+  const sales = data?.sales ?? [];
 
   // Collapse lot sales (shared sale_group) into one event row.
   type Event = { gid: string; items: Sale[]; leg: "import" | "export"; sold_at: string; qty: number; gross: number; cogs: number; margin: number };
@@ -128,6 +142,8 @@ export default function SalesView() {
         </Tabs>
       </div>
 
+      {error && <QueryError onRetry={retry} />}
+
       <Table>
         <TableHeader>
           <TableRow>
@@ -158,16 +174,24 @@ export default function SalesView() {
               <TableCell className={e.margin < 0 ? "text-destructive" : ""}>${e.margin.toFixed(0)}</TableCell>
             </TableRow>
           ))}
-          {events.length === 0 && (
-            <TableRow><TableCell colSpan={7} className="text-muted-foreground">{loading ? t("common.loading") : t("trips.empty")}</TableCell></TableRow>
+          {events.length === 0 && !error && (
+            <TableRow><TableCell colSpan={7} className="text-muted-foreground">{isLoading ? t("common.loading") : t("trips.empty")}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>
-      {events.length > 0 && (
-        <p className="text-sm font-medium">
-          {t("sales.totalSummary", { gross: total.gross.toFixed(0), margin: total.margin.toFixed(0) })}
-        </p>
-      )}
+
+      <div className="flex items-center justify-between gap-2">
+        {events.length > 0 && (
+          <p className="text-sm font-medium">
+            {t("sales.totalSummary", { gross: total.gross.toFixed(0), margin: total.margin.toFixed(0) })}
+          </p>
+        )}
+        {data?.truncated && (
+          <Button variant="outline" size="sm" disabled={isLoading} onClick={() => setLimit((l) => l + PAGE)}>
+            {t("common.loadMore")}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

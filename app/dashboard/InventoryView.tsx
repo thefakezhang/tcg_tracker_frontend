@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ImageOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
+import { useSupabaseQuery, QueryError } from "./use-query";
 import { useLanguage } from "./LanguageContext";
 import { getCardDisplayName } from "./use-card-data";
 import { Input } from "@/components/ui/input";
@@ -40,19 +41,17 @@ interface Holding {
 export default function InventoryView() {
   const { t } = useTranslation();
   const { language } = useLanguage();
-  const [holdings, setHoldings] = useState<Holding[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [leg, setLeg] = useState<"all" | "import" | "export">("all");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
 
-  const fetchHoldings = useCallback(async () => {
-    setLoading(true);
+  const fetchHoldings = useCallback(async (): Promise<Holding[]> => {
     const supabase = createClient();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("inventory_holdings_v")
       .select("game, item_type, leg, card_id, product_id, name, set_code, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd")
       .order("total_cost_usd", { ascending: false });
+    if (error) throw error;
     const rows = ((data as Omit<Holding, "imageUrl" | "englishName">[]) ?? []).map(
       (h) => ({ ...h, imageUrl: null as string | null, englishName: null as string | null })
     );
@@ -75,11 +74,11 @@ export default function InventoryView() {
       const hit = r.game === "pokemon" ? pkm.get(r.card_id!) : r.game === "mtg" ? mtg.get(r.card_id!) : sealed.get(r.product_id!);
       if (hit) { r.imageUrl = hit.image_url; r.englishName = hit.english_name ?? null; }
     }
-    setHoldings(rows);
-    setLoading(false);
+    return rows;
   }, []);
 
-  useEffect(() => { fetchHoldings(); }, [fetchHoldings]);
+  const { data, error, isLoading, retry } = useSupabaseQuery("inventory-holdings", fetchHoldings);
+  const holdings = useMemo(() => data ?? [], [data]);
 
   const label = useCallback(
     (h: Holding) => getCardDisplayName({ regional_name: h.name, english_name: h.englishName }, language),
@@ -128,6 +127,8 @@ export default function InventoryView() {
         </div>
       </div>
 
+      {error && <QueryError onRetry={retry} />}
+
       <div className="flex gap-3 text-sm text-muted-foreground">
         <span>{t("inventory.distinct", { n: rows.length })}</span>
         <span>{t("inventory.totalQty", { n: totals.qty })}</span>
@@ -157,7 +158,7 @@ export default function InventoryView() {
               </CardContent>
             </Card>
           ))}
-          {!loading && rows.length === 0 && <p className="col-span-full text-sm text-muted-foreground">{t("inventory.empty")}</p>}
+          {!isLoading && rows.length === 0 && <p className="col-span-full text-sm text-muted-foreground">{t("inventory.empty")}</p>}
         </div>
       ) : (
         <Table>
@@ -182,7 +183,7 @@ export default function InventoryView() {
                 <TableCell>${Number(h.total_cost_usd).toFixed(2)}</TableCell>
               </TableRow>
             ))}
-            {!loading && rows.length === 0 && (
+            {!isLoading && rows.length === 0 && (
               <TableRow><TableCell colSpan={6} className="text-muted-foreground">{t("inventory.empty")}</TableCell></TableRow>
             )}
           </TableBody>
