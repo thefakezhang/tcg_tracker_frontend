@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useLanguage } from "./LanguageContext";
-import { getCardDisplayName } from "./use-card-data";
+import { getCardDisplayName, cardMeta } from "./use-card-data";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +27,8 @@ interface Holding {
   product_id: number | null;
   name: string;
   set_code: string;
+  card_number: string | null;
+  misc_info: string | null;
   condition_id: number | null;
   psa_grade: number | null;
   sealed_condition: string | null;
@@ -49,7 +51,7 @@ export default function InventoryView() {
     const supabase = createClient();
     const { data, error } = await supabase
       .from("inventory_holdings_v")
-      .select("game, item_type, leg, card_id, product_id, name, set_code, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd")
+      .select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd")
       .order("total_cost_usd", { ascending: false });
     if (error) throw error;
     const rows = ((data as Omit<Holding, "imageUrl" | "englishName">[]) ?? []).map(
@@ -147,6 +149,7 @@ export default function InventoryView() {
               )}
               <CardContent className="space-y-1 p-2">
                 <div className="truncate text-xs font-medium">{label(h)}</div>
+                {h.item_type !== "sealed" && <div className="truncate text-[10px] text-muted-foreground">{cardMeta(h.set_code, h.card_number, h.misc_info)}</div>}
                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge>
                   <span className="truncate">{detail(h)}</span>
@@ -175,7 +178,7 @@ export default function InventoryView() {
           <TableBody>
             {rows.map((h) => (
               <TableRow key={keyOf(h)}>
-                <TableCell className="truncate max-w-[320px]">{label(h)} · {h.set_code}</TableCell>
+                <TableCell className="truncate max-w-[320px]">{label(h)} <span className="text-muted-foreground">· {cardMeta(h.set_code, h.card_number, h.misc_info)}</span></TableCell>
                 <TableCell><Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge></TableCell>
                 <TableCell className="text-xs text-muted-foreground">{detail(h)}</TableCell>
                 <TableCell>{h.qty_on_hand}</TableCell>

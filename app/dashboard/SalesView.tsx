@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
+import { cardMeta } from "./use-card-data";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +32,7 @@ interface Sale {
 
 type LedgerRow = {
   sale_id: number; game: string; sale_group: number | null;
-  regional_name: string; set_code: string; card_number: string | null;
+  regional_name: string; set_code: string; card_number: string | null; misc_info: string | null;
   leg: "import" | "export" | null; sold_at: string; quantity: number;
   gross_usd: number; cogs_usd: number; margin_usd: number; is_reverted: boolean;
 };
@@ -40,7 +41,7 @@ async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncat
   const supabase = createClient();
   const { data, error } = await supabase
     .from("sales_ledger_v")
-    .select("sale_id, game, sale_group, regional_name, set_code, card_number, leg, sold_at, quantity, gross_usd, cogs_usd, margin_usd, is_reverted")
+    .select("sale_id, game, sale_group, regional_name, set_code, card_number, misc_info, leg, sold_at, quantity, gross_usd, cogs_usd, margin_usd, is_reverted")
     .order("sold_at", { ascending: false })
     .limit(limit);
   if (error) throw error;
@@ -49,7 +50,7 @@ async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncat
     .filter((r) => !r.is_reverted) // reverted sales drop out (the revert undid them)
     .map((r) => ({
       key: `${r.game}-${r.sale_id}`,
-      name: `${r.regional_name} · ${r.set_code} ${r.card_number ?? ""}`.trim(),
+      name: `${r.regional_name} · ${cardMeta(r.set_code, r.card_number, r.misc_info)}`.trim(),
       leg: r.leg ?? "import",
       sold_at: r.sold_at, quantity: r.quantity,
       gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd, sale_group: r.sale_group,

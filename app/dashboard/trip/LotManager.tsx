@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Plus, Trash2, Check, Pencil, Upload, ImageOff, RotateCcw, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
-import { getCardDisplayName, useDebouncedValue } from "../use-card-data";
+import { getCardDisplayName, cardMeta, useDebouncedValue } from "../use-card-data";
 import { useLanguage } from "../LanguageContext";
 import { useLotPicker } from "../LotPickerContext";
 import { useSaving } from "@/lib/use-saving";
@@ -63,6 +63,7 @@ interface LotLine {
   englishName: string | null;
   setCode: string;
   cardNumber: string | null;
+  miscInfo: string | null;
   imageUrl: string | null;
 }
 
@@ -139,12 +140,12 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       if (rows.length === 0) continue;
       const nameTable = game === "pokemon" ? "pokemon_card_definitions" : "mtg_card_definitions_v";
       const cols = game === "pokemon"
-        ? "card_id, regional_name, english_name, set_code, card_number, image_url"
+        ? "card_id, regional_name, english_name, set_code, card_number, misc_info, image_url"
         : "card_id, regional_name, set_code, card_number, image_url";
       const { data: defs } = await supabase.from(nameTable).select(cols).in("card_id", rows.map((r) => r.card_id));
-      const defMap = new Map<number, { regionalName: string; englishName: string | null; setCode: string; cardNumber: string | null; imageUrl: string | null }>();
-      for (const d of (defs as unknown as { card_id: number; regional_name: string; english_name?: string | null; set_code: string; card_number: string | null; image_url: string | null }[]) ?? []) {
-        defMap.set(d.card_id, { regionalName: d.regional_name, englishName: d.english_name ?? null, setCode: d.set_code, cardNumber: d.card_number, imageUrl: d.image_url });
+      const defMap = new Map<number, { regionalName: string; englishName: string | null; setCode: string; cardNumber: string | null; miscInfo: string | null; imageUrl: string | null }>();
+      for (const d of (defs as unknown as { card_id: number; regional_name: string; english_name?: string | null; set_code: string; card_number: string | null; misc_info?: string | null; image_url: string | null }[]) ?? []) {
+        defMap.set(d.card_id, { regionalName: d.regional_name, englishName: d.english_name ?? null, setCode: d.set_code, cardNumber: d.card_number, miscInfo: d.misc_info ?? null, imageUrl: d.image_url });
       }
       for (const r of rows) {
         const d = defMap.get(r.card_id);
@@ -152,7 +153,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           line_id: r.line_id, table: LINE_TABLE[game], kind: "single", quantity: r.quantity,
           condition_id: r.condition_id, price_override_usd: r.price_override_usd, allocated_cost_usd: r.allocated_cost_usd,
           regionalName: d?.regionalName ?? `#${r.card_id}`, englishName: d?.englishName ?? null,
-          setCode: d?.setCode ?? "", cardNumber: d?.cardNumber ?? null, imageUrl: d?.imageUrl ?? null,
+          setCode: d?.setCode ?? "", cardNumber: d?.cardNumber ?? null, miscInfo: d?.miscInfo ?? null, imageUrl: d?.imageUrl ?? null,
         });
       }
     }
@@ -174,7 +175,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           line_id: r.line_id, table: SEALED_TABLE, kind: "sealed", quantity: r.quantity,
           sealedLabel: `${r.sealed_condition}/${r.variant_edition}`, price_override_usd: r.price_override_usd,
           allocated_cost_usd: r.allocated_cost_usd, regionalName: p?.name ?? `#${r.product_id}`, englishName: null,
-          setCode: p?.setCode ?? "", cardNumber: null, imageUrl: p?.imageUrl ?? null,
+          setCode: p?.setCode ?? "", cardNumber: null, miscInfo: null, imageUrl: p?.imageUrl ?? null,
         });
       }
     }
@@ -218,7 +219,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
 
   // Search the card CATALOG directly (not price summaries), so every card is
   // findable — cards you buy in Japan often have no price-summary row.
-  interface SearchHit { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string | null; }
+  interface SearchHit { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string | null; misc_info: string | null; }
   const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
   const dSearch = useDebouncedValue(search, 300);
   useEffect(() => {
@@ -231,7 +232,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       let hits: SearchHit[] = [];
       if (searchGame === "pokemon") {
         const { data } = await supabase.from("pokemon_card_definitions")
-          .select("card_id, regional_name, english_name, set_code, card_number")
+          .select("card_id, regional_name, english_name, set_code, card_number, misc_info")
           .or(`regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,card_number.ilike.%${safe}%`)
           .limit(25).abortSignal(ac.signal);
         hits = (data as SearchHit[]) ?? [];
@@ -240,7 +241,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           .select("card_id, regional_name, set_code, card_number")
           .or(`regional_name.ilike.%${safe}%,card_number.ilike.%${safe}%`)
           .limit(25).abortSignal(ac.signal);
-        hits = ((data as Omit<SearchHit, "english_name">[]) ?? []).map((d) => ({ ...d, english_name: null }));
+        hits = ((data as Omit<SearchHit, "english_name" | "misc_info">[]) ?? []).map((d) => ({ ...d, english_name: null, misc_info: null }));
       }
       setSearchResults(hits);
     })().catch(() => { /* aborted / superseded */ });
@@ -465,7 +466,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                       className="flex w-full items-center justify-between px-2 py-1.5 text-left text-sm hover:bg-accent"
                     >
                       <span className="truncate">
-                        {getCardDisplayName({ regional_name: r.regional_name, english_name: r.english_name }, language)} · {r.set_code}{r.card_number ? ` ${r.card_number}` : ""}
+                        {getCardDisplayName({ regional_name: r.regional_name, english_name: r.english_name }, language)} · {cardMeta(r.set_code, r.card_number, r.misc_info)}
                       </span>
                       <Plus className="size-4 shrink-0" />
                     </button>
@@ -502,7 +503,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                   <CardContent className="space-y-1 p-2">
                     <div className="truncate text-xs font-medium">{lineLabel(ln)}</div>
                     <div className="truncate text-xs text-muted-foreground">
-                      {ln.setCode}{ln.kind === "sealed" ? ` · ${ln.sealedLabel}` : ""}
+                      {ln.kind === "sealed" ? `${ln.setCode} · ${ln.sealedLabel}` : cardMeta(ln.setCode, ln.cardNumber, ln.miscInfo)}
                     </div>
                     <div className="flex items-center justify-between text-xs">
                       <span>×{ln.quantity}</span>
@@ -533,7 +534,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
             <TableBody>
               {lines.map((ln) => (
                 <TableRow key={`${ln.table}-${ln.line_id}`}>
-                  <TableCell className="truncate max-w-[280px]">{lineLabel(ln)} · {ln.setCode}</TableCell>
+                  <TableCell className="truncate max-w-[280px]">{lineLabel(ln)} <span className="text-muted-foreground">· {ln.kind === "sealed" ? `${ln.setCode} · ${ln.sealedLabel}` : cardMeta(ln.setCode, ln.cardNumber, ln.miscInfo)}</span></TableCell>
                   <TableCell>
                     {lot.lines_imported ? ln.quantity : (
                       <Input type="number" defaultValue={ln.quantity} className="h-8 w-16"
