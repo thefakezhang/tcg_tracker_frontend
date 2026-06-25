@@ -206,6 +206,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.lotFinalizedNote": "このロットは確定済みです — カードと原価は固定されています。",
   "trips.selectLotHint": "上でロットを作成し、選択してカードを追加します。",
   "trips.void": "取消",
+  "trips.editSale": "売却を編集",
+  "trips.editSaleQtyNote": "数量を変更するには、この売却を取り消して再登録してください（数量は原価レイヤーに影響します）。",
   "trips.voidConfirm": "この販売を取り消しますか？カードは在庫に戻ります。",
   "trips.card": "カード",
   "trips.avgCost": "平均原価",

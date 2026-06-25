@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Undo2, ImageOff, ChevronUp, ChevronDown, ChevronsUpDown, Loader2 } from "lucide-react";
+import { Undo2, ImageOff, ChevronUp, ChevronDown, ChevronsUpDown, Loader2, Pencil } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
@@ -69,6 +69,10 @@ interface SaleRow {
   imageUrl: string | null;
   sale_group: number | null; // shared id for cards sold together as a lot
   reverted: boolean;         // an undo (negative) row already references this sale
+  fees_usd: number;
+  orig_currency: string;     // 'USD' (import) or native e.g. 'JPY' (export)
+  proceeds_orig: number;
+  fx_rate_used: number;
 }
 
 const DEF_TABLE: Record<CardGame, string> = { pokemon: "pokemon_card_definitions", mtg: "mtg_card_definitions_v" };
@@ -85,6 +89,12 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [fx, setFx] = useState("0.0067");
   const [fees, setFees] = useState("0");
   const [soldAt, setSoldAt] = useState(new Date().toISOString().slice(0, 10));
+  // Edit-a-sale dialog (correct proceeds/fees/date without revert + re-record).
+  const [editSel, setEditSel] = useState<SaleRow | null>(null);
+  const [eProceeds, setEProceeds] = useState("");
+  const [eFees, setEFees] = useState("0");
+  const [eFx, setEFx] = useState("1");
+  const [eDate, setEDate] = useState("");
   // Lot sale: pick several holdings, enter one total.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lotOpen, setLotOpen] = useState(false);
@@ -140,9 +150,9 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     for (const game of ["pokemon", "mtg"] as CardGame[]) {
       const { data } = await supabase
         .from(`${game}_sales`)
-        .select("sale_id, card_id, condition_id, psa_grade, sold_at, quantity, gross_usd, cogs_usd, margin_usd, sale_group, reverses_sale_id")
+        .select("sale_id, card_id, condition_id, psa_grade, sold_at, quantity, gross_usd, cogs_usd, margin_usd, sale_group, reverses_sale_id, fees_usd, orig_currency, proceeds_orig, fx_rate_used")
         .order("sold_at", { ascending: false }).limit(100);
-      const rows = (data as { sale_id: number; card_id: number; condition_id: number; psa_grade: number; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number; sale_group: number | null; reverses_sale_id: number | null }[]) ?? [];
+      const rows = (data as { sale_id: number; card_id: number; condition_id: number; psa_grade: number; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number; sale_group: number | null; reverses_sale_id: number | null; fees_usd: number; orig_currency: string; proceeds_orig: number; fx_rate_used: number }[]) ?? [];
       // A negative row is an undo — record which original it cancels, then drop
       // it from the displayed history (it's an accounting artifact, not a sale).
       for (const r of rows) if (r.reverses_sale_id != null) revertedKeys.add(`${game}-${r.reverses_sale_id}`);
@@ -163,14 +173,15 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         quantity: r.quantity, gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
         marginPct: r.gross_usd ? Math.round((r.margin_usd / r.gross_usd) * 1000) / 10 : 0,
         imageUrl: imgMap.get(r.card_id) ?? null, sale_group: r.sale_group, reverted: false,
+        fees_usd: r.fees_usd, orig_currency: r.orig_currency, proceeds_orig: r.proceeds_orig, fx_rate_used: r.fx_rate_used,
       });
     }
     // sealed sales
     const { data: sdata } = await supabase
       .from("pokemon_sealed_sales")
-      .select("sale_id, product_id, sealed_condition, variant_edition, sold_at, quantity, gross_usd, cogs_usd, margin_usd, sale_group, reverses_sale_id")
+      .select("sale_id, product_id, sealed_condition, variant_edition, sold_at, quantity, gross_usd, cogs_usd, margin_usd, sale_group, reverses_sale_id, fees_usd, orig_currency, proceeds_orig, fx_rate_used")
       .order("sold_at", { ascending: false }).limit(100);
-    const srows = (sdata as { sale_id: number; product_id: number; sealed_condition: string; variant_edition: string; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number; sale_group: number | null; reverses_sale_id: number | null }[]) ?? [];
+    const srows = (sdata as { sale_id: number; product_id: number; sealed_condition: string; variant_edition: string; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number; sale_group: number | null; reverses_sale_id: number | null; fees_usd: number; orig_currency: string; proceeds_orig: number; fx_rate_used: number }[]) ?? [];
     for (const r of srows) if (r.reverses_sale_id != null) revertedKeys.add(`sealed-${r.reverses_sale_id}`);
     const sorigs = srows.filter((r) => r.reverses_sale_id == null);
     if (sorigs.length > 0) {
@@ -188,6 +199,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         quantity: r.quantity, gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
         marginPct: r.gross_usd ? Math.round((r.margin_usd / r.gross_usd) * 1000) / 10 : 0,
         imageUrl: pImg.get(r.product_id) ?? null, sale_group: r.sale_group, reverted: false,
+        fees_usd: r.fees_usd, orig_currency: r.orig_currency, proceeds_orig: r.proceeds_orig, fx_rate_used: r.fx_rate_used,
       });
     }
     // Reverted sales drop out of the list entirely (a revert undoes the sale).
@@ -271,6 +283,39 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     if (!ok) return;
     await fetchHoldings(); await fetchSales();
   }
+
+  function openEdit(s: SaleRow) {
+    const isNative = !!s.orig_currency && s.orig_currency.toUpperCase() !== "USD";
+    setEditSel(s);
+    setEProceeds(String(isNative ? s.proceeds_orig : s.gross_usd));
+    setEFees(String(s.fees_usd));
+    setEFx(String(s.fx_rate_used || 1));
+    setEDate(s.sold_at);
+  }
+
+  // Edit a confirmed sale's proceeds/fees/date in place (no revert + re-record).
+  // Quantity isn't editable — that changes the FIFO cost layers, so a qty fix
+  // still needs a revert + re-record.
+  async function editSale() {
+    if (!editSel || saving) return;
+    const s = editSel;
+    const supabase = createClient();
+    const isNative = !!s.orig_currency && s.orig_currency.toUpperCase() !== "USD";
+    const grossUsd = isNative ? Math.round(Number(eProceeds) * Number(eFx) * 100) / 100 : Number(eProceeds);
+    const common = {
+      p_gross_usd: isNative ? 0 : grossUsd, p_fees_usd: Number(eFees) || 0, p_sold_at: eDate,
+      p_orig_currency: isNative ? s.orig_currency : null,
+      p_proceeds_orig: isNative ? Number(eProceeds) : null,
+      p_fx_rate: isNative ? Number(eFx) : 1,
+    };
+    const ok = await save(() => s.kind === "sealed"
+      ? supabase.rpc("edit_sealed_sale", { p_sale_id: s.sale_id, ...common })
+      : supabase.rpc("edit_sale", { p_game: s.game, p_sale_id: s.sale_id, ...common }));
+    if (!ok) return;
+    setEditSel(null);
+    await fetchSales();
+  }
+  const eNative = !!editSel?.orig_currency && editSel.orig_currency.toUpperCase() !== "USD";
 
   const native = sel?.leg === "export" && currency.toUpperCase() !== "USD";
 
@@ -368,6 +413,10 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     if (s.reverted) return <span className="text-xs text-muted-foreground">{t("trips.reverted")}</span>;
     if (s.quantity <= 0) return null;
     return (
+      <span className="flex items-center gap-0.5">
+      <Button variant="ghost" size="icon" className="size-7" disabled={saving} onClick={() => openEdit(s)} title={t("trips.editSale")}>
+        <Pencil className="size-4" />
+      </Button>
       <AlertDialog>
         <AlertDialogTrigger render={<Button variant="ghost" size="icon" className="size-7" disabled={saving} />}><Undo2 className="size-4" /></AlertDialogTrigger>
         <AlertDialogContent>
@@ -381,6 +430,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </span>
     );
   };
 
@@ -707,6 +757,34 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           <DialogFooter>
             <Button variant="outline" onClick={() => setSel(null)}>{t("trips.cancel")}</Button>
             <Button disabled={!proceeds || saving} onClick={recordSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.recordSale")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editSel} onOpenChange={(o) => !o && setEditSel(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>{t("trips.editSale")} · {editSel?.name}</DialogTitle></DialogHeader>
+          <FieldGroup>
+            <Field><Label>{eNative ? t("trips.saleProceedsOrig") : t("trips.saleGross")}</Label>
+              <Input type="number" value={eProceeds} onChange={(e) => setEProceeds(e.target.value)} autoFocus /></Field>
+            {eNative && (
+              <>
+                <Field><Label>{t("trips.saleFx")}</Label>
+                  <Input type="number" value={eFx} onChange={(e) => setEFx(e.target.value)} /></Field>
+                <p className="text-xs text-muted-foreground">
+                  {t("trips.usdComputed", { usd: (Number(eProceeds) * Number(eFx) || 0).toFixed(2) })}
+                </p>
+              </>
+            )}
+            <Field><Label>{t("trips.saleFees")}</Label>
+              <Input type="number" value={eFees} onChange={(e) => setEFees(e.target.value)} /></Field>
+            <Field><Label>{t("trips.month")}</Label>
+              <Input type="date" value={eDate} onChange={(e) => setEDate(e.target.value)} /></Field>
+            <p className="text-xs text-muted-foreground">{t("trips.editSaleQtyNote")}</p>
+          </FieldGroup>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditSel(null)}>{t("trips.cancel")}</Button>
+            <Button disabled={!eProceeds || saving} onClick={editSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

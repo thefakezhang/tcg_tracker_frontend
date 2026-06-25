@@ -204,6 +204,8 @@ const en = {
   "trips.lotFinalizedNote": "This lot is finalized — cards and costs are locked.",
   "trips.selectLotHint": "Create a lot above, then select it to add cards.",
   "trips.void": "Void",
+  "trips.editSale": "Edit sale",
+  "trips.editSaleQtyNote": "To change the quantity, void this sale and re-record it (quantity affects the cost layers).",
   "trips.voidConfirm": "Void this sale? The cards go back into inventory.",
   "trips.card": "Card",
   "trips.avgCost": "Avg cost",
