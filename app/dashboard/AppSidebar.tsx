@@ -179,6 +179,15 @@ export function AppSidebar({ user }: AppSidebarProps) {
                   {t("inventory.title")}
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeTripId === -2}
+                  onClick={() => { setActiveTripId(-2); setActiveBuylistId(null); }}
+                >
+                  <DollarSign className="size-4" />
+                  {t("sales.allTitle")}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               {trips.map((tr) => (
                 <SidebarMenuItem key={tr.trip_id}>
                   <SidebarMenuButton
