@@ -47,6 +47,19 @@ export function getCardDisplayName(
   return card.regional_name;
 }
 
+// The variant tag worth showing — null for the plain base printing (misc_info is
+// 'UNKNOWN' for ~69% of cards, which we treat as "no variant").
+export function cardVariant(miscInfo?: string | null): string | null {
+  const v = (miscInfo ?? "").trim();
+  return v && v.toUpperCase() !== "UNKNOWN" ? v : null;
+}
+
+// Muted subtitle for a card: "SET 123/456 · <variant>" (variant omitted when base).
+export function cardMeta(setCode?: string | null, cardNumber?: string | null, miscInfo?: string | null): string {
+  const setNum = [setCode, cardNumber].filter(Boolean).join(" ");
+  return [setNum, cardVariant(miscInfo)].filter(Boolean).join(" · ");
+}
+
 export const POKEMON_CARD_DEF_COLS =
   "card_id, regional_name, english_name, set_code, card_number, misc_info, image_url";
 export const MTG_CARD_DEF_COLS =

@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
 import { useLanguage } from "../LanguageContext";
-import { getCardDisplayName } from "../use-card-data";
+import { getCardDisplayName, cardMeta, cardVariant } from "../use-card-data";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,8 @@ interface Holding {
   product_id: number | null;
   name: string;
   set_code: string;
+  card_number: string | null;
+  misc_info: string | null;
   condition_id: number | null;
   psa_grade: number | null;
   sealed_condition: string | null;
@@ -79,7 +81,7 @@ type LedgerSaleRow = {
   sale_id: number; kind: "single" | "sealed"; game: string; sale_group: number | null;
   card_id: number | null; product_id: number | null; condition_id: number | null; psa_grade: number | null;
   sealed_condition: string | null; variant_edition: string | null;
-  regional_name: string; set_code: string; card_number: string | null; image_url: string | null;
+  regional_name: string; set_code: string; card_number: string | null; misc_info: string | null; image_url: string | null;
   sold_at: string; quantity: number; gross_usd: number; fees_usd: number; cogs_usd: number; margin_usd: number;
   orig_currency: string; proceeds_orig: number; fx_rate_used: number; is_reverted: boolean;
 };
@@ -125,7 +127,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     const supabase = createClient();
     const { data } = await supabase
       .from("inventory_holdings_v")
-      .select("game, item_type, leg, card_id, product_id, name, set_code, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd")
+      .select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd")
       .order("total_cost_usd", { ascending: false });
     const rows = ((data as Omit<Holding, "imageUrl" | "englishName">[]) ?? []).map((h) => ({ ...h, imageUrl: null as string | null, englishName: null as string | null }));
     // batch-fetch image_url (+ english_name for pokemon) for grid view
@@ -156,7 +158,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     const supabase = createClient();
     const { data, error } = await supabase
       .from("sales_ledger_v")
-      .select("sale_id, kind, game, sale_group, card_id, product_id, condition_id, psa_grade, sealed_condition, variant_edition, regional_name, set_code, card_number, image_url, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted")
+      .select("sale_id, kind, game, sale_group, card_id, product_id, condition_id, psa_grade, sealed_condition, variant_edition, regional_name, set_code, card_number, misc_info, image_url, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted")
       .order("sold_at", { ascending: false }).limit(300);
     if (error) { setSales([]); return; }
     const rows = (data as LedgerSaleRow[]) ?? [];
@@ -166,7 +168,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         key: `${r.game}-${r.sale_id}`, kind: r.kind, game: r.game, sale_id: r.sale_id,
         card_id: r.card_id, product_id: r.product_id, condition_id: r.condition_id, psa_grade: r.psa_grade,
         sealed_condition: r.sealed_condition, variant_edition: r.variant_edition,
-        name: `${r.regional_name} · ${r.set_code} ${r.card_number ?? ""}`.trim(),
+        name: `${r.regional_name} · ${cardMeta(r.set_code, r.card_number, r.misc_info)}`.trim(),
         sold_at: r.sold_at, quantity: r.quantity,
         gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
         marginPct: r.gross_usd ? Math.round((r.margin_usd / r.gross_usd) * 1000) / 10 : 0,
@@ -503,6 +505,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                 </div>
                 <CardContent className="space-y-1 p-2">
                   <div className="truncate text-xs font-medium">{label(h)}</div>
+                  {h.item_type !== "sealed" && <div className="truncate text-[10px] text-muted-foreground">{cardMeta(h.set_code, h.card_number, h.misc_info)}</div>}
                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
                     <Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge>
                     <span className="truncate">{h.item_type === "sealed" ? `${h.sealed_condition}/${h.variant_edition}` : h.psa_grade ? `PSA ${h.psa_grade}` : ""}</span>
@@ -535,8 +538,8 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                   disabled={selectedLeg !== null && h.leg !== selectedLeg}
                   onChange={() => toggle(h)} title={t("trips.sellLotHint")} />
               </TableCell>
-              <TableCell className="truncate max-w-[260px]">
-                {label(h)} · {h.set_code}
+              <TableCell className="truncate max-w-[280px]">
+                {label(h)} <span className="text-muted-foreground">· {cardMeta(h.set_code, h.card_number, h.misc_info)}</span>
                 {h.item_type === "sealed" && <span className="text-muted-foreground"> ({h.sealed_condition}/{h.variant_edition})</span>}
                 {h.psa_grade ? <span className="text-muted-foreground"> PSA {h.psa_grade}</span> : ""}
               </TableCell>
@@ -770,7 +773,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           <div className="max-h-44 space-y-1 overflow-auto rounded-md border p-1 text-sm">
             {selectedHoldings.map((h) => (
               <div key={holdingKey(h)} className="flex items-center gap-2 px-1 py-0.5">
-                <span className="flex-1 truncate">{label(h)}{h.psa_grade ? ` · PSA ${h.psa_grade}` : ""}{h.item_type === "sealed" ? ` · ${h.sealed_condition}/${h.variant_edition}` : ""}</span>
+                <span className="flex-1 truncate">{label(h)}{cardVariant(h.misc_info) ? ` · ${cardVariant(h.misc_info)}` : ""}{h.psa_grade ? ` · PSA ${h.psa_grade}` : ""}{h.item_type === "sealed" ? ` · ${h.sealed_condition}/${h.variant_edition}` : ""}</span>
                 <Input type="number" min={1} max={h.qty_on_hand}
                   value={lotQty[holdingKey(h)] ?? String(h.qty_on_hand)}
                   onChange={(e) => setLotQty((p) => ({ ...p, [holdingKey(h)]: e.target.value }))}
