@@ -190,9 +190,10 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         imageUrl: pImg.get(r.product_id) ?? null, sale_group: r.sale_group, reverted: false,
       });
     }
-    for (const o of out) o.reverted = revertedKeys.has(o.key);
-    out.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1));
-    setSales(out);
+    // Reverted sales drop out of the list entirely (a revert undoes the sale).
+    const live = out.filter((o) => !revertedKeys.has(o.key));
+    live.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1));
+    setSales(live);
   }, []);
 
   useEffect(() => { fetchHoldings(); fetchSales(); }, [fetchHoldings, fetchSales]);
