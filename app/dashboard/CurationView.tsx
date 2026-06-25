@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { ImageOff, ArrowRight, Check, X, RotateCcw, Search, Loader2 } from "lucide-react";
+import { ImageOff, ArrowRight, Check, X, Pencil, Clock, Search, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
@@ -171,7 +171,7 @@ function CandidateCard({ c, status, language, saving, onApprove, onReject, onSen
       priceJpy: priceJpy !== c.ocr_price_jpy ? priceJpy : null,
     });
   }
-  const canApprove = !!(override || c.candidate_card_id); // no-match → reject only
+  const hasMatch = !!c.candidate_card_id; // mark-correct needs an existing match; no-match → correct/reject
 
   return (
     <Card size="sm">
@@ -241,27 +241,34 @@ function CandidateCard({ c, status, language, saving, onApprove, onReject, onSen
                 </div>
               )}
             </div>
+            <div className="flex items-center gap-2 border-t pt-2">
+              <Button size="sm" disabled={saving || !(override || hasMatch)} onClick={doApprove}>
+                <Check className="size-4 mr-1" />{t("curation.approveFixes")}
+              </Button>
+              <Button size="sm" variant="outline" disabled={saving} onClick={() => onReject(c)}>
+                <X className="size-4 mr-1" />{t("curation.rejectNoMatch")}
+              </Button>
+              <span className="ml-auto text-[10px] text-muted-foreground">{t("curation.rejectHint")}</span>
+            </div>
           </div>
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" disabled={saving || !canApprove} onClick={doApprove}>
-            <Check className="size-4 mr-1" />{t("curation.approve")}
+          {/* the three curator decisions: it's right · it's wrong (fix or reject) · later */}
+          <Button size="sm" disabled={saving || !hasMatch} onClick={() => onApprove(c)}>
+            <Check className="size-4 mr-1" />{t("curation.markCorrect")}
           </Button>
-          <Button size="sm" variant="outline" disabled={saving} onClick={() => onReject(c)}>
-            <X className="size-4 mr-1" />{t("curation.reject")}
+          <Button size="sm" variant={correcting ? "secondary" : "outline"} disabled={saving} onClick={() => setCorrecting((v) => !v)}>
+            <Pencil className="size-4 mr-1" />{t("curation.correctMatch")}
           </Button>
           {status === "pending" && (
-            <Button size="sm" variant="ghost" disabled={saving} onClick={() => onSendBack(c)}>
-              <RotateCcw className="size-4 mr-1" />{t("curation.toReview")}
+            <Button size="sm" variant="ghost" className="ml-auto" disabled={saving} onClick={() => onSendBack(c)}>
+              <Clock className="size-4 mr-1" />{t("curation.deferLater")}
             </Button>
           )}
-          <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setCorrecting((v) => !v)}>
-            {correcting ? t("curation.done") : t("curation.correct")}
-          </Button>
           {saving && <Loader2 className="size-4 animate-spin" />}
         </div>
-        {!canApprove && <p className="text-[10px] text-muted-foreground">{t("curation.noMatchHint")}</p>}
+        {!hasMatch && !correcting && <p className="text-[10px] text-muted-foreground">{t("curation.noMatchHint")}</p>}
       </CardContent>
     </Card>
   );
