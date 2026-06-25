@@ -208,7 +208,7 @@ const en = {
   "trips.selectLotHint": "Create a lot above, then select it to add cards.",
   "trips.void": "Void",
   "trips.editSale": "Edit sale",
-  "trips.editSaleQtyNote": "To change the quantity, void this sale and re-record it (quantity affects the cost layers).",
+  "trips.editSaleQtyNote": "Changing quantity re-runs FIFO — inventory and COGS will be recomputed.",
   "trips.voidConfirm": "Void this sale? The cards go back into inventory.",
   "trips.card": "Card",
   "trips.avgCost": "Avg cost",
