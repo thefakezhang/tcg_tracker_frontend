@@ -211,6 +211,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.void": "取消",
   "trips.editSale": "売却を編集",
   "trips.editSaleQtyNote": "数量を変更するとFIFOが再計算され、在庫と原価が再計算されます。",
+  "trips.editLotNote": "新しい合計と手数料は各カードの原価割合で再配分されます。数量は変更されません。",
   "trips.voidConfirm": "この販売を取り消しますか？カードは在庫に戻ります。",
   "trips.card": "カード",
   "trips.avgCost": "平均原価",

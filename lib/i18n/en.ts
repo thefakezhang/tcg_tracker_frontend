@@ -209,6 +209,7 @@ const en = {
   "trips.void": "Void",
   "trips.editSale": "Edit sale",
   "trips.editSaleQtyNote": "Changing quantity re-runs FIFO — inventory and COGS will be recomputed.",
+  "trips.editLotNote": "The new total and fees are re-split across the cards by their cost share; quantities are unchanged.",
   "trips.voidConfirm": "Void this sale? The cards go back into inventory.",
   "trips.card": "Card",
   "trips.avgCost": "Avg cost",
