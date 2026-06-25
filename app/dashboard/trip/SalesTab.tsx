@@ -26,7 +26,6 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 
-type CardGame = "pokemon" | "mtg";
 
 // inventory_holdings_v rows now carry item_type + leg + sealed keys.
 interface Holding {
@@ -75,7 +74,16 @@ interface SaleRow {
   fx_rate_used: number;
 }
 
-const DEF_TABLE: Record<CardGame, string> = { pokemon: "pokemon_card_definitions", mtg: "mtg_card_definitions_v" };
+// A row of sales_ledger_v (migration 085).
+type LedgerSaleRow = {
+  sale_id: number; kind: "single" | "sealed"; game: string; sale_group: number | null;
+  card_id: number | null; product_id: number | null; condition_id: number | null; psa_grade: number | null;
+  sealed_condition: string | null; variant_edition: string | null;
+  regional_name: string; set_code: string; card_number: string | null; image_url: string | null;
+  sold_at: string; quantity: number; gross_usd: number; fees_usd: number; cogs_usd: number; margin_usd: number;
+  orig_currency: string; proceeds_orig: number; fx_rate_used: number; is_reverted: boolean;
+};
+
 
 export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const { t } = useTranslation();
@@ -141,70 +149,30 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     setHoldings(rows);
   }, []);
 
+  // History reads from sales_ledger_v (085) — one query that resolves name, the
+  // real leg, the reverted flag, and exposes card_id/product_id. Replaces the
+  // old 3-table + joins assembly. Reverted sales are dropped (revert undoes them).
   const fetchSales = useCallback(async () => {
     const supabase = createClient();
-    const out: SaleRow[] = [];
-    // Keys of originals that already have an undo (negative) row referencing
-    // them — so we can hide the revert button and never double-reverse.
-    const revertedKeys = new Set<string>();
-    // card sales
-    for (const game of ["pokemon", "mtg"] as CardGame[]) {
-      const { data } = await supabase
-        .from(`${game}_sales`)
-        .select("sale_id, card_id, condition_id, psa_grade, sold_at, quantity, gross_usd, cogs_usd, margin_usd, sale_group, reverses_sale_id, fees_usd, orig_currency, proceeds_orig, fx_rate_used")
-        .order("sold_at", { ascending: false }).limit(100);
-      const rows = (data as { sale_id: number; card_id: number; condition_id: number; psa_grade: number; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number; sale_group: number | null; reverses_sale_id: number | null; fees_usd: number; orig_currency: string; proceeds_orig: number; fx_rate_used: number }[]) ?? [];
-      // A negative row is an undo — record which original it cancels, then drop
-      // it from the displayed history (it's an accounting artifact, not a sale).
-      for (const r of rows) if (r.reverses_sale_id != null) revertedKeys.add(`${game}-${r.reverses_sale_id}`);
-      const originals = rows.filter((r) => r.reverses_sale_id == null);
-      if (originals.length === 0) continue;
-      const { data: defs } = await supabase
-        .from(DEF_TABLE[game]).select("card_id, regional_name, set_code, card_number, image_url").in("card_id", [...new Set(originals.map((r) => r.card_id))]);
-      const nameMap = new Map<number, string>();
-      const imgMap = new Map<number, string | null>();
-      for (const d of (defs as { card_id: number; regional_name: string; set_code: string; card_number: string | null; image_url: string | null }[]) ?? []) {
-        nameMap.set(d.card_id, `${d.regional_name} · ${d.set_code} ${d.card_number ?? ""}`.trim());
-        imgMap.set(d.card_id, d.image_url);
-      }
-      for (const r of originals) out.push({
-        key: `${game}-${r.sale_id}`, kind: "single", game, sale_id: r.sale_id, card_id: r.card_id,
-        product_id: null, condition_id: r.condition_id, psa_grade: r.psa_grade, sealed_condition: null,
-        variant_edition: null, name: nameMap.get(r.card_id) ?? `#${r.card_id}`, sold_at: r.sold_at,
-        quantity: r.quantity, gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
+    const { data, error } = await supabase
+      .from("sales_ledger_v")
+      .select("sale_id, kind, game, sale_group, card_id, product_id, condition_id, psa_grade, sealed_condition, variant_edition, regional_name, set_code, card_number, image_url, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted")
+      .order("sold_at", { ascending: false }).limit(300);
+    if (error) { setSales([]); return; }
+    const rows = (data as LedgerSaleRow[]) ?? [];
+    const live: SaleRow[] = rows
+      .filter((r) => !r.is_reverted)
+      .map((r) => ({
+        key: `${r.game}-${r.sale_id}`, kind: r.kind, game: r.game, sale_id: r.sale_id,
+        card_id: r.card_id, product_id: r.product_id, condition_id: r.condition_id, psa_grade: r.psa_grade,
+        sealed_condition: r.sealed_condition, variant_edition: r.variant_edition,
+        name: `${r.regional_name} · ${r.set_code} ${r.card_number ?? ""}`.trim(),
+        sold_at: r.sold_at, quantity: r.quantity,
+        gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
         marginPct: r.gross_usd ? Math.round((r.margin_usd / r.gross_usd) * 1000) / 10 : 0,
-        imageUrl: imgMap.get(r.card_id) ?? null, sale_group: r.sale_group, reverted: false,
+        imageUrl: r.image_url, sale_group: r.sale_group, reverted: false,
         fees_usd: r.fees_usd, orig_currency: r.orig_currency, proceeds_orig: r.proceeds_orig, fx_rate_used: r.fx_rate_used,
-      });
-    }
-    // sealed sales
-    const { data: sdata } = await supabase
-      .from("pokemon_sealed_sales")
-      .select("sale_id, product_id, sealed_condition, variant_edition, sold_at, quantity, gross_usd, cogs_usd, margin_usd, sale_group, reverses_sale_id, fees_usd, orig_currency, proceeds_orig, fx_rate_used")
-      .order("sold_at", { ascending: false }).limit(100);
-    const srows = (sdata as { sale_id: number; product_id: number; sealed_condition: string; variant_edition: string; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number; sale_group: number | null; reverses_sale_id: number | null; fees_usd: number; orig_currency: string; proceeds_orig: number; fx_rate_used: number }[]) ?? [];
-    for (const r of srows) if (r.reverses_sale_id != null) revertedKeys.add(`sealed-${r.reverses_sale_id}`);
-    const sorigs = srows.filter((r) => r.reverses_sale_id == null);
-    if (sorigs.length > 0) {
-      const { data: prods } = await supabase
-        .from("pokemon_sealed_products").select("product_id, name, set_code, image_url").in("product_id", [...new Set(sorigs.map((r) => r.product_id))]);
-      const pMap = new Map<number, string>();
-      const pImg = new Map<number, string | null>();
-      for (const p of (prods as { product_id: number; name: string; set_code: string; image_url: string | null }[]) ?? []) {
-        pMap.set(p.product_id, `${p.name} · ${p.set_code}`); pImg.set(p.product_id, p.image_url);
-      }
-      for (const r of sorigs) out.push({
-        key: `sealed-${r.sale_id}`, kind: "sealed", game: "pokemon_sealed", sale_id: r.sale_id, card_id: null,
-        product_id: r.product_id, condition_id: null, psa_grade: null, sealed_condition: r.sealed_condition,
-        variant_edition: r.variant_edition, name: pMap.get(r.product_id) ?? `#${r.product_id}`, sold_at: r.sold_at,
-        quantity: r.quantity, gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
-        marginPct: r.gross_usd ? Math.round((r.margin_usd / r.gross_usd) * 1000) / 10 : 0,
-        imageUrl: pImg.get(r.product_id) ?? null, sale_group: r.sale_group, reverted: false,
-        fees_usd: r.fees_usd, orig_currency: r.orig_currency, proceeds_orig: r.proceeds_orig, fx_rate_used: r.fx_rate_used,
-      });
-    }
-    // Reverted sales drop out of the list entirely (a revert undoes the sale).
-    const live = out.filter((o) => !revertedKeys.has(o.key));
+      }));
     live.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1));
     setSales(live);
   }, []);
