@@ -91,6 +91,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [soldAt, setSoldAt] = useState(new Date().toISOString().slice(0, 10));
   // Edit-a-sale dialog (correct proceeds/fees/date without revert + re-record).
   const [editSel, setEditSel] = useState<SaleRow | null>(null);
+  const [eQty, setEQty] = useState("1");
   const [eProceeds, setEProceeds] = useState("");
   const [eFees, setEFees] = useState("0");
   const [eFx, setEFx] = useState("1");
@@ -287,15 +288,16 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   function openEdit(s: SaleRow) {
     const isNative = !!s.orig_currency && s.orig_currency.toUpperCase() !== "USD";
     setEditSel(s);
+    setEQty(String(s.quantity));
     setEProceeds(String(isNative ? s.proceeds_orig : s.gross_usd));
     setEFees(String(s.fees_usd));
     setEFx(String(s.fx_rate_used || 1));
     setEDate(s.sold_at);
   }
 
-  // Edit a confirmed sale's proceeds/fees/date in place (no revert + re-record).
-  // Quantity isn't editable — that changes the FIFO cost layers, so a qty fix
-  // still needs a revert + re-record.
+  // Edit a confirmed sale in place (no revert + re-record). Editing quantity
+  // re-runs FIFO (edit_sale restores the old cost layers and re-consumes for the
+  // new qty), so COGS is recomputed.
   async function editSale() {
     if (!editSel || saving) return;
     const s = editSel;
@@ -303,6 +305,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     const isNative = !!s.orig_currency && s.orig_currency.toUpperCase() !== "USD";
     const grossUsd = isNative ? Math.round(Number(eProceeds) * Number(eFx) * 100) / 100 : Number(eProceeds);
     const common = {
+      p_quantity: Math.max(1, Math.floor(Number(eQty)) || 1),
       p_gross_usd: isNative ? 0 : grossUsd, p_fees_usd: Number(eFees) || 0, p_sold_at: eDate,
       p_orig_currency: isNative ? s.orig_currency : null,
       p_proceeds_orig: isNative ? Number(eProceeds) : null,
@@ -313,7 +316,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       : supabase.rpc("edit_sale", { p_game: s.game, p_sale_id: s.sale_id, ...common }));
     if (!ok) return;
     setEditSel(null);
-    await fetchSales();
+    await fetchHoldings(); await fetchSales();
   }
   const eNative = !!editSel?.orig_currency && editSel.orig_currency.toUpperCase() !== "USD";
 
@@ -765,6 +768,8 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader><DialogTitle>{t("trips.editSale")} · {editSel?.name}</DialogTitle></DialogHeader>
           <FieldGroup>
+            <Field><Label>{t("trips.saleQty")}</Label>
+              <Input type="number" min={1} value={eQty} onChange={(e) => setEQty(e.target.value)} /></Field>
             <Field><Label>{eNative ? t("trips.saleProceedsOrig") : t("trips.saleGross")}</Label>
               <Input type="number" value={eProceeds} onChange={(e) => setEProceeds(e.target.value)} autoFocus /></Field>
             {eNative && (
@@ -780,7 +785,9 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
               <Input type="number" value={eFees} onChange={(e) => setEFees(e.target.value)} /></Field>
             <Field><Label>{t("trips.month")}</Label>
               <Input type="date" value={eDate} onChange={(e) => setEDate(e.target.value)} /></Field>
-            <p className="text-xs text-muted-foreground">{t("trips.editSaleQtyNote")}</p>
+            {Number(eQty) !== editSel?.quantity && (
+              <p className="text-xs text-muted-foreground">{t("trips.editSaleQtyNote")}</p>
+            )}
           </FieldGroup>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditSel(null)}>{t("trips.cancel")}</Button>
