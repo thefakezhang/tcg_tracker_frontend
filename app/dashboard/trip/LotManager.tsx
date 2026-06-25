@@ -26,6 +26,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { CollectrImportDialog } from "./CollectrImportDialog";
+import LotReceipts from "./LotReceipts";
 
 type CardGame = "pokemon" | "mtg";
 type Leg = "import" | "export";
@@ -420,6 +421,8 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
               </AlertDialog>
             </div>
           </div>
+
+          <LotReceipts lotId={lot.lot_id} />
 
           {!lot.lines_imported ? (
             <div className="space-y-2 rounded-md bg-muted/40 p-3">
