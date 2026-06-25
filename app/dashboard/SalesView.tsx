@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import { ChevronRight, ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { cardMeta } from "./use-card-data";
@@ -62,6 +63,9 @@ export default function SalesView() {
   const { t } = useTranslation();
   const [leg, setLeg] = useState<"all" | "import" | "export">("all");
   const [limit, setLimit] = useState(PAGE);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpand = (gid: string) =>
+    setExpanded((p) => { const n = new Set(p); if (n.has(gid)) n.delete(gid); else n.add(gid); return n; });
   const { data, error, isLoading, retry } = useSupabaseQuery(
     ["global-sales", limit], () => fetchGlobalSales(limit));
   const sales = data?.sales ?? [];
@@ -117,11 +121,18 @@ export default function SalesView() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {events.map((e) => (
-            <TableRow key={e.gid}>
+          {events.map((e) => {
+            const isLot = e.items.length > 1;
+            const open = expanded.has(e.gid);
+            return (
+            <Fragment key={e.gid}>
+            <TableRow className={isLot ? "cursor-pointer" : ""} onClick={isLot ? () => toggleExpand(e.gid) : undefined}>
               <TableCell>{e.sold_at}</TableCell>
               <TableCell className="truncate max-w-[280px]">
-                {e.items.length > 1 ? t("trips.lotItems", { n: e.items.length }) : e.items[0].name}
+                <span className="flex items-center gap-1">
+                  {isLot && (open ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />)}
+                  {isLot ? t("trips.lotItems", { n: e.items.length }) : e.items[0].name}
+                </span>
               </TableCell>
               <TableCell>
                 <Badge variant={e.leg === "export" ? "secondary" : "outline"}>
@@ -133,7 +144,20 @@ export default function SalesView() {
               <TableCell>${e.cogs.toFixed(0)}</TableCell>
               <TableCell className={e.margin < 0 ? "text-destructive" : ""}>${e.margin.toFixed(0)}</TableCell>
             </TableRow>
-          ))}
+            {isLot && open && e.items.map((s) => (
+              <TableRow key={s.key} className="bg-muted/30 text-xs text-muted-foreground">
+                <TableCell />
+                <TableCell className="truncate max-w-[280px] pl-6">{s.name} ×{s.quantity}</TableCell>
+                <TableCell />
+                <TableCell>{s.quantity}</TableCell>
+                <TableCell>${Number(s.gross_usd).toFixed(0)}</TableCell>
+                <TableCell>${Number(s.cogs_usd).toFixed(0)}</TableCell>
+                <TableCell className={Number(s.margin_usd) < 0 ? "text-destructive" : ""}>${Number(s.margin_usd).toFixed(0)}</TableCell>
+              </TableRow>
+            ))}
+            </Fragment>
+            );
+          })}
           {events.length === 0 && !error && (
             <TableRow><TableCell colSpan={7} className="text-muted-foreground">{isLoading ? t("common.loading") : t("trips.empty")}</TableCell></TableRow>
           )}

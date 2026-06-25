@@ -106,6 +106,13 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [eFees, setEFees] = useState("0");
   const [eFx, setEFx] = useState("1");
   const [eDate, setEDate] = useState("");
+  // Edit-a-lot dialog: change the lot's TOTAL gross/fees and re-split across its
+  // member cards (by their current cost share), without revert + re-record.
+  const [eLotItems, setELotItems] = useState<SaleRow[] | null>(null);
+  const [eLotGross, setELotGross] = useState("");
+  const [eLotFees, setELotFees] = useState("0");
+  const [eLotFx, setELotFx] = useState("1");
+  const [eLotDate, setELotDate] = useState("");
   // Lot sale: pick several holdings, enter one total.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lotOpen, setLotOpen] = useState(false);
@@ -289,6 +296,49 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     await fetchHoldings(); await fetchSales();
   }
   const eNative = !!editSel?.orig_currency && editSel.orig_currency.toUpperCase() !== "USD";
+
+  const eLotNative = !!eLotItems?.[0]?.orig_currency && eLotItems[0].orig_currency.toUpperCase() !== "USD";
+  function openEditLot(items: SaleRow[]) {
+    const native = !!items[0]?.orig_currency && items[0].orig_currency.toUpperCase() !== "USD";
+    setELotItems(items);
+    setELotGross(String(native ? items.reduce((a, s) => a + Number(s.proceeds_orig), 0) : items.reduce((a, s) => a + Number(s.gross_usd), 0)));
+    setELotFees(String(items.reduce((a, s) => a + Number(s.fees_usd), 0)));
+    setELotFx(String(items[0]?.fx_rate_used || 1));
+    setELotDate(items[0]?.sold_at ?? new Date().toISOString().slice(0, 10));
+  }
+  // Re-split the new lot total + fees across the members by their CURRENT cost
+  // share (gross → cogs → even fallback) and edit each member in place. Each
+  // edit_sale re-runs FIFO for the unchanged qty, so COGS is stable and only the
+  // revenue/fees re-allocate. Sequential (no lot-level RPC); stops on first error.
+  async function editLotSale() {
+    if (!eLotItems || saving) return;
+    const items = eLotItems;
+    let weights = items.map((s) => Number(s.gross_usd));
+    if (weights.reduce((a, b) => a + b, 0) <= 0) weights = items.map((s) => Number(s.cogs_usd));
+    const grossAlloc = allocate(Number(eLotGross), weights);
+    const feesAlloc = allocate(Number(eLotFees) || 0, weights);
+    const supabase = createClient();
+    const ok = await save(async () => {
+      for (let i = 0; i < items.length; i++) {
+        const s = items[i];
+        const common = {
+          p_quantity: s.quantity,
+          p_gross_usd: eLotNative ? 0 : grossAlloc[i],
+          p_fees_usd: feesAlloc[i], p_sold_at: eLotDate,
+          p_orig_currency: eLotNative ? s.orig_currency : null,
+          p_proceeds_orig: eLotNative ? grossAlloc[i] : null,
+          p_fx_rate: eLotNative ? Number(eLotFx) : 1,
+        };
+        const { error } = await (s.kind === "sealed"
+          ? supabase.rpc("edit_sealed_sale", { p_sale_id: s.sale_id, ...common })
+          : supabase.rpc("edit_sale", { p_game: s.game, p_sale_id: s.sale_id, ...common }));
+        if (error) throw error;
+      }
+    });
+    if (!ok) return;
+    setELotItems(null);
+    await fetchHoldings(); await fetchSales();
+  }
 
   const native = sel?.leg === "export" && currency.toUpperCase() !== "USD";
 
@@ -582,17 +632,62 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
               {hSortAsc ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
             </Button>
           </div>
-          {groupBy === "card" && (
-            <Tabs value={viewMode} onValueChange={(v) => setViewMode(String(v) as "list" | "grid")}>
-              <TabsList>
-                <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
-                <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          )}
+          <Tabs value={viewMode} onValueChange={(v) => setViewMode(String(v) as "list" | "grid")}>
+            <TabsList>
+              <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
+              <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
       </div>
-      {groupBy === "sale" ? (
+      {groupBy === "sale" && viewMode === "grid" ? (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {saleEvents.map((ev) => (
+            <Card key={ev.gid} size="sm" className={`gap-0 overflow-hidden ${ev.reverted ? "opacity-50" : ""}`}>
+              <div className="flex gap-2 p-2">
+                {ev.items[0].imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={ev.items[0].imageUrl} alt="" loading="lazy" className="aspect-[5/7] w-14 shrink-0 rounded object-cover" />
+                ) : (
+                  <div className="flex aspect-[5/7] w-14 shrink-0 items-center justify-center rounded bg-muted"><ImageOff className="size-6 text-muted-foreground" /></div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1 truncate text-sm font-medium">
+                    {ev.isLot ? <Badge variant="secondary" className="text-[10px]">{t("trips.lotItems", { n: ev.items.length })}</Badge> : <span className="truncate">{ev.items[0].name}</span>}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{ev.sold_at} · ×{ev.qty}</div>
+                  <div className="mt-1 grid grid-cols-3 gap-1 text-xs tabular-nums">
+                    <span title={t("trips.saleGross")}>${ev.gross.toFixed(0)}</span>
+                    <span className="text-muted-foreground" title={t("trips.saleCogs")}>${ev.cogs.toFixed(0)}</span>
+                    <span className={ev.margin < 0 ? "text-destructive" : ""} title={t("trips.saleMargin")}>${ev.margin.toFixed(0)} · {ev.marginPct}%</span>
+                  </div>
+                  {!ev.reverted && (
+                    <Button variant="ghost" size="sm" className="mt-1 h-6 px-1 text-xs" disabled={saving}
+                      onClick={() => ev.isLot ? openEditLot(ev.items) : openEdit(ev.items[0])}>
+                      <Pencil className="size-3 mr-1" />{ev.isLot ? t("trips.editLot") : t("trips.editSale")}
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {ev.isLot && (
+                <div className="max-h-28 space-y-0.5 overflow-auto border-t px-2 py-1">
+                  {ev.items.map((s) => (
+                    <div key={s.key} className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="truncate text-muted-foreground">{s.name} ×{s.quantity}</span>
+                      <span className="flex shrink-0 items-center gap-2 tabular-nums">
+                        <span>${s.gross_usd}</span>
+                        <span className="text-muted-foreground">${s.cogs_usd}</span>
+                        <span className={s.margin_usd < 0 ? "text-destructive" : ""}>${s.margin_usd}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          ))}
+          {saleEvents.length === 0 && <p className="col-span-full text-sm text-muted-foreground">{t("trips.empty")}</p>}
+        </div>
+      ) : groupBy === "sale" ? (
         <div className="space-y-2">
           {saleEvents.map((ev) => (
             <Card key={ev.gid} size="sm">
@@ -610,6 +705,12 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                     {ev.reverted ? (
                       <span className="text-xs text-muted-foreground">{t("trips.reverted")}</span>
                     ) : (
+                      <>
+                      <Button variant="ghost" size="icon" className="size-7" disabled={saving}
+                        onClick={() => ev.isLot ? openEditLot(ev.items) : openEdit(ev.items[0])}
+                        title={ev.isLot ? t("trips.editLot") : t("trips.editSale")}>
+                        <Pencil className="size-4" />
+                      </Button>
                       <AlertDialog>
                         <AlertDialogTrigger render={<Button variant="ghost" size="sm" disabled={saving} />}>
                           <Undo2 className="size-4 mr-1" />{t("trips.revertLot")}
@@ -625,16 +726,28 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                           </AlertDialogFooter>
                         </AlertDialogContent>
                       </AlertDialog>
+                      </>
                     )}
                   </div>
                 </div>
                 {ev.isLot && (
                   <div className="space-y-1 border-t pt-2">
+                    <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                      <span>{t("trips.item")}</span>
+                      <span className="flex shrink-0 items-center gap-3">
+                        <span className="w-14 text-right">{t("trips.saleGross")}</span>
+                        <span className="w-14 text-right">{t("trips.saleCogs")}</span>
+                        <span className="w-20 text-right">{t("trips.saleMargin")}</span>
+                        <span className="w-7" />
+                      </span>
+                    </div>
                     {ev.items.map((s) => (
                       <div key={s.key} className="flex items-center justify-between gap-2 text-xs">
                         <span className="truncate text-muted-foreground">{s.name} ×{s.quantity}</span>
-                        <span className="flex shrink-0 items-center gap-2">
-                          <span className={s.margin_usd < 0 ? "text-destructive" : ""}>${s.margin_usd}</span>
+                        <span className="flex shrink-0 items-center gap-3 tabular-nums">
+                          <span className="w-14 text-right">${s.gross_usd}</span>
+                          <span className="w-14 text-right text-muted-foreground">${s.cogs_usd}</span>
+                          <span className={`w-20 text-right ${s.margin_usd < 0 ? "text-destructive" : ""}`}>${s.margin_usd} · {s.marginPct}%</span>
                           {voidButton(s)}
                         </span>
                       </div>
@@ -659,6 +772,10 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
               <CardContent className="space-y-1 p-2">
                 <div className="truncate text-xs font-medium">{s.name}</div>
                 <div className="text-xs text-muted-foreground">{s.sold_at} · ×{s.quantity}</div>
+                <div className="flex justify-between text-[11px] tabular-nums text-muted-foreground">
+                  <span title={t("trips.saleGross")}>${s.gross_usd}</span>
+                  <span title={t("trips.saleCogs")}>−${s.cogs_usd}</span>
+                </div>
                 <div className="flex items-center justify-between text-xs">
                   <span className={s.margin_usd < 0 ? "text-destructive" : ""}>${s.margin_usd} · {s.marginPct}%</span>
                   {voidButton(s)}
@@ -763,6 +880,34 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditSel(null)}>{t("trips.cancel")}</Button>
             <Button disabled={!eProceeds || saving} onClick={editSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.saveChanges")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!eLotItems} onOpenChange={(o) => !o && setELotItems(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>{t("trips.editLot")} · {t("trips.lotItems", { n: eLotItems?.length ?? 0 })}</DialogTitle></DialogHeader>
+          <FieldGroup>
+            <Field><Label>{eLotNative ? t("trips.saleProceedsOrig") : t("trips.saleGross")}</Label>
+              <Input type="number" value={eLotGross} onChange={(e) => setELotGross(e.target.value)} autoFocus /></Field>
+            {eLotNative && (
+              <>
+                <Field><Label>{t("trips.saleFx")}</Label>
+                  <Input type="number" value={eLotFx} onChange={(e) => setELotFx(e.target.value)} /></Field>
+                <p className="text-xs text-muted-foreground">
+                  {t("trips.usdComputed", { usd: (Number(eLotGross) * Number(eLotFx) || 0).toFixed(2) })}
+                </p>
+              </>
+            )}
+            <Field><Label>{t("trips.saleFees")}</Label>
+              <Input type="number" value={eLotFees} onChange={(e) => setELotFees(e.target.value)} /></Field>
+            <Field><Label>{t("trips.month")}</Label>
+              <Input type="date" value={eLotDate} onChange={(e) => setELotDate(e.target.value)} /></Field>
+            <p className="text-xs text-muted-foreground">{t("trips.editLotNote")}</p>
+          </FieldGroup>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setELotItems(null)}>{t("trips.cancel")}</Button>
+            <Button disabled={!eLotGross || saving} onClick={editLotSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.saveChanges")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
