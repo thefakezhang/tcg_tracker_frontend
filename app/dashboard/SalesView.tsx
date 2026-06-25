@@ -12,14 +12,10 @@ import {
 } from "@/components/ui/table";
 
 // Global sales ledger: every recorded sale across all trips and both legs, in
-// one place. (The per-trip Sales tab is for RECORDING a sale from inventory;
-// this is the read-only history of everything we've sold.)
-type CardGame = "pokemon" | "mtg";
-const DEF_TABLE: Record<CardGame, string> = {
-  pokemon: "pokemon_card_definitions",
-  mtg: "mtg_card_definitions_v",
-};
-const PAGE = 300; // sales per source table per fetch; "Load more" raises it
+// one place, read from sales_ledger_v (migration 085) — which resolves name,
+// the REAL leg (from the cost layers, not currency), and the reverted flag in
+// SQL. (The per-trip Sales tab is for RECORDING a sale; this is the history.)
+const PAGE = 300; // sales per fetch; "Load more" raises it
 
 interface Sale {
   key: string;
@@ -33,69 +29,32 @@ interface Sale {
   sale_group: number | null;
 }
 
-// Leg isn't stored on the sale row; it's inferred from the sale currency —
-// import sells in the US (USD), export sells in Japan (native JPY).
-const legOf = (orig_currency: string | null): "import" | "export" =>
-  orig_currency && orig_currency.toUpperCase() !== "USD" ? "export" : "import";
-
-const SEL = "sale_id, sold_at, quantity, gross_usd, cogs_usd, margin_usd, sale_group, reverses_sale_id, orig_currency";
-
-type RawCard = { sale_id: number; card_id: number; sold_at: string; quantity: number; gross_usd: number; cogs_usd: number; margin_usd: number; sale_group: number | null; reverses_sale_id: number | null; orig_currency: string | null };
-type RawSealed = Omit<RawCard, "card_id"> & { product_id: number };
+type LedgerRow = {
+  sale_id: number; game: string; sale_group: number | null;
+  regional_name: string; set_code: string; card_number: string | null;
+  leg: "import" | "export" | null; sold_at: string; quantity: number;
+  gross_usd: number; cogs_usd: number; margin_usd: number; is_reverted: boolean;
+};
 
 async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncated: boolean }> {
   const supabase = createClient();
-  // The three source tables in parallel.
-  const [pk, mtg, sealed] = await Promise.all([
-    supabase.from("pokemon_sales").select(`card_id, ${SEL}`).order("sold_at", { ascending: false }).limit(limit),
-    supabase.from("mtg_sales").select(`card_id, ${SEL}`).order("sold_at", { ascending: false }).limit(limit),
-    supabase.from("pokemon_sealed_sales").select(`product_id, ${SEL}`).order("sold_at", { ascending: false }).limit(limit),
-  ]);
-  for (const r of [pk, mtg, sealed]) if (r.error) throw r.error; // surface read failures (don't blank silently)
-
-  const out: Sale[] = [];
-  const reverted = new Set<string>();
-  let truncated = false;
-
-  for (const [game, res] of [["pokemon", pk], ["mtg", mtg]] as const) {
-    const rows = (res.data as RawCard[]) ?? [];
-    if (rows.length >= limit) truncated = true;
-    for (const r of rows) if (r.reverses_sale_id != null) reverted.add(`${game}-${r.reverses_sale_id}`);
-    const origs = rows.filter((r) => r.reverses_sale_id == null);
-    const ids = [...new Set(origs.map((r) => r.card_id))];
-    const nameMap = new Map<number, string>();
-    if (ids.length) {
-      const { data: defs } = await supabase.from(DEF_TABLE[game]).select("card_id, regional_name, set_code, card_number").in("card_id", ids);
-      for (const d of (defs as { card_id: number; regional_name: string; set_code: string; card_number: string | null }[]) ?? []) {
-        nameMap.set(d.card_id, `${d.regional_name} · ${d.set_code} ${d.card_number ?? ""}`.trim());
-      }
-    }
-    for (const r of origs) out.push({
-      key: `${game}-${r.sale_id}`, name: nameMap.get(r.card_id) ?? `#${r.card_id}`,
-      leg: legOf(r.orig_currency), sold_at: r.sold_at, quantity: r.quantity,
+  const { data, error } = await supabase
+    .from("sales_ledger_v")
+    .select("sale_id, game, sale_group, regional_name, set_code, card_number, leg, sold_at, quantity, gross_usd, cogs_usd, margin_usd, is_reverted")
+    .order("sold_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  const rows = (data as LedgerRow[]) ?? [];
+  const sales: Sale[] = rows
+    .filter((r) => !r.is_reverted) // reverted sales drop out (the revert undid them)
+    .map((r) => ({
+      key: `${r.game}-${r.sale_id}`,
+      name: `${r.regional_name} · ${r.set_code} ${r.card_number ?? ""}`.trim(),
+      leg: r.leg ?? "import",
+      sold_at: r.sold_at, quantity: r.quantity,
       gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd, sale_group: r.sale_group,
-    });
-  }
-
-  const srows = (sealed.data as RawSealed[]) ?? [];
-  if (srows.length >= limit) truncated = true;
-  for (const r of srows) if (r.reverses_sale_id != null) reverted.add(`sealed-${r.reverses_sale_id}`);
-  const sorigs = srows.filter((r) => r.reverses_sale_id == null);
-  if (sorigs.length > 0) {
-    const { data: prods } = await supabase.from("pokemon_sealed_products").select("product_id, name, set_code").in("product_id", [...new Set(sorigs.map((r) => r.product_id))]);
-    const pMap = new Map<number, string>();
-    for (const p of (prods as { product_id: number; name: string; set_code: string }[]) ?? []) pMap.set(p.product_id, `${p.name} · ${p.set_code}`);
-    for (const r of sorigs) out.push({
-      key: `sealed-${r.sale_id}`, name: pMap.get(r.product_id) ?? `#${r.product_id}`,
-      leg: legOf(r.orig_currency), sold_at: r.sold_at, quantity: r.quantity,
-      gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd, sale_group: r.sale_group,
-    });
-  }
-
-  // Reverted sales drop out entirely (the revert undid them).
-  const live = out.filter((o) => !reverted.has(o.key));
-  live.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1));
-  return { sales: live, truncated };
+    }));
+  return { sales, truncated: rows.length >= limit };
 }
 
 export default function SalesView() {
