@@ -122,7 +122,7 @@ export default function CurationView() {
   );
 }
 
-interface SearchHit { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string | null; misc_info: string | null; }
+interface SearchHit { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string | null; misc_info: string | null; image_url: string | null; }
 
 function CandidateCard({ c, status, language, saving, onApprove, onReject, onSendBack }: {
   c: Candidate; status: Status; language: "en" | "ja"; saving: boolean;
@@ -136,7 +136,9 @@ function CandidateCard({ c, status, language, saving, onApprove, onReject, onSen
   const [price, setPrice] = useState(c.ocr_price_jpy != null ? String(c.ocr_price_jpy) : "");
   const [search, setSearch] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [zoom, setZoom] = useState<string | null>(null); // image URL shown in the lightbox
   const dSearch = useDebouncedValue(search, 300);
+  const matchedImg = override?.image_url ?? c.card?.image_url ?? null;
 
   // confidence as a 0-100 chip; colour by band
   const conf = c.confidence != null ? Math.round(c.confidence * 100) : null;
@@ -149,7 +151,7 @@ function CandidateCard({ c, status, language, saving, onApprove, onReject, onSen
     const supabase = createClient();
     const safe = s.replace(/[,()*]/g, " ");
     const { data } = await supabase.from("pokemon_card_definitions")
-      .select("card_id, regional_name, english_name, set_code, card_number, misc_info")
+      .select("card_id, regional_name, english_name, set_code, card_number, misc_info, image_url")
       .or(`regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,card_number.ilike.%${safe}%`)
       .limit(20);
     setHits((data as SearchHit[]) ?? []);
@@ -177,24 +179,26 @@ function CandidateCard({ c, status, language, saving, onApprove, onReject, onSen
     <Card size="sm">
       <CardContent className="space-y-2 p-3">
         <div className="flex gap-2">
-          {/* the detected crop */}
+          {/* the detected crop (card + price banner); click to zoom */}
           <figure className="shrink-0 text-center">
             {c.cell_image_url ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={c.cell_image_url} alt="" loading="lazy" className="aspect-[5/7] w-24 rounded object-cover" />
+              <img src={c.cell_image_url} alt="" loading="lazy" onClick={() => setZoom(c.cell_image_url)}
+                className="h-32 w-24 cursor-zoom-in rounded bg-muted object-contain" />
             ) : (
-              <div className="flex aspect-[5/7] w-24 items-center justify-center rounded bg-muted"><ImageOff className="size-6 text-muted-foreground" /></div>
+              <div className="flex h-32 w-24 items-center justify-center rounded bg-muted"><ImageOff className="size-6 text-muted-foreground" /></div>
             )}
             <figcaption className="mt-0.5 text-[10px] text-muted-foreground">{t("curation.detected")}</figcaption>
           </figure>
-          <ArrowRight className="mt-10 size-4 shrink-0 text-muted-foreground" />
-          {/* the matched card */}
+          <ArrowRight className="mt-12 size-4 shrink-0 text-muted-foreground" />
+          {/* the matched card — or "?" when there's no match, so you can assign one */}
           <figure className="shrink-0 text-center">
-            {(override ? null : c.card?.image_url) ? (
+            {matchedImg ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={c.card!.image_url!} alt="" loading="lazy" className="aspect-[5/7] w-24 rounded object-cover" />
+              <img src={matchedImg} alt="" loading="lazy" onClick={() => setZoom(matchedImg)}
+                className="h-32 w-24 cursor-zoom-in rounded bg-muted object-contain" />
             ) : (
-              <div className="flex aspect-[5/7] w-24 items-center justify-center rounded bg-muted"><ImageOff className="size-6 text-muted-foreground" /></div>
+              <div className="flex h-32 w-24 items-center justify-center rounded bg-muted text-3xl font-semibold text-muted-foreground" title={t("curation.noMatch")}>?</div>
             )}
             <figcaption className="mt-0.5 text-[10px] text-muted-foreground">{t("curation.matched")}</figcaption>
           </figure>
@@ -270,6 +274,26 @@ function CandidateCard({ c, status, language, saving, onApprove, onReject, onSen
         </div>
         {!hasMatch && !correcting && <p className="text-[10px] text-muted-foreground">{t("curation.noMatchHint")}</p>}
       </CardContent>
+      {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
     </Card>
+  );
+}
+
+// Fullscreen image inspector. Click outside / the ✕ to close; click the image
+// to toggle fit ↔ 200% (then scroll to inspect). Pinch-zoom works natively on
+// touch. Used for both the detected crop and the matched card.
+function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  const [big, setBig] = useState(false);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-auto bg-black/85 p-2" onClick={onClose}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt="" onClick={(e) => { e.stopPropagation(); setBig((v) => !v); }}
+        className={big ? "max-w-none cursor-zoom-out" : "max-h-[92vh] max-w-[92vw] cursor-zoom-in object-contain"}
+        style={big ? { width: "min(200%, 1400px)" } : undefined} />
+      <button onClick={onClose} aria-label="Close"
+        className="fixed right-3 top-3 rounded-full bg-white/15 p-2 text-white hover:bg-white/25">
+        <X className="size-5" />
+      </button>
+    </div>
   );
 }
