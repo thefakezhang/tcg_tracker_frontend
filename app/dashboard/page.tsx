@@ -7,6 +7,7 @@ import TripDashboard from "./TripDashboard";
 import TripsOverview from "./TripsOverview";
 import InventoryView from "./InventoryView";
 import SalesView from "./SalesView";
+import CurationView from "./CurationView";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
 import { useGame } from "./GameContext";
@@ -23,6 +24,9 @@ function DashboardContent() {
   }
   if (activeTripId === -2) {
     return <SalesView key="sales" />;
+  }
+  if (activeTripId === -3) {
+    return <CurationView key="curation" />;
   }
   if (activeTripId) {
     return <TripDashboard key={`trip-${activeTripId}`} tripId={activeTripId} />;
