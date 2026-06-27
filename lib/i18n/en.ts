@@ -218,6 +218,8 @@ const en = {
   "trips.legExport": "Export",
   "sales.allTitle": "Sales",
   "sales.searchPlaceholder": "Search name / number / set…",
+  "expenses.title": "Expenses",
+  "expenses.overheadNote": "General business expenses not tied to a trip (shipping supplies, software, fees) — these roll into your overall P&L.",
   "curation.title": "Image Curation",
   "curation.needsReview": "Needs review",
   "curation.pending": "Pending",
