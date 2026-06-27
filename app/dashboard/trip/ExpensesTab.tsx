@@ -26,7 +26,8 @@ interface Expense {
   amount_usd: number;
 }
 
-export default function ExpensesTab({ tripId }: { tripId: number }) {
+// tripId === null → general/overhead business expenses not tied to any trip.
+export default function ExpensesTab({ tripId }: { tripId: number | null }) {
   const { t } = useTranslation();
   const { saving, save } = useSaving();
   const [rows, setRows] = useState<Expense[]>([]);
@@ -40,11 +41,11 @@ export default function ExpensesTab({ tripId }: { tripId: number }) {
 
   const fetchRows = useCallback(async () => {
     const supabase = createClient();
-    const { data } = await supabase
+    const base = supabase
       .from("trip_expenses")
       .select("expense_id, description, category, incurred_at, orig_currency, amount_orig, amount_usd")
-      .eq("trip_id", tripId)
       .order("incurred_at", { ascending: false });
+    const { data } = await (tripId === null ? base.is("trip_id", null) : base.eq("trip_id", tripId));
     setRows((data as Expense[]) ?? []);
   }, [tripId]);
 
@@ -75,7 +76,10 @@ export default function ExpensesTab({ tripId }: { tripId: number }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">{t("trips.expenses")}</h2>
+        <div>
+          <h2 className="text-base font-semibold">{t("trips.expenses")}</h2>
+          {tripId === null && <p className="text-xs text-muted-foreground">{t("expenses.overheadNote")}</p>}
+        </div>
         <Button size="sm" onClick={() => setOpen(true)}>
           <Plus className="size-4 mr-1" />{t("trips.addExpense")}
         </Button>

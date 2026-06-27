@@ -220,6 +220,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.legExport": "輸出",
   "sales.allTitle": "売上",
   "sales.searchPlaceholder": "名前・番号・セットで検索…",
+  "expenses.title": "経費",
+  "expenses.overheadNote": "トリップに紐づかない一般経費（梱包材・ソフト・手数料など）。全体損益に計上されます。",
   "curation.title": "画像キュレーション",
   "curation.needsReview": "要確認",
   "curation.pending": "保留中",
