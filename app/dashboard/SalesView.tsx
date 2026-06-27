@@ -9,6 +9,7 @@ import { useSupabaseQuery, QueryError } from "./use-query";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -22,6 +23,7 @@ const PAGE = 300; // sales per fetch; "Load more" raises it
 interface Sale {
   key: string;
   name: string;
+  search: string; // lowercased name+english+set+number for filtering
   leg: "import" | "export";
   sold_at: string;
   quantity: number;
@@ -33,7 +35,7 @@ interface Sale {
 
 type LedgerRow = {
   sale_id: number; game: string; sale_group: number | null;
-  regional_name: string; set_code: string; card_number: string | null; misc_info: string | null;
+  regional_name: string; english_name: string | null; set_code: string; card_number: string | null; misc_info: string | null;
   leg: "import" | "export" | null; sold_at: string; quantity: number;
   gross_usd: number; cogs_usd: number; margin_usd: number; is_reverted: boolean;
 };
@@ -42,7 +44,7 @@ async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncat
   const supabase = createClient();
   const { data, error } = await supabase
     .from("sales_ledger_v")
-    .select("sale_id, game, sale_group, regional_name, set_code, card_number, misc_info, leg, sold_at, quantity, gross_usd, cogs_usd, margin_usd, is_reverted")
+    .select("sale_id, game, sale_group, regional_name, english_name, set_code, card_number, misc_info, leg, sold_at, quantity, gross_usd, cogs_usd, margin_usd, is_reverted")
     .order("sold_at", { ascending: false })
     .limit(limit);
   if (error) throw error;
@@ -52,6 +54,7 @@ async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncat
     .map((r) => ({
       key: `${r.game}-${r.sale_id}`,
       name: `${r.regional_name} · ${cardMeta(r.set_code, r.card_number, r.misc_info)}`.trim(),
+      search: `${r.regional_name} ${r.english_name ?? ""} ${r.set_code} ${r.card_number ?? ""}`.toLowerCase(),
       leg: r.leg ?? "import",
       sold_at: r.sold_at, quantity: r.quantity,
       gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd, sale_group: r.sale_group,
@@ -62,6 +65,7 @@ async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncat
 export default function SalesView() {
   const { t } = useTranslation();
   const [leg, setLeg] = useState<"all" | "import" | "export">("all");
+  const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(PAGE);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggleExpand = (gid: string) =>
@@ -73,7 +77,9 @@ export default function SalesView() {
   // Collapse lot sales (shared sale_group) into one event row.
   type Event = { gid: string; items: Sale[]; leg: "import" | "export"; sold_at: string; qty: number; gross: number; cogs: number; margin: number };
   const events = useMemo<Event[]>(() => {
-    const filtered = leg === "all" ? sales : sales.filter((s) => s.leg === leg);
+    const q = search.trim().toLowerCase();
+    const filtered = sales.filter((s) =>
+      (leg === "all" || s.leg === leg) && (!q || s.search.includes(q)));
     const map = new Map<string, Sale[]>();
     for (const s of filtered) {
       const gid = s.sale_group != null ? `g${s.sale_group}` : `s${s.key}`;
@@ -86,7 +92,7 @@ export default function SalesView() {
       cogs: items.reduce((a, i) => a + Number(i.cogs_usd), 0),
       margin: items.reduce((a, i) => a + Number(i.margin_usd), 0),
     }));
-  }, [sales, leg]);
+  }, [sales, leg, search]);
 
   const total = useMemo(() => ({
     gross: events.reduce((a, e) => a + e.gross, 0),
@@ -97,6 +103,9 @@ export default function SalesView() {
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">{t("sales.allTitle")}</h1>
+        <div className="ml-auto flex items-center gap-2">
+        <Input value={search} onChange={(e) => setSearch(e.target.value)}
+          placeholder={t("sales.searchPlaceholder")} className="h-9 w-56" />
         <Tabs value={leg} onValueChange={(v) => setLeg(String(v) as "all" | "import" | "export")}>
           <TabsList>
             <TabsTrigger value="all">{t("sales.legAll")}</TabsTrigger>
@@ -104,6 +113,7 @@ export default function SalesView() {
             <TabsTrigger value="export">{t("trips.legExport")}</TabsTrigger>
           </TabsList>
         </Tabs>
+        </div>
       </div>
 
       {error && <QueryError onRetry={retry} />}
