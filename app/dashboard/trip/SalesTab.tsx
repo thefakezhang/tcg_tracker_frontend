@@ -124,6 +124,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [lotQty, setLotQty] = useState<Record<string, string>>({});
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [sortCol, setSortCol] = useState<"name" | "leg" | "qty" | "avg" | null>(null);
+  const [hSearch, setHSearch] = useState("");
   const [hSortCol, setHSortCol] = useState<"name" | "date" | "qty" | "gross" | "cogs" | "margin" | "marginPct" | null>("date");
   const [sortAsc, setSortAsc] = useState(true);
   const [hSortAsc, setHSortAsc] = useState(false);
@@ -391,7 +392,9 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     </TableHead>
   );
   const sortedSales = useMemo(() => {
-    if (!hSortCol) return sales;
+    const qy = hSearch.trim().toLowerCase();
+    const base = qy ? sales.filter((s) => s.name.toLowerCase().includes(qy)) : sales;
+    if (!hSortCol) return base;
     const dir = hSortAsc ? 1 : -1;
     const val = (s: SaleRow): string | number =>
       hSortCol === "name" ? s.name.toLowerCase()
@@ -401,8 +404,8 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       : hSortCol === "cogs" ? Number(s.cogs_usd)
       : hSortCol === "margin" ? Number(s.margin_usd)
       : Number(s.marginPct);
-    return [...sales].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
-  }, [sales, hSortCol, hSortAsc]);
+    return [...base].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
+  }, [sales, hSortCol, hSortAsc, hSearch]);
 
   // Group sales into events: a lot (shared sale_group) collapses to one row;
   // singles are their own event. Preserves the sorted order via first-seen.
@@ -611,6 +614,8 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">{t("trips.salesHistory")}</h3>
         <div className="flex items-center gap-2">
+          <Input value={hSearch} onChange={(e) => setHSearch(e.target.value)}
+            placeholder={t("sales.searchPlaceholder")} className="h-8 w-44" />
           <Tabs value={groupBy} onValueChange={(v) => setGroupBy(String(v) as "sale" | "card")}>
             <TabsList>
               <TabsTrigger value="sale">{t("trips.bySale")}</TabsTrigger>

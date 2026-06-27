@@ -217,6 +217,7 @@ const en = {
   "trips.legImport": "Import",
   "trips.legExport": "Export",
   "sales.allTitle": "Sales",
+  "sales.searchPlaceholder": "Search name / number / set…",
   "curation.title": "Image Curation",
   "curation.needsReview": "Needs review",
   "curation.pending": "Pending",

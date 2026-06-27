@@ -219,6 +219,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.legImport": "輸入",
   "trips.legExport": "輸出",
   "sales.allTitle": "売上",
+  "sales.searchPlaceholder": "名前・番号・セットで検索…",
   "curation.title": "画像キュレーション",
   "curation.needsReview": "要確認",
   "curation.pending": "保留中",
