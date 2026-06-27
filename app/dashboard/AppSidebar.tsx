@@ -158,6 +158,22 @@ export function AppSidebar({ user }: AppSidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
+          <SidebarGroupLabel>{t("curation.title")}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeTripId === -3}
+                  onClick={() => { setActiveTripId(-3); setActiveBuylistId(null); }}
+                >
+                  <ScanSearch className="size-4" />
+                  {t("curation.needsReview")}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
           <SidebarGroupLabel>{t("sidebar.trips")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -186,15 +202,6 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 >
                   <DollarSign className="size-4" />
                   {t("sales.allTitle")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === -3}
-                  onClick={() => { setActiveTripId(-3); setActiveBuylistId(null); }}
-                >
-                  <ScanSearch className="size-4" />
-                  {t("curation.title")}
                 </SidebarMenuButton>
               </SidebarMenuItem>
               {trips.map((tr) => (
