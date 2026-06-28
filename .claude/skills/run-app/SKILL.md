@@ -9,12 +9,15 @@ The app is Google-OAuth-gated with no dev bypass, and data is protected by RLS (
 
 ## One-time per machine: capture a session
 The session is a credential, kept in `.auth/` (gitignored) - it does NOT sync via the repo, so each machine that drives the app needs its own (or copy `.auth/state.json` securely between machines; it is portable but expires).
-```bash
-npm install && npx playwright install chromium   # first time only
-APP_URL=<the origin you log into> node scripts/setup-auth.mjs
-```
-A real browser opens; log in with Google, reach the dashboard, press Enter. Saves `.auth/state.json`.
-`APP_URL` must be the origin you actually log into (the deployed app, or `http://localhost:3000` for local dev with `npm run dev`). Cookies are per-origin, so capture and drive the SAME origin.
+
+First time only: `npm install && npx playwright install chromium`.
+
+**Capture by exporting cookies from your normal browser (primary method).** Google blocks OAuth logins inside an automation-controlled browser, so do NOT try to log in through Playwright.
+1. Log into the app in your normal browser (the deployed app, or `http://localhost:3000` with `npm run dev`).
+2. Export that site's cookies to JSON with a cookie extension (Cookie-Editor / EditThisCookie).
+3. `node scripts/import-session.mjs <exported-cookies.json>` -> writes `.auth/state.json`.
+
+Cookies are per-origin, so capture and drive the SAME origin. The script warns if no `sb-*-auth-token` cookie is present (you exported the wrong tab/domain). `scripts/setup-auth.mjs` (interactive Playwright login) exists as a fallback but Google usually blocks it.
 
 ## Drive the app + screenshot
 ```bash
