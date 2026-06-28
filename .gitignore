@@ -38,3 +38,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# agent E2E session + screenshots (machine-local credentials)
+.auth/
+debug/
