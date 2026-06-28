@@ -9,16 +9,32 @@
 //   APP_URL=https://your-app.example.com node scripts/run-app.mjs [route] [outfile]
 //   node scripts/run-app.mjs /dashboard .auth/shot.png
 import { chromium } from "playwright";
-import { existsSync } from "node:fs";
-
-const APP_URL = (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
-const route = process.argv[2] || "/dashboard";
-const out = process.argv[3] || ".auth/shot.png";
+import { existsSync, readFileSync } from "node:fs";
 
 if (!existsSync(".auth/state.json")) {
-  console.error("No .auth/state.json - run `node scripts/setup-auth.mjs` first.");
+  console.error("No .auth/state.json - capture a session first (see the run-app skill / import-session.mjs).");
   process.exit(1);
 }
+
+// Default the origin to wherever the saved session was captured (the auth cookie's
+// domain), so you don't have to remember APP_URL. Override with APP_URL when needed.
+function originFromState() {
+  try {
+    const st = JSON.parse(readFileSync(".auth/state.json", "utf8"));
+    const cookies = st.cookies || [];
+    const c = cookies.find((x) => x.name.includes("auth-token")) || cookies[0];
+    if (c?.domain) {
+      const host = c.domain.replace(/^\./, "");
+      return host.includes("localhost") ? `http://${host}` : `https://${host}`;
+    }
+  } catch { /* fall through */ }
+  return null;
+}
+
+const APP_URL = (process.env.APP_URL || originFromState() || "http://localhost:3000").replace(/\/$/, "");
+const route = process.argv[2] || "/dashboard";
+const out = process.argv[3] || ".auth/shot.png";
+console.log(`Driving ${APP_URL}${route}`);
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({
