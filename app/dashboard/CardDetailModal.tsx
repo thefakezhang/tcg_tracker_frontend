@@ -123,6 +123,29 @@ export default function CardDetailModal({
   const [activeTab, setActiveTab] = useState<"non-psa" | "psa">(initialPsaMode);
   const [targetPrice, setTargetPrice] = useState<string>("");
   const [savingTargetPrice, setSavingTargetPrice] = useState(false);
+  const [jpExclusive, setJpExclusive] = useState(false);
+  const [savingJp, setSavingJp] = useState(false);
+
+  // Sync the manual JP-exclusive flag from the opened card.
+  useEffect(() => {
+    setJpExclusive(!!card?.card.is_japan_exclusive);
+  }, [card]);
+
+  const toggleJpExclusive = useCallback(async () => {
+    if (!card || savingJp) return;
+    const next = !jpExclusive;
+    setSavingJp(true);
+    const supabase = createClient();
+    const { error } = await supabase.rpc("set_pokemon_japan_exclusive", {
+      p_card_id: Number(card.card.card_id),
+      p_value: next,
+    });
+    setSavingJp(false);
+    if (!error) {
+      setJpExclusive(next);
+      card.card.is_japan_exclusive = next; // keep the row in sync for the list
+    }
+  }, [card, jpExclusive, savingJp]);
 
   const saveTargetPrice = useCallback(async () => {
     if (!entryGame || entryId == null || savingTargetPrice) return;
@@ -306,6 +329,18 @@ export default function CardDetailModal({
                     <Sparkles className="size-3" />
                     {def.rarity}
                   </Badge>
+                )}
+                {activeGame === "pokemon" && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={jpExclusive ? "default" : "outline"}
+                    className="h-auto px-1.5 py-px text-xs"
+                    disabled={savingJp}
+                    onClick={toggleJpExclusive}
+                  >
+                    {jpExclusive ? "🇯🇵 " : ""}{t("modal.jpExclusive")}
+                  </Button>
                 )}
               </div>
             </div>

@@ -34,6 +34,7 @@ export interface CardDefinition {
   misc_info: string | null;
   image_url: string | null;
   rarity?: string | null; // Pokémon only (from TCGPlayer); undefined for MTG
+  is_japan_exclusive?: boolean | null; // Pokémon only; manual curator flag (093)
   // MTG-only (from mtg_card_definitions_v); undefined for Pokémon.
   is_foil?: boolean | null;
   foil_type?: string | null;
@@ -62,7 +63,7 @@ export function cardMeta(setCode?: string | null, cardNumber?: string | null, mi
 }
 
 export const POKEMON_CARD_DEF_COLS =
-  "card_id, regional_name, english_name, set_code, card_number, misc_info, image_url, rarity";
+  "card_id, regional_name, english_name, set_code, card_number, misc_info, image_url, rarity, is_japan_exclusive";
 export const MTG_CARD_DEF_COLS =
   "card_id, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language";
 
@@ -274,6 +275,7 @@ export function useCardData(options: {
   sellRegion: RegionFilter;
   rarity: string | null;
   promosOnly: boolean;
+  jpExclusiveOnly: boolean;
   minBuyPrice: number | null;
   minSellPrice: number | null;
   roiFloor: number | null;
@@ -301,6 +303,7 @@ export function useCardData(options: {
     sellRegion,
     rarity,
     promosOnly,
+    jpExclusiveOnly,
     minBuyPrice,
     minSellPrice,
     roiFloor,
@@ -329,7 +332,7 @@ export function useCardData(options: {
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, rarity, promosOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, page, pageSize]);
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, rarity, promosOnly, jpExclusiveOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -375,6 +378,9 @@ export function useCardData(options: {
     if (rarity) query = query.eq(`${cardDefTable}.rarity`, rarity);
     if (promosOnly && activeGame === "pokemon") {
       query = query.or(POKEMON_PROMO_OR, { referencedTable: cardDefTable });
+    }
+    if (jpExclusiveOnly && activeGame === "pokemon") {
+      query = query.eq(`${cardDefTable}.is_japan_exclusive`, true);
     }
 
     // Region filter on sell side (displayed as "Lowest Buy")
