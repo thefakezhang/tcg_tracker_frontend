@@ -1,3 +1,7 @@
+// FALLBACK capture method. Google usually BLOCKS OAuth logins inside this
+// automation-controlled browser ("this browser may not be secure"). Prefer
+// scripts/import-session.mjs (export cookies from your normal browser).
+//
 // One-time: log into the app in a real browser, then save the session so
 // run-app.mjs can reuse it headlessly. The saved file is a CREDENTIAL - it lives
 // under .auth/ which is gitignored, so it never syncs via the repo.
