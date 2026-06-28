@@ -63,6 +63,7 @@ export default function CardBrowser() {
   const [selectedTier, setSelectedTier] = useState(1);
   const [sellRegion, setSellRegion] = useState<RegionFilter>("all");
   const [rarity, setRarity] = useState<string>("");          // "" = all (Pokémon only)
+  const [promosOnly, setPromosOnly] = useState(false);       // Pokémon promotional cards
   const [minBuyPrice, setMinBuyPrice] = useState<string>("");
   const [minSellPrice, setMinSellPrice] = useState<string>("");
   const [roiFloor, setRoiFloor] = useState<string>("");
@@ -86,6 +87,7 @@ export default function CardBrowser() {
       selectedTier,
       sellRegion,
       rarity: rarity || null,
+      promosOnly,
       minBuyPrice: minBuyPrice !== "" ? Number(minBuyPrice) : null,
       minSellPrice: minSellPrice !== "" ? Number(minSellPrice) : null,
       roiFloor: roiFloor !== "" ? Number(roiFloor) : null,
@@ -104,6 +106,7 @@ export default function CardBrowser() {
     setSelectedTier(1);
     setSellRegion("all");
     setRarity("");
+    setPromosOnly(false);
     setMinBuyPrice("");
     setMinSellPrice("");
     setRoiFloor("");
@@ -116,7 +119,7 @@ export default function CardBrowser() {
   // Reset page when filters change
   useEffect(() => {
     setPage(0);
-  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, rarity, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, rarity, promosOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -203,6 +206,15 @@ export default function CardBrowser() {
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
+        )}
+        {activeGame === "pokemon" && (
+          <Button
+            variant={promosOnly ? "default" : "outline"}
+            className="shrink-0"
+            onClick={() => setPromosOnly((v) => !v)}
+          >
+            {t("cardBrowser.promosOnly")}
+          </Button>
         )}
         <Input
           type="number"

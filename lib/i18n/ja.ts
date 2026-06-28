@@ -51,6 +51,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "modal.loading": "リスティング読み込み中...",
   "cardBrowser.regionAll": "全地域",
   "cardBrowser.rarityAll": "全レアリティ",
+  "cardBrowser.promosOnly": "プロモ",
   "column.rarity": "レアリティ",
   "cardBrowser.regionNA": "NA",
   "cardBrowser.regionJP": "JP",
