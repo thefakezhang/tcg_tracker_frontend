@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, DollarSign, ExternalLink, Hash, Layers, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronDown, DollarSign, ExternalLink, Hash, Layers, LoaderCircle, Plus, Sparkles, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -301,6 +301,12 @@ export default function CardDetailModal({
                   <Layers className="size-3" />
                   {def.set_code}
                 </Badge>
+                {def.rarity && (
+                  <Badge variant="secondary" className="h-auto px-1.5 py-px">
+                    <Sparkles className="size-3" />
+                    {def.rarity}
+                  </Badge>
+                )}
               </div>
             </div>
           </div>
