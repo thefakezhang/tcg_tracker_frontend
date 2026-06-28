@@ -20,6 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -331,16 +332,15 @@ export default function CardDetailModal({
                   </Badge>
                 )}
                 {activeGame === "pokemon" && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={jpExclusive ? "default" : "outline"}
-                    className="h-auto px-1.5 py-px text-xs"
-                    disabled={savingJp}
-                    onClick={toggleJpExclusive}
-                  >
-                    {jpExclusive ? "🇯🇵 " : ""}{t("modal.jpExclusive")}
-                  </Button>
+                  <label className="ml-1 inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs">
+                    <Switch
+                      size="sm"
+                      checked={jpExclusive}
+                      disabled={savingJp}
+                      onCheckedChange={toggleJpExclusive}
+                    />
+                    <span className="select-none">🇯🇵 {t("modal.jpExclusive")}</span>
+                  </label>
                 )}
               </div>
             </div>
