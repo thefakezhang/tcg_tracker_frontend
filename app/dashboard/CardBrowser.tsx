@@ -70,6 +70,7 @@ export default function CardBrowser() {
   const [sellRegion, setSellRegion] = useState<RegionFilter>("all");
   const [rarity, setRarity] = useState<string>("");          // "" = all (Pokémon only)
   const [promosOnly, setPromosOnly] = useState(false);       // Pokémon promotional cards
+  const [jpExclusiveOnly, setJpExclusiveOnly] = useState(false); // manual JP-exclusive flag
   const [minBuyPrice, setMinBuyPrice] = useState<string>("");
   const [minSellPrice, setMinSellPrice] = useState<string>("");
   const [roiFloor, setRoiFloor] = useState<string>("");
@@ -94,6 +95,7 @@ export default function CardBrowser() {
       sellRegion,
       rarity: rarity || null,
       promosOnly,
+      jpExclusiveOnly,
       minBuyPrice: minBuyPrice !== "" ? Number(minBuyPrice) : null,
       minSellPrice: minSellPrice !== "" ? Number(minSellPrice) : null,
       roiFloor: roiFloor !== "" ? Number(roiFloor) : null,
@@ -113,6 +115,7 @@ export default function CardBrowser() {
     setSellRegion("all");
     setRarity("");
     setPromosOnly(false);
+    setJpExclusiveOnly(false);
     setMinBuyPrice("");
     setMinSellPrice("");
     setRoiFloor("");
@@ -125,7 +128,7 @@ export default function CardBrowser() {
   // Reset page when filters change
   useEffect(() => {
     setPage(0);
-  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, rarity, promosOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, rarity, promosOnly, jpExclusiveOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -219,6 +222,15 @@ export default function CardBrowser() {
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
+        )}
+        {activeGame === "pokemon" && (
+          <Button
+            variant={jpExclusiveOnly ? "default" : "outline"}
+            className="shrink-0"
+            onClick={() => setJpExclusiveOnly((v) => !v)}
+          >
+            {t("cardBrowser.jpExclusiveOnly")}
+          </Button>
         )}
         <Input
           type="number"
