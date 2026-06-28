@@ -19,8 +19,9 @@
 .DS_Store
 *.pem
 
-# claude
-.claude/
+# claude (track shared skills; ignore machine-local/runtime files)
+.claude/*
+!.claude/skills/
 
 # debug
 npm-debug.log*
