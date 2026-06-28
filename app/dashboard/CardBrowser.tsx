@@ -49,8 +49,14 @@ const POKEMON_RARITIES = [
   "Double Rare", "Super Rare", "Super Rare Holo", "Ultra Rare", "Shiny Rare",
   "Shiny Secret Rare", "Art Rare", "Special Art Rare", "Hyper Rare", "Triple Rare",
   "Character Rare", "Character Super Rare", "Trainer Rare", "Prism Rare",
-  "ACE Rare", "Amazing Rare", "Radiant Rare", "Promo",
+  "ACE Rare", "Amazing Rare", "Radiant Rare",
+  // "Promo" rarity is intentionally omitted — the "Promos" dropdown entry
+  // (PROMOS_OPTION) is the complete promo filter and already includes rarity=Promo.
 ];
+
+// Sentinel for the "Promos" entry in the rarity dropdown — selects the
+// cross-cutting promo filter (set_code/rarity) rather than a single rarity value.
+const PROMOS_OPTION = "__promos__";
 
 export default function CardBrowser() {
   const { t } = useTranslation();
@@ -194,27 +200,25 @@ export default function CardBrowser() {
         {activeGame === "pokemon" && (
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button variant="outline" className="shrink-0" />}>
-              {rarity || t("cardBrowser.rarityAll")}
+              {promosOnly ? t("cardBrowser.promosOnly") : rarity || t("cardBrowser.rarityAll")}
               <ChevronDown className="ml-1 size-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent className="max-h-72 overflow-auto">
-              <DropdownMenuRadioGroup value={rarity} onValueChange={setRarity}>
+              <DropdownMenuRadioGroup
+                value={promosOnly ? PROMOS_OPTION : rarity}
+                onValueChange={(v) => {
+                  if (v === PROMOS_OPTION) { setPromosOnly(true); setRarity(""); }
+                  else { setPromosOnly(false); setRarity(v); }
+                }}
+              >
                 <DropdownMenuRadioItem value="">{t("cardBrowser.rarityAll")}</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value={PROMOS_OPTION}>{t("cardBrowser.promosOnly")}</DropdownMenuRadioItem>
                 {POKEMON_RARITIES.map((r) => (
                   <DropdownMenuRadioItem key={r} value={r}>{r}</DropdownMenuRadioItem>
                 ))}
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-        )}
-        {activeGame === "pokemon" && (
-          <Button
-            variant={promosOnly ? "default" : "outline"}
-            className="shrink-0"
-            onClick={() => setPromosOnly((v) => !v)}
-          >
-            {t("cardBrowser.promosOnly")}
-          </Button>
         )}
         <Input
           type="number"
