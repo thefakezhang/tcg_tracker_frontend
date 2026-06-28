@@ -48,6 +48,8 @@ const en = {
   "modal.noListings": "No listings",
   "modal.loading": "Loading listings...",
   "cardBrowser.regionAll": "All Regions",
+  "cardBrowser.rarityAll": "All Rarities",
+  "column.rarity": "Rarity",
   "cardBrowser.regionNA": "NA",
   "cardBrowser.regionJP": "JP",
   "cardBrowser.minBuyPrice": "Min buy $",

@@ -33,6 +33,7 @@ export interface CardDefinition {
   card_number: string | null;
   misc_info: string | null;
   image_url: string | null;
+  rarity?: string | null; // Pokémon only (from TCGPlayer); undefined for MTG
   // MTG-only (from mtg_card_definitions_v); undefined for Pokémon.
   is_foil?: boolean | null;
   foil_type?: string | null;
@@ -61,7 +62,7 @@ export function cardMeta(setCode?: string | null, cardNumber?: string | null, mi
 }
 
 export const POKEMON_CARD_DEF_COLS =
-  "card_id, regional_name, english_name, set_code, card_number, misc_info, image_url";
+  "card_id, regional_name, english_name, set_code, card_number, misc_info, image_url, rarity";
 export const MTG_CARD_DEF_COLS =
   "card_id, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language";
 
@@ -263,6 +264,7 @@ export function useCardData(options: {
   searchSetCode: string;
   selectedTier: number;
   sellRegion: RegionFilter;
+  rarity: string | null;
   minBuyPrice: number | null;
   minSellPrice: number | null;
   roiFloor: number | null;
@@ -288,6 +290,7 @@ export function useCardData(options: {
     searchSetCode,
     selectedTier,
     sellRegion,
+    rarity,
     minBuyPrice,
     minSellPrice,
     roiFloor,
@@ -316,7 +319,7 @@ export function useCardData(options: {
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, page, pageSize]);
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, rarity, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -359,6 +362,7 @@ export function useCardData(options: {
     }
     if (cn) query = query.ilike(`${cardDefTable}.card_number`, `%${cn}%`);
     if (sc) query = query.ilike(`${cardDefTable}.set_code`, `%${sc}%`);
+    if (rarity) query = query.eq(`${cardDefTable}.rarity`, rarity);
 
     // Region filter on sell side (displayed as "Lowest Buy")
     if (sellRegion !== "all") {

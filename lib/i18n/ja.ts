@@ -50,6 +50,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "modal.noListings": "リスティングなし",
   "modal.loading": "リスティング読み込み中...",
   "cardBrowser.regionAll": "全地域",
+  "cardBrowser.rarityAll": "全レアリティ",
+  "column.rarity": "レアリティ",
   "cardBrowser.regionNA": "NA",
   "cardBrowser.regionJP": "JP",
   "cardBrowser.minBuyPrice": "最低買値 $",

@@ -42,6 +42,16 @@ import {
 import { ImageOff } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 
+// TCGPlayer's Pokémon rarity taxonomy (the values stored in
+// pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
+const POKEMON_RARITIES = [
+  "Common", "Uncommon", "Rare", "Holo Rare", "Rare Holo LV.X", "Rare Holo LEGEND",
+  "Double Rare", "Super Rare", "Super Rare Holo", "Ultra Rare", "Shiny Rare",
+  "Shiny Secret Rare", "Art Rare", "Special Art Rare", "Hyper Rare", "Triple Rare",
+  "Character Rare", "Character Super Rare", "Trainer Rare", "Prism Rare",
+  "ACE Rare", "Amazing Rare", "Radiant Rare", "Promo",
+];
+
 export default function CardBrowser() {
   const { t } = useTranslation();
   const { language } = useLanguage();
@@ -52,6 +62,7 @@ export default function CardBrowser() {
   const [searchSetCode, setSearchSetCode] = useState("");
   const [selectedTier, setSelectedTier] = useState(1);
   const [sellRegion, setSellRegion] = useState<RegionFilter>("all");
+  const [rarity, setRarity] = useState<string>("");          // "" = all (Pokémon only)
   const [minBuyPrice, setMinBuyPrice] = useState<string>("");
   const [minSellPrice, setMinSellPrice] = useState<string>("");
   const [roiFloor, setRoiFloor] = useState<string>("");
@@ -74,6 +85,7 @@ export default function CardBrowser() {
       searchSetCode,
       selectedTier,
       sellRegion,
+      rarity: rarity || null,
       minBuyPrice: minBuyPrice !== "" ? Number(minBuyPrice) : null,
       minSellPrice: minSellPrice !== "" ? Number(minSellPrice) : null,
       roiFloor: roiFloor !== "" ? Number(roiFloor) : null,
@@ -91,6 +103,7 @@ export default function CardBrowser() {
     setSearchSetCode("");
     setSelectedTier(1);
     setSellRegion("all");
+    setRarity("");
     setMinBuyPrice("");
     setMinSellPrice("");
     setRoiFloor("");
@@ -103,7 +116,7 @@ export default function CardBrowser() {
   // Reset page when filters change
   useEffect(() => {
     setPage(0);
-  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, rarity, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -175,6 +188,22 @@ export default function CardBrowser() {
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
+        {activeGame === "pokemon" && (
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="outline" className="shrink-0" />}>
+              {rarity || t("cardBrowser.rarityAll")}
+              <ChevronDown className="ml-1 size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="max-h-72 overflow-auto">
+              <DropdownMenuRadioGroup value={rarity} onValueChange={setRarity}>
+                <DropdownMenuRadioItem value="">{t("cardBrowser.rarityAll")}</DropdownMenuRadioItem>
+                {POKEMON_RARITIES.map((r) => (
+                  <DropdownMenuRadioItem key={r} value={r}>{r}</DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         <Input
           type="number"
           placeholder={t("cardBrowser.minBuyPrice")}

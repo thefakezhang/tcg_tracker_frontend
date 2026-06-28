@@ -122,6 +122,12 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
       ),
     },
     {
+      id: "rarity",
+      accessorFn: (row) => row.card.rarity ?? null,
+      header: () => t("column.rarity"),
+      cell: ({ getValue }) => (getValue() as string | null) ?? "—",
+    },
+    {
       id: "psa_grade",
       accessorFn: (row) => row.psaGrade ?? null,
       header: ({ column }) => <SortableHeader column={column} label={t("column.psa")} />,
