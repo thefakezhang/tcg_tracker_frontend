@@ -109,6 +109,8 @@ const en = {
   "trips.colImportMargin": "Card Margin",
   "trips.colExpenses": "Expenses",
   "trips.colNet": "Net",
+  "trips.capitalInInventory": "Capital in inventory",
+  "trips.realizedMargin": "Realized margin",
   "trips.colRoi": "ROI %",
   "trips.importLots": "Acquisition Lots",
   "trips.exportLots": "Export Lots (carry to Japan)",

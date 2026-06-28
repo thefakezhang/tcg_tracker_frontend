@@ -20,10 +20,55 @@ interface OverviewRow {
   roi_pct: number | null;
 }
 
+// Global operating position — aggregated across the whole operation, not per
+// trip (which the table below shows). Capital-in-inventory is the piece the
+// per-trip P&L doesn't roll up; the rest reconciles realized margin vs expenses.
+interface Position {
+  invImport: number;
+  invExport: number;
+  invCost: number;
+  margin: number;   // realized, non-reverted sales
+  expenses: number; // trip + overhead
+}
+
+const usd = (n: number) => "$" + Math.round(n).toLocaleString();
+
+async function fetchPosition(): Promise<Position> {
+  const supabase = createClient();
+  const [h, s, e] = await Promise.all([
+    supabase.from("inventory_holdings_v").select("leg, total_cost_usd"),
+    supabase.from("sales_ledger_v").select("margin_usd, is_reverted"),
+    supabase.from("trip_expenses").select("amount_usd"),
+  ]);
+  let invImport = 0, invExport = 0;
+  for (const r of (h.data as { leg: string | null; total_cost_usd: number }[] | null) ?? []) {
+    const cost = Number(r.total_cost_usd ?? 0);
+    if ((r.leg ?? "").trim() === "export") invExport += cost; else invImport += cost;
+  }
+  let margin = 0;
+  for (const r of (s.data as { margin_usd: number; is_reverted: boolean }[] | null) ?? []) {
+    if (!r.is_reverted) margin += Number(r.margin_usd ?? 0);
+  }
+  const expenses = ((e.data as { amount_usd: number }[] | null) ?? [])
+    .reduce((a, r) => a + Number(r.amount_usd ?? 0), 0);
+  return { invImport, invExport, invCost: invImport + invExport, margin, expenses };
+}
+
+function Stat({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+  return (
+    <div className="rounded-md border p-3">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={`text-lg font-semibold tabular-nums ${accent ? "text-primary" : ""}`}>{value}</div>
+      {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
+    </div>
+  );
+}
+
 export default function TripsOverview() {
   const { t } = useTranslation();
   const { setActiveTripId } = useTrips();
   const [rows, setRows] = useState<OverviewRow[]>([]);
+  const [pos, setPos] = useState<Position | null>(null);
 
   const fetchRows = useCallback(async () => {
     const supabase = createClient();
@@ -31,6 +76,7 @@ export default function TripsOverview() {
       .from("trips_overview_v")
       .select("trip_id, name, status, export_revenue_usd, export_profit_usd, import_realized_margin_usd, expenses_usd, realized_net_usd, roi_pct");
     setRows((data as OverviewRow[]) ?? []);
+    setPos(await fetchPosition());
   }, []);
 
   useEffect(() => { fetchRows(); }, [fetchRows]);
@@ -38,6 +84,20 @@ export default function TripsOverview() {
   return (
     <div className="space-y-4">
       <h2 className="text-base font-semibold">{t("trips.overviewTitle")}</h2>
+
+      {pos && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat
+            label={t("trips.capitalInInventory")}
+            value={usd(pos.invCost)}
+            sub={`${t("trips.legImport")} ${usd(pos.invImport)} · ${t("trips.legExport")} ${usd(pos.invExport)}`}
+          />
+          <Stat label={t("trips.realizedMargin")} value={usd(pos.margin)} />
+          <Stat label={t("trips.colExpenses")} value={usd(pos.expenses)} />
+          <Stat label={t("trips.colNet")} value={usd(pos.margin - pos.expenses)} accent />
+        </div>
+      )}
+
       <Table>
         <TableHeader>
           <TableRow>
