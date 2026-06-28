@@ -7,6 +7,7 @@ import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
 import { useLanguage } from "../LanguageContext";
 import { getCardDisplayName, cardMeta, cardVariant } from "../use-card-data";
+import ReceiptsDialog from "../Receipts";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -410,14 +411,15 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   // Group sales into events: a lot (shared sale_group) collapses to one row;
   // singles are their own event. Preserves the sorted order via first-seen.
   type SaleEvent = {
-    gid: string; items: SaleRow[]; sold_at: string;
+    gid: string; items: SaleRow[]; game: string; sale_group: number | null; sold_at: string;
     qty: number; gross: number; cogs: number; margin: number; marginPct: number;
     reverted: boolean; isLot: boolean;
   };
   const saleEvents = useMemo<SaleEvent[]>(() => {
     const map = new Map<string, SaleRow[]>();
     for (const s of sortedSales) {
-      const gid = s.sale_group != null ? `g${s.sale_group}` : `s${s.key}`;
+      // sale_group is per-game, so key lots by game+group (else cross-game lots merge).
+      const gid = s.sale_group != null ? `g${s.game}-${s.sale_group}` : `s${s.key}`;
       const arr = map.get(gid);
       if (arr) arr.push(s); else map.set(gid, [s]);
     }
@@ -425,7 +427,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       const gross = items.reduce((a, i) => a + Number(i.gross_usd), 0);
       const margin = items.reduce((a, i) => a + Number(i.margin_usd), 0);
       return {
-        gid, items, sold_at: items[0].sold_at,
+        gid, items, game: items[0].game, sale_group: items[0].sale_group, sold_at: items[0].sold_at,
         qty: items.reduce((a, i) => a + i.quantity, 0),
         gross, cogs: items.reduce((a, i) => a + Number(i.cogs_usd), 0), margin,
         marginPct: gross ? Math.round((margin / gross) * 1000) / 10 : 0,
@@ -666,12 +668,17 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                     <span className="text-muted-foreground" title={t("trips.saleCogs")}>${ev.cogs.toFixed(0)}</span>
                     <span className={ev.margin < 0 ? "text-destructive" : ""} title={t("trips.saleMargin")}>${ev.margin.toFixed(0)} · {ev.marginPct}%</span>
                   </div>
-                  {!ev.reverted && (
-                    <Button variant="ghost" size="sm" className="mt-1 h-6 px-1 text-xs" disabled={saving}
-                      onClick={() => ev.isLot ? openEditLot(ev.items) : openEdit(ev.items[0])}>
-                      <Pencil className="size-3 mr-1" />{ev.isLot ? t("trips.editLot") : t("trips.editSale")}
-                    </Button>
-                  )}
+                  <div className="mt-1 flex items-center gap-1">
+                    {!ev.reverted && (
+                      <Button variant="ghost" size="sm" className="h-6 px-1 text-xs" disabled={saving}
+                        onClick={() => ev.isLot ? openEditLot(ev.items) : openEdit(ev.items[0])}>
+                        <Pencil className="size-3 mr-1" />{ev.isLot ? t("trips.editLot") : t("trips.editSale")}
+                      </Button>
+                    )}
+                    {ev.sale_group != null && (
+                      <ReceiptsDialog ownerType={`sale:${ev.game}`} ownerId={ev.sale_group} />
+                    )}
+                  </div>
                 </div>
               </div>
               {ev.isLot && (
@@ -732,6 +739,9 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                         </AlertDialogContent>
                       </AlertDialog>
                       </>
+                    )}
+                    {ev.sale_group != null && (
+                      <ReceiptsDialog ownerType={`sale:${ev.game}`} ownerId={ev.sale_group} />
                     )}
                   </div>
                 </div>

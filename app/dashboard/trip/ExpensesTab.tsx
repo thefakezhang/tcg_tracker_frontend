@@ -12,6 +12,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, FieldGroup } from "@/components/ui/field";
+import ReceiptsDialog from "../Receipts";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -103,9 +104,12 @@ export default function ExpensesTab({ tripId }: { tripId: number | null }) {
               <TableCell>{r.incurred_at}</TableCell>
               <TableCell>${r.amount_usd} <span className="text-xs text-muted-foreground">({r.orig_currency} {r.amount_orig})</span></TableCell>
               <TableCell>
-                <Button variant="ghost" size="icon" className="size-7" onClick={() => remove(r.expense_id)}>
-                  <Trash2 className="size-4" />
-                </Button>
+                <div className="flex items-center justify-end gap-1">
+                  <ReceiptsDialog ownerType="expense" ownerId={r.expense_id} />
+                  <Button variant="ghost" size="icon" className="size-7" onClick={() => remove(r.expense_id)}>
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
               </TableCell>
             </TableRow>
           ))}
