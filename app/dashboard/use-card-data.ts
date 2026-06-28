@@ -70,6 +70,14 @@ export function cardDefCols(game: Game): string {
   return game === "pokemon" ? POKEMON_CARD_DEF_COLS : MTG_CARD_DEF_COLS;
 }
 
+// "Promotional cards" in the catalog (Pokémon): any set_code ending in -P (the
+// Japanese promo convention — covers SM-P, S-P, XY-P, BW-P, DP-P, …), the
+// non--P promo set codes, or a TCGPlayer rarity tag of "Promo". The set was
+// derived authoritatively by mapping TCGPlayer's promo-named source sets to
+// their catalog set_codes. PostgREST or-filter on the embedded card-def table.
+const POKEMON_PROMO_OR =
+  "set_code.ilike.%-P,set_code.in.(P,PLAY,PPP,OLD-CPC,OLD-UPC,OLD-JCDP),rarity.eq.Promo";
+
 export interface MarketListing {
   card_id: number;
   price_type: "Buy" | "Sell";
@@ -265,6 +273,7 @@ export function useCardData(options: {
   selectedTier: number;
   sellRegion: RegionFilter;
   rarity: string | null;
+  promosOnly: boolean;
   minBuyPrice: number | null;
   minSellPrice: number | null;
   roiFloor: number | null;
@@ -291,6 +300,7 @@ export function useCardData(options: {
     selectedTier,
     sellRegion,
     rarity,
+    promosOnly,
     minBuyPrice,
     minSellPrice,
     roiFloor,
@@ -319,7 +329,7 @@ export function useCardData(options: {
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, rarity, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, page, pageSize]);
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, rarity, promosOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -363,6 +373,9 @@ export function useCardData(options: {
     if (cn) query = query.ilike(`${cardDefTable}.card_number`, `%${cn}%`);
     if (sc) query = query.ilike(`${cardDefTable}.set_code`, `%${sc}%`);
     if (rarity) query = query.eq(`${cardDefTable}.rarity`, rarity);
+    if (promosOnly && activeGame === "pokemon") {
+      query = query.or(POKEMON_PROMO_OR, { referencedTable: cardDefTable });
+    }
 
     // Region filter on sell side (displayed as "Lowest Buy")
     if (sellRegion !== "all") {

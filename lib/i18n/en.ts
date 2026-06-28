@@ -49,6 +49,7 @@ const en = {
   "modal.loading": "Loading listings...",
   "cardBrowser.regionAll": "All Regions",
   "cardBrowser.rarityAll": "All Rarities",
+  "cardBrowser.promosOnly": "Promos",
   "column.rarity": "Rarity",
   "cardBrowser.regionNA": "NA",
   "cardBrowser.regionJP": "JP",
