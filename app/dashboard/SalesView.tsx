@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { cardMeta } from "./use-card-data";
 import { useSupabaseQuery, QueryError } from "./use-query";
+import ReceiptsDialog from "./Receipts";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ const PAGE = 300; // sales per fetch; "Load more" raises it
 
 interface Sale {
   key: string;
+  game: string;
   name: string;
   search: string; // lowercased name+english+set+number for filtering
   leg: "import" | "export";
@@ -53,6 +55,7 @@ async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncat
     .filter((r) => !r.is_reverted) // reverted sales drop out (the revert undid them)
     .map((r) => ({
       key: `${r.game}-${r.sale_id}`,
+      game: r.game,
       name: `${r.regional_name} · ${cardMeta(r.set_code, r.card_number, r.misc_info)}`.trim(),
       search: `${r.regional_name} ${r.english_name ?? ""} ${r.set_code} ${r.card_number ?? ""}`.toLowerCase(),
       leg: r.leg ?? "import",
@@ -75,18 +78,19 @@ export default function SalesView() {
   const sales = data?.sales ?? [];
 
   // Collapse lot sales (shared sale_group) into one event row.
-  type Event = { gid: string; items: Sale[]; leg: "import" | "export"; sold_at: string; qty: number; gross: number; cogs: number; margin: number };
+  type Event = { gid: string; items: Sale[]; game: string; sale_group: number | null; leg: "import" | "export"; sold_at: string; qty: number; gross: number; cogs: number; margin: number };
   const events = useMemo<Event[]>(() => {
     const q = search.trim().toLowerCase();
     const filtered = sales.filter((s) =>
       (leg === "all" || s.leg === leg) && (!q || s.search.includes(q)));
     const map = new Map<string, Sale[]>();
     for (const s of filtered) {
-      const gid = s.sale_group != null ? `g${s.sale_group}` : `s${s.key}`;
+      // sale_group is per-game, so key lots by game+group (else pokemon g1 and mtg g1 merge).
+      const gid = s.sale_group != null ? `g${s.game}-${s.sale_group}` : `s${s.key}`;
       const arr = map.get(gid); if (arr) arr.push(s); else map.set(gid, [s]);
     }
     return [...map.entries()].map(([gid, items]) => ({
-      gid, items, leg: items[0].leg, sold_at: items[0].sold_at,
+      gid, items, game: items[0].game, sale_group: items[0].sale_group, leg: items[0].leg, sold_at: items[0].sold_at,
       qty: items.reduce((a, i) => a + i.quantity, 0),
       gross: items.reduce((a, i) => a + Number(i.gross_usd), 0),
       cogs: items.reduce((a, i) => a + Number(i.cogs_usd), 0),
@@ -128,6 +132,7 @@ export default function SalesView() {
             <TableHead className="w-24">{t("trips.saleGross")}</TableHead>
             <TableHead className="w-24">{t("trips.saleCogs")}</TableHead>
             <TableHead className="w-24">{t("trips.saleMargin")}</TableHead>
+            <TableHead className="w-10" />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -153,6 +158,11 @@ export default function SalesView() {
               <TableCell>${e.gross.toFixed(0)}</TableCell>
               <TableCell>${e.cogs.toFixed(0)}</TableCell>
               <TableCell className={e.margin < 0 ? "text-destructive" : ""}>${e.margin.toFixed(0)}</TableCell>
+              <TableCell className="text-right">
+                {e.sale_group != null && (
+                  <ReceiptsDialog ownerType={`sale:${e.game}`} ownerId={e.sale_group} />
+                )}
+              </TableCell>
             </TableRow>
             {isLot && open && e.items.map((s) => (
               <TableRow key={s.key} className="bg-muted/30 text-xs text-muted-foreground">
@@ -163,13 +173,14 @@ export default function SalesView() {
                 <TableCell>${Number(s.gross_usd).toFixed(0)}</TableCell>
                 <TableCell>${Number(s.cogs_usd).toFixed(0)}</TableCell>
                 <TableCell className={Number(s.margin_usd) < 0 ? "text-destructive" : ""}>${Number(s.margin_usd).toFixed(0)}</TableCell>
+                <TableCell />
               </TableRow>
             ))}
             </Fragment>
             );
           })}
           {events.length === 0 && !error && (
-            <TableRow><TableCell colSpan={7} className="text-muted-foreground">{isLoading ? t("common.loading") : t("trips.empty")}</TableCell></TableRow>
+            <TableRow><TableCell colSpan={8} className="text-muted-foreground">{isLoading ? t("common.loading") : t("trips.empty")}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>
