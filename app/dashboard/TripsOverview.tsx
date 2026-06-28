@@ -54,11 +54,11 @@ async function fetchPosition(): Promise<Position> {
   return { invImport, invExport, invCost: invImport + invExport, margin, expenses };
 }
 
-function Stat({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+function Stat({ label, value, sub, valueClassName }: { label: string; value: string; sub?: string; valueClassName?: string }) {
   return (
     <div className="rounded-md border p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`text-lg font-semibold tabular-nums ${accent ? "text-primary" : ""}`}>{value}</div>
+      <div className={`text-lg font-semibold tabular-nums ${valueClassName ?? ""}`}>{value}</div>
       {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
     </div>
   );
@@ -94,7 +94,11 @@ export default function TripsOverview() {
           />
           <Stat label={t("trips.realizedMargin")} value={usd(pos.margin)} />
           <Stat label={t("trips.colExpenses")} value={usd(pos.expenses)} />
-          <Stat label={t("trips.colNet")} value={usd(pos.margin - pos.expenses)} accent />
+          <Stat
+            label={t("trips.colNet")}
+            value={usd(pos.margin - pos.expenses)}
+            valueClassName={pos.margin - pos.expenses < 0 ? "text-destructive" : ""}
+          />
         </div>
       )}
 
