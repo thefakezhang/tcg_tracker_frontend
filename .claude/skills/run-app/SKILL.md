@@ -26,8 +26,14 @@ APP_URL=<same origin> node scripts/run-app.mjs [route] [outfile]
 ```
 Loads the saved session, navigates, and writes a 2x full-page screenshot for inspection. If it redirects to `/login`, the session expired - re-run `setup-auth.mjs`.
 
+## Screenshot accuracy (important for this JP-heavy app)
+Headless Chromium needs CJK fonts installed or Japanese text renders as tofu boxes (□) - that is an environment artifact, NOT an app bug, so do not "fix" the app font for it. Install once per machine:
+```bash
+curl -fsSL -o ~/.local/share/fonts/NotoSansJP.ttf "https://github.com/google/fonts/raw/main/ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf" && fc-cache -f
+```
+
 ## Using it
-- For pixel-perfect checks (guideline: be picky about the UI), screenshot the route you changed and inspect it. If something looks off - even unrelated - fix it alongside your work.
+- For pixel-perfect checks (guideline: be picky about the UI), screenshot the route you changed and inspect it. If something looks off - even unrelated - fix it alongside your work. But first confirm a glitch is real (not a capture artifact) - see [[feedback_verify_render_in_real_browser]].
 - For a user-reported bug, reproduce it here first (navigate the same path a user would) before changing code, so you fix the real problem.
 - Write screenshots under `debug/` (gitignored) or `.auth/`, not the repo.
 - For local-dev inspection of uncommitted changes, run `npm run dev` and capture/drive `http://localhost:3000` (needs a localhost session).
