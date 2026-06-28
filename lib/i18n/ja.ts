@@ -111,6 +111,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.colImportMargin": "カード粗利",
   "trips.colExpenses": "経費",
   "trips.colNet": "純利益",
+  "trips.capitalInInventory": "在庫資金",
+  "trips.realizedMargin": "実現粗利",
   "trips.colRoi": "ROI %",
   "trips.importLots": "仕入れロット",
   "trips.exportLots": "輸出ロット（日本へ持ち込み）",
