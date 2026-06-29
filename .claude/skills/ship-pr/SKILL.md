@@ -39,15 +39,16 @@ The standard PR flow for `tcg_tracker` / `tcg_tracker_frontend`. Run from the re
    for i in $(seq 1 12); do
      p=$(gh pr checks $n 2>&1 | grep -ciE "pending|in_progress|queued"); [ "$p" = "0" ] && break; sleep 20; done
    gh pr checks $n 2>&1 | tail -2
-   gh pr merge $n --merge
+   gh pr merge $n --merge --delete-branch   # deletes the remote AND local branch, checks out base
    ```
-   - Frontend PRs show Vercel checks; backend often has none ("no checks reported") — that's fine, merge.
-5. **Sync + clean up:**
+   - Frontend PRs show Vercel checks; backend often has none ("no checks reported"), which is fine - merge.
+5. **Sync:**
    ```bash
-   git checkout main -q && git pull origin main -q && git branch -d <branch>
+   git pull origin main -q
    ```
+   `--delete-branch` already removed the remote and local branch and switched to base; never leave a merged branch behind.
 
 ## Notes
-- This repo has a sibling: backend `tcg_tracker` + frontend `tcg_tracker_frontend`. A feature often spans both → two PRs (apply backend first if the frontend depends on it).
+- This repo has a sibling: backend `tcg_tracker` + frontend `tcg_tracker_frontend`. A feature often spans both, so two PRs (apply backend first if the frontend depends on it).
 - If a migration is involved, run the **cloud-migrate** skill BEFORE shipping (it numbers + applies the migration; ship-pr then lands the files).
-- `gh pr merge --merge` does NOT delete the remote branch — periodic cleanup: delete remote branches `git branch -r --merged origin/main` (excluding open-PR heads).
+- If merged branches ever accumulate, prune them: `git branch -r --merged origin/main` (excluding open-PR heads) -> `git push origin --delete`.
