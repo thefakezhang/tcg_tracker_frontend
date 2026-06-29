@@ -24,6 +24,12 @@ Do not leave merged branches lying around; if any accumulate, prune them (`git b
 - When making technical decisions, do not give weight to development cost.
 Prefer quality, simplicity, robustness, scalability, and long-term maintainability.
 
+### Documentation
+- The goal is organized, concise documentation covering every facet of the application; keep it current.
+- When building a new feature, create documentation for it that states the architecture, the justification, the goals, and the non-goals.
+- When changing an existing feature, update its documentation in the same change.
+- When you notice outdated documentation, even if it is unrelated to the current task, bring it up to date.
+
 ### Bug fixing
 - When fixing a bug, always start by reproducing it in an end-to-end setting that mirrors how a real end user would hit it.
 Reproducing it the way a user would is what makes sure you find the real problem and not just a symptom.
