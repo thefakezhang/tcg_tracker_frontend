@@ -16,6 +16,10 @@ Preserve normal Markdown structure (headings, lists, tables, code blocks), but d
 - Never manually modify files that are marked as auto-generated.
 Change them by re-running their generator instead.
 
+### Version control
+- After a branch's PR is merged, delete the branch - both remote AND local (prefer `gh pr merge --merge --delete-branch`, which removes both).
+Do not leave merged branches lying around; if any accumulate, prune them (`git branch -r --merged origin/main`, excluding open-PR heads).
+
 ### Technical decisions
 - When making technical decisions, do not give weight to development cost.
 Prefer quality, simplicity, robustness, scalability, and long-term maintainability.
