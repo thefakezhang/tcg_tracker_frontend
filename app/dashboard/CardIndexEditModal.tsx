@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Trash2, Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import {
@@ -31,6 +32,12 @@ const PRODUCT_TYPES = [
 ];
 const EDITIONS = ["standard", "1ed", "unlimited"];
 const CONDITIONS = ["standard", "shrink", "no_shrink"];
+const PLATFORMS = ["pricecharting", "tcgplayer", "snkrdunk", "collectr"];
+
+export interface ProductLink {
+  platform_name: string;
+  external_reference_id: string;
+}
 
 export interface EditableProduct {
   product_id: number;
@@ -42,6 +49,7 @@ export interface EditableProduct {
   misc_info: string;
   variant_edition: string;
   sealed_condition: string;
+  links: ProductLink[];
 }
 
 const selectClass =
@@ -60,19 +68,24 @@ export default function CardIndexEditModal({
 }) {
   const { t } = useTranslation();
   const [form, setForm] = useState<EditableProduct | null>(product);
-  const [saving, setSaving] = useState(false);
+  const [links, setLinks] = useState<ProductLink[]>(product?.links ?? []);
+  const [newPlatform, setNewPlatform] = useState("pricecharting");
+  const [newId, setNewId] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setForm(product);
+    setLinks(product?.links ?? []);
+    setNewId("");
     setError(null);
   }, [product]);
 
   if (!form) return null;
   const set = (k: keyof EditableProduct, v: string) => setForm({ ...form, [k]: v });
 
-  const save = async () => {
-    setSaving(true);
+  const saveIdentity = async () => {
+    setBusy(true);
     setError(null);
     const supabase = createClient();
     const { error: rpcError } = await supabase.rpc("card_index_edit_sealed_product", {
@@ -86,13 +99,54 @@ export default function CardIndexEditModal({
       p_variant_edition: form.variant_edition,
       p_sealed_condition: form.sealed_condition,
     });
-    setSaving(false);
+    setBusy(false);
     if (rpcError) {
       setError(rpcError.message);
       return;
     }
     onSaved();
     onOpenChange(false);
+  };
+
+  const addLink = async () => {
+    const id = newId.trim();
+    if (!id) return;
+    setBusy(true);
+    setError(null);
+    const supabase = createClient();
+    const { error: rpcError } = await supabase.rpc("card_index_attach_sealed_link", {
+      p_product_id: form.product_id,
+      p_platform: newPlatform,
+      p_external_id: id,
+    });
+    setBusy(false);
+    if (rpcError) {
+      setError(rpcError.message);
+      return;
+    }
+    setLinks((prev) => [
+      ...prev.filter((l) => l.platform_name !== newPlatform),
+      { platform_name: newPlatform, external_reference_id: id },
+    ]);
+    setNewId("");
+    onSaved();
+  };
+
+  const removeLink = async (platform: string) => {
+    setBusy(true);
+    setError(null);
+    const supabase = createClient();
+    const { error: rpcError } = await supabase.rpc("card_index_remove_sealed_link", {
+      p_product_id: form.product_id,
+      p_platform: platform,
+    });
+    setBusy(false);
+    if (rpcError) {
+      setError(rpcError.message);
+      return;
+    }
+    setLinks((prev) => prev.filter((l) => l.platform_name !== platform));
+    onSaved();
   };
 
   return (
@@ -168,13 +222,65 @@ export default function CardIndexEditModal({
             <Input value={form.misc_info} onChange={(e) => set("misc_info", e.target.value)} />
           </div>
         </div>
+
+        {/* Platform links - applied immediately (move-the-link). */}
+        <div className="space-y-2 border-t pt-3">
+          <Label>{t("cardIndex.fLinks")}</Label>
+          <div className="space-y-1">
+            {links.length === 0 && (
+              <p className="text-xs text-muted-foreground">{t("cardIndex.noLinks")}</p>
+            )}
+            {links
+              .slice()
+              .sort((a, b) => a.platform_name.localeCompare(b.platform_name))
+              .map((l) => (
+                <div key={l.platform_name} className="flex items-center gap-2 text-sm">
+                  <span className="w-28 shrink-0 text-muted-foreground">{l.platform_name}</span>
+                  <span className="flex-1 font-mono text-xs">{l.external_reference_id}</span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    disabled={busy}
+                    onClick={() => removeLink(l.platform_name)}
+                    title={t("cardIndex.removeLink")}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              className={`${selectClass} w-28`}
+              value={newPlatform}
+              onChange={(e) => setNewPlatform(e.target.value)}
+            >
+              {PLATFORMS.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+            <Input
+              className="flex-1"
+              placeholder={t("cardIndex.linkIdPlaceholder")}
+              value={newId}
+              onChange={(e) => setNewId(e.target.value)}
+            />
+            <Button variant="outline" size="sm" disabled={busy || !newId.trim()} onClick={addLink}>
+              <Plus className="size-3.5" /> {t("cardIndex.addLink")}
+            </Button>
+          </div>
+        </div>
+
         {error && <p className="text-sm text-destructive">{error}</p>}
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
             {t("common.cancel")}
           </Button>
-          <Button onClick={save} disabled={saving}>
-            {saving ? t("common.saving") : t("common.save")}
+          <Button onClick={saveIdentity} disabled={busy}>
+            {busy ? t("common.saving") : t("common.save")}
           </Button>
         </DialogFooter>
       </DialogContent>
