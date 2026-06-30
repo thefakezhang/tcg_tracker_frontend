@@ -144,13 +144,13 @@ export default function CardIndexView() {
         <p className="text-sm text-muted-foreground">{t("cardIndex.empty")}</p>
       ) : (
         <div className="overflow-x-auto rounded-md border">
-          <table className="w-full text-sm">
+          <table className="w-full table-fixed text-sm">
             <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">{t("cardIndex.colCard")}</th>
-                <th className="px-3 py-2 font-medium">{t("cardIndex.colVariant")}</th>
-                <th className="px-3 py-2 font-medium">{t("cardIndex.colLinks")}</th>
-                <th className="px-3 py-2 font-medium">{t("cardIndex.colUid")}</th>
+                <th className="w-[42%] px-3 py-2 font-medium">{t("cardIndex.colCard")}</th>
+                <th className="w-[16%] px-3 py-2 font-medium">{t("cardIndex.colVariant")}</th>
+                <th className="w-[30%] px-3 py-2 font-medium">{t("cardIndex.colLinks")}</th>
+                <th className="w-[12%] px-3 py-2 font-medium">{t("cardIndex.colUid")}</th>
               </tr>
             </thead>
             <tbody>
@@ -173,8 +173,14 @@ export default function CardIndexView() {
                       <div className="min-w-0">
                         <div className="truncate font-medium">{p.name}</div>
                         <div className="truncate text-xs text-muted-foreground">
-                          {p.english_name ? p.english_name + " · " : ""}
-                          {p.set_code} · {p.product_type} · {p.language}
+                          {[
+                            p.english_name,
+                            p.set_code !== "UNKNOWN" ? p.set_code : null,
+                            p.product_type,
+                            p.language,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
                         </div>
                       </div>
                     </div>
