@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Trash2, Plus } from "lucide-react";
+import { Trash2, Plus, GitMerge } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import {
@@ -73,13 +73,39 @@ export default function CardIndexEditModal({
   const [newId, setNewId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mergeSearch, setMergeSearch] = useState("");
+  const [mergeResults, setMergeResults] = useState<{ product_id: number; name: string; set_code: string }[]>([]);
+  const [mergeTarget, setMergeTarget] = useState<{ product_id: number; name: string } | null>(null);
 
   useEffect(() => {
     setForm(product);
     setLinks(product?.links ?? []);
     setNewId("");
     setError(null);
+    setMergeSearch("");
+    setMergeResults([]);
+    setMergeTarget(null);
   }, [product]);
+
+  // Debounced target search for merge (excludes the current product).
+  useEffect(() => {
+    const q = mergeSearch.trim();
+    if (!q || !product || mergeTarget) {
+      setMergeResults([]);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("pokemon_sealed_products")
+        .select("product_id, name, set_code")
+        .ilike("name", `%${q.replace(/[%,]/g, " ")}%`)
+        .neq("product_id", product.product_id)
+        .limit(6);
+      setMergeResults((data as { product_id: number; name: string; set_code: string }[]) ?? []);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [mergeSearch, product, mergeTarget]);
 
   if (!form) return null;
   const set = (k: keyof EditableProduct, v: string) => setForm({ ...form, [k]: v });
@@ -147,6 +173,24 @@ export default function CardIndexEditModal({
     }
     setLinks((prev) => prev.filter((l) => l.platform_name !== platform));
     onSaved();
+  };
+
+  const doMerge = async () => {
+    if (!mergeTarget) return;
+    setBusy(true);
+    setError(null);
+    const supabase = createClient();
+    const { error: rpcError } = await supabase.rpc("card_index_merge_sealed_products", {
+      p_from_id: form.product_id,
+      p_into_id: mergeTarget.product_id,
+    });
+    setBusy(false);
+    if (rpcError) {
+      setError(rpcError.message);
+      return;
+    }
+    onSaved();
+    onOpenChange(false);
   };
 
   return (
@@ -272,6 +316,53 @@ export default function CardIndexEditModal({
               <Plus className="size-3.5" /> {t("cardIndex.addLink")}
             </Button>
           </div>
+        </div>
+
+        {/* Merge into another product - destructive (deletes this product). */}
+        <div className="space-y-2 border-t pt-3">
+          <Label className="flex items-center gap-1.5">
+            <GitMerge className="size-3.5" /> {t("cardIndex.mergeTitle")}
+          </Label>
+          {mergeTarget ? (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="flex-1 truncate">
+                {t("cardIndex.mergeInto")}:{" "}
+                <span className="font-medium">{mergeTarget.name}</span>
+              </span>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => setMergeTarget(null)}>
+                {t("common.cancel")}
+              </Button>
+              <Button variant="destructive" size="sm" disabled={busy} onClick={doMerge}>
+                {t("cardIndex.mergeConfirm")}
+              </Button>
+            </div>
+          ) : (
+            <>
+              <Input
+                placeholder={t("cardIndex.mergeSearch")}
+                value={mergeSearch}
+                onChange={(e) => setMergeSearch(e.target.value)}
+              />
+              {mergeResults.length > 0 && (
+                <div className="rounded-md border">
+                  {mergeResults.map((r) => (
+                    <button
+                      key={r.product_id}
+                      type="button"
+                      className="flex w-full items-center justify-between px-2 py-1.5 text-left text-sm hover:bg-muted"
+                      onClick={() => setMergeTarget({ product_id: r.product_id, name: r.name })}
+                    >
+                      <span className="truncate">{r.name}</span>
+                      <span className="ml-2 shrink-0 text-xs text-muted-foreground">
+                        {r.set_code}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">{t("cardIndex.mergeHint")}</p>
+            </>
+          )}
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
