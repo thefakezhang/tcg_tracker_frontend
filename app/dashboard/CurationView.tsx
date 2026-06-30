@@ -200,36 +200,53 @@ function CandidateCard({ c, status, language, saving, onApprove, onReject, onSen
   const hasMatch = !!c.candidate_card_id; // mark-correct needs an existing match; no-match → correct/reject
 
   const { card: cardBBox, price: priceBBox } = parseGridBBox(c.source_grid_bbox);
-  // The source image is the full tweet image we cropped from. cell_image_url
-  // is currently set to the same URL (the orchestrator's old "placeholder";
-  // see services/image-recognition/orchestrator.py). Prefer the explicit
-  // source_image_url so the legacy placeholder semantics don't sneak in.
-  const sourceImg = c.source_image_url ?? c.cell_image_url ?? null;
+  // source_image_url is set by the orchestrator and was historically a local
+  // filesystem path ("internal/image_recognition/eval/<buyer>/...jpg") which
+  // the browser can't load. Only treat it as the CSS-crop source when it's a
+  // real http(s) URL; otherwise we fall through to the cell-crop URL.
+  const sourceImg = c.source_image_url && /^https?:\/\//i.test(c.source_image_url) ? c.source_image_url : null;
+  // Older candidates (pre source-upload) have a working R2 URL in
+  // cell_image_url pointing at a pre-cropped card image. When the source
+  // isn't a real URL we render that directly with no CSS cropping; the
+  // price slot becomes a "no price box" placeholder because the standalone
+  // price crop only exists when we can CSS-crop the source.
+  const cellCardImg = c.cell_image_url && /^https?:\/\//i.test(c.cell_image_url) ? c.cell_image_url : null;
+  const showCardCrop = sourceImg && cardBBox;
+  const showPriceCrop = sourceImg && priceBBox;
+  // Lightbox target falls back to whichever URL we actually have, so click
+  // always opens *something* for the curator instead of blank black.
+  const lightboxImg = sourceImg ?? cellCardImg;
 
   return (
     <Card size="sm">
       <CardContent className="space-y-2 p-3">
         <div className="flex gap-2">
-          {/* The card we found, cropped from the source via the card bbox.
-              Click opens the full source image in a pan+zoom inspector so
-              the curator can see the rest of the sheet for context. */}
+          {/* The card we found. New candidates have a real source URL + a
+              card bbox - we CSS-crop the card region. Legacy candidates
+              pre-date the source-upload work and only have an R2 URL of a
+              pre-cropped card in cell_image_url - we show that directly. */}
           <figure className="shrink-0 text-center">
-            {sourceImg && cardBBox ? (
-              <CropPreview src={sourceImg} bbox={cardBBox} w={96} h={128}
-                onClick={() => setZoom(sourceImg)} />
+            {showCardCrop ? (
+              <CropPreview src={sourceImg!} bbox={cardBBox!} w={96} h={128}
+                onClick={() => lightboxImg && setZoom(lightboxImg)} />
+            ) : cellCardImg ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={cellCardImg} alt="" loading="lazy"
+                onClick={() => setZoom(cellCardImg)}
+                className="h-32 w-24 cursor-zoom-in rounded bg-muted object-contain" />
             ) : (
               <div className="flex h-32 w-24 items-center justify-center rounded bg-muted"><ImageOff className="size-6 text-muted-foreground" /></div>
             )}
             <figcaption className="mt-0.5 text-[10px] text-muted-foreground">{t("curation.detected")}</figcaption>
           </figure>
-          {/* The price banner, cropped from the source via the price bbox.
-              Older candidates pre-date the bbox split and have no price box
-              stored; for those, just render a "no price crop" placeholder
-              so the layout stays consistent. */}
+          {/* The price banner. Only ever rendered when we can CSS-crop it
+              out of a real source URL - the orchestrator's earlier
+              "placeholder URL" pattern never gave us standalone price
+              crops, so legacy rows simply show a "no price box" slot. */}
           <figure className="shrink-0 text-center">
-            {sourceImg && priceBBox ? (
-              <CropPreview src={sourceImg} bbox={priceBBox} w={96} h={48}
-                onClick={() => setZoom(sourceImg)} />
+            {showPriceCrop ? (
+              <CropPreview src={sourceImg!} bbox={priceBBox!} w={96} h={48}
+                onClick={() => lightboxImg && setZoom(lightboxImg)} />
             ) : (
               <div className="flex h-12 w-24 items-center justify-center rounded bg-muted">
                 <span className="text-[10px] text-muted-foreground">{t("curation.noPriceCrop")}</span>
