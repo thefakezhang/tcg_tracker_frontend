@@ -34,7 +34,7 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Boxes, ChevronsUpDown, DollarSign, Globe, Library, ListChecks, Loader2, LogOut, Luggage, Map, Package, Plus, Receipt, ScanSearch, ShoppingCart, Sparkles, Squirrel } from "lucide-react";
+import { Boxes, ChevronsUpDown, ClipboardCheck, DollarSign, Globe, Library, ListChecks, Loader2, LogOut, Luggage, Map, Package, Plus, Receipt, ScanSearch, ShoppingCart, Sparkles, Squirrel } from "lucide-react";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
 import { useSaving } from "@/lib/use-saving";
@@ -184,6 +184,15 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 >
                   <Library className="size-4" />
                   {t("cardIndex.title")}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeTripId === -6}
+                  onClick={() => { setActiveTripId(-6); setActiveBuylistId(null); }}
+                >
+                  <ClipboardCheck className="size-4" />
+                  {t("review.title")}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
