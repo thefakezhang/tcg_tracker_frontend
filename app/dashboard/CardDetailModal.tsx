@@ -63,6 +63,7 @@ import {
 } from "./use-card-data";
 import { useLanguage } from "./LanguageContext";
 import type { Game } from "./GameContext";
+import { FreshnessChip } from "./FreshnessChip";
 
 const BUYLIST_ENTRY_TABLE: Record<Game, string> = {
   pokemon: "pokemon_buylist_entries",
@@ -78,6 +79,9 @@ interface DetailListing {
   marketRegion: string | null;
   conditionLabel: string;
   listingUrl: string | null;
+  // pokemon_market_listings.last_updated; drives the freshness chip next
+  // to the location. null when the row predates the column being populated.
+  lastUpdated: string | null;
 }
 
 interface CardDetailModalProps {
@@ -189,7 +193,7 @@ export default function CardDetailModal({
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
             .select(
-              "card_id, price_type, price, currency, psa_grade, condition, location_id, listing_url, currencies(symbol)"
+              "card_id, price_type, price, currency, psa_grade, condition, location_id, listing_url, last_updated, currencies(symbol)"
             )
             .eq("card_id", card!.card.card_id),
           fetchRateMap(supabase),
@@ -211,6 +215,7 @@ export default function CardDetailModal({
           condition: (l.condition as number | null) ?? null,
           location_id: l.location_id as number,
           listing_url: (l.listing_url as string | null) ?? null,
+          last_updated: (l.last_updated as string | null) ?? null,
         })
       );
 
@@ -249,6 +254,7 @@ export default function CardDetailModal({
         marketRegion: loc?.marketRegion ?? null,
         conditionLabel,
         listingUrl: l.listing_url,
+        lastUpdated: l.last_updated,
       };
     };
 
@@ -621,6 +627,7 @@ function ListingTable({
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1.5">
+                    <FreshnessChip lastUpdated={l.lastUpdated} />
                     {l.listingUrl ? (
                       <a
                         href={l.listingUrl}

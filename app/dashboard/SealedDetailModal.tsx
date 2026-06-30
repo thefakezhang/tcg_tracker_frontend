@@ -62,6 +62,7 @@ import {
   productTypeLabel,
 } from "./use-sealed-data";
 import { useLanguage } from "./LanguageContext";
+import { FreshnessChip } from "./FreshnessChip";
 
 const SEALED_ENTRY_TABLE = "pokemon_sealed_buylist_entries";
 
@@ -74,6 +75,7 @@ interface SealedListing {
   locationId: number;
   listingUrl: string | null;
   priceType: "Buy" | "Sell";
+  lastUpdated: string | null;
 }
 
 interface DetailListing {
@@ -84,6 +86,10 @@ interface DetailListing {
   marketRegion: string | null;
   conditionLabel: string;
   listingUrl: string | null;
+  // pokemon_sealed_market_listings.last_updated; drives the freshness
+  // chip next to the location. null when the row predates the column
+  // being populated.
+  lastUpdated: string | null;
 }
 
 interface SealedDetailModalProps {
@@ -161,7 +167,7 @@ export default function SealedDetailModal({
         supabase
           .from("pokemon_sealed_market_listings")
           .select(
-            "product_id, price_type, price, currency, sealed_condition, variant_edition, location_id, listing_url, currencies(symbol)"
+            "product_id, price_type, price, currency, sealed_condition, variant_edition, location_id, listing_url, last_updated, currencies(symbol)"
           )
           .eq("product_id", card!.card.card_id),
         fetchRateMap(supabase),
@@ -181,6 +187,7 @@ export default function SealedDetailModal({
           locationId: l.location_id as number,
           listingUrl: (l.listing_url as string | null) ?? null,
           priceType: l.price_type as "Buy" | "Sell",
+          lastUpdated: (l.last_updated as string | null) ?? null,
         })
       );
 
@@ -210,6 +217,7 @@ export default function SealedDetailModal({
         marketRegion: loc?.marketRegion ?? null,
         conditionLabel: `${editionLabel(t, l.variantEdition)} · ${conditionLabel(t, l.sealedCondition)}`,
         listingUrl: l.listingUrl,
+        lastUpdated: l.lastUpdated,
       };
     };
 
@@ -495,6 +503,7 @@ function ListingTable({
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1.5">
+                    <FreshnessChip lastUpdated={l.lastUpdated} />
                     {l.listingUrl ? (
                       <a
                         href={l.listingUrl}
