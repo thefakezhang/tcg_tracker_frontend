@@ -174,7 +174,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
-          <SidebarGroupLabel>{t("cardIndex.section")}</SidebarGroupLabel>
+          <SidebarGroupLabel>{t("catalog.section")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
@@ -183,7 +183,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
                   onClick={() => { setActiveTripId(-5); setActiveBuylistId(null); }}
                 >
                   <Library className="size-4" />
-                  {t("cardIndex.title")}
+                  {t("catalog.index")}
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>

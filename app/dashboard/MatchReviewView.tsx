@@ -5,6 +5,8 @@ import { ClipboardCheck, Check, X, Plus, ImageOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
+import { useGame } from "./GameContext";
+import CatalogNotMigrated from "./CatalogNotMigrated";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -160,6 +162,7 @@ function Anchors({ links }: { links: ProductLink[] }) {
 
 export default function MatchReviewView() {
   const { t } = useTranslation();
+  const { activeGame } = useGame();
   const { data, error, isLoading, retry } = useSupabaseQuery(["match-review"], fetchQueue);
   const candidates = data?.candidates ?? [];
   const products = data?.products ?? new Map<number, ProductLite>();
@@ -171,6 +174,11 @@ export default function MatchReviewView() {
     () => Array.from(new Set(candidates.map((c) => c.source_platform))).sort(),
     [candidates],
   );
+
+  // Only pokemon_sealed has been through the owned-identity refactor so far.
+  if (activeGame !== "pokemon_sealed") {
+    return <CatalogNotMigrated game={activeGame} />;
+  }
 
   async function confirm(c: Candidate, productId: number) {
     setBusyId(c.candidate_id);
