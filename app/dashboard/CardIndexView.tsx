@@ -1,13 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { Library, Search, ImageOff } from "lucide-react";
+import { Library, Search, ImageOff, Pencil } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue } from "./use-card-data";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import CardIndexEditModal from "./CardIndexEditModal";
 
 // Read-only browser over the owned sealed-product identity (Stage 3 of the
 // card-index refactor). Each row shows the durable product_uid, the identity
@@ -111,6 +113,7 @@ export default function CardIndexView() {
     () => fetchIndex(debounced),
   );
   const products = data ?? [];
+  const [editing, setEditing] = useState<IndexProduct | null>(null);
 
   return (
     <div className="space-y-4">
@@ -238,9 +241,20 @@ export default function CardIndexView() {
                     </div>
                   </td>
                   <td className="px-3 py-2">
-                    <span className="font-mono text-xs text-muted-foreground">
-                      {p.product_uid.slice(0, 8)}
-                    </span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {p.product_uid.slice(0, 8)}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 shrink-0"
+                        onClick={() => setEditing(p)}
+                        title={t("cardIndex.edit")}
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -248,6 +262,15 @@ export default function CardIndexView() {
           </table>
         </div>
       )}
+
+      <CardIndexEditModal
+        product={editing}
+        open={!!editing}
+        onOpenChange={(o) => {
+          if (!o) setEditing(null);
+        }}
+        onSaved={retry}
+      />
     </div>
   );
 }
