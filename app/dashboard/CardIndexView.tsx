@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Library, Search, ImageOff, Pencil } from "lucide-react";
+import { Library, Search, ImageOff, Pencil, Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import CardIndexEditModal from "./CardIndexEditModal";
+import CardIndexCreateModal from "./CardIndexCreateModal";
 
 // Read-only browser over the owned sealed-product identity (Stage 3 of the
 // card-index refactor). Each row shows the durable product_uid, the identity
@@ -114,6 +115,7 @@ export default function CardIndexView() {
   );
   const products = data ?? [];
   const [editing, setEditing] = useState<IndexProduct | null>(null);
+  const [creating, setCreating] = useState(false);
 
   return (
     <div className="space-y-4">
@@ -127,14 +129,19 @@ export default function CardIndexView() {
             </span>
           )}
         </div>
-        <div className="relative w-72">
-          <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="pl-8"
-            placeholder={t("cardIndex.search")}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative w-72">
+            <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="pl-8"
+              placeholder={t("cardIndex.search")}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <Button onClick={() => setCreating(true)}>
+            <Plus className="size-4" /> {t("cardIndex.newProduct")}
+          </Button>
         </div>
       </div>
       <p className="text-xs text-muted-foreground">{t("cardIndex.hint")}</p>
@@ -271,6 +278,7 @@ export default function CardIndexView() {
         }}
         onSaved={retry}
       />
+      <CardIndexCreateModal open={creating} onOpenChange={setCreating} onCreated={retry} />
     </div>
   );
 }
