@@ -37,6 +37,8 @@ function DashboardHeader() {
       ? t("sales.allTitle")
       : activeTripId === -3
       ? t("curation.title")
+      : activeTripId === -5
+      ? t("cardIndex.title")
       : activeTrip?.name ?? activeBuylist?.name ?? t(`game.${activeGame}` as TranslationKey);
   const description = activeBuylist?.description;
 
