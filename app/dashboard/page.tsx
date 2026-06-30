@@ -8,6 +8,7 @@ import TripsOverview from "./TripsOverview";
 import InventoryView from "./InventoryView";
 import SalesView from "./SalesView";
 import CurationView from "./CurationView";
+import CardIndexView from "./CardIndexView";
 import ExpensesTab from "./trip/ExpensesTab";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
@@ -31,6 +32,9 @@ function DashboardContent() {
   }
   if (activeTripId === -4) {
     return <div key="expenses" className="p-4"><ExpensesTab tripId={null} /></div>;
+  }
+  if (activeTripId === -5) {
+    return <CardIndexView key="card-index" />;
   }
   if (activeTripId) {
     return <TripDashboard key={`trip-${activeTripId}`} tripId={activeTripId} />;

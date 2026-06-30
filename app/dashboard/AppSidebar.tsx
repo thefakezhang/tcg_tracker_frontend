@@ -34,7 +34,7 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Boxes, ChevronsUpDown, DollarSign, Globe, ListChecks, Loader2, LogOut, Luggage, Map, Package, Plus, Receipt, ScanSearch, ShoppingCart, Sparkles, Squirrel } from "lucide-react";
+import { Boxes, ChevronsUpDown, DollarSign, Globe, Library, ListChecks, Loader2, LogOut, Luggage, Map, Package, Plus, Receipt, ScanSearch, ShoppingCart, Sparkles, Squirrel } from "lucide-react";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
 import { useSaving } from "@/lib/use-saving";
@@ -168,6 +168,22 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 >
                   <ScanSearch className="size-4" />
                   {t("curation.needsReview")}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>{t("cardIndex.section")}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeTripId === -5}
+                  onClick={() => { setActiveTripId(-5); setActiveBuylistId(null); }}
+                >
+                  <Library className="size-4" />
+                  {t("cardIndex.title")}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
