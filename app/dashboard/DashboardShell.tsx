@@ -38,7 +38,7 @@ function DashboardHeader() {
       : activeTripId === -3
       ? t("curation.title")
       : activeTripId === -5
-      ? t("cardIndex.title")
+      ? t("catalog.index")
       : activeTripId === -6
       ? t("review.title")
       : activeTrip?.name ?? activeBuylist?.name ?? t(`game.${activeGame}` as TranslationKey);

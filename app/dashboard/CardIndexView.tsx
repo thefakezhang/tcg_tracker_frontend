@@ -11,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import CardIndexEditModal from "./CardIndexEditModal";
 import CardIndexCreateModal from "./CardIndexCreateModal";
+import CatalogNotMigrated from "./CatalogNotMigrated";
+import { useGame } from "./GameContext";
 
 // Read-only browser over the owned sealed-product identity (Stage 3 of the
 // card-index refactor). Each row shows the durable product_uid, the identity
@@ -106,6 +108,7 @@ function platformLinkURL(platform: string, id: string): string | null {
 
 export default function CardIndexView() {
   const { t } = useTranslation();
+  const { activeGame } = useGame();
   const [search, setSearch] = useState("");
   const debounced = useDebouncedValue(search, 300);
 
@@ -117,12 +120,17 @@ export default function CardIndexView() {
   const [editing, setEditing] = useState<IndexProduct | null>(null);
   const [creating, setCreating] = useState(false);
 
+  // Only pokemon_sealed has been through the owned-identity refactor so far.
+  if (activeGame !== "pokemon_sealed") {
+    return <CatalogNotMigrated game={activeGame} />;
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <Library className="size-5 text-muted-foreground" />
-          <h1 className="text-lg font-semibold">{t("cardIndex.title")}</h1>
+          <h1 className="text-lg font-semibold">{t("catalog.index")}</h1>
           {!isLoading && (
             <span className="text-sm text-muted-foreground">
               {t("cardIndex.count").replace("{n}", String(products.length))}
