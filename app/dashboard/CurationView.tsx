@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ImageOff, ArrowRight, Check, X, Pencil, Clock, Search, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
@@ -25,10 +25,34 @@ interface MatchedCard {
   regional_name: string; english_name: string | null; set_code: string;
   card_number: string | null; misc_info: string | null; image_url: string | null;
 }
+
+// Rectangle in source-image pixel coordinates.
+interface BBox { x0: number; y0: number; x1: number; y1: number; }
+
+// source_grid_bbox JSONB shape, with backwards compat. The orchestrator used
+// to store only the card box ({x0,y0,x1,y1}); the newer shape splits it into
+// {card, price} so the curation UI can render the card and the price banner
+// as two separate clean crops. parseGridBBox() collapses both into a single
+// {card, price?} view.
+type GridBBoxJSON = BBox | { card?: BBox; price?: BBox } | null | undefined;
+
+function parseGridBBox(raw: GridBBoxJSON): { card: BBox | null; price: BBox | null } {
+  if (!raw) return { card: null, price: null };
+  // Modern shape: explicit `card` / `price` keys.
+  if ("card" in raw || "price" in raw) {
+    return { card: raw.card ?? null, price: raw.price ?? null };
+  }
+  // Legacy shape: flat {x0,y0,x1,y1} = card box only.
+  if ("x0" in raw && "x1" in raw) return { card: raw as BBox, price: null };
+  return { card: null, price: null };
+}
+
 interface Candidate {
   candidate_id: number;
   status: string;
   cell_image_url: string | null;
+  source_image_url: string | null;
+  source_grid_bbox: GridBBoxJSON;
   ocr_price_jpy: number | null;
   confidence: number | null;
   match_method: string | null;
@@ -44,7 +68,7 @@ interface Candidate {
 }
 
 const CAND_COLS =
-  "candidate_id, status, cell_image_url, ocr_price_jpy, confidence, match_method, match_score_features, match_score_embedding, card_grading, variant_attrs, source_author_handle, source_tweet_url, source_tweet_date, candidate_card_id";
+  "candidate_id, status, cell_image_url, source_image_url, source_grid_bbox, ocr_price_jpy, confidence, match_method, match_score_features, match_score_embedding, card_grading, variant_attrs, source_author_handle, source_tweet_url, source_tweet_date, candidate_card_id";
 
 export default function CurationView() {
   const { t } = useTranslation();
@@ -175,23 +199,48 @@ function CandidateCard({ c, status, language, saving, onApprove, onReject, onSen
   }
   const hasMatch = !!c.candidate_card_id; // mark-correct needs an existing match; no-match → correct/reject
 
+  const { card: cardBBox, price: priceBBox } = parseGridBBox(c.source_grid_bbox);
+  // The source image is the full tweet image we cropped from. cell_image_url
+  // is currently set to the same URL (the orchestrator's old "placeholder";
+  // see services/image-recognition/orchestrator.py). Prefer the explicit
+  // source_image_url so the legacy placeholder semantics don't sneak in.
+  const sourceImg = c.source_image_url ?? c.cell_image_url ?? null;
+
   return (
     <Card size="sm">
       <CardContent className="space-y-2 p-3">
         <div className="flex gap-2">
-          {/* the detected crop (card + price banner); click to zoom */}
+          {/* The card we found, cropped from the source via the card bbox.
+              Click opens the full source image in a pan+zoom inspector so
+              the curator can see the rest of the sheet for context. */}
           <figure className="shrink-0 text-center">
-            {c.cell_image_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={c.cell_image_url} alt="" loading="lazy" onClick={() => setZoom(c.cell_image_url)}
-                className="h-32 w-24 cursor-zoom-in rounded bg-muted object-contain" />
+            {sourceImg && cardBBox ? (
+              <CropPreview src={sourceImg} bbox={cardBBox} w={96} h={128}
+                onClick={() => setZoom(sourceImg)} />
             ) : (
               <div className="flex h-32 w-24 items-center justify-center rounded bg-muted"><ImageOff className="size-6 text-muted-foreground" /></div>
             )}
             <figcaption className="mt-0.5 text-[10px] text-muted-foreground">{t("curation.detected")}</figcaption>
           </figure>
+          {/* The price banner, cropped from the source via the price bbox.
+              Older candidates pre-date the bbox split and have no price box
+              stored; for those, just render a "no price crop" placeholder
+              so the layout stays consistent. */}
+          <figure className="shrink-0 text-center">
+            {sourceImg && priceBBox ? (
+              <CropPreview src={sourceImg} bbox={priceBBox} w={96} h={48}
+                onClick={() => setZoom(sourceImg)} />
+            ) : (
+              <div className="flex h-12 w-24 items-center justify-center rounded bg-muted">
+                <span className="text-[10px] text-muted-foreground">{t("curation.noPriceCrop")}</span>
+              </div>
+            )}
+            <figcaption className="mt-0.5 text-[10px] text-muted-foreground">{t("curation.priceBanner")}</figcaption>
+          </figure>
           <ArrowRight className="mt-12 size-4 shrink-0 text-muted-foreground" />
-          {/* the matched card — or "?" when there's no match, so you can assign one */}
+          {/* The matched catalog card. Click opens the catalog image alone
+              (no source context to pan around) in the same pan+zoom
+              inspector. */}
           <figure className="shrink-0 text-center">
             {matchedImg ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -279,21 +328,138 @@ function CandidateCard({ c, status, language, saving, onApprove, onReject, onSen
   );
 }
 
-// Fullscreen image inspector. Click outside / the ✕ to close; click the image
-// to toggle fit ↔ 200% (then scroll to inspect). Pinch-zoom works natively on
-// touch. Used for both the detected crop and the matched card.
-function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
-  const [big, setBig] = useState(false);
+// A thumbnail that shows the cropped region of `src` defined by `bbox`,
+// scaled to fit a `w` x `h` box. Uses CSS only - no JS image measurement
+// and no extra HTTP requests - so it renders the moment the source image
+// loads. `object-fit: none` plus a negative `object-position` shows the
+// crop region at 1:1 image pixels, then transform:scale shrinks it down
+// (or up) so it fills the display rectangle while preserving aspect.
+function CropPreview({ src, bbox, w, h, onClick }: {
+  src: string; bbox: BBox; w: number; h: number; onClick?: () => void;
+}) {
+  const cw = Math.max(1, bbox.x1 - bbox.x0);
+  const ch = Math.max(1, bbox.y1 - bbox.y0);
+  const scale = Math.min(w / cw, h / ch);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-auto bg-black/85 p-2" onClick={onClose}>
+    <div
+      onClick={onClick}
+      className={`overflow-hidden rounded bg-muted ${onClick ? "cursor-zoom-in" : ""}`}
+      style={{ width: `${w}px`, height: `${h}px` }}
+    >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={src} alt="" onClick={(e) => { e.stopPropagation(); setBig((v) => !v); }}
-        className={big ? "max-w-none cursor-zoom-out" : "max-h-[92vh] max-w-[92vw] cursor-zoom-in object-contain"}
-        style={big ? { width: "min(200%, 1400px)" } : undefined} />
+      <img
+        src={src} alt="" loading="lazy" draggable={false}
+        style={{
+          width: `${cw}px`, height: `${ch}px`,
+          objectFit: "none",
+          objectPosition: `-${bbox.x0}px -${bbox.y0}px`,
+          transformOrigin: "top left",
+          transform: `scale(${scale})`,
+          maxWidth: "none", maxHeight: "none",
+        }}
+      />
+    </div>
+  );
+}
+
+// Fullscreen image inspector with proper pan + zoom. Wheel zooms around the
+// cursor; click-and-drag pans; double-click resets. Click the dark backdrop
+// or the ✕ to close. Replaces an older fit-vs-200% toggle that could only
+// zoom in, never let the curator pan around to look at the rest of the
+// sheet.
+function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  const [scale, setScale] = useState(1);
+  const [translate, setTranslate] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ startX: number; startY: number; t0: { x: number; y: number } } | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Esc closes; arrow keys nudge the pan (handy on trackpads).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      const step = 80 / scale;
+      if (e.key === "ArrowLeft") setTranslate((t) => ({ x: t.x + step, y: t.y }));
+      else if (e.key === "ArrowRight") setTranslate((t) => ({ x: t.x - step, y: t.y }));
+      else if (e.key === "ArrowUp") setTranslate((t) => ({ x: t.x, y: t.y + step }));
+      else if (e.key === "ArrowDown") setTranslate((t) => ({ x: t.x, y: t.y - step }));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, scale]);
+
+  const onWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    // Zoom around the cursor position so the point under the mouse stays
+    // visually anchored - the standard "zoom to cursor" UX. Without this,
+    // every wheel tick rubber-bands the focal point back to the center.
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const cx = e.clientX - rect.left - rect.width / 2;
+    const cy = e.clientY - rect.top - rect.height / 2;
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const next = Math.min(12, Math.max(0.2, scale * factor));
+    const ratio = next / scale;
+    setTranslate((t) => ({
+      x: cx - (cx - t.x) * ratio,
+      y: cy - (cy - t.y) * ratio,
+    }));
+    setScale(next);
+  };
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, t0: translate };
+  };
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (!dragRef.current) return;
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    setTranslate({ x: dragRef.current.t0.x + dx, y: dragRef.current.t0.y + dy });
+  };
+  const stopDrag = () => { dragRef.current = null; };
+  const onDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setScale(1);
+    setTranslate({ x: 0, y: 0 });
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="fixed inset-0 z-50 overflow-hidden bg-black/85"
+      onClick={onClose}
+      onWheel={onWheel}
+      onMouseMove={onMouseMove}
+      onMouseUp={stopDrag}
+      onMouseLeave={stopDrag}
+    >
+      <div
+        className="absolute inset-0 flex items-center justify-center"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={onMouseDown}
+        onDoubleClick={onDoubleClick}
+        style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src} alt="" draggable={false}
+          style={{
+            maxHeight: "92vh", maxWidth: "92vw",
+            transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
+            transformOrigin: "center",
+            transition: dragRef.current ? "none" : "transform 80ms ease-out",
+            userSelect: "none",
+          }}
+        />
+      </div>
       <button onClick={onClose} aria-label="Close"
         className="fixed right-3 top-3 rounded-full bg-white/15 p-2 text-white hover:bg-white/25">
         <X className="size-5" />
       </button>
+      <div className="pointer-events-none fixed bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-white/15 px-3 py-1 text-[11px] text-white">
+        Wheel: zoom · Drag: pan · Double-click: reset · Esc / click outside: close
+      </div>
     </div>
   );
 }
