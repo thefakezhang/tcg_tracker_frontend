@@ -89,6 +89,7 @@ export interface MarketListing {
   condition: number | null;
   location_id: number;
   listing_url: string | null;
+  last_updated: string | null;
 }
 
 export interface PriceEntry {
