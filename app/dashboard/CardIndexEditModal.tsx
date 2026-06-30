@@ -49,6 +49,7 @@ export interface EditableProduct {
   misc_info: string;
   variant_edition: string;
   sealed_condition: string;
+  image_url: string | null;
   links: ProductLink[];
 }
 
@@ -124,6 +125,7 @@ export default function CardIndexEditModal({
       p_misc_info: form.misc_info,
       p_variant_edition: form.variant_edition,
       p_sealed_condition: form.sealed_condition,
+      p_image_url: form.image_url ?? "",
     });
     setBusy(false);
     if (rpcError) {
@@ -264,6 +266,14 @@ export default function CardIndexEditModal({
           <div className="space-y-1">
             <Label>{t("cardIndex.fMisc")}</Label>
             <Input value={form.misc_info} onChange={(e) => set("misc_info", e.target.value)} />
+          </div>
+          <div className="col-span-2 space-y-1">
+            <Label>{t("cardIndex.fImage")}</Label>
+            <Input
+              value={form.image_url ?? ""}
+              onChange={(e) => set("image_url", e.target.value)}
+              placeholder="https://…"
+            />
           </div>
         </div>
 
