@@ -75,6 +75,7 @@ interface SaleRow {
   orig_currency: string;     // 'USD' (import) or native e.g. 'JPY' (export)
   proceeds_orig: number;
   fx_rate_used: number;
+  customer_id: number | null; // buyer (CRM), null = unattributed
 }
 
 // A row of sales_ledger_v (migration 085).
@@ -84,8 +85,10 @@ type LedgerSaleRow = {
   sealed_condition: string | null; variant_edition: string | null;
   regional_name: string; set_code: string; card_number: string | null; misc_info: string | null; image_url: string | null;
   sold_at: string; quantity: number; gross_usd: number; fees_usd: number; cogs_usd: number; margin_usd: number;
-  orig_currency: string; proceeds_orig: number; fx_rate_used: number; is_reverted: boolean;
+  orig_currency: string; proceeds_orig: number; fx_rate_used: number; is_reverted: boolean; customer_id: number | null;
 };
+
+type CustomerLite = { customer_id: number; name: string };
 
 
 export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
@@ -100,6 +103,9 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [fx, setFx] = useState("0.0067");
   const [fees, setFees] = useState("0");
   const [soldAt, setSoldAt] = useState(new Date().toISOString().slice(0, 10));
+  const [customers, setCustomers] = useState<CustomerLite[]>([]);
+  const [saleCustomerId, setSaleCustomerId] = useState<number | null>(null);
+  const [lotCustomerId, setLotCustomerId] = useState<number | null>(null);
   // Edit-a-sale dialog (correct proceeds/fees/date without revert + re-record).
   const [editSel, setEditSel] = useState<SaleRow | null>(null);
   const [eQty, setEQty] = useState("1");
@@ -167,7 +173,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     const supabase = createClient();
     const { data, error } = await supabase
       .from("sales_ledger_v")
-      .select("sale_id, kind, game, sale_group, card_id, product_id, condition_id, psa_grade, sealed_condition, variant_edition, regional_name, set_code, card_number, misc_info, image_url, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted")
+      .select("sale_id, kind, game, sale_group, card_id, product_id, condition_id, psa_grade, sealed_condition, variant_edition, regional_name, set_code, card_number, misc_info, image_url, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted, customer_id")
       .order("sold_at", { ascending: false }).limit(300);
     if (error) { setSales([]); return; }
     const rows = (data as LedgerSaleRow[]) ?? [];
@@ -183,16 +189,38 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         marginPct: r.gross_usd ? Math.round((r.margin_usd / r.gross_usd) * 1000) / 10 : 0,
         imageUrl: r.image_url, sale_group: r.sale_group, reverted: false,
         fees_usd: r.fees_usd, orig_currency: r.orig_currency, proceeds_orig: r.proceeds_orig, fx_rate_used: r.fx_rate_used,
+        customer_id: r.customer_id,
       }));
     live.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1));
     setSales(live);
   }, []);
 
-  useEffect(() => { fetchHoldings(); fetchSales(); }, [fetchHoldings, fetchSales]);
+  const fetchCustomers = useCallback(async () => {
+    const supabase = createClient();
+    const { data } = await supabase.from("customers").select("customer_id, name").order("name");
+    setCustomers((data as CustomerLite[]) ?? []);
+  }, []);
+
+  useEffect(() => { fetchHoldings(); fetchSales(); fetchCustomers(); }, [fetchHoldings, fetchSales, fetchCustomers]);
+
+  const customerName = useCallback(
+    (id: number | null) => (id == null ? null : customers.find((c) => c.customer_id === id)?.name ?? null),
+    [customers],
+  );
+
+  // A small buyer <select> reused by the sale dialog, the lot dialog, and each
+  // history row (retroactive attribution). Matches the sort-select styling.
+  const customerSelect = (value: number | null, onChange: (id: number | null) => void, cls?: string) => (
+    <select value={value ?? ""} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+      className={cls ?? "h-9 w-full rounded-md border bg-background px-2 text-sm"}>
+      <option value="">{t("trips.soldToNone")}</option>
+      {customers.map((c) => <option key={c.customer_id} value={c.customer_id}>{c.name}</option>)}
+    </select>
+  );
 
   function openSale(h: Holding) {
     setSel(h);
-    setQty("1"); setProceeds(""); setFees("0");
+    setQty("1"); setProceeds(""); setFees("0"); setSaleCustomerId(null);
     setCurrency(h.leg === "export" ? "JPY" : "USD");
   }
 
@@ -209,18 +237,47 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       p_proceeds_orig: native ? Number(proceeds) : null,
       p_fx_rate: native ? Number(fx) : 1,
     };
-    const ok = await save(() => sel.item_type === "sealed"
-      ? supabase.rpc("record_sealed_sale", {
-          p_product_id: sel.product_id, p_sealed_condition: sel.sealed_condition,
-          p_variant_edition: sel.variant_edition, ...common,
-        })
-      : supabase.rpc("record_sale", {
-          p_game: sel.game, p_card_id: sel.card_id, p_condition_id: sel.condition_id,
-          p_psa_grade: sel.psa_grade ?? 0, ...common,
-        }));
+    const ok = await save(async () => {
+      const res = await (sel.item_type === "sealed"
+        ? supabase.rpc("record_sealed_sale", {
+            p_product_id: sel.product_id, p_sealed_condition: sel.sealed_condition,
+            p_variant_edition: sel.variant_edition, ...common,
+          })
+        : supabase.rpc("record_sale", {
+            p_game: sel.game, p_card_id: sel.card_id, p_condition_id: sel.condition_id,
+            p_psa_grade: sel.psa_grade ?? 0, ...common,
+          }));
+      if (res.error) return res;
+      // Attribute the fresh sale to the picked buyer (best-effort second step).
+      const saleId = (res.data as { sale_id: number }[] | null)?.[0]?.sale_id;
+      if (saleCustomerId && saleId) {
+        const r2 = await supabase.rpc("set_sale_customer", { p_game: sel.game, p_sale_id: saleId, p_customer_id: saleCustomerId });
+        if (r2.error) return r2;
+      }
+      return res;
+    });
     if (!ok) return;
     setSel(null);
     await fetchHoldings(); await fetchSales();
+  }
+
+  // Retroactively (or from the record dialogs) attribute an already-recorded sale
+  // event to a buyer: a lot updates every line via its shared group; a single by id.
+  async function attributeEvent(ev: SaleEvent, customerId: number | null) {
+    if (saving) return;
+    const supabase = createClient();
+    const ok = await save(async () => {
+      if (ev.isLot && ev.sale_group != null) {
+        for (const g of new Set(ev.items.map((i) => i.game))) {
+          const { error } = await supabase.rpc("set_lot_customer", { p_game: g, p_sale_group: ev.sale_group, p_customer_id: customerId });
+          if (error) return { error };
+        }
+        return { error: null };
+      }
+      return supabase.rpc("set_sale_customer", { p_game: ev.items[0].game, p_sale_id: ev.items[0].sale_id, p_customer_id: customerId });
+    });
+    if (!ok) return;
+    await fetchSales();
   }
 
   // One reversal RPC. Caller is responsible for skipping already-reverted
@@ -413,7 +470,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   type SaleEvent = {
     gid: string; items: SaleRow[]; game: string; sale_group: number | null; sold_at: string;
     qty: number; gross: number; cogs: number; margin: number; marginPct: number;
-    reverted: boolean; isLot: boolean;
+    reverted: boolean; isLot: boolean; customer_id: number | null;
   };
   const saleEvents = useMemo<SaleEvent[]>(() => {
     const map = new Map<string, SaleRow[]>();
@@ -433,6 +490,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         marginPct: gross ? Math.round((margin / gross) * 1000) / 10 : 0,
         reverted: items.every((i) => i.reverted),
         isLot: items.length > 1,
+        customer_id: items[0].customer_id,
       };
     });
   }, [sortedSales]);
@@ -470,7 +528,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     const q: Record<string, string> = {};
     for (const h of selectedHoldings) q[holdingKey(h)] = String(h.qty_on_hand);
     setLotQty(q);
-    setLotGross(""); setLotFees("0"); setLotDate(new Date().toISOString().slice(0, 10));
+    setLotGross(""); setLotFees("0"); setLotDate(new Date().toISOString().slice(0, 10)); setLotCustomerId(null);
     setLotCurrency(selectedLeg === "export" ? "JPY" : "USD"); setLotFx("0.0067");
     setLotOpen(true);
   }
@@ -501,11 +559,22 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       product_id: h.product_id, sealed_condition: h.sealed_condition, variant_edition: h.variant_edition,
       quantity: qtyOf(h), gross: grossAlloc[idx], fees: feesAlloc[idx],
     }));
-    const ok = await save(() => supabase.rpc("record_lot_sale", {
-      p_items: payload, p_sold_at: lotDate, p_leg: selectedLeg,
-      p_orig_currency: isNative ? lotCurrency.toUpperCase() : null,
-      p_fx_rate: isNative ? Number(lotFx) : 1,
-    }));
+    const ok = await save(async () => {
+      const res = await supabase.rpc("record_lot_sale", {
+        p_items: payload, p_sold_at: lotDate, p_leg: selectedLeg,
+        p_orig_currency: isNative ? lotCurrency.toUpperCase() : null,
+        p_fx_rate: isNative ? Number(lotFx) : 1,
+      });
+      if (res.error) return res;
+      const grp = (res.data as { sale_group: number }[] | null)?.[0]?.sale_group;
+      if (lotCustomerId && grp != null) {
+        for (const g of new Set(items.map((h) => h.game))) {
+          const r2 = await supabase.rpc("set_lot_customer", { p_game: g, p_sale_group: grp, p_customer_id: lotCustomerId });
+          if (r2.error) return r2;
+        }
+      }
+      return res;
+    });
     if (!ok) return;
     setLotOpen(false); setSelected(new Set());
     await fetchHoldings(); await fetchSales();
@@ -745,6 +814,12 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                     )}
                   </div>
                 </div>
+                {!ev.reverted && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="shrink-0">{t("trips.soldTo")}:</span>
+                    {customerSelect(ev.customer_id, (id) => attributeEvent(ev, id), "h-7 max-w-[220px] rounded-md border bg-background px-1.5 text-xs")}
+                  </div>
+                )}
                 {ev.isLot && (
                   <div className="space-y-1 border-t pt-2">
                     <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -859,6 +934,8 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
               <Input type="number" value={fees} onChange={(e) => setFees(e.target.value)} /></Field>
             <Field><Label>{t("trips.month")}</Label>
               <Input type="date" value={soldAt} onChange={(e) => setSoldAt(e.target.value)} /></Field>
+            <Field><Label>{t("trips.soldTo")}</Label>
+              {customerSelect(saleCustomerId, setSaleCustomerId)}</Field>
           </FieldGroup>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSel(null)}>{t("trips.cancel")}</Button>
@@ -962,6 +1039,8 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
               <Input type="number" value={lotFees} onChange={(e) => setLotFees(e.target.value)} /></Field>
             <Field><Label>{t("trips.month")}</Label>
               <Input type="date" value={lotDate} onChange={(e) => setLotDate(e.target.value)} /></Field>
+            <Field><Label>{t("trips.soldTo")}</Label>
+              {customerSelect(lotCustomerId, setLotCustomerId)}</Field>
           </FieldGroup>
           <DialogFooter>
             <Button variant="outline" onClick={() => setLotOpen(false)}>{t("trips.cancel")}</Button>
