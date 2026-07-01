@@ -24,6 +24,7 @@ import SalesTab from "./trip/SalesTab";
 import ExportTab from "./trip/ExportTab";
 import ExpensesTab from "./trip/ExpensesTab";
 import PnlTab from "./trip/PnlTab";
+import TripReachoutTab from "./trip/TripReachoutTab";
 
 const STATUSES = ["planning", "active", "closed"] as const;
 
@@ -98,12 +99,14 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
           <TabsTrigger value="sales">{t("trips.tabSales")}</TabsTrigger>
           <TabsTrigger value="expenses">{t("trips.tabExpenses")}</TabsTrigger>
           <TabsTrigger value="pnl">{t("trips.tabPnl")}</TabsTrigger>
+          <TabsTrigger value="reachout">{t("trips.tabReachout")}</TabsTrigger>
         </TabsList>
         <TabsContent value="export">{tab === "export" && <ExportTab tripId={tripId} />}</TabsContent>
         <TabsContent value="import">{tab === "import" && <ImportTab tripId={tripId} />}</TabsContent>
         <TabsContent value="sales">{tab === "sales" && <SalesTab tripId={tripId} />}</TabsContent>
         <TabsContent value="expenses">{tab === "expenses" && <ExpensesTab tripId={tripId} />}</TabsContent>
         <TabsContent value="pnl">{tab === "pnl" && <PnlTab tripId={tripId} />}</TabsContent>
+        <TabsContent value="reachout">{tab === "reachout" && <TripReachoutTab tripId={tripId} tripEnd={trip?.ended_at ?? null} />}</TabsContent>
       </Tabs>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
