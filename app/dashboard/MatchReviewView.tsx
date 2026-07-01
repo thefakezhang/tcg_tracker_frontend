@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { ClipboardCheck, Check, X, Plus, ImageOff } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ClipboardCheck, Check, X, Plus, Search, ImageOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -167,6 +167,7 @@ export default function MatchReviewView() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [createFor, setCreateFor] = useState<Candidate | null>(null);
+  const [matchFor, setMatchFor] = useState<Candidate | null>(null);
 
   const platforms = useMemo(
     () => Array.from(new Set(candidates.map((c) => c.source_platform))).sort(),
@@ -333,6 +334,16 @@ export default function MatchReviewView() {
                           size="icon"
                           className="size-7"
                           disabled={busy}
+                          title={t("review.match")}
+                          onClick={() => setMatchFor(c)}
+                        >
+                          <Search className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="size-7"
+                          disabled={busy}
                           title={t("review.create")}
                           onClick={() => setCreateFor(c)}
                         >
@@ -369,7 +380,127 @@ export default function MatchReviewView() {
           retry();
         }}
       />
+      <MatchToExisting
+        candidate={matchFor}
+        open={!!matchFor}
+        onOpenChange={(o) => {
+          if (!o) setMatchFor(null);
+        }}
+        onMatched={() => {
+          setMatchFor(null);
+          retry();
+        }}
+      />
     </div>
+  );
+}
+
+// MatchToExisting confirms the candidate onto an EXISTING product the curator
+// finds by search - the "this box already exists, don't create a duplicate" path.
+function MatchToExisting({
+  candidate,
+  open,
+  onOpenChange,
+  onMatched,
+}: {
+  candidate: Candidate | null;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onMatched: () => void;
+}) {
+  const { t } = useTranslation();
+  const [search, setSearch] = useState("");
+  const [results, setResults] = useState<{ product_id: number; name: string; set_code: string }[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [seeded, setSeeded] = useState<number | null>(null);
+
+  // Seed the search box with the candidate's name when it opens.
+  if (candidate && seeded !== candidate.candidate_id) {
+    setSearch(candidate.source_name);
+    setSeeded(candidate.candidate_id);
+    setError(null);
+  }
+
+  useEffect(() => {
+    const q = search.trim();
+    if (!q) {
+      setResults([]);
+      return;
+    }
+    const h = setTimeout(async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("pokemon_sealed_products")
+        .select("product_id, name, set_code")
+        .ilike("name", `%${q.replace(/[%,]/g, " ")}%`)
+        .limit(8);
+      setResults((data as { product_id: number; name: string; set_code: string }[]) ?? []);
+    }, 300);
+    return () => clearTimeout(h);
+  }, [search]);
+
+  async function matchTo(productId: number) {
+    if (!candidate) return;
+    setBusy(true);
+    setError(null);
+    const supabase = createClient();
+    const { error: e } = await supabase.rpc("card_index_resolve_candidate_confirm", {
+      p_candidate_id: candidate.candidate_id,
+      p_product_id: productId,
+    });
+    setBusy(false);
+    if (e) {
+      setError(e.message);
+      return;
+    }
+    onMatched();
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t("review.matchTitle")}</DialogTitle>
+        </DialogHeader>
+        {candidate && (
+          <p className="text-xs text-muted-foreground">
+            {t("review.matchFrom").replace("{name}", candidate.source_name)}
+          </p>
+        )}
+        <Input
+          placeholder={t("review.matchSearch")}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <div className="max-h-72 space-y-1 overflow-y-auto">
+          {results.length === 0 ? (
+            <p className="text-xs text-muted-foreground">{t("review.noResults")}</p>
+          ) : (
+            results.map((r) => (
+              <button
+                key={r.product_id}
+                type="button"
+                disabled={busy}
+                onClick={() => matchTo(r.product_id)}
+                className="flex w-full items-center justify-between rounded border px-2 py-1.5 text-left text-sm hover:border-primary hover:bg-muted"
+              >
+                <span className="truncate">{r.name}</span>
+                <span className="ml-2 shrink-0 text-xs text-muted-foreground">
+                  {r.set_code !== "UNKNOWN" ? r.set_code : ""}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            {t("common.cancel")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
