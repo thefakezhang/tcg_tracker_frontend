@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Users, Search, Plus, Trash2, X, Star, Bell } from "lucide-react";
+import { Users, Search, Plus, Trash2, X, Star, Bell, History } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -44,6 +44,25 @@ interface WishlistItem {
   status: string;
   notes: string | null;
   label?: string; // resolved client-side
+}
+// A resolved sale attributed to this customer (from sales_ledger_v).
+interface PurchaseRow {
+  sale_id: number;
+  game: string;
+  regional_name: string;
+  english_name: string | null;
+  set_code: string;
+  card_number: string | null;
+  misc_info: string | null;
+  sold_at: string;
+  quantity: number;
+  gross_usd: number;
+  margin_usd: number;
+}
+function purchaseLabel(p: PurchaseRow): string {
+  const name = p.english_name || p.regional_name;
+  const set = p.set_code && p.set_code !== "UNKNOWN" ? ` · ${p.set_code}${p.card_number ? ` ${p.card_number}` : ""}` : "";
+  return `${name}${set}`;
 }
 
 const GAMES = ["pokemon_sealed", "pokemon", "mtg"] as const;
@@ -269,6 +288,7 @@ function CustomerDetail({
   const [form, setForm] = useState<Customer | null>(customer);
   const [handleRows, setHandleRows] = useState<[string, string][]>([]);
   const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
+  const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -284,10 +304,21 @@ function CustomerDetail({
         .eq("customer_id", customer.customer_id)
         .order("priority")
         .then(({ data }) => resolveWishlist((data ?? []) as WishlistItem[]).then(setWishlist));
+      supabase
+        .from("sales_ledger_v")
+        .select("sale_id, game, regional_name, english_name, set_code, card_number, misc_info, sold_at, quantity, gross_usd, margin_usd")
+        .eq("customer_id", customer.customer_id)
+        .eq("is_reverted", false)
+        .order("sold_at", { ascending: false })
+        .limit(100)
+        .then(({ data }) => setPurchases((data ?? []) as PurchaseRow[]));
     } else {
       setWishlist([]);
+      setPurchases([]);
     }
   }, [customer]);
+
+  const totalSpent = purchases.reduce((a, p) => a + Number(p.gross_usd), 0);
 
   if (!form) return null;
   const set = (k: keyof Customer, v: unknown) => setForm({ ...form, [k]: v });
@@ -496,6 +527,34 @@ function CustomerDetail({
               ))}
             </div>
             <WishlistAdd customerId={form.customer_id} onAdded={reloadWishlist} />
+          </div>
+
+          {/* Purchase history - what they've actually bought (drives preferences + reach-out). */}
+          <div className="space-y-2 border-t pt-3">
+            <Label className="flex items-center gap-1.5">
+              <History className="size-3.5" /> {t("customers.purchases")}
+              {purchases.length > 0 && (
+                <span className="text-xs font-normal text-muted-foreground">
+                  · {t("customers.totalSpent").replace("{v}", `$${totalSpent.toFixed(0)}`)}
+                </span>
+              )}
+            </Label>
+            {purchases.length === 0 ? (
+              <p className="text-xs text-muted-foreground">{t("customers.purchasesEmpty")}</p>
+            ) : (
+              <div className="max-h-48 space-y-1 overflow-y-auto">
+                {purchases.map((p) => (
+                  <div key={`${p.game}-${p.sale_id}`} className="flex items-center gap-2 text-sm">
+                    <span className="w-16 shrink-0 text-xs text-muted-foreground">{p.sold_at}</span>
+                    <span className="flex-1 truncate">
+                      {purchaseLabel(p)}
+                      {p.quantity > 1 && <span className="text-muted-foreground"> ×{p.quantity}</span>}
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums">${Number(p.gross_usd).toFixed(0)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
