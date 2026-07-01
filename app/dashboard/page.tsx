@@ -10,6 +10,7 @@ import SalesView from "./SalesView";
 import CurationView from "./CurationView";
 import CardIndexView from "./CardIndexView";
 import MatchReviewView from "./MatchReviewView";
+import CustomersView from "./CustomersView";
 import ExpensesTab from "./trip/ExpensesTab";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
@@ -39,6 +40,9 @@ function DashboardContent() {
   }
   if (activeTripId === -6) {
     return <MatchReviewView key="match-review" />;
+  }
+  if (activeTripId === -7) {
+    return <CustomersView key="customers" />;
   }
   if (activeTripId) {
     return <TripDashboard key={`trip-${activeTripId}`} tripId={activeTripId} />;
