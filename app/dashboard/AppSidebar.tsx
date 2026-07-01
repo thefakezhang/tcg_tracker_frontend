@@ -34,7 +34,7 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Boxes, ChevronsUpDown, ClipboardCheck, DollarSign, Globe, Library, ListChecks, Loader2, LogOut, Luggage, Map, Package, Plus, Receipt, ScanSearch, ShoppingCart, Sparkles, Squirrel } from "lucide-react";
+import { Boxes, ChevronsUpDown, ClipboardCheck, DollarSign, Globe, Library, ListChecks, Loader2, LogOut, Luggage, Map, Package, Plus, Receipt, ScanSearch, ShoppingCart, Sparkles, Squirrel, Users } from "lucide-react";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
 import { useSaving } from "@/lib/use-saving";
@@ -193,6 +193,22 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 >
                   <ClipboardCheck className="size-4" />
                   {t("review.title")}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>{t("customers.section")}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeTripId === -7}
+                  onClick={() => { setActiveTripId(-7); setActiveBuylistId(null); }}
+                >
+                  <Users className="size-4" />
+                  {t("customers.title")}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
