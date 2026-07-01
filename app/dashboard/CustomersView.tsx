@@ -289,6 +289,7 @@ function CustomerDetail({
   const [handleRows, setHandleRows] = useState<[string, string][]>([]);
   const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
   const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
+  const [inStockIds, setInStockIds] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -312,9 +313,17 @@ function CustomerDetail({
         .order("sold_at", { ascending: false })
         .limit(100)
         .then(({ data }) => setPurchases((data ?? []) as PurchaseRow[]));
+      supabase
+        .from("customer_reachout_v")
+        .select("wishlist_id")
+        .eq("customer_id", customer.customer_id)
+        .then(({ data }) =>
+          setInStockIds(new Set(((data ?? []) as { wishlist_id: number }[]).map((r) => r.wishlist_id))),
+        );
     } else {
       setWishlist([]);
       setPurchases([]);
+      setInStockIds(new Set());
     }
   }, [customer]);
 
@@ -503,6 +512,11 @@ function CustomerDetail({
                 <div key={w.wishlist_id} className="flex items-center gap-2 text-sm">
                   <span className="w-8 shrink-0 text-xs text-muted-foreground">P{w.priority}</span>
                   <span className="flex-1 truncate">{w.label ?? `#${w.card_id ?? w.product_id}`}</span>
+                  {inStockIds.has(w.wishlist_id) && (
+                    <Badge variant="secondary" className="shrink-0 text-[10px] text-emerald-600">
+                      {t("customers.inStock")}
+                    </Badge>
+                  )}
                   {w.max_price_usd != null && (
                     <span className="shrink-0 text-xs text-muted-foreground">
                       ≤${Number(w.max_price_usd).toFixed(0)}
