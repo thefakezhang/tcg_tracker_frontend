@@ -164,9 +164,18 @@ function CandidateCard({ c, status, language, saving, onApprove, onReject, onSen
   const dSearch = useDebouncedValue(search, 300);
   const matchedImg = override?.image_url ?? c.card?.image_url ?? null;
 
-  // confidence as a 0-100 chip; colour by band
+  // confidence as a 0-100 chip; colour by band. Rendered with a tinted
+  // background (not just coloured text) so it's readable at a glance next to
+  // the other outline badges — the previous text-only 10px chip disappeared
+  // into the muted-foreground row.
   const conf = c.confidence != null ? Math.round(c.confidence * 100) : null;
-  const confColor = conf == null ? "" : conf >= 70 ? "text-green-600" : conf >= 45 ? "text-amber-600" : "text-destructive";
+  const confBadgeClass = conf == null
+    ? ""
+    : conf >= 70
+      ? "border-green-500/50 bg-green-500/10 text-green-700 dark:text-green-400"
+      : conf >= 45
+        ? "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+        : "border-destructive/50 bg-destructive/10 text-destructive";
   const ribbon = c.variant_attrs && (c.variant_attrs.ribbon_detected || c.variant_attrs.variant_edition);
 
   const runSearch = useCallback(async () => {
@@ -273,10 +282,16 @@ function CandidateCard({ c, status, language, saving, onApprove, onReject, onSen
             <div className="truncate font-medium">{matchName}</div>
             {matchMeta && <div className="truncate text-muted-foreground">{matchMeta}</div>}
             <div className="flex flex-wrap gap-1">
-              {conf != null && <Badge variant="outline" className={`text-[10px] ${confColor}`}>{conf}% · {c.match_method}</Badge>}
+              {conf != null && <Badge variant="outline" className={`font-semibold ${confBadgeClass}`}>{conf}% · {c.match_method}</Badge>}
               {c.card_grading && c.card_grading !== "raw" && <Badge variant="secondary" className="text-[10px]">{c.card_grading}</Badge>}
               {ribbon ? <Badge variant="secondary" className="text-[10px]">{t("curation.variant")}</Badge> : null}
             </div>
+            {(c.match_score_features != null || c.match_score_embedding != null) && (
+              <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                {c.match_score_features != null && <span>SIFT: <span className="font-mono">{c.match_score_features}</span></span>}
+                {c.match_score_embedding != null && <span>CLIP: <span className="font-mono">{c.match_score_embedding.toFixed(3)}</span></span>}
+              </div>
+            )}
             <div className="text-muted-foreground">{c.ocr_price_jpy != null ? `¥${c.ocr_price_jpy.toLocaleString()}` : t("curation.noPrice")}</div>
             <div className="truncate text-[10px] text-muted-foreground">
               {c.source_author_handle}{c.source_tweet_date ? ` · ${c.source_tweet_date}` : ""}
@@ -389,8 +404,11 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
   const [translate, setTranslate] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ startX: number; startY: number; t0: { x: number; y: number } } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
 
-  // Esc closes; arrow keys nudge the pan (handy on trackpads).
+  // Esc closes; arrow keys nudge the pan (handy on trackpads). Also lock
+  // background page scroll so wheel events on the lightbox never bleed
+  // through to the underlying page.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -401,11 +419,23 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
       else if (e.key === "ArrowDown") setTranslate((t) => ({ x: t.x, y: t.y - step }));
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const prevBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    // React attaches wheel listeners as passive, so onWheel's preventDefault
+    // is a no-op. Attach a native non-passive listener on the container so
+    // wheel scrolling anywhere inside the lightbox never scrolls the page
+    // behind it.
+    const el = containerRef.current;
+    const nativeWheel = (e: WheelEvent) => e.preventDefault();
+    el?.addEventListener("wheel", nativeWheel, { passive: false });
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevBodyOverflow;
+      el?.removeEventListener("wheel", nativeWheel);
+    };
   }, [onClose, scale]);
 
   const onWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
     // Zoom around the cursor position so the point under the mouse stays
     // visually anchored - the standard "zoom to cursor" UX. Without this,
     // every wheel tick rubber-bands the focal point back to the center.
@@ -425,7 +455,6 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
 
   const onMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
-    e.stopPropagation();
     dragRef.current = { startX: e.clientX, startY: e.clientY, t0: translate };
   };
   const onMouseMove = (e: React.MouseEvent) => {
@@ -441,11 +470,19 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
     setTranslate({ x: 0, y: 0 });
   };
 
+  // Click anywhere in the lightbox EXCEPT on the image itself closes. The
+  // image gets stopPropagation on its own click handler so dragging + panning
+  // never accidentally closes.
+  const onBackdropClick = (e: React.MouseEvent) => {
+    if (imgRef.current && e.target instanceof Node && imgRef.current.contains(e.target)) return;
+    onClose();
+  };
+
   return (
     <div
       ref={containerRef}
       className="fixed inset-0 z-50 overflow-hidden bg-black/85"
-      onClick={onClose}
+      onClick={onBackdropClick}
       onWheel={onWheel}
       onMouseMove={onMouseMove}
       onMouseUp={stopDrag}
@@ -453,7 +490,6 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
     >
       <div
         className="absolute inset-0 flex items-center justify-center"
-        onClick={(e) => e.stopPropagation()}
         onMouseDown={onMouseDown}
         onDoubleClick={onDoubleClick}
         style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
