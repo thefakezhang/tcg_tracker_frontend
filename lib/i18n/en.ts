@@ -349,6 +349,8 @@ const en = {
   "review.createFrom": "From {platform}: {key} - mints a new product and links this source.",
   "review.createConfirm": "Create + link",
   "review.match": "Match to existing",
+  "review.alias": "Alias to existing card",
+  "review.aliasTitle": "Alias this source text to an existing card",
   "review.matchTitle": "Match to an existing product",
   "review.matchFrom": "Find the product this listing already is: {name}",
   "review.matchSearch": "Search sealed products by name…",

@@ -351,6 +351,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "review.createFrom": "{platform}: {key} から - 新商品を作成しこのソースをリンクします。",
   "review.createConfirm": "作成してリンク",
   "review.match": "既存に一致",
+  "review.alias": "既存カードのエイリアスに",
+  "review.aliasTitle": "このソーステキストを既存カードのエイリアスにする",
   "review.matchTitle": "既存の商品に一致",
   "review.matchFrom": "このリスティングが該当する既存商品を検索: {name}",
   "review.matchSearch": "シールド商品を名前で検索…",
