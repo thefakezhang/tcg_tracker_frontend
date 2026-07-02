@@ -14,12 +14,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { AutoApproveModal } from "./AutoApproveModal";
+import { Bot } from "lucide-react";
 
 // Image-buylist curation. Reviews AI-detected card candidates (crop vs matched
 // card) and promotes / rejects them via the SECURITY DEFINER RPCs (the browser
 // can't write status directly — see project_image_curation_contract). v1 is
 // singles only (pokemon_image_buylist_candidates); sealed is a follow-up.
-type Status = "needs_review" | "pending";
+type Status = "needs_review" | "pending" | "auto_approved";
 
 // Confidence bands power the section grouping, the batch-approve target, and
 // the keyboard-nav flat order. Kept in a fixed high→low sequence so a
@@ -110,6 +112,7 @@ export default function CurationView() {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [batchProgress, setBatchProgress] = useState<number | null>(null);
   const [selectedBuyer, setSelectedBuyer] = useState<string | null>(null); // null = all buyers
+  const [autoApproveOpen, setAutoApproveOpen] = useState(false);
 
   const fetchCandidates = useCallback(async (st: Status): Promise<Candidate[]> => {
     const supabase = createClient();
@@ -279,13 +282,20 @@ export default function CurationView() {
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">{t("curation.title")}</h1>
-        <Tabs value={status} onValueChange={(v) => setStatus(String(v) as Status)}>
-          <TabsList>
-            <TabsTrigger value="needs_review">{t("curation.needsReview")}</TabsTrigger>
-            <TabsTrigger value="pending">{t("curation.pending")}</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setAutoApproveOpen(true)}>
+            <Bot className="size-4 mr-1" />{t("curation.autoApprove.buttonLabel")}
+          </Button>
+          <Tabs value={status} onValueChange={(v) => setStatus(String(v) as Status)}>
+            <TabsList>
+              <TabsTrigger value="needs_review">{t("curation.needsReview")}</TabsTrigger>
+              <TabsTrigger value="pending">{t("curation.pending")}</TabsTrigger>
+              <TabsTrigger value="auto_approved">{t("curation.autoApproved")}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
       </div>
+      <AutoApproveModal open={autoApproveOpen} onOpenChange={setAutoApproveOpen} onRunComplete={retry} />
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <span>{t("curation.hint")}</span>
         <span className="inline-flex items-center gap-1">
