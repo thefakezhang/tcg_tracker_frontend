@@ -21,6 +21,29 @@ import { Badge } from "@/components/ui/badge";
 // singles only (pokemon_image_buylist_candidates); sealed is a follow-up.
 type Status = "needs_review" | "pending";
 
+// Confidence bands power the section grouping, the batch-approve target, and
+// the keyboard-nav flat order. Kept in a fixed high→low sequence so a
+// reviewer walks from "safe to auto-approve" down to "actually needs eyes."
+type Band = "high" | "medium" | "low" | "veryLow" | "unknown";
+const BANDS: readonly Band[] = ["high", "medium", "low", "veryLow", "unknown"] as const;
+
+function bandOf(conf: number | null): Band {
+  if (conf == null) return "unknown";
+  const p = conf * 100;
+  if (p >= 95) return "high";
+  if (p >= 80) return "medium";
+  if (p >= 45) return "low";
+  return "veryLow";
+}
+
+const BAND_CLASS: Record<Band, string> = {
+  high: "border-green-500/50 bg-green-500/10 text-green-700 dark:text-green-400",
+  medium: "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+  low: "border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-400",
+  veryLow: "border-destructive/50 bg-destructive/10 text-destructive",
+  unknown: "border-border bg-muted text-muted-foreground",
+};
+
 interface MatchedCard {
   regional_name: string; english_name: string | null; set_code: string;
   card_number: string | null; misc_info: string | null; image_url: string | null;
@@ -75,6 +98,8 @@ export default function CurationView() {
   const { language } = useLanguage();
   const { saving, save } = useSaving();
   const [status, setStatus] = useState<Status>("needs_review");
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const [batchProgress, setBatchProgress] = useState<number | null>(null);
 
   const fetchCandidates = useCallback(async (st: Status): Promise<Candidate[]> => {
     const supabase = createClient();
@@ -82,7 +107,7 @@ export default function CurationView() {
       .from("pokemon_image_buylist_candidates")
       .select(CAND_COLS)
       .eq("status", st)
-      .order("confidence", { ascending: true, nullsFirst: true }) // lowest confidence first — most need eyes
+      .order("confidence", { ascending: false, nullsFirst: false }) // highest first — band sections sort within
       .limit(200);
     if (error) throw error;
     const rows = (data as Omit<Candidate, "card">[]) ?? [];
@@ -102,20 +127,113 @@ export default function CurationView() {
   const { data, error, isLoading, retry } = useSupabaseQuery(["curation", status], () => fetchCandidates(status));
   const candidates = useMemo(() => data ?? [], [data]);
 
+  // Bucket candidates by confidence band. Preserves the fetch order inside
+  // each band so the flat list below stays predictable (highest-conf first
+  // within high, lowest-conf first within very-low, etc).
+  const grouped = useMemo(() => {
+    const g: Record<Band, Candidate[]> = { high: [], medium: [], low: [], veryLow: [], unknown: [] };
+    for (const c of candidates) g[bandOf(c.confidence)].push(c);
+    return g;
+  }, [candidates]);
+
+  // Flat order = band order, then in-band order. Keyboard nav walks this list
+  // so j/k mirror what's on screen top→bottom.
+  const flat = useMemo(() => BANDS.flatMap((b) => grouped[b]), [grouped]);
+
+  // Reset selection whenever the underlying data or the active tab changes.
+  useEffect(() => { setSelectedIdx(0); }, [candidates, status]);
+
+  const supabase = createClient();
+
   async function act(fn: () => PromiseLike<{ error: unknown }>) {
     const ok = await save(async () => { const { error } = await fn(); if (error) throw error; });
     if (ok) retry();
   }
-  const supabase = createClient();
-  const approve = (c: Candidate, o?: { cardId?: number; grading?: string | null; priceJpy?: number | null }) =>
+  const approve = useCallback((c: Candidate, o?: { cardId?: number; grading?: string | null; priceJpy?: number | null }) =>
     act(() => supabase.rpc("promote_image_buylist_candidate", {
       p_candidate_id: c.candidate_id,
       p_card_id: o?.cardId ?? null, p_card_grading: o?.grading ?? null, p_price_jpy: o?.priceJpy ?? null,
-    }));
-  const reject = (c: Candidate) =>
-    act(() => supabase.rpc("reject_image_buylist_candidate", { p_candidate_id: c.candidate_id, p_curator_notes: null }));
-  const sendBack = (c: Candidate) =>
-    act(() => supabase.rpc("mark_image_buylist_candidate_needs_review", { p_candidate_id: c.candidate_id, p_curator_notes: null }));
+    })),
+  // supabase + save + retry are stable within a render pass; act closes over
+  // them from the enclosing scope.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  []);
+  const reject = useCallback((c: Candidate) =>
+    act(() => supabase.rpc("reject_image_buylist_candidate", { p_candidate_id: c.candidate_id, p_curator_notes: null })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  []);
+  const sendBack = useCallback((c: Candidate) =>
+    act(() => supabase.rpc("mark_image_buylist_candidate_needs_review", { p_candidate_id: c.candidate_id, p_curator_notes: null })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  []);
+
+  // Batch approve every candidate in a band that has a matched card. One
+  // save/retry cycle for the whole batch — otherwise each per-item RPC would
+  // trigger a full candidate re-fetch. Progress state drives the button label
+  // so the curator sees the batch advance instead of freezing.
+  async function approveBand(band: Band) {
+    const list = grouped[band].filter((c) => c.candidate_card_id);
+    if (!list.length) return;
+    setBatchProgress(0);
+    try {
+      const ok = await save(async () => {
+        for (let i = 0; i < list.length; i++) {
+          const c = list[i];
+          const { error } = await supabase.rpc("promote_image_buylist_candidate", {
+            p_candidate_id: c.candidate_id,
+            p_card_id: null, p_card_grading: null, p_price_jpy: null,
+          });
+          if (error) throw error;
+          setBatchProgress(i + 1);
+        }
+      });
+      if (ok) retry();
+    } finally {
+      setBatchProgress(null);
+    }
+  }
+
+  // Global keyboard shortcuts. Skips when the curator is typing (inputs,
+  // textareas, contenteditable) or holding a modifier so browser shortcuts
+  // stay untouched.
+  useEffect(() => {
+    const typing = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (typing(e.target)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const cur = flat[selectedIdx];
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIdx((i) => Math.min(flat.length - 1, i + 1));
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIdx((i) => Math.max(0, i - 1));
+      } else if (e.key === "y" && cur?.candidate_card_id) {
+        e.preventDefault();
+        approve(cur);
+      } else if (e.key === "n" && cur) {
+        e.preventDefault();
+        reject(cur);
+      } else if (e.key === "d" && cur && status === "pending") {
+        e.preventDefault();
+        sendBack(cur);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [flat, selectedIdx, status, approve, reject, sendBack]);
+
+  // Scroll the selected card into view whenever the selection index changes.
+  useEffect(() => {
+    if (!flat.length) return;
+    const el = document.querySelector<HTMLElement>(`[data-candidate-idx="${selectedIdx}"]`);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selectedIdx, flat.length]);
 
   return (
     <div className="space-y-4 p-4">
@@ -128,16 +246,76 @@ export default function CurationView() {
           </TabsList>
         </Tabs>
       </div>
-      <p className="text-sm text-muted-foreground">{t("curation.hint")}</p>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span>{t("curation.hint")}</span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">j</kbd>
+          <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">k</kbd>
+          <span>{t("curation.kbdNav")}</span>
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">y</kbd>
+          <span>{t("curation.kbdApprove")}</span>
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">n</kbd>
+          <span>{t("curation.kbdReject")}</span>
+        </span>
+        {status === "pending" && (
+          <span className="inline-flex items-center gap-1">
+            <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">d</kbd>
+            <span>{t("curation.kbdDefer")}</span>
+          </span>
+        )}
+      </div>
 
       {error && <QueryError onRetry={retry} />}
 
-      <div className="grid gap-3 lg:grid-cols-2">
-        {candidates.map((c) => (
-          <CandidateCard key={c.candidate_id} c={c} status={status} language={language} saving={saving}
-            onApprove={approve} onReject={reject} onSendBack={sendBack} />
-        ))}
-      </div>
+      {BANDS.map((band) => {
+        const list = grouped[band];
+        if (!list.length) return null;
+        // Offset of this band's first item within the flat keyboard-nav list.
+        const offset = BANDS.slice(0, BANDS.indexOf(band)).reduce((sum, b) => sum + grouped[b].length, 0);
+        const matched = list.filter((c) => c.candidate_card_id);
+        return (
+          <section key={band} className="space-y-2">
+            <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background/95 py-1 backdrop-blur">
+              <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold ${BAND_CLASS[band]}`}>
+                {t(`curation.band.${band}` as never)} · {list.length}
+              </span>
+              {band === "high" && matched.length > 0 && (
+                <Button size="sm" variant="outline" disabled={saving || batchProgress != null} onClick={() => approveBand(band)}>
+                  <Check className="size-3 mr-1" />
+                  {batchProgress != null
+                    ? t("curation.approveAllProgress", { n: `${batchProgress}/${matched.length}` })
+                    : t("curation.approveAllHigh", { n: matched.length })}
+                </Button>
+              )}
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {list.map((c, i) => {
+                const idx = offset + i;
+                return (
+                  <CandidateCard
+                    key={c.candidate_id}
+                    c={c}
+                    idx={idx}
+                    status={status}
+                    language={language}
+                    saving={saving}
+                    selected={idx === selectedIdx}
+                    onSelect={() => setSelectedIdx(idx)}
+                    onApprove={approve}
+                    onReject={reject}
+                    onSendBack={sendBack}
+                  />
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
+
       {!isLoading && candidates.length === 0 && !error && (
         <p className="text-sm text-muted-foreground">{t("curation.empty")}</p>
       )}
@@ -148,8 +326,9 @@ export default function CurationView() {
 
 interface SearchHit { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string | null; misc_info: string | null; image_url: string | null; }
 
-function CandidateCard({ c, status, language, saving, onApprove, onReject, onSendBack }: {
-  c: Candidate; status: Status; language: "en" | "ja"; saving: boolean;
+function CandidateCard({ c, idx, status, language, saving, selected, onSelect, onApprove, onReject, onSendBack }: {
+  c: Candidate; idx: number; status: Status; language: "en" | "ja"; saving: boolean;
+  selected: boolean; onSelect: () => void;
   onApprove: (c: Candidate, o?: { cardId?: number; grading?: string | null; priceJpy?: number | null }) => void;
   onReject: (c: Candidate) => void; onSendBack: (c: Candidate) => void;
 }) {
@@ -227,7 +406,12 @@ function CandidateCard({ c, status, language, saving, onApprove, onReject, onSen
   const lightboxImg = sourceImg ?? cellCardImg;
 
   return (
-    <Card size="sm">
+    <Card
+      size="sm"
+      data-candidate-idx={idx}
+      onClick={onSelect}
+      className={`cursor-pointer transition-shadow ${selected ? "ring-2 ring-primary ring-offset-1" : ""}`}
+    >
       <CardContent className="space-y-2 p-3">
         <div className="flex gap-2">
           {/* The card we found. New candidates have a real source URL + a
