@@ -77,21 +77,30 @@ interface Candidate {
   source_image_url: string | null;
   source_grid_bbox: GridBBoxJSON;
   ocr_price_jpy: number | null;
+  ocr_text: string | null;
+  ocr_overlay_text: string | null;
+  ocr_cell_label_text: string | null;
   confidence: number | null;
   match_method: string | null;
   match_score_features: number | null;
   match_score_embedding: number | null;
+  match_score_text: number | null;
   card_grading: string | null;
   variant_attrs: Record<string, unknown> | null;
+  variant_source: string | null;
+  curator_notes: string | null;
   source_author_handle: string | null;
   source_tweet_url: string | null;
   source_tweet_date: string | null;
+  source_thread_root_id: string | null;
+  source_thread_position: number | null;
+  source_thread_root_text: string | null;
   candidate_card_id: number | null;
   card: MatchedCard | null;
 }
 
 const CAND_COLS =
-  "candidate_id, status, cell_image_url, source_image_url, source_grid_bbox, ocr_price_jpy, confidence, match_method, match_score_features, match_score_embedding, card_grading, variant_attrs, source_author_handle, source_tweet_url, source_tweet_date, candidate_card_id";
+  "candidate_id, status, cell_image_url, source_image_url, source_grid_bbox, ocr_price_jpy, ocr_text, ocr_overlay_text, ocr_cell_label_text, confidence, match_method, match_score_features, match_score_embedding, match_score_text, card_grading, variant_attrs, variant_source, curator_notes, source_author_handle, source_tweet_url, source_tweet_date, source_thread_root_id, source_thread_position, source_thread_root_text, candidate_card_id";
 
 export default function CurationView() {
   const { t } = useTranslation();
@@ -179,21 +188,22 @@ export default function CurationView() {
     const ok = await save(async () => { const { error } = await fn(); if (error) throw error; });
     if (ok) retry();
   }
-  const approve = useCallback((c: Candidate, o?: { cardId?: number; grading?: string | null; priceJpy?: number | null }) =>
+  const approve = useCallback((c: Candidate, o?: { cardId?: number; grading?: string | null; priceJpy?: number | null; notes?: string | null }) =>
     act(() => supabase.rpc("promote_image_buylist_candidate", {
       p_candidate_id: c.candidate_id,
-      p_card_id: o?.cardId ?? null, p_card_grading: o?.grading ?? null, p_price_jpy: o?.priceJpy ?? null,
+      p_card_id: o?.cardId ?? null, p_card_grading: o?.grading ?? null,
+      p_price_jpy: o?.priceJpy ?? null, p_curator_notes: o?.notes ?? null,
     })),
   // supabase + save + retry are stable within a render pass; act closes over
   // them from the enclosing scope.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   []);
-  const reject = useCallback((c: Candidate) =>
-    act(() => supabase.rpc("reject_image_buylist_candidate", { p_candidate_id: c.candidate_id, p_curator_notes: null })),
+  const reject = useCallback((c: Candidate, notes?: string | null) =>
+    act(() => supabase.rpc("reject_image_buylist_candidate", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null })),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   []);
-  const sendBack = useCallback((c: Candidate) =>
-    act(() => supabase.rpc("mark_image_buylist_candidate_needs_review", { p_candidate_id: c.candidate_id, p_curator_notes: null })),
+  const sendBack = useCallback((c: Candidate, notes?: string | null) =>
+    act(() => supabase.rpc("mark_image_buylist_candidate_needs_review", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null })),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   []);
 
@@ -392,19 +402,25 @@ interface SearchHit { card_id: number; regional_name: string; english_name: stri
 function CandidateCard({ c, idx, status, language, saving, selected, onSelect, onApprove, onReject, onSendBack }: {
   c: Candidate; idx: number; status: Status; language: "en" | "ja"; saving: boolean;
   selected: boolean; onSelect: () => void;
-  onApprove: (c: Candidate, o?: { cardId?: number; grading?: string | null; priceJpy?: number | null }) => void;
-  onReject: (c: Candidate) => void; onSendBack: (c: Candidate) => void;
+  onApprove: (c: Candidate, o?: { cardId?: number; grading?: string | null; priceJpy?: number | null; notes?: string | null }) => void;
+  onReject: (c: Candidate, notes?: string | null) => void; onSendBack: (c: Candidate, notes?: string | null) => void;
 }) {
   const { t } = useTranslation();
   const [correcting, setCorrecting] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   const [override, setOverride] = useState<SearchHit | null>(null);
   const [grading, setGrading] = useState(c.card_grading || "raw");
   const [price, setPrice] = useState(c.ocr_price_jpy != null ? String(c.ocr_price_jpy) : "");
+  const [notes, setNotes] = useState(c.curator_notes ?? "");
   const [search, setSearch] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [zoom, setZoom] = useState<string | null>(null); // image URL shown in the lightbox
   const dSearch = useDebouncedValue(search, 300);
   const matchedImg = override?.image_url ?? c.card?.image_url ?? null;
+  // The notes value carried on approve / reject / defer. Empty string means
+  // "no change" (COALESCE on the RPC side keeps whatever's already recorded);
+  // trimmed text means "overwrite with this."
+  const notesArg = () => (notes.trim() && notes !== (c.curator_notes ?? "") ? notes.trim() : null);
 
   // confidence as a 0-100 chip; colour by band. Rendered with a tinted
   // background (not just coloured text) so it's readable at a glance next to
@@ -446,6 +462,7 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
       cardId: override?.card_id, // null → keep candidate's match
       grading: grading !== (c.card_grading || "raw") || override ? grading : null,
       priceJpy: priceJpy !== c.ocr_price_jpy ? priceJpy : null,
+      notes: notesArg(),
     });
   }
   const hasMatch = !!c.candidate_card_id; // mark-correct needs an existing match; no-match → correct/reject
@@ -577,7 +594,7 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
               <Button size="sm" disabled={saving || !(override || hasMatch)} onClick={doApprove}>
                 <Check className="size-4 mr-1" />{t("curation.approveFixes")}
               </Button>
-              <Button size="sm" variant="outline" disabled={saving} onClick={() => onReject(c)}>
+              <Button size="sm" variant="outline" disabled={saving} onClick={() => onReject(c, notesArg())}>
                 <X className="size-4 mr-1" />{t("curation.rejectNoMatch")}
               </Button>
               <span className="ml-auto text-[10px] text-muted-foreground">{t("curation.rejectHint")}</span>
@@ -585,22 +602,78 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
           </div>
         )}
 
+        {/* Curator notes. Always visible so a reviewer can drop a note without
+            first opening the correct panel — leftover intent lands on approve /
+            reject / defer alike via COALESCE on the RPC's p_curator_notes. */}
+        <div>
+          <Label className="text-xs flex items-center gap-1"><Pencil className="size-3" />{t("curation.curatorNotes")}</Label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder={t("curation.curatorNotesPlaceholder")}
+            rows={2}
+            className="mt-0.5 w-full resize-y rounded-md border bg-background px-2 py-1 text-xs"
+          />
+        </div>
+
         <div className="flex flex-wrap items-center gap-2">
           {/* the three curator decisions: it's right · it's wrong (fix or reject) · later */}
-          <Button size="sm" disabled={saving || !hasMatch} onClick={() => onApprove(c)}>
+          <Button size="sm" disabled={saving || !hasMatch} onClick={() => onApprove(c, { notes: notesArg() })}>
             <Check className="size-4 mr-1" />{t("curation.markCorrect")}
           </Button>
           <Button size="sm" variant={correcting ? "secondary" : "outline"} disabled={saving} onClick={() => setCorrecting((v) => !v)}>
             <Pencil className="size-4 mr-1" />{t("curation.correctMatch")}
           </Button>
+          <Button size="sm" variant="ghost" onClick={() => setShowDetails((v) => !v)}>
+            {showDetails ? t("curation.hideDetails") : t("curation.showDetails")}
+          </Button>
           {status === "pending" && (
-            <Button size="sm" variant="ghost" className="ml-auto" disabled={saving} onClick={() => onSendBack(c)}>
+            <Button size="sm" variant="ghost" className="ml-auto" disabled={saving} onClick={() => onSendBack(c, notesArg())}>
               <Clock className="size-4 mr-1" />{t("curation.deferLater")}
             </Button>
           )}
           {saving && <Loader2 className="size-4 animate-spin" />}
         </div>
         {!hasMatch && !correcting && <p className="text-[10px] text-muted-foreground">{t("curation.noMatchHint")}</p>}
+
+        {/* Details drawer: read-only view of everything the pipeline recorded
+            about this candidate. Hidden by default because the reviewer's
+            primary loop doesn't need it; useful when a match feels off. */}
+        {showDetails && (
+          <div className="space-y-1 rounded-md border bg-muted/20 p-2 text-[11px]">
+            {(c.ocr_text || c.ocr_overlay_text || c.ocr_cell_label_text) && (
+              <div>
+                <div className="font-semibold text-muted-foreground">{t("curation.detailsOcr")}</div>
+                {c.ocr_text && <div>text: <span className="font-mono">{c.ocr_text}</span></div>}
+                {c.ocr_overlay_text && <div>overlay: <span className="font-mono">{c.ocr_overlay_text}</span></div>}
+                {c.ocr_cell_label_text && <div>cell label: <span className="font-mono">{c.ocr_cell_label_text}</span></div>}
+              </div>
+            )}
+            {(c.source_thread_root_id || c.source_thread_root_text) && (
+              <div>
+                <div className="font-semibold text-muted-foreground">{t("curation.detailsThread")}</div>
+                {c.source_thread_position != null && <div>position #{c.source_thread_position}</div>}
+                {c.source_thread_root_text && <div className="whitespace-pre-wrap break-words">{c.source_thread_root_text}</div>}
+              </div>
+            )}
+            {(c.match_score_features != null || c.match_score_embedding != null || c.match_score_text != null || c.match_method) && (
+              <div>
+                <div className="font-semibold text-muted-foreground">{t("curation.detailsScores")}</div>
+                {c.match_method && <div>method: <span className="font-mono">{c.match_method}</span></div>}
+                {c.match_score_features != null && <div>SIFT: <span className="font-mono">{c.match_score_features}</span></div>}
+                {c.match_score_embedding != null && <div>CLIP: <span className="font-mono">{c.match_score_embedding.toFixed(3)}</span></div>}
+                {c.match_score_text != null && <div>text: <span className="font-mono">{c.match_score_text.toFixed(3)}</span></div>}
+              </div>
+            )}
+            {(c.variant_attrs || c.variant_source) && (
+              <div>
+                <div className="font-semibold text-muted-foreground">{t("curation.detailsVariant")}</div>
+                {c.variant_source && <div>source: <span className="font-mono">{c.variant_source}</span></div>}
+                {c.variant_attrs && <div className="whitespace-pre-wrap font-mono">{JSON.stringify(c.variant_attrs)}</div>}
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
       {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
     </Card>
