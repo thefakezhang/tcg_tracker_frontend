@@ -1,0 +1,800 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ImageOff, ArrowRight, Check, X, Pencil, Clock, Search, Loader2 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { useTranslation } from "@/lib/i18n";
+import { useSaving } from "@/lib/use-saving";
+import { useLanguage } from "./LanguageContext";
+import { useSupabaseQuery, QueryError } from "./use-query";
+import { useDebouncedValue } from "./use-card-data";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+
+// Image-buylist curation for SEALED products. Sibling to CurationView.tsx —
+// same shape, but reads pokemon_sealed_image_buylist_candidates and matches
+// against pokemon_sealed_products (booster boxes / ETBs / etc.). The two files
+// share ~90% of their code today; if Phase C keeps growing they should be
+// unified into a generic view + shared hooks. Left duplicated for now so this
+// slice ships as a straight read of the sealed schema instead of a bigger
+// refactor.
+//
+// Reviews AI-detected sealed candidates (crop vs matched product) and
+// promotes / rejects them via the SECURITY DEFINER RPCs (the browser can't
+// write status directly).
+type Status = "needs_review" | "pending";
+
+// Confidence bands power the section grouping, the batch-approve target, and
+// the keyboard-nav flat order. Kept in a fixed high→low sequence so a
+// reviewer walks from "safe to auto-approve" down to "actually needs eyes."
+type Band = "high" | "medium" | "low" | "veryLow" | "unknown";
+const BANDS: readonly Band[] = ["high", "medium", "low", "veryLow", "unknown"] as const;
+
+function bandOf(conf: number | null): Band {
+  if (conf == null) return "unknown";
+  const p = conf * 100;
+  if (p >= 95) return "high";
+  if (p >= 80) return "medium";
+  if (p >= 45) return "low";
+  return "veryLow";
+}
+
+const BAND_CLASS: Record<Band, string> = {
+  high: "border-green-500/50 bg-green-500/10 text-green-700 dark:text-green-400",
+  medium: "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+  low: "border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-400",
+  veryLow: "border-destructive/50 bg-destructive/10 text-destructive",
+  unknown: "border-border bg-muted text-muted-foreground",
+};
+
+interface MatchedProduct {
+  name: string; english_name: string | null; set_code: string;
+  product_type: string | null; language: string | null;
+  variant_edition: string | null; misc_info: string | null; image_url: string | null;
+}
+
+// Rectangle in source-image pixel coordinates.
+interface BBox { x0: number; y0: number; x1: number; y1: number; }
+
+// source_grid_bbox JSONB shape, with backwards compat. The orchestrator used
+// to store only the card box ({x0,y0,x1,y1}); the newer shape splits it into
+// {card, price} so the curation UI can render the card and the price banner
+// as two separate clean crops. parseGridBBox() collapses both into a single
+// {card, price?} view.
+type GridBBoxJSON = BBox | { card?: BBox; price?: BBox } | null | undefined;
+
+function parseGridBBox(raw: GridBBoxJSON): { card: BBox | null; price: BBox | null } {
+  if (!raw) return { card: null, price: null };
+  // Modern shape: explicit `card` / `price` keys.
+  if ("card" in raw || "price" in raw) {
+    return { card: raw.card ?? null, price: raw.price ?? null };
+  }
+  // Legacy shape: flat {x0,y0,x1,y1} = card box only.
+  if ("x0" in raw && "x1" in raw) return { card: raw as BBox, price: null };
+  return { card: null, price: null };
+}
+
+interface Candidate {
+  candidate_id: number;
+  status: string;
+  cell_image_url: string | null;
+  source_image_url: string | null;
+  source_grid_bbox: GridBBoxJSON;
+  ocr_price_jpy: number | null;
+  confidence: number | null;
+  match_method: string | null;
+  match_score_features: number | null;
+  match_score_embedding: number | null;
+  sealed_condition: string | null;
+  variant_attrs: Record<string, unknown> | null;
+  source_author_handle: string | null;
+  source_tweet_url: string | null;
+  source_tweet_date: string | null;
+  candidate_product_id: number | null;
+  product: MatchedProduct | null;
+}
+
+const CAND_COLS =
+  "candidate_id, status, cell_image_url, source_image_url, source_grid_bbox, ocr_price_jpy, confidence, match_method, match_score_features, match_score_embedding, sealed_condition, variant_attrs, source_author_handle, source_tweet_url, source_tweet_date, candidate_product_id";
+
+// sealed_condition_enum values accepted by promote_sealed_image_buylist_candidate.
+const SEALED_CONDITIONS: readonly string[] = ["standard", "shrink", "no_shrink"] as const;
+
+export default function SealedCurationView() {
+  const { t } = useTranslation();
+  const { language } = useLanguage();
+  const { saving, save } = useSaving();
+  const [status, setStatus] = useState<Status>("needs_review");
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const [batchProgress, setBatchProgress] = useState<number | null>(null);
+  const [selectedBuyer, setSelectedBuyer] = useState<string | null>(null); // null = all buyers
+
+  const fetchCandidates = useCallback(async (st: Status): Promise<Candidate[]> => {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("pokemon_sealed_image_buylist_candidates")
+      .select(CAND_COLS)
+      .eq("status", st)
+      .order("confidence", { ascending: false, nullsFirst: false }) // highest first — band sections sort within
+      .limit(200);
+    if (error) throw error;
+    const rows = (data as Omit<Candidate, "product">[]) ?? [];
+    // batch-fetch the matched sealed products by id (robust vs FK-embed guessing).
+    const ids = [...new Set(rows.map((r) => r.candidate_product_id).filter((x): x is number => !!x))];
+    const productMap = new Map<number, MatchedProduct>();
+    if (ids.length) {
+      const { data: defs } = await supabase
+        .from("pokemon_sealed_products")
+        .select("product_id, name, english_name, set_code, product_type, language, variant_edition, misc_info, image_url")
+        .in("product_id", ids);
+      for (const d of (defs as ({ product_id: number } & MatchedProduct)[]) ?? []) productMap.set(d.product_id, d);
+    }
+    return rows.map((r) => ({ ...r, product: r.candidate_product_id ? productMap.get(r.candidate_product_id) ?? null : null }));
+  }, []);
+
+  const { data, error, isLoading, retry } = useSupabaseQuery(["sealed_curation", status], () => fetchCandidates(status));
+  const allCandidates = useMemo(() => data ?? [], [data]);
+
+  // Per-buyer counts across the full fetched set — chip labels stay stable
+  // as the reviewer works down through candidates, not just the filtered slice.
+  const buyerCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of allCandidates) {
+      const b = c.source_author_handle ?? "unknown";
+      m.set(b, (m.get(b) ?? 0) + 1);
+    }
+    // Highest count first so the busiest buyer is a single mouse-target away.
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [allCandidates]);
+
+  // If the selected buyer disappears from the working set (all its
+  // candidates resolved), fall back to "all" instead of leaving the
+  // reviewer looking at an empty screen with no exit.
+  useEffect(() => {
+    if (selectedBuyer && !buyerCounts.some(([h]) => h === selectedBuyer)) {
+      setSelectedBuyer(null);
+    }
+  }, [buyerCounts, selectedBuyer]);
+
+  // The active working set — every downstream memo (bands, flat nav list,
+  // batch-approve target) reads this, so a buyer switch cascades cleanly.
+  const candidates = useMemo(
+    () => (selectedBuyer ? allCandidates.filter((c) => c.source_author_handle === selectedBuyer) : allCandidates),
+    [allCandidates, selectedBuyer],
+  );
+
+  // Bucket candidates by confidence band. Preserves the fetch order inside
+  // each band so the flat list below stays predictable (highest-conf first
+  // within high, lowest-conf first within very-low, etc).
+  const grouped = useMemo(() => {
+    const g: Record<Band, Candidate[]> = { high: [], medium: [], low: [], veryLow: [], unknown: [] };
+    for (const c of candidates) g[bandOf(c.confidence)].push(c);
+    return g;
+  }, [candidates]);
+
+  // Flat order = band order, then in-band order. Keyboard nav walks this list
+  // so j/k mirror what's on screen top→bottom.
+  const flat = useMemo(() => BANDS.flatMap((b) => grouped[b]), [grouped]);
+
+  // Reset selection whenever the underlying data, active tab, or buyer
+  // filter changes — otherwise the ring lingers on an off-screen index.
+  useEffect(() => { setSelectedIdx(0); }, [candidates, status, selectedBuyer]);
+
+  const supabase = createClient();
+
+  async function act(fn: () => PromiseLike<{ error: unknown }>) {
+    const ok = await save(async () => { const { error } = await fn(); if (error) throw error; });
+    if (ok) retry();
+  }
+  const approve = useCallback((c: Candidate, o?: { productId?: number; condition?: string | null; priceJpy?: number | null }) =>
+    act(() => supabase.rpc("promote_sealed_image_buylist_candidate", {
+      p_candidate_id: c.candidate_id,
+      p_product_id: o?.productId ?? null, p_sealed_condition: o?.condition ?? null, p_price_jpy: o?.priceJpy ?? null,
+    })),
+  // supabase + save + retry are stable within a render pass; act closes over
+  // them from the enclosing scope.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  []);
+  const reject = useCallback((c: Candidate) =>
+    act(() => supabase.rpc("reject_sealed_image_buylist_candidate", { p_candidate_id: c.candidate_id, p_curator_notes: null })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  []);
+  const sendBack = useCallback((c: Candidate) =>
+    act(() => supabase.rpc("mark_sealed_image_buylist_candidate_needs_review", { p_candidate_id: c.candidate_id, p_curator_notes: null })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  []);
+
+  // Batch approve every candidate in a band that has a matched card. One
+  // save/retry cycle for the whole batch — otherwise each per-item RPC would
+  // trigger a full candidate re-fetch. Progress state drives the button label
+  // so the curator sees the batch advance instead of freezing.
+  async function approveBand(band: Band) {
+    const list = grouped[band].filter((c) => c.candidate_product_id);
+    if (!list.length) return;
+    setBatchProgress(0);
+    try {
+      const ok = await save(async () => {
+        for (let i = 0; i < list.length; i++) {
+          const c = list[i];
+          const { error } = await supabase.rpc("promote_sealed_image_buylist_candidate", {
+            p_candidate_id: c.candidate_id,
+            p_product_id: null, p_sealed_condition: null, p_price_jpy: null,
+          });
+          if (error) throw error;
+          setBatchProgress(i + 1);
+        }
+      });
+      if (ok) retry();
+    } finally {
+      setBatchProgress(null);
+    }
+  }
+
+  // Global keyboard shortcuts. Skips when the curator is typing (inputs,
+  // textareas, contenteditable) or holding a modifier so browser shortcuts
+  // stay untouched.
+  useEffect(() => {
+    const typing = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (typing(e.target)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const cur = flat[selectedIdx];
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIdx((i) => Math.min(flat.length - 1, i + 1));
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIdx((i) => Math.max(0, i - 1));
+      } else if (e.key === "y" && cur?.candidate_product_id) {
+        e.preventDefault();
+        approve(cur);
+      } else if (e.key === "n" && cur) {
+        e.preventDefault();
+        reject(cur);
+      } else if (e.key === "d" && cur && status === "pending") {
+        e.preventDefault();
+        sendBack(cur);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [flat, selectedIdx, status, approve, reject, sendBack]);
+
+  // Scroll the selected card into view whenever the selection index changes.
+  useEffect(() => {
+    if (!flat.length) return;
+    const el = document.querySelector<HTMLElement>(`[data-candidate-idx="${selectedIdx}"]`);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selectedIdx, flat.length]);
+
+  return (
+    <div className="space-y-4 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-lg font-semibold">{t("curation.titleSealed")}</h1>
+        <Tabs value={status} onValueChange={(v) => setStatus(String(v) as Status)}>
+          <TabsList>
+            <TabsTrigger value="needs_review">{t("curation.needsReview")}</TabsTrigger>
+            <TabsTrigger value="pending">{t("curation.pending")}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span>{t("curation.hint")}</span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">j</kbd>
+          <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">k</kbd>
+          <span>{t("curation.kbdNav")}</span>
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">y</kbd>
+          <span>{t("curation.kbdApprove")}</span>
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">n</kbd>
+          <span>{t("curation.kbdReject")}</span>
+        </span>
+        {status === "pending" && (
+          <span className="inline-flex items-center gap-1">
+            <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">d</kbd>
+            <span>{t("curation.kbdDefer")}</span>
+          </span>
+        )}
+      </div>
+
+      {/* Per-buyer filter chips. Horizontal scrollable list so many buyers
+          stay one glance away without wrapping the layout. Chips render only
+          when the fetched set has 2+ buyers — solo-buyer view stays clean. */}
+      {buyerCounts.length > 1 && (
+        <div className="flex flex-nowrap items-center gap-1 overflow-x-auto pb-1 text-xs">
+          <button
+            type="button"
+            onClick={() => setSelectedBuyer(null)}
+            className={`shrink-0 rounded-full border px-2.5 py-1 font-medium transition-colors ${
+              selectedBuyer == null
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-background hover:bg-muted"
+            }`}
+          >
+            {t("curation.allBuyers")} · {allCandidates.length}
+          </button>
+          {buyerCounts.map(([handle, n]) => (
+            <button
+              key={handle}
+              type="button"
+              onClick={() => setSelectedBuyer(handle)}
+              className={`shrink-0 rounded-full border px-2.5 py-1 font-medium transition-colors ${
+                selectedBuyer === handle
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-background hover:bg-muted"
+              }`}
+            >
+              {handle} · {n}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {error && <QueryError onRetry={retry} />}
+
+      {BANDS.map((band) => {
+        const list = grouped[band];
+        if (!list.length) return null;
+        // Offset of this band's first item within the flat keyboard-nav list.
+        const offset = BANDS.slice(0, BANDS.indexOf(band)).reduce((sum, b) => sum + grouped[b].length, 0);
+        const matched = list.filter((c) => c.candidate_product_id);
+        return (
+          <section key={band} className="space-y-2">
+            <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background/95 py-1 backdrop-blur">
+              <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold ${BAND_CLASS[band]}`}>
+                {t(`curation.band.${band}` as never)} · {list.length}
+              </span>
+              {band === "high" && matched.length > 0 && (
+                <Button size="sm" variant="outline" disabled={saving || batchProgress != null} onClick={() => approveBand(band)}>
+                  <Check className="size-3 mr-1" />
+                  {batchProgress != null
+                    ? t("curation.approveAllProgress", { n: `${batchProgress}/${matched.length}` })
+                    : t("curation.approveAllHigh", { n: matched.length })}
+                </Button>
+              )}
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {list.map((c, i) => {
+                const idx = offset + i;
+                return (
+                  <CandidateCard
+                    key={c.candidate_id}
+                    c={c}
+                    idx={idx}
+                    status={status}
+                    language={language}
+                    saving={saving}
+                    selected={idx === selectedIdx}
+                    onSelect={() => setSelectedIdx(idx)}
+                    onApprove={approve}
+                    onReject={reject}
+                    onSendBack={sendBack}
+                  />
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
+
+      {!isLoading && candidates.length === 0 && !error && (
+        <p className="text-sm text-muted-foreground">{t("curation.empty")}</p>
+      )}
+      {isLoading && <p className="text-sm text-muted-foreground">{t("common.loading")}</p>}
+    </div>
+  );
+}
+
+interface SearchHit {
+  product_id: number; name: string; english_name: string | null;
+  set_code: string; product_type: string | null; language: string | null;
+  variant_edition: string | null; misc_info: string | null; image_url: string | null;
+}
+
+// Local product-shaped helpers (mirrors use-card-data's getCardDisplayName /
+// cardMeta / cardVariant). Kept here rather than exporting from use-card-data
+// because sealed products have a different shape (name vs regional_name +
+// card_number, product_type instead of card_number) and adapting the card
+// helpers would be more code than just having two of them.
+function getProductDisplayName(p: Pick<MatchedProduct | SearchHit, "name" | "english_name">, language: "en" | "ja"): string {
+  if (language === "en" && p.english_name) return p.english_name;
+  return p.name;
+}
+function productVariant(miscInfo?: string | null): string | null {
+  const v = (miscInfo ?? "").trim();
+  return v && v.toUpperCase() !== "UNKNOWN" ? v : null;
+}
+function productMeta(setCode?: string | null, productType?: string | null, miscInfo?: string | null, variantEdition?: string | null): string {
+  const setBits = [setCode, productType].filter(Boolean).join(" ");
+  const edition = variantEdition && variantEdition !== "standard" ? variantEdition : null;
+  return [setBits, edition, productVariant(miscInfo)].filter(Boolean).join(" · ");
+}
+
+function CandidateCard({ c, idx, status, language, saving, selected, onSelect, onApprove, onReject, onSendBack }: {
+  c: Candidate; idx: number; status: Status; language: "en" | "ja"; saving: boolean;
+  selected: boolean; onSelect: () => void;
+  onApprove: (c: Candidate, o?: { productId?: number; condition?: string | null; priceJpy?: number | null }) => void;
+  onReject: (c: Candidate) => void; onSendBack: (c: Candidate) => void;
+}) {
+  const { t } = useTranslation();
+  const [correcting, setCorrecting] = useState(false);
+  const [override, setOverride] = useState<SearchHit | null>(null);
+  const [condition, setCondition] = useState(c.sealed_condition || "standard");
+  const [price, setPrice] = useState(c.ocr_price_jpy != null ? String(c.ocr_price_jpy) : "");
+  const [search, setSearch] = useState("");
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [zoom, setZoom] = useState<string | null>(null); // image URL shown in the lightbox
+  const dSearch = useDebouncedValue(search, 300);
+  const matchedImg = override?.image_url ?? c.product?.image_url ?? null;
+
+  // confidence as a 0-100 chip; colour by band. Rendered with a tinted
+  // background (not just coloured text) so it's readable at a glance next to
+  // the other outline badges — the previous text-only 10px chip disappeared
+  // into the muted-foreground row.
+  const conf = c.confidence != null ? Math.round(c.confidence * 100) : null;
+  const confBadgeClass = conf == null
+    ? ""
+    : conf >= 70
+      ? "border-green-500/50 bg-green-500/10 text-green-700 dark:text-green-400"
+      : conf >= 45
+        ? "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+        : "border-destructive/50 bg-destructive/10 text-destructive";
+  const ribbon = c.variant_attrs && (c.variant_attrs.ribbon_detected || c.variant_attrs.variant_edition);
+
+  const runSearch = useCallback(async () => {
+    const s = dSearch.trim();
+    if (!s) { setHits([]); return; }
+    const supabase = createClient();
+    const safe = s.replace(/[,()*]/g, " ");
+    const { data } = await supabase.from("pokemon_sealed_products")
+      .select("product_id, name, english_name, set_code, product_type, language, variant_edition, misc_info, image_url")
+      .or(`name.ilike.%${safe}%,english_name.ilike.%${safe}%`)
+      .limit(20);
+    setHits((data as SearchHit[]) ?? []);
+  }, [dSearch]);
+  useMemo(() => { void runSearch(); }, [runSearch]);
+
+  const matchName = override
+    ? getProductDisplayName(override, language)
+    : c.product ? getProductDisplayName(c.product, language) : t("curation.noMatch");
+  const matchMeta = override
+    ? productMeta(override.set_code, override.product_type, override.misc_info, override.variant_edition)
+    : c.product ? productMeta(c.product.set_code, c.product.product_type, c.product.misc_info, c.product.variant_edition) : "";
+
+  function doApprove() {
+    const priceJpy = price.trim() ? Math.round(Number(price)) : null;
+    onApprove(c, {
+      productId: override?.product_id, // null → keep candidate's match
+      condition: condition !== (c.sealed_condition || "standard") || override ? condition : null,
+      priceJpy: priceJpy !== c.ocr_price_jpy ? priceJpy : null,
+    });
+  }
+  const hasMatch = !!c.candidate_product_id; // mark-correct needs an existing match; no-match → correct/reject
+
+  const { card: cardBBox, price: priceBBox } = parseGridBBox(c.source_grid_bbox);
+  // source_image_url is set by the orchestrator and was historically a local
+  // filesystem path ("internal/image_recognition/eval/<buyer>/...jpg") which
+  // the browser can't load. Only treat it as the CSS-crop source when it's a
+  // real http(s) URL; otherwise we fall through to the cell-crop URL.
+  const sourceImg = c.source_image_url && /^https?:\/\//i.test(c.source_image_url) ? c.source_image_url : null;
+  // Older candidates (pre source-upload) have a working R2 URL in
+  // cell_image_url pointing at a pre-cropped card image. When the source
+  // isn't a real URL we render that directly with no CSS cropping; the
+  // price slot becomes a "no price box" placeholder because the standalone
+  // price crop only exists when we can CSS-crop the source.
+  const cellCardImg = c.cell_image_url && /^https?:\/\//i.test(c.cell_image_url) ? c.cell_image_url : null;
+  const showCardCrop = sourceImg && cardBBox;
+  const showPriceCrop = sourceImg && priceBBox;
+  // Lightbox target falls back to whichever URL we actually have, so click
+  // always opens *something* for the curator instead of blank black.
+  const lightboxImg = sourceImg ?? cellCardImg;
+
+  return (
+    <Card
+      size="sm"
+      data-candidate-idx={idx}
+      onClick={onSelect}
+      className={`cursor-pointer transition-shadow ${selected ? "ring-2 ring-primary ring-offset-1" : ""}`}
+    >
+      <CardContent className="space-y-2 p-3">
+        <div className="flex gap-2">
+          {/* The card we found. New candidates have a real source URL + a
+              card bbox - we CSS-crop the card region. Legacy candidates
+              pre-date the source-upload work and only have an R2 URL of a
+              pre-cropped card in cell_image_url - we show that directly. */}
+          <figure className="shrink-0 text-center">
+            {showCardCrop ? (
+              <CropPreview src={sourceImg!} bbox={cardBBox!} w={96} h={128}
+                onClick={() => lightboxImg && setZoom(lightboxImg)} />
+            ) : cellCardImg ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={cellCardImg} alt="" loading="lazy"
+                onClick={() => setZoom(cellCardImg)}
+                className="h-32 w-24 cursor-zoom-in rounded bg-muted object-contain" />
+            ) : (
+              <div className="flex h-32 w-24 items-center justify-center rounded bg-muted"><ImageOff className="size-6 text-muted-foreground" /></div>
+            )}
+            <figcaption className="mt-0.5 text-[10px] text-muted-foreground">{t("curation.detected")}</figcaption>
+          </figure>
+          {/* The price banner. Only ever rendered when we can CSS-crop it
+              out of a real source URL - the orchestrator's earlier
+              "placeholder URL" pattern never gave us standalone price
+              crops, so legacy rows simply show a "no price box" slot. */}
+          <figure className="shrink-0 text-center">
+            {showPriceCrop ? (
+              <CropPreview src={sourceImg!} bbox={priceBBox!} w={96} h={48}
+                onClick={() => lightboxImg && setZoom(lightboxImg)} />
+            ) : (
+              <div className="flex h-12 w-24 items-center justify-center rounded bg-muted">
+                <span className="text-[10px] text-muted-foreground">{t("curation.noPriceCrop")}</span>
+              </div>
+            )}
+            <figcaption className="mt-0.5 text-[10px] text-muted-foreground">{t("curation.priceBanner")}</figcaption>
+          </figure>
+          <ArrowRight className="mt-12 size-4 shrink-0 text-muted-foreground" />
+          {/* The matched catalog card. Click opens the catalog image alone
+              (no source context to pan around) in the same pan+zoom
+              inspector. */}
+          <figure className="shrink-0 text-center">
+            {matchedImg ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={matchedImg} alt="" loading="lazy" onClick={() => setZoom(matchedImg)}
+                className="h-32 w-24 cursor-zoom-in rounded bg-muted object-contain" />
+            ) : (
+              <div className="flex h-32 w-24 items-center justify-center rounded bg-muted text-3xl font-semibold text-muted-foreground" title={t("curation.noMatch")}>?</div>
+            )}
+            <figcaption className="mt-0.5 text-[10px] text-muted-foreground">{t("curation.matched")}</figcaption>
+          </figure>
+          {/* signals */}
+          <div className="min-w-0 flex-1 space-y-1 text-xs">
+            <div className="truncate font-medium">{matchName}</div>
+            {matchMeta && <div className="truncate text-muted-foreground">{matchMeta}</div>}
+            <div className="flex flex-wrap gap-1">
+              {conf != null && <Badge variant="outline" className={`font-semibold ${confBadgeClass}`}>{conf}% · {c.match_method}</Badge>}
+              {c.sealed_condition && c.sealed_condition !== "standard" && <Badge variant="secondary" className="text-[10px]">{c.sealed_condition}</Badge>}
+              {ribbon ? <Badge variant="secondary" className="text-[10px]">{t("curation.variant")}</Badge> : null}
+            </div>
+            {(c.match_score_features != null || c.match_score_embedding != null) && (
+              <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                {c.match_score_features != null && <span>SIFT: <span className="font-mono">{c.match_score_features}</span></span>}
+                {c.match_score_embedding != null && <span>CLIP: <span className="font-mono">{c.match_score_embedding.toFixed(3)}</span></span>}
+              </div>
+            )}
+            <div className="text-muted-foreground">{c.ocr_price_jpy != null ? `¥${c.ocr_price_jpy.toLocaleString()}` : t("curation.noPrice")}</div>
+            <div className="truncate text-[10px] text-muted-foreground">
+              {c.source_author_handle}{c.source_tweet_date ? ` · ${c.source_tweet_date}` : ""}
+              {c.source_tweet_url && <> · <a href={c.source_tweet_url} target="_blank" rel="noreferrer" className="underline">{t("curation.source")}</a></>}
+            </div>
+          </div>
+        </div>
+
+        {correcting && (
+          <div className="space-y-2 rounded-md border bg-muted/30 p-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">{t("curation.sealedCondition")}</Label>
+                <select value={condition} onChange={(e) => setCondition(e.target.value)} className="h-8 w-full rounded-md border bg-background px-2 text-sm">
+                  {SEALED_CONDITIONS.map((cond) => (
+                    <option key={cond} value={cond}>{t(`curation.sealedCondition.${cond}` as never)}</option>
+                  ))}
+                </select></div>
+              <div><Label className="text-xs">{t("curation.priceJpy")}</Label>
+                <Input type="number" value={price} onChange={(e) => setPrice(e.target.value)} className="h-8" /></div>
+            </div>
+            <div>
+              <Label className="text-xs flex items-center gap-1"><Search className="size-3" />{t("curation.changeProduct")}</Label>
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("curation.searchProductPlaceholder")} className="h-8" />
+              {override && <div className="mt-1 flex items-center gap-1 text-xs"><Badge variant="secondary">{getProductDisplayName(override, language)} · {productMeta(override.set_code, override.product_type, override.misc_info, override.variant_edition)}</Badge><Button variant="ghost" size="icon" className="size-5" onClick={() => setOverride(null)}><X className="size-3" /></Button></div>}
+              {search && hits.length > 0 && (
+                <div className="mt-1 max-h-40 overflow-auto rounded-md border bg-background">
+                  {hits.map((h) => (
+                    <button key={h.product_id} onClick={() => { setOverride(h); setSearch(""); setHits([]); }}
+                      className="block w-full truncate px-2 py-1 text-left text-xs hover:bg-accent">
+                      {getProductDisplayName(h, language)} · {productMeta(h.set_code, h.product_type, h.misc_info, h.variant_edition)}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2 border-t pt-2">
+              <Button size="sm" disabled={saving || !(override || hasMatch)} onClick={doApprove}>
+                <Check className="size-4 mr-1" />{t("curation.approveFixes")}
+              </Button>
+              <Button size="sm" variant="outline" disabled={saving} onClick={() => onReject(c)}>
+                <X className="size-4 mr-1" />{t("curation.rejectNoMatch")}
+              </Button>
+              <span className="ml-auto text-[10px] text-muted-foreground">{t("curation.rejectHint")}</span>
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* the three curator decisions: it's right · it's wrong (fix or reject) · later */}
+          <Button size="sm" disabled={saving || !hasMatch} onClick={() => onApprove(c)}>
+            <Check className="size-4 mr-1" />{t("curation.markCorrect")}
+          </Button>
+          <Button size="sm" variant={correcting ? "secondary" : "outline"} disabled={saving} onClick={() => setCorrecting((v) => !v)}>
+            <Pencil className="size-4 mr-1" />{t("curation.correctMatch")}
+          </Button>
+          {status === "pending" && (
+            <Button size="sm" variant="ghost" className="ml-auto" disabled={saving} onClick={() => onSendBack(c)}>
+              <Clock className="size-4 mr-1" />{t("curation.deferLater")}
+            </Button>
+          )}
+          {saving && <Loader2 className="size-4 animate-spin" />}
+        </div>
+        {!hasMatch && !correcting && <p className="text-[10px] text-muted-foreground">{t("curation.noMatchHint")}</p>}
+      </CardContent>
+      {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
+    </Card>
+  );
+}
+
+// A thumbnail that shows the cropped region of `src` defined by `bbox`,
+// scaled to fit a `w` x `h` box. Uses CSS only - no JS image measurement
+// and no extra HTTP requests - so it renders the moment the source image
+// loads. `object-fit: none` plus a negative `object-position` shows the
+// crop region at 1:1 image pixels, then transform:scale shrinks it down
+// (or up) so it fills the display rectangle while preserving aspect.
+function CropPreview({ src, bbox, w, h, onClick }: {
+  src: string; bbox: BBox; w: number; h: number; onClick?: () => void;
+}) {
+  const cw = Math.max(1, bbox.x1 - bbox.x0);
+  const ch = Math.max(1, bbox.y1 - bbox.y0);
+  const scale = Math.min(w / cw, h / ch);
+  return (
+    <div
+      onClick={onClick}
+      className={`overflow-hidden rounded bg-muted ${onClick ? "cursor-zoom-in" : ""}`}
+      style={{ width: `${w}px`, height: `${h}px` }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src} alt="" loading="lazy" draggable={false}
+        style={{
+          width: `${cw}px`, height: `${ch}px`,
+          objectFit: "none",
+          objectPosition: `-${bbox.x0}px -${bbox.y0}px`,
+          transformOrigin: "top left",
+          transform: `scale(${scale})`,
+          maxWidth: "none", maxHeight: "none",
+        }}
+      />
+    </div>
+  );
+}
+
+// Fullscreen image inspector with proper pan + zoom. Wheel zooms around the
+// cursor; click-and-drag pans; double-click resets. Click the dark backdrop
+// or the ✕ to close. Replaces an older fit-vs-200% toggle that could only
+// zoom in, never let the curator pan around to look at the rest of the
+// sheet.
+function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  const [scale, setScale] = useState(1);
+  const [translate, setTranslate] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ startX: number; startY: number; t0: { x: number; y: number } } | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+
+  // Esc closes; arrow keys nudge the pan (handy on trackpads). Also lock
+  // background page scroll so wheel events on the lightbox never bleed
+  // through to the underlying page.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      const step = 80 / scale;
+      if (e.key === "ArrowLeft") setTranslate((t) => ({ x: t.x + step, y: t.y }));
+      else if (e.key === "ArrowRight") setTranslate((t) => ({ x: t.x - step, y: t.y }));
+      else if (e.key === "ArrowUp") setTranslate((t) => ({ x: t.x, y: t.y + step }));
+      else if (e.key === "ArrowDown") setTranslate((t) => ({ x: t.x, y: t.y - step }));
+    };
+    window.addEventListener("keydown", onKey);
+    const prevBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    // React attaches wheel listeners as passive, so onWheel's preventDefault
+    // is a no-op. Attach a native non-passive listener on the container so
+    // wheel scrolling anywhere inside the lightbox never scrolls the page
+    // behind it.
+    const el = containerRef.current;
+    const nativeWheel = (e: WheelEvent) => e.preventDefault();
+    el?.addEventListener("wheel", nativeWheel, { passive: false });
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevBodyOverflow;
+      el?.removeEventListener("wheel", nativeWheel);
+    };
+  }, [onClose, scale]);
+
+  const onWheel = (e: React.WheelEvent) => {
+    // Zoom around the cursor position so the point under the mouse stays
+    // visually anchored - the standard "zoom to cursor" UX. Without this,
+    // every wheel tick rubber-bands the focal point back to the center.
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const cx = e.clientX - rect.left - rect.width / 2;
+    const cy = e.clientY - rect.top - rect.height / 2;
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const next = Math.min(12, Math.max(0.2, scale * factor));
+    const ratio = next / scale;
+    setTranslate((t) => ({
+      x: cx - (cx - t.x) * ratio,
+      y: cy - (cy - t.y) * ratio,
+    }));
+    setScale(next);
+  };
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, t0: translate };
+  };
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (!dragRef.current) return;
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    setTranslate({ x: dragRef.current.t0.x + dx, y: dragRef.current.t0.y + dy });
+  };
+  const stopDrag = () => { dragRef.current = null; };
+  const onDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setScale(1);
+    setTranslate({ x: 0, y: 0 });
+  };
+
+  // Click anywhere in the lightbox EXCEPT on the image itself closes. The
+  // image gets stopPropagation on its own click handler so dragging + panning
+  // never accidentally closes.
+  const onBackdropClick = (e: React.MouseEvent) => {
+    if (imgRef.current && e.target instanceof Node && imgRef.current.contains(e.target)) return;
+    onClose();
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="fixed inset-0 z-50 overflow-hidden bg-black/85"
+      onClick={onBackdropClick}
+      onWheel={onWheel}
+      onMouseMove={onMouseMove}
+      onMouseUp={stopDrag}
+      onMouseLeave={stopDrag}
+    >
+      <div
+        className="absolute inset-0 flex items-center justify-center"
+        onMouseDown={onMouseDown}
+        onDoubleClick={onDoubleClick}
+        style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src} alt="" draggable={false}
+          style={{
+            maxHeight: "92vh", maxWidth: "92vw",
+            transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
+            transformOrigin: "center",
+            transition: dragRef.current ? "none" : "transform 80ms ease-out",
+            userSelect: "none",
+          }}
+        />
+      </div>
+      <button onClick={onClose} aria-label="Close"
+        className="fixed right-3 top-3 rounded-full bg-white/15 p-2 text-white hover:bg-white/25">
+        <X className="size-5" />
+      </button>
+      <div className="pointer-events-none fixed bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-white/15 px-3 py-1 text-[11px] text-white">
+        Wheel: zoom · Drag: pan · Double-click: reset · Esc / click outside: close
+      </div>
+    </div>
+  );
+}

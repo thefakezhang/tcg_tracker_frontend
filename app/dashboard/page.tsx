@@ -8,6 +8,7 @@ import TripsOverview from "./TripsOverview";
 import InventoryView from "./InventoryView";
 import SalesView from "./SalesView";
 import CurationView from "./CurationView";
+import SealedCurationView from "./SealedCurationView";
 import CardIndexView from "./CardIndexView";
 import MatchReviewView from "./MatchReviewView";
 import CustomersView from "./CustomersView";
@@ -32,6 +33,9 @@ function DashboardContent() {
   }
   if (activeTripId === -3) {
     return <CurationView key="curation" />;
+  }
+  if (activeTripId === -9) {
+    return <SealedCurationView key="sealed-curation" />;
   }
   if (activeTripId === -4) {
     return <div key="expenses" className="p-4"><ExpensesTab tripId={null} /></div>;

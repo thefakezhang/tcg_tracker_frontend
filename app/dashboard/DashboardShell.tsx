@@ -37,6 +37,8 @@ function DashboardHeader() {
       ? t("sales.allTitle")
       : activeTripId === -3
       ? t("curation.title")
+      : activeTripId === -9
+      ? t("curation.titleSealed")
       : activeTripId === -5
       ? t("catalog.index")
       : activeTripId === -6
