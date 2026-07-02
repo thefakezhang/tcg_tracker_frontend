@@ -100,6 +100,7 @@ export default function CurationView() {
   const [status, setStatus] = useState<Status>("needs_review");
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [batchProgress, setBatchProgress] = useState<number | null>(null);
+  const [selectedBuyer, setSelectedBuyer] = useState<string | null>(null); // null = all buyers
 
   const fetchCandidates = useCallback(async (st: Status): Promise<Candidate[]> => {
     const supabase = createClient();
@@ -125,7 +126,35 @@ export default function CurationView() {
   }, []);
 
   const { data, error, isLoading, retry } = useSupabaseQuery(["curation", status], () => fetchCandidates(status));
-  const candidates = useMemo(() => data ?? [], [data]);
+  const allCandidates = useMemo(() => data ?? [], [data]);
+
+  // Per-buyer counts across the full fetched set — chip labels stay stable
+  // as the reviewer works down through candidates, not just the filtered slice.
+  const buyerCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of allCandidates) {
+      const b = c.source_author_handle ?? "unknown";
+      m.set(b, (m.get(b) ?? 0) + 1);
+    }
+    // Highest count first so the busiest buyer is a single mouse-target away.
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [allCandidates]);
+
+  // If the selected buyer disappears from the working set (all its
+  // candidates resolved), fall back to "all" instead of leaving the
+  // reviewer looking at an empty screen with no exit.
+  useEffect(() => {
+    if (selectedBuyer && !buyerCounts.some(([h]) => h === selectedBuyer)) {
+      setSelectedBuyer(null);
+    }
+  }, [buyerCounts, selectedBuyer]);
+
+  // The active working set — every downstream memo (bands, flat nav list,
+  // batch-approve target) reads this, so a buyer switch cascades cleanly.
+  const candidates = useMemo(
+    () => (selectedBuyer ? allCandidates.filter((c) => c.source_author_handle === selectedBuyer) : allCandidates),
+    [allCandidates, selectedBuyer],
+  );
 
   // Bucket candidates by confidence band. Preserves the fetch order inside
   // each band so the flat list below stays predictable (highest-conf first
@@ -140,8 +169,9 @@ export default function CurationView() {
   // so j/k mirror what's on screen top→bottom.
   const flat = useMemo(() => BANDS.flatMap((b) => grouped[b]), [grouped]);
 
-  // Reset selection whenever the underlying data or the active tab changes.
-  useEffect(() => { setSelectedIdx(0); }, [candidates, status]);
+  // Reset selection whenever the underlying data, active tab, or buyer
+  // filter changes — otherwise the ring lingers on an off-screen index.
+  useEffect(() => { setSelectedIdx(0); }, [candidates, status, selectedBuyer]);
 
   const supabase = createClient();
 
@@ -268,6 +298,39 @@ export default function CurationView() {
           </span>
         )}
       </div>
+
+      {/* Per-buyer filter chips. Horizontal scrollable list so many buyers
+          stay one glance away without wrapping the layout. Chips render only
+          when the fetched set has 2+ buyers — solo-buyer view stays clean. */}
+      {buyerCounts.length > 1 && (
+        <div className="flex flex-nowrap items-center gap-1 overflow-x-auto pb-1 text-xs">
+          <button
+            type="button"
+            onClick={() => setSelectedBuyer(null)}
+            className={`shrink-0 rounded-full border px-2.5 py-1 font-medium transition-colors ${
+              selectedBuyer == null
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-background hover:bg-muted"
+            }`}
+          >
+            {t("curation.allBuyers")} · {allCandidates.length}
+          </button>
+          {buyerCounts.map(([handle, n]) => (
+            <button
+              key={handle}
+              type="button"
+              onClick={() => setSelectedBuyer(handle)}
+              className={`shrink-0 rounded-full border px-2.5 py-1 font-medium transition-colors ${
+                selectedBuyer === handle
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-background hover:bg-muted"
+              }`}
+            >
+              {handle} · {n}
+            </button>
+          ))}
+        </div>
+      )}
 
       {error && <QueryError onRetry={retry} />}
 
