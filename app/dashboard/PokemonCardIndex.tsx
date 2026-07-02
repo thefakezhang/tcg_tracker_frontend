@@ -1,0 +1,359 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Search, ImageOff, Pencil, Plus, Trash2 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { useTranslation } from "@/lib/i18n";
+import { useSupabaseQuery, QueryError } from "./use-query";
+import { useDebouncedValue } from "./use-card-data";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+
+// Card Index editor for pokemon SINGLES (Stage 2-A). Mirrors the sealed catalog
+// surface over the card_index_*_pokemon_* RPCs so variant adds + TCGID links go
+// through the UI + the durable card_uid, not hand-SQL. Platform id is a link, not
+// an anchor (one id can attach to several variant cards), so link add never evicts.
+
+interface CardLink {
+  platform_name: string;
+  external_reference_id: string;
+}
+interface IndexCard {
+  card_id: number;
+  card_uid: string;
+  regional_name: string;
+  english_name: string | null;
+  set_code: string;
+  card_number: string;
+  language: string;
+  misc_info: string;
+  image_url: string | null;
+  links: CardLink[];
+}
+
+const COLS = "card_id, card_uid, regional_name, english_name, set_code, card_number, language, misc_info, image_url";
+const PLATFORMS = ["tcgplayer", "snkrdunk", "pricecharting", "collectr", "tcgplayer_SKU"];
+const PLATFORM_SHORT: Record<string, string> = { tcgplayer: "TCG", snkrdunk: "SNKR", pricecharting: "PC", collectr: "COLL", tcgplayer_SKU: "SKU" };
+const selectClass = "h-9 rounded-md border bg-transparent px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
+
+function tcgURL(platform: string, id: string): string | null {
+  if (platform === "tcgplayer") return `https://www.tcgplayer.com/product/${id}`;
+  if (platform === "pricecharting") return `https://www.pricecharting.com/game/${id}`;
+  return null;
+}
+
+async function fetchIndex(search: string): Promise<IndexCard[]> {
+  const supabase = createClient();
+  let q = supabase.from("pokemon_card_definitions").select(COLS).order("regional_name").limit(500);
+  const s = search.trim();
+  if (s) {
+    const safe = s.replace(/[%,]/g, " ");
+    q = q.or(`regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,set_code.ilike.%${safe}%,card_number.ilike.%${safe}%`);
+  }
+  const { data, error } = await q;
+  if (error) throw error;
+  const rows = (data ?? []) as Omit<IndexCard, "links">[];
+  const ids = rows.map((r) => r.card_id);
+  const linkMap = new Map<number, CardLink[]>();
+  if (ids.length) {
+    const { data: links, error: lerr } = await supabase
+      .from("pokemon_external_identifiers")
+      .select("card_id, platform_name, external_reference_id")
+      .in("card_id", ids);
+    if (lerr) throw lerr;
+    for (const l of (links ?? []) as ({ card_id: number } & CardLink)[]) {
+      const arr = linkMap.get(l.card_id) ?? [];
+      arr.push({ platform_name: l.platform_name, external_reference_id: l.external_reference_id });
+      linkMap.set(l.card_id, arr);
+    }
+  }
+  return rows.map((r) => ({
+    ...r,
+    links: (linkMap.get(r.card_id) ?? []).sort((a, b) => a.platform_name.localeCompare(b.platform_name)),
+  }));
+}
+
+export default function PokemonCardIndex() {
+  const { t } = useTranslation();
+  const [search, setSearch] = useState("");
+  const debounced = useDebouncedValue(search, 300);
+  const { data, error, isLoading, retry } = useSupabaseQuery(["card-index-pokemon", debounced], () => fetchIndex(debounced));
+  const cards = data ?? [];
+  const [editing, setEditing] = useState<IndexCard | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        {!isLoading && (
+          <span className="text-sm text-muted-foreground">
+            {t("cardIndex.count").replace("{n}", String(cards.length))}
+          </span>
+        )}
+        <div className="flex items-center gap-2">
+          <div className="relative w-72">
+            <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input className="pl-8" placeholder={t("cardIndex.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <Button onClick={() => setCreating(true)}>
+            <Plus className="size-4" /> {t("cardIndex.newCard")}
+          </Button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">{t("cardIndex.hintPokemon")}</p>
+
+      {error ? (
+        <QueryError onRetry={retry} />
+      ) : isLoading ? (
+        <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
+      ) : cards.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("cardIndex.empty")}</p>
+      ) : (
+        <div className="overflow-x-auto rounded-md border">
+          <table className="w-full table-fixed text-sm">
+            <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="w-[44%] px-3 py-2 font-medium">{t("cardIndex.colCard")}</th>
+                <th className="w-[14%] px-3 py-2 font-medium">{t("cardIndex.colVariant")}</th>
+                <th className="w-[30%] px-3 py-2 font-medium">{t("cardIndex.colLinks")}</th>
+                <th className="w-[12%] px-3 py-2 font-medium">{t("cardIndex.colUid")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cards.map((c) => (
+                <tr key={c.card_uid} className="border-b last:border-0">
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-3">
+                      {c.image_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={c.image_url} alt="" className="h-10 w-7 rounded border object-cover" />
+                      ) : (
+                        <div className="flex h-10 w-7 items-center justify-center rounded border bg-muted">
+                          <ImageOff className="size-3 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{c.regional_name}</div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {[c.english_name, c.set_code !== "UNKNOWN" ? c.set_code : null, c.card_number, c.language]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2">
+                    {c.misc_info && c.misc_info !== "UNKNOWN" ? (
+                      <Badge variant="outline">{c.misc_info}</Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex flex-wrap gap-1">
+                      {c.links.length === 0 ? (
+                        <span className="text-xs text-muted-foreground">{t("cardIndex.noLinks")}</span>
+                      ) : (
+                        c.links.map((l) => {
+                          const url = tcgURL(l.platform_name, l.external_reference_id);
+                          const label = `${PLATFORM_SHORT[l.platform_name] ?? l.platform_name} ${l.external_reference_id}`;
+                          return url ? (
+                            <a key={l.platform_name + l.external_reference_id} href={url} target="_blank" rel="noreferrer" className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted">
+                              {label}
+                            </a>
+                          ) : (
+                            <span key={l.platform_name + l.external_reference_id} className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground">
+                              {label}
+                            </span>
+                          );
+                        })
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-xs text-muted-foreground">{c.card_uid.slice(0, 8)}</span>
+                      <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={() => setEditing(c)} title={t("cardIndex.edit")}>
+                        <Pencil className="size-3.5" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <PokemonCardModal card={editing} open={!!editing || creating} isCreate={creating} onOpenChange={(o) => { if (!o) { setEditing(null); setCreating(false); } }} onSaved={retry} />
+    </div>
+  );
+}
+
+const BLANK = { regional_name: "", english_name: "", set_code: "", card_number: "", language: "jp", misc_info: "" };
+
+// Create OR edit a singles card_def + manage its platform links. All writes go
+// through the SECURITY DEFINER RPCs (000116).
+function PokemonCardModal({
+  card,
+  open,
+  isCreate,
+  onOpenChange,
+  onSaved,
+}: {
+  card: IndexCard | null;
+  open: boolean;
+  isCreate: boolean;
+  onOpenChange: (o: boolean) => void;
+  onSaved: () => void;
+}) {
+  const { t } = useTranslation();
+  const [form, setForm] = useState({ ...BLANK });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // new-link inputs (create + edit)
+  const [linkPlatform, setLinkPlatform] = useState("tcgplayer");
+  const [linkId, setLinkId] = useState("");
+  const set = (k: keyof typeof BLANK, v: string) => setForm((p) => ({ ...p, [k]: v }));
+
+  useEffect(() => {
+    setError(null);
+    setLinkId("");
+    setLinkPlatform("tcgplayer");
+    if (isCreate || !card) setForm({ ...BLANK });
+    else setForm({
+      regional_name: card.regional_name ?? "",
+      english_name: card.english_name ?? "",
+      set_code: card.set_code === "UNKNOWN" ? "" : card.set_code ?? "",
+      card_number: card.card_number ?? "",
+      language: card.language ?? "jp",
+      misc_info: card.misc_info === "UNKNOWN" ? "" : card.misc_info ?? "",
+    });
+  }, [card, isCreate, open]);
+
+  async function save() {
+    if (!form.regional_name.trim()) { setError(t("cardIndex.nameRequired")); return; }
+    setBusy(true);
+    setError(null);
+    const supabase = createClient();
+    let rpcError;
+    if (isCreate) {
+      ({ error: rpcError } = await supabase.rpc("card_index_create_pokemon_card", {
+        p_regional_name: form.regional_name, p_english_name: form.english_name, p_set_code: form.set_code,
+        p_card_number: form.card_number, p_language: form.language, p_misc_info: form.misc_info,
+        p_platform: linkId.trim() ? linkPlatform : null, p_external_id: linkId.trim() || null,
+      }));
+    } else if (card) {
+      ({ error: rpcError } = await supabase.rpc("card_index_edit_pokemon_card", {
+        p_card_id: card.card_id, p_regional_name: form.regional_name, p_english_name: form.english_name,
+        p_set_code: form.set_code, p_card_number: form.card_number, p_language: form.language, p_misc_info: form.misc_info,
+      }));
+    }
+    setBusy(false);
+    if (rpcError) { setError(rpcError.message); return; }
+    onSaved();
+    onOpenChange(false);
+  }
+
+  async function addLink() {
+    if (!card || !linkId.trim()) return;
+    setBusy(true);
+    const supabase = createClient();
+    const { error: e } = await supabase.rpc("card_index_attach_pokemon_link", {
+      p_card_id: card.card_id, p_platform: linkPlatform, p_external_id: linkId.trim(),
+    });
+    setBusy(false);
+    if (e) { setError(e.message); return; }
+    setLinkId("");
+    onSaved();
+    onOpenChange(false);
+  }
+
+  async function removeLink(platform: string) {
+    if (!card) return;
+    setBusy(true);
+    const supabase = createClient();
+    await supabase.rpc("card_index_remove_pokemon_link", { p_card_id: card.card_id, p_platform: platform });
+    setBusy(false);
+    onSaved();
+    onOpenChange(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{isCreate ? t("cardIndex.createTitlePokemon") : t("cardIndex.editTitlePokemon")}</DialogTitle>
+        </DialogHeader>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2 space-y-1">
+            <Label>{t("cardIndex.fName")}</Label>
+            <Input value={form.regional_name} onChange={(e) => set("regional_name", e.target.value)} />
+          </div>
+          <div className="col-span-2 space-y-1">
+            <Label>{t("cardIndex.fEnglish")}</Label>
+            <Input value={form.english_name} onChange={(e) => set("english_name", e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>{t("cardIndex.fSet")}</Label>
+            <Input value={form.set_code} onChange={(e) => set("set_code", e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>{t("cardIndex.fNumber")}</Label>
+            <Input value={form.card_number} onChange={(e) => set("card_number", e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>{t("cardIndex.fLanguage")}</Label>
+            <Input value={form.language} onChange={(e) => set("language", e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>{t("cardIndex.fMisc")}</Label>
+            <Input value={form.misc_info} onChange={(e) => set("misc_info", e.target.value)} placeholder="ミラー, 1ED, …" />
+          </div>
+        </div>
+
+        {/* Links: on create, one optional anchor; on edit, list + add/remove. */}
+        <div className="space-y-2 border-t pt-3">
+          <Label>{t("cardIndex.links")}</Label>
+          {!isCreate && card && card.links.length > 0 && (
+            <div className="space-y-1">
+              {card.links.map((l) => (
+                <div key={l.platform_name} className="flex items-center gap-2 text-sm">
+                  <span className="w-24 shrink-0 text-xs text-muted-foreground">{PLATFORM_SHORT[l.platform_name] ?? l.platform_name}</span>
+                  <span className="flex-1 truncate font-mono text-xs">{l.external_reference_id}</span>
+                  <Button variant="ghost" size="icon" className="size-7" disabled={busy} onClick={() => removeLink(l.platform_name)}>
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <select className={`${selectClass} w-28`} value={linkPlatform} onChange={(e) => setLinkPlatform(e.target.value)}>
+              {PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <Input className="flex-1" placeholder={t("cardIndex.linkIdPlaceholder")} value={linkId} onChange={(e) => setLinkId(e.target.value)} />
+            {!isCreate && (
+              <Button variant="outline" size="sm" disabled={busy || !linkId.trim()} onClick={addLink}>
+                {t("cardIndex.addLink")}
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">{isCreate ? t("cardIndex.anchorHint") : t("cardIndex.linkHintPokemon")}</p>
+        </div>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>{t("common.cancel")}</Button>
+          <Button onClick={save} disabled={busy || !form.regional_name.trim()}>
+            {busy ? t("common.saving") : isCreate ? t("cardIndex.create") : t("common.save")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
