@@ -272,6 +272,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "curation.kbdApprove": "承認",
   "curation.kbdReject": "却下",
   "curation.kbdDefer": "後回し",
+  "curation.allBuyers": "全店",
   "cardIndex.section": "カタログ",
   "cardIndex.title": "カードインデックス",
   "cardIndex.count": "{n}件",
