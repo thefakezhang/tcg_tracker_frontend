@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ClipboardCheck, Check, X, Plus, Search, ImageOff } from "lucide-react";
+import { ClipboardCheck, Check, X, Plus, Search, Link2, ImageOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -67,6 +67,7 @@ interface GameConfig {
   rpcConfirm: string;
   rpcCreate: string;
   rpcReject: string;
+  rpcAlias?: string; // resolve candidate as an alias of an existing item (pokemon only)
   confirmIdParam: string; // p_product_id | p_card_id
   createFields: Field[];
   createNameKey: string; // the required field
@@ -145,6 +146,7 @@ const CONFIGS: Record<Game, GameConfig> = {
     rpcConfirm: "card_index_resolve_pokemon_candidate_confirm",
     rpcCreate: "card_index_resolve_pokemon_candidate_create",
     rpcReject: "card_index_resolve_pokemon_candidate_reject",
+    rpcAlias: "card_index_resolve_pokemon_candidate_alias",
     confirmIdParam: "p_card_id",
     createNameKey: "regional_name",
     createFields: [
@@ -265,7 +267,7 @@ export default function MatchReviewView() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [createFor, setCreateFor] = useState<Candidate | null>(null);
-  const [matchFor, setMatchFor] = useState<Candidate | null>(null);
+  const [matchFor, setMatchFor] = useState<{ c: Candidate; alias: boolean } | null>(null);
 
   const platforms = useMemo(
     () => Array.from(new Set(candidates.map((c) => c.source_platform))).sort(),
@@ -398,9 +400,15 @@ export default function MatchReviewView() {
                           </Button>
                         )}
                         <Button variant="outline" size="icon" className="size-7" disabled={busy}
-                          title={t("review.match")} onClick={() => setMatchFor(c)}>
+                          title={t("review.match")} onClick={() => setMatchFor({ c, alias: false })}>
                           <Search className="size-3.5" />
                         </Button>
+                        {cfg.rpcAlias && (
+                          <Button variant="outline" size="icon" className="size-7" disabled={busy}
+                            title={t("review.alias")} onClick={() => setMatchFor({ c, alias: true })}>
+                            <Link2 className="size-3.5" />
+                          </Button>
+                        )}
                         <Button variant="outline" size="icon" className="size-7" disabled={busy}
                           title={t("review.create")} onClick={() => setCreateFor(c)}>
                           <Plus className="size-3.5" />
@@ -422,20 +430,25 @@ export default function MatchReviewView() {
       <CreateFromCandidate cfg={cfg} candidate={createFor} open={!!createFor}
         onOpenChange={(o) => { if (!o) setCreateFor(null); }}
         onCreated={() => { setCreateFor(null); retry(); }} />
-      <MatchToExisting cfg={cfg} candidate={matchFor} open={!!matchFor}
+      <MatchToExisting cfg={cfg} candidate={matchFor?.c ?? null} alias={matchFor?.alias ?? false}
+        rpc={matchFor?.alias ? (cfg.rpcAlias as string) : cfg.rpcConfirm} open={!!matchFor}
         onOpenChange={(o) => { if (!o) setMatchFor(null); }}
         onMatched={() => { setMatchFor(null); retry(); }} />
     </div>
   );
 }
 
-// MatchToExisting confirms the candidate onto an EXISTING catalog item the curator
-// finds by search - the "this already exists, don't create a duplicate" path.
+// MatchToExisting resolves the candidate onto an EXISTING catalog item the curator
+// finds by search. alias=false → "this already exists, don't duplicate" (confirm);
+// alias=true → "this source spelling is an alias of that card" (bind alias). Both
+// pass (candidate_id, chosen id) to their RPC.
 function MatchToExisting({
-  cfg, candidate, open, onOpenChange, onMatched,
+  cfg, candidate, alias, rpc, open, onOpenChange, onMatched,
 }: {
   cfg: GameConfig;
   candidate: Candidate | null;
+  alias: boolean;
+  rpc: string;
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onMatched: () => void;
@@ -473,7 +486,7 @@ function MatchToExisting({
     if (!candidate) return;
     setBusy(true);
     setError(null);
-    const { error: e } = await createClient().rpc(cfg.rpcConfirm, { p_candidate_id: candidate.candidate_id, [cfg.confirmIdParam]: id });
+    const { error: e } = await createClient().rpc(rpc, { p_candidate_id: candidate.candidate_id, [alias ? "p_card_id" : cfg.confirmIdParam]: id });
     setBusy(false);
     if (e) { setError(e.message); return; }
     onMatched();
@@ -482,7 +495,7 @@ function MatchToExisting({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>{t("review.matchTitle")}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{alias ? t("review.aliasTitle") : t("review.matchTitle")}</DialogTitle></DialogHeader>
         {candidate && (
           <p className="text-xs text-muted-foreground">{t("review.matchFrom").replace("{name}", candidate.source_name)}</p>
         )}
