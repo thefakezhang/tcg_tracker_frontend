@@ -68,6 +68,8 @@ interface GameConfig {
   rpcCreate: string;
   rpcReject: string;
   rpcAlias?: string; // resolve candidate as an alias of an existing item (pokemon only)
+  rpcBulkConfirm: string; // confirm many (those with a proposed match) in one call
+  rpcBulkReject: string; // reject many in one call
   confirmIdParam: string; // p_product_id | p_card_id
   createFields: Field[];
   createNameKey: string; // the required field
@@ -103,6 +105,8 @@ const CONFIGS: Record<Game, GameConfig> = {
     rpcConfirm: "card_index_resolve_candidate_confirm",
     rpcCreate: "card_index_resolve_candidate_create",
     rpcReject: "card_index_resolve_candidate_reject",
+    rpcBulkConfirm: "card_index_resolve_candidates_confirm",
+    rpcBulkReject: "card_index_resolve_candidates_reject",
     confirmIdParam: "p_product_id",
     createNameKey: "name",
     createFields: [
@@ -147,6 +151,8 @@ const CONFIGS: Record<Game, GameConfig> = {
     rpcCreate: "card_index_resolve_pokemon_candidate_create",
     rpcReject: "card_index_resolve_pokemon_candidate_reject",
     rpcAlias: "card_index_resolve_pokemon_candidate_alias",
+    rpcBulkConfirm: "card_index_resolve_pokemon_candidates_confirm",
+    rpcBulkReject: "card_index_resolve_pokemon_candidates_reject",
     confirmIdParam: "p_card_id",
     createNameKey: "regional_name",
     createFields: [
@@ -268,6 +274,26 @@ export default function MatchReviewView() {
   const [err, setErr] = useState<string | null>(null);
   const [createFor, setCreateFor] = useState<Candidate | null>(null);
   const [matchFor, setMatchFor] = useState<{ c: Candidate; alias: boolean } | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  const proposedCount = useMemo(
+    () => candidates.filter((c) => selected.has(c.candidate_id) && c.proposed_id).length,
+    [candidates, selected],
+  );
+  function toggle(id: number) {
+    setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+  function toggleAll() {
+    setSelected((prev) => (prev.size === candidates.length ? new Set() : new Set(candidates.map((c) => c.candidate_id))));
+  }
+  async function bulk(rpc: string) {
+    setBusyId(-1);
+    setErr(null);
+    const { error: e } = await createClient().rpc(rpc, { p_ids: [...selected] });
+    setBusyId(null);
+    if (e) setErr(e.message);
+    else { setSelected(new Set()); retry(); }
+  }
 
   const platforms = useMemo(
     () => Array.from(new Set(candidates.map((c) => c.source_platform))).sort(),
@@ -298,7 +324,7 @@ export default function MatchReviewView() {
         <h1 className="text-lg font-semibold">{t("review.title")}</h1>
         <div className="ml-2 flex gap-1">
           {(["pokemon_sealed", "pokemon"] as const).map((g) => (
-            <Button key={g} size="sm" variant={game === g ? "default" : "outline"} onClick={() => setGame(g)}>
+            <Button key={g} size="sm" variant={game === g ? "default" : "outline"} onClick={() => { setGame(g); setSelected(new Set()); }}>
               {t(`game.${g}` as "game.pokemon_sealed")}
             </Button>
           ))}
@@ -311,6 +337,18 @@ export default function MatchReviewView() {
         )}
       </div>
       <p className="text-xs text-muted-foreground">{t("review.hint")}</p>
+      {selected.size > 0 && (
+        <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
+          <span className="text-sm font-medium">{t("review.selected").replace("{n}", String(selected.size))}</span>
+          <Button size="sm" variant="outline" disabled={busyId === -1 || proposedCount === 0} onClick={() => bulk(cfg.rpcBulkConfirm)}>
+            <Check className="size-3.5 text-green-600" /> {t("review.bulkConfirm").replace("{n}", String(proposedCount))}
+          </Button>
+          <Button size="sm" variant="outline" disabled={busyId === -1} onClick={() => bulk(cfg.rpcBulkReject)}>
+            <X className="size-3.5 text-destructive" /> {t("review.bulkReject").replace("{n}", String(selected.size))}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>{t("review.clearSel")}</Button>
+        </div>
+      )}
       {err && <p className="text-sm text-destructive">{err}</p>}
 
       {error ? (
@@ -324,7 +362,12 @@ export default function MatchReviewView() {
           <table className="w-full table-fixed text-sm">
             <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
               <tr>
-                <th className="w-[26%] px-3 py-2 font-medium">{t("review.colSource")}</th>
+                <th className="w-8 px-2 py-2">
+                  <input type="checkbox" checked={candidates.length > 0 && selected.size === candidates.length}
+                    ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < candidates.length; }}
+                    onChange={toggleAll} />
+                </th>
+                <th className="w-[24%] px-3 py-2 font-medium">{t("review.colSource")}</th>
                 <th className="w-[30%] px-3 py-2 font-medium">{t("review.colMatch")}</th>
                 <th className="w-[22%] px-3 py-2 font-medium">{t("review.colAnchors")}</th>
                 <th className="w-[10%] px-3 py-2 font-medium">{t("review.colConfidence")}</th>
@@ -339,6 +382,9 @@ export default function MatchReviewView() {
                 const fields = c.source_fields ?? {};
                 return (
                   <tr key={c.candidate_id} className="border-b align-top last:border-0">
+                    <td className="px-2 py-2">
+                      <input type="checkbox" checked={selected.has(c.candidate_id)} onChange={() => toggle(c.candidate_id)} />
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex items-start gap-2">
                         {c.source_image_url ? (
