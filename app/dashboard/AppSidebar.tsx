@@ -170,6 +170,15 @@ export function AppSidebar({ user }: AppSidebarProps) {
                   {t("curation.needsReview")}
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeTripId === -9}
+                  onClick={() => { setActiveTripId(-9); setActiveBuylistId(null); }}
+                >
+                  <ScanSearch className="size-4" />
+                  {t("curation.titleSealed")}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
