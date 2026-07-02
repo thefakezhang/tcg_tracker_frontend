@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import PokemonAliasesTab from "./PokemonAliasesTab";
 
 // Card Index editor for pokemon SINGLES (Stage 2-A). Mirrors the sealed catalog
 // surface over the card_index_*_pokemon_* RPCs so variant adds + TCGID links go
@@ -77,6 +78,24 @@ async function fetchIndex(search: string): Promise<IndexCard[]> {
 }
 
 export default function PokemonCardIndex() {
+  const { t } = useTranslation();
+  const [tab, setTab] = useState<"cards" | "aliases">("cards");
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1">
+        <Button size="sm" variant={tab === "cards" ? "default" : "outline"} onClick={() => setTab("cards")}>
+          {t("cardIndex.tabCards")}
+        </Button>
+        <Button size="sm" variant={tab === "aliases" ? "default" : "outline"} onClick={() => setTab("aliases")}>
+          {t("cardIndex.tabAliases")}
+        </Button>
+      </div>
+      {tab === "cards" ? <CardsTab /> : <PokemonAliasesTab />}
+    </div>
+  );
+}
+
+function CardsTab() {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
   const debounced = useDebouncedValue(search, 300);
