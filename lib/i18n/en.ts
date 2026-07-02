@@ -270,6 +270,7 @@ const en = {
   "curation.kbdApprove": "approve",
   "curation.kbdReject": "reject",
   "curation.kbdDefer": "defer",
+  "curation.allBuyers": "All",
   "cardIndex.section": "Catalog",
   "cardIndex.title": "Card Index",
   "cardIndex.count": "{n} products",
