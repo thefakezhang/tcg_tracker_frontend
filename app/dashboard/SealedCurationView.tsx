@@ -124,6 +124,15 @@ export default function SealedCurationView() {
   const [batchProgress, setBatchProgress] = useState<number | null>(null);
   const [selectedBuyer, setSelectedBuyer] = useState<string | null>(null); // null = all buyers
   const [autoApproveOpen, setAutoApproveOpen] = useState(false);
+  // One-slot undo history. Populated by approve / reject / sendBack after
+  // they resolve; consumed by the `u` shortcut and the top-banner Undo
+  // button. Auto-clears after 10s.
+  const [lastAction, setLastAction] = useState<{ candidateId: number; label: string } | null>(null);
+  useEffect(() => {
+    if (!lastAction) return;
+    const t = setTimeout(() => setLastAction(null), 10_000);
+    return () => clearTimeout(t);
+  }, [lastAction]);
 
   const fetchCandidates = useCallback(async (st: Status): Promise<Candidate[]> => {
     const supabase = createClient();
@@ -202,24 +211,41 @@ export default function SealedCurationView() {
     const ok = await save(async () => { const { error } = await fn(); if (error) throw error; });
     if (ok) retry();
   }
-  const approve = useCallback((c: Candidate, o?: { productId?: number; condition?: string | null; priceJpy?: number | null; notes?: string | null }) =>
-    act(() => supabase.rpc("promote_sealed_image_buylist_candidate", {
+  // Wrap the RPC calls so a successful action populates lastAction, which
+  // powers the top-banner Undo button + `u` shortcut.
+  const approve = useCallback(async (c: Candidate, o?: { productId?: number; condition?: string | null; priceJpy?: number | null; notes?: string | null }) => {
+    await act(() => supabase.rpc("promote_sealed_image_buylist_candidate", {
       p_candidate_id: c.candidate_id,
       p_product_id: o?.productId ?? null, p_sealed_condition: o?.condition ?? null,
       p_price_jpy: o?.priceJpy ?? null, p_curator_notes: o?.notes ?? null,
-    })),
-  // supabase + save + retry are stable within a render pass; act closes over
-  // them from the enclosing scope.
+    }));
+    setLastAction({ candidateId: c.candidate_id, label: t("curation.undo.approvedLabel", { id: c.candidate_id }) });
+  // supabase + save + retry + t are stable within a render pass; act closes
+  // over them from the enclosing scope.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  []);
-  const reject = useCallback((c: Candidate, notes?: string | null) =>
-    act(() => supabase.rpc("reject_sealed_image_buylist_candidate", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null })),
+  }, []);
+  const reject = useCallback(async (c: Candidate, notes?: string | null) => {
+    await act(() => supabase.rpc("reject_sealed_image_buylist_candidate", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null }));
+    setLastAction({ candidateId: c.candidate_id, label: t("curation.undo.rejectedLabel", { id: c.candidate_id }) });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  []);
-  const sendBack = useCallback((c: Candidate, notes?: string | null) =>
-    act(() => supabase.rpc("mark_sealed_image_buylist_candidate_needs_review", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null })),
+  }, []);
+  const sendBack = useCallback(async (c: Candidate, notes?: string | null) => {
+    await act(() => supabase.rpc("mark_sealed_image_buylist_candidate_needs_review", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null }));
+    setLastAction({ candidateId: c.candidate_id, label: t("curation.undo.deferredLabel", { id: c.candidate_id }) });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  []);
+  }, []);
+  const undo = useCallback(async () => {
+    if (!lastAction) return;
+    const cid = lastAction.candidateId;
+    setLastAction(null);
+    const { error } = await supabase.rpc("undo_sealed_image_buylist_candidate_action", { p_candidate_id: cid });
+    if (error) {
+      setLastAction({ candidateId: cid, label: t("curation.undo.failedLabel", { msg: error.message }) });
+      return;
+    }
+    retry();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastAction]);
 
   // Batch approve every candidate in a band that has a matched card. One
   // save/retry cycle for the whole batch — otherwise each per-item RPC would
@@ -276,11 +302,14 @@ export default function SealedCurationView() {
       } else if (e.key === "d" && cur && status === "pending") {
         e.preventDefault();
         sendBack(cur);
+      } else if (e.key === "u" && lastAction) {
+        e.preventDefault();
+        undo();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [flat, selectedIdx, status, approve, reject, sendBack]);
+  }, [flat, selectedIdx, status, approve, reject, sendBack, undo, lastAction]);
 
   // Scroll the selected card into view whenever the selection index changes.
   useEffect(() => {
@@ -328,7 +357,25 @@ export default function SealedCurationView() {
             <span>{t("curation.kbdDefer")}</span>
           </span>
         )}
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">u</kbd>
+          <span>{t("curation.kbdUndo")}</span>
+        </span>
       </div>
+
+      {/* Undo banner. Shows the last action for 10s or until dismissed / re-fired
+          via the `u` shortcut. */}
+      {lastAction && (
+        <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-xs">
+          <span>{lastAction.label}</span>
+          <Button variant="ghost" size="sm" className="h-6 ml-auto" onClick={() => undo()}>
+            {t("curation.undoAction")}
+          </Button>
+          <Button variant="ghost" size="icon" className="size-6" onClick={() => setLastAction(null)}>
+            <X className="size-3" />
+          </Button>
+        </div>
+      )}
 
       {/* Per-buyer filter chips. Horizontal scrollable list so many buyers
           stay one glance away without wrapping the layout. Chips render only
