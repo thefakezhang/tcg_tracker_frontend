@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ImageOff, Upload, Trash2, Loader2, Paperclip } from "lucide-react";
+import { ImageOff, Upload, Trash2, Loader2, Paperclip, FileText } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,11 @@ import {
 // (owner_type, owner_id); files live in the private 'lot-receipts' bucket.
 // Private bucket ⇒ previews use short-lived signed URLs. Loads lazily on open.
 const BUCKET = "lot-receipts";
+const ACCEPT = "image/*,application/pdf";
+
+function isPdf(name: string | null | undefined): boolean {
+  return !!name && name.toLowerCase().endsWith(".pdf");
+}
 
 interface Receipt {
   receipt_id: number;
@@ -101,7 +106,7 @@ export default function ReceiptsDialog({
             <label className={`inline-flex w-fit cursor-pointer items-center gap-1 rounded-md border px-2.5 py-1.5 text-sm hover:bg-accent ${busy ? "pointer-events-none opacity-60" : ""}`}>
               {busy ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
               {t("trips.uploadReceipt")}
-              <input type="file" accept="image/*" multiple className="hidden" disabled={busy} onChange={(e) => upload(e.target.files)} />
+              <input type="file" accept={ACCEPT} multiple className="hidden" disabled={busy} onChange={(e) => upload(e.target.files)} />
             </label>
             {receipts.length === 0 ? (
               <p className="text-xs text-muted-foreground">{t("trips.noReceipts")}</p>
@@ -110,9 +115,16 @@ export default function ReceiptsDialog({
                 {receipts.map((r) => (
                   <div key={r.receipt_id} className="group relative aspect-square overflow-hidden rounded-md border bg-background">
                     {r.url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <a href={r.url} target="_blank" rel="noreferrer" title={r.original_name ?? ""}>
-                        <img src={r.url} alt={r.original_name ?? "receipt"} loading="lazy" className="size-full object-cover" />
+                      <a href={r.url} target="_blank" rel="noreferrer" title={r.original_name ?? ""} className="block size-full">
+                        {isPdf(r.original_name) ? (
+                          <div className="flex size-full flex-col items-center justify-center gap-1 p-1 text-center">
+                            <FileText className="size-6 text-muted-foreground" />
+                            <span className="line-clamp-2 break-all text-[10px] text-muted-foreground">{r.original_name}</span>
+                          </div>
+                        ) : (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={r.url} alt={r.original_name ?? "receipt"} loading="lazy" className="size-full object-cover" />
+                        )}
                       </a>
                     ) : (
                       <div className="flex size-full items-center justify-center"><ImageOff className="size-6 text-muted-foreground" /></div>
