@@ -12,8 +12,9 @@ import { Button } from "@/components/ui/button";
 import CardIndexEditModal from "./CardIndexEditModal";
 import CardIndexCreateModal from "./CardIndexCreateModal";
 import PokemonCardIndex from "./PokemonCardIndex";
+import MtgCardIndex from "./MtgCardIndex";
 
-type Catalog = "pokemon_sealed" | "pokemon";
+type Catalog = "pokemon_sealed" | "pokemon" | "mtg";
 
 // Read-only browser over the owned sealed-product identity (Stage 3 of the
 // card-index refactor). Each row shows the durable product_uid, the identity
@@ -120,14 +121,14 @@ export default function CardIndexView() {
         <Library className="size-5 text-muted-foreground" />
         <h1 className="text-lg font-semibold">{t("catalog.index")}</h1>
         <div className="ml-2 flex gap-1">
-          {(["pokemon_sealed", "pokemon"] as const).map((c) => (
+          {(["pokemon_sealed", "pokemon", "mtg"] as const).map((c) => (
             <Button key={c} size="sm" variant={catalog === c ? "default" : "outline"} onClick={() => setCatalog(c)}>
               {t(`game.${c}` as "game.pokemon_sealed")}
             </Button>
           ))}
         </div>
       </div>
-      {catalog === "pokemon_sealed" ? <SealedCardIndex /> : <PokemonCardIndex />}
+      {catalog === "pokemon_sealed" ? <SealedCardIndex /> : catalog === "pokemon" ? <PokemonCardIndex /> : <MtgCardIndex />}
     </div>
   );
 }
