@@ -22,7 +22,7 @@ import {
 // process). Each row stores only the source side + a pointer to the proposed
 // catalog item; the catalog side is resolved from that pointer, never duplicated.
 
-type Game = "pokemon_sealed" | "pokemon";
+type Game = "pokemon_sealed" | "pokemon" | "mtg";
 
 interface CatalogLink {
   platform_name: string;
@@ -77,6 +77,8 @@ interface GameConfig {
   createArgs: (c: Candidate, form: Record<string, string>) => Record<string, unknown>;
 }
 
+const ART_TYPES = ["NON_FULL_ART", "FULL_ART"];
+const IS_FOIL = ["false", "true"];
 const PRODUCT_TYPES = [
   "booster_box", "booster_bundle", "booster_pack", "elite_trainer_box",
   "premium_collection", "build_battle_box", "special_collection", "tin",
@@ -174,6 +176,54 @@ const CONFIGS: Record<Game, GameConfig> = {
     createArgs: (c, form) => ({
       p_candidate_id: c.candidate_id, p_regional_name: form.regional_name, p_english_name: form.english_name,
       p_set_code: form.set_code, p_card_number: form.card_number, p_language: form.language, p_misc_info: form.misc_info,
+    }),
+  },
+  mtg: {
+    game: "mtg",
+    candidatesTable: "mtg_match_candidates",
+    proposedCol: "proposed_card_id",
+    candidateIdsCol: "candidate_card_ids",
+    // Flattened view (000128): universal join + card_uid, English name aliased as regional_name.
+    catalogTable: "mtg_card_definitions_v",
+    catalogSelect: "card_id, card_uid, regional_name, set_code, card_number, language, is_foil, art_type, foil_type, misc_info, local_name",
+    extIdsTable: "mtg_external_identifiers",
+    idCol: "card_id",
+    uidCol: "card_uid",
+    nameCol: "regional_name",
+    subtitle: (r) => joinParts([r.set_code as string, r.card_number as string, r.language as string, (r.is_foil ? "foil" : "") as string]),
+    rpcConfirm: "card_index_resolve_mtg_candidate_confirm",
+    rpcCreate: "card_index_resolve_mtg_candidate_create",
+    rpcReject: "card_index_resolve_mtg_candidate_reject",
+    rpcBulkConfirm: "card_index_resolve_mtg_candidates_confirm",
+    rpcBulkReject: "card_index_resolve_mtg_candidates_reject",
+    confirmIdParam: "p_card_id",
+    createNameKey: "name",
+    createFields: [
+      { key: "name", label: "cardIndex.fName", full: true },
+      { key: "local_name", label: "cardIndex.fLocalName", full: true },
+      { key: "set_code", label: "cardIndex.fSet" },
+      { key: "card_number", label: "cardIndex.fNumber" },
+      { key: "language", label: "cardIndex.fLanguage" },
+      { key: "is_foil", label: "cardIndex.fFoil", kind: "select", options: IS_FOIL },
+      { key: "art_type", label: "cardIndex.fArtType", kind: "select", options: ART_TYPES },
+      { key: "foil_type", label: "cardIndex.fFoilType" },
+      { key: "misc_info", label: "cardIndex.fMisc" },
+    ],
+    createDefaults: (c) => {
+      const f = c.source_fields ?? {};
+      return {
+        name: c.source_name, local_name: "",
+        set_code: norm(f.set_code), card_number: f.card_number || "",
+        language: f.language || "en", is_foil: f.is_foil === "true" ? "true" : "false",
+        art_type: f.art_type || "NON_FULL_ART", foil_type: f.foil_type || "STANDARD",
+        misc_info: f.misc_info || "UNKNOWN",
+      };
+    },
+    createArgs: (c, form) => ({
+      p_candidate_id: c.candidate_id, p_name: form.name, p_local_name: form.local_name,
+      p_set_code: form.set_code, p_card_number: form.card_number,
+      p_art_type: form.art_type, p_foil_type: form.foil_type, p_misc_info: form.misc_info,
+      p_language: form.language, p_is_foil: form.is_foil === "true",
     }),
   },
 };
@@ -323,7 +373,7 @@ export default function MatchReviewView() {
         <ClipboardCheck className="size-5 text-muted-foreground" />
         <h1 className="text-lg font-semibold">{t("review.title")}</h1>
         <div className="ml-2 flex gap-1">
-          {(["pokemon_sealed", "pokemon"] as const).map((g) => (
+          {(["pokemon_sealed", "pokemon", "mtg"] as const).map((g) => (
             <Button key={g} size="sm" variant={game === g ? "default" : "outline"} onClick={() => { setGame(g); setSelected(new Set()); }}>
               {t(`game.${g}` as "game.pokemon_sealed")}
             </Button>
