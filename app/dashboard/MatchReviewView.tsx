@@ -63,6 +63,7 @@ interface GameConfig {
   idCol: string;
   uidCol: string;
   nameCol: string; // search + display column on the catalog table
+  numberCol?: string; // card-number column, if the catalog has one (singles/mtg, not sealed)
   subtitle: (row: Record<string, unknown>) => string;
   rpcConfirm: string;
   rpcCreate: string;
@@ -149,6 +150,7 @@ const CONFIGS: Record<Game, GameConfig> = {
     idCol: "card_id",
     uidCol: "card_uid",
     nameCol: "regional_name",
+    numberCol: "card_number",
     subtitle: (r) => joinParts([r.set_code as string, r.card_number as string, r.misc_info as string, r.language as string]),
     rpcConfirm: "card_index_resolve_pokemon_candidate_confirm",
     rpcCreate: "card_index_resolve_pokemon_candidate_create",
@@ -191,6 +193,7 @@ const CONFIGS: Record<Game, GameConfig> = {
     idCol: "card_id",
     uidCol: "card_uid",
     nameCol: "regional_name",
+    numberCol: "card_number",
     subtitle: (r) => joinParts([r.set_code as string, r.card_number as string, r.language as string, (r.is_foil ? "foil" : "") as string]),
     rpcConfirm: "card_index_resolve_mtg_candidate_confirm",
     rpcCreate: "card_index_resolve_mtg_candidate_create",
@@ -458,9 +461,18 @@ export default function MatchReviewView() {
                         <div className="min-w-0">
                           <div className="font-medium">{c.source_name}</div>
                           <div className="truncate text-xs text-muted-foreground">
-                            <span className="font-mono">{c.source_platform}</span>
-                            {" · "}
-                            {joinParts([fields.set_code, fields.card_number, fields.product_type, fields.language])}
+                            {joinParts([fields.set_code, fields.card_number, fields.misc_info, fields.product_type, fields.language])}
+                          </div>
+                          <div className="truncate text-[10px] text-muted-foreground">
+                            {c.source_platform === "unmatched" ? (
+                              t("review.srcUnmatched")
+                            ) : c.source_platform === "tcgplayer" ? (
+                              <a href={`https://www.tcgplayer.com/product/${c.source_key}`} target="_blank" rel="noreferrer" className="underline hover:text-primary">
+                                {t("review.srcFrom").replace("{src}", `TCGplayer #${c.source_key}`)}
+                              </a>
+                            ) : (
+                              t("review.srcFrom").replace("{src}", `${c.source_platform} #${c.source_key}`)
+                            )}
                           </div>
                         </div>
                       </div>
@@ -490,12 +502,12 @@ export default function MatchReviewView() {
                       <Anchors links={proposed?.links ?? []} />
                     </td>
                     <td className="px-3 py-2">
-                      {c.confidence != null ? (
-                        <span className="font-medium">{Math.round(c.confidence * 100)}%</span>
+                      {c.confidence != null && c.confidence >= 0.7 ? (
+                        <span className="rounded border border-green-500/50 px-1.5 py-0.5 text-[10px] font-medium text-green-600">{t("review.tierAuto")}</span>
                       ) : (
-                        <span className="text-xs text-muted-foreground">-</span>
+                        <span className="rounded border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{t("review.tierReview")}</span>
                       )}
-                      {c.reason && <div className="truncate text-[10px] text-muted-foreground">{c.reason}</div>}
+                      {c.reason && <div className="mt-0.5 truncate text-[10px] text-muted-foreground" title={c.reason}>{c.reason}</div>}
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center justify-end gap-1">
@@ -574,27 +586,44 @@ function MatchToExisting({
   const [error, setError] = useState<string | null>(null);
   const [seeded, setSeeded] = useState<number | null>(null);
 
+  // Start with an empty search: the default results are the cards you already have
+  // for this candidate's exact set + card number, so you can see (and match/alias to)
+  // your existing variants immediately instead of hunting by name.
   if (candidate && seeded !== candidate.candidate_id) {
-    setSearch(candidate.source_name);
+    setSearch("");
     setSeeded(candidate.candidate_id);
     setError(null);
   }
 
   useEffect(() => {
+    if (!candidate) { setResults([]); return; }
     const q = search.trim();
-    if (!q) { setResults([]); return; }
+    const f = candidate.source_fields ?? {};
+    const setc = f.set_code ?? "";
+    const num = f.card_number ?? "";
     const h = setTimeout(async () => {
-      const { data } = await createClient()
-        .from(cfg.catalogTable)
-        .select(cfg.catalogSelect)
-        .ilike(cfg.nameCol, `%${q.replace(/[%,]/g, " ")}%`)
-        .limit(8);
+      let query = createClient().from(cfg.catalogTable).select(cfg.catalogSelect);
+      if (q) {
+        // Free search across name + set code + card number.
+        const safe = q.replace(/[%,]/g, " ");
+        const parts = [`${cfg.nameCol}.ilike.%${safe}%`, `set_code.ilike.%${safe}%`];
+        if (cfg.numberCol) parts.push(`${cfg.numberCol}.ilike.%${safe}%`);
+        query = query.or(parts.join(","));
+      } else if (setc) {
+        // Default: your existing cards for this exact set (+ number), i.e. "what you already have".
+        query = query.eq("set_code", setc);
+        if (cfg.numberCol && num) query = query.eq(cfg.numberCol, num);
+      } else {
+        setResults([]);
+        return;
+      }
+      const { data } = await query.limit(20);
       setResults(((data ?? []) as Record<string, unknown>[]).map((r) => ({
         id: r[cfg.idCol] as number, name: (r[cfg.nameCol] as string) ?? "", subtitle: cfg.subtitle(r),
       })));
     }, 300);
     return () => clearTimeout(h);
-  }, [search, cfg]);
+  }, [search, cfg, candidate]);
 
   async function matchTo(id: number) {
     if (!candidate) return;
@@ -611,8 +640,15 @@ function MatchToExisting({
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>{alias ? t("review.aliasTitle") : t("review.matchTitle")}</DialogTitle></DialogHeader>
         {candidate && (
-          <p className="text-xs text-muted-foreground">{t("review.matchFrom").replace("{name}", candidate.source_name)}</p>
+          <p className="text-xs text-muted-foreground">
+            {t("review.matchFrom").replace("{name}", candidate.source_name)}{" "}
+            <span className="font-mono text-foreground">
+              {[candidate.source_fields?.set_code, candidate.source_fields?.card_number, candidate.source_fields?.misc_info]
+                .filter((v) => v && v !== "UNKNOWN").join(" · ")}
+            </span>
+          </p>
         )}
+        <p className="text-xs text-muted-foreground">{t("review.matchExistingHint")}</p>
         <Input placeholder={t("review.matchSearch")} value={search} onChange={(e) => setSearch(e.target.value)} />
         <div className="max-h-72 space-y-1 overflow-y-auto">
           {results.length === 0 ? (
