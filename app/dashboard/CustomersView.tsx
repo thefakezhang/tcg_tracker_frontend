@@ -83,30 +83,51 @@ async function fetchCustomers(search: string): Promise<Customer[]> {
   return (data ?? []) as Customer[];
 }
 
-// searchCatalog finds catalog items by name for the wishlist picker.
+// searchCatalog finds catalog items for the wishlist picker.
+//
+// The query is tokenized on whitespace and each token must match SOME column
+// (regional_name / english_name / set_code / card_number / misc_info for
+// singles; name / set_code for sealed). Tokens AND together, so
+// "セビエ SV2P" narrows to Frigibax in set SV2P — impossible with a
+// name-only search when hundreds of Pokémon share a name.
+//
+// Filters out ",%()" from tokens to avoid breaking PostgREST's `.or()`
+// parser; other characters (including "/" in card numbers like 024/071)
+// pass through fine.
 async function searchCatalog(
   game: string,
   query: string,
 ): Promise<{ id: number; label: string }[]> {
   const supabase = createClient();
-  const q = query.replace(/[%,]/g, " ");
+  const tokens = query
+    .replace(/[%,()]/g, " ")
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (tokens.length === 0) return [];
+
   if (game === "pokemon_sealed") {
-    const { data } = await supabase
-      .from("pokemon_sealed_products")
-      .select("product_id, name, set_code")
-      .ilike("name", `%${q}%`)
-      .limit(8);
+    let q = supabase.from("pokemon_sealed_products").select("product_id, name, set_code");
+    for (const t of tokens) {
+      q = q.or(`name.ilike.%${t}%,set_code.ilike.%${t}%`);
+    }
+    const { data } = await q.limit(8);
     return (data ?? []).map((r: { product_id: number; name: string; set_code: string }) => ({
       id: r.product_id,
       label: `${r.name}${r.set_code && r.set_code !== "UNKNOWN" ? ` · ${r.set_code}` : ""}`,
     }));
   }
+
   const table = game === "mtg" ? "mtg_card_definitions_v" : "pokemon_card_definitions";
-  const { data } = await supabase
+  let q = supabase
     .from(table)
-    .select("card_id, regional_name, english_name, set_code, card_number, misc_info")
-    .or(`regional_name.ilike.%${q}%,english_name.ilike.%${q}%`)
-    .limit(8);
+    .select("card_id, regional_name, english_name, set_code, card_number, misc_info");
+  for (const t of tokens) {
+    q = q.or(
+      `regional_name.ilike.%${t}%,english_name.ilike.%${t}%,set_code.ilike.%${t}%,card_number.ilike.%${t}%,misc_info.ilike.%${t}%`,
+    );
+  }
+  const { data } = await q.limit(8);
   return (data ?? []).map(
     (r: {
       card_id: number;
