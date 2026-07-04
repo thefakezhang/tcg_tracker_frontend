@@ -302,6 +302,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "aliases.count": "エイリアス {n}件",
   "aliases.search": "ソース名・TCGID・セットで検索…",
   "aliases.hint": "テキスト差異のエイリアス：ソース表記 → 対象TCGID。マッチャーはこれをライブで読むため、追加・削除は次回実行時に反映されます。",
+  "aliases.hintMtg": "MTGテキスト差異のエイリアス：ソースタプル（名称・多くは複合セットコード・番号・フォイル/アート/その他）→ 対象TCGID。マッチgenがライブで読み、全ソース共通です。",
   "aliases.required": "ソース名とTCGIDは必須です。",
   "aliases.add": "追加",
   "aliases.empty": "エイリアスなし。",
