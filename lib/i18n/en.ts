@@ -300,6 +300,7 @@ const en = {
   "aliases.count": "{n} aliases",
   "aliases.search": "Search source name, TCGID, set…",
   "aliases.hint": "Text-variance aliases: a source spelling → a target TCGID. The matcher reads these live, so add/remove takes effect on the next run.",
+  "aliases.hintMtg": "mtg text-variance aliases: a source tuple (name, a usually-compound set code, number, foil/art/misc) → a target TCGID. Match-gen reads these live, global across sources.",
   "aliases.required": "Source name and TCGID are required.",
   "aliases.add": "Add",
   "aliases.empty": "No aliases.",

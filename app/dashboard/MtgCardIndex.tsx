@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import MtgAliasesTab from "./MtgAliasesTab";
 
 // Card Index editor for mtg. Mirrors the pokemon-singles surface over the
 // card_index_*_mtg_* RPCs (000126). mtg identity is split: the durable card_uid +
@@ -84,6 +85,24 @@ async function fetchIndex(search: string): Promise<IndexCard[]> {
 }
 
 export default function MtgCardIndex() {
+  const { t } = useTranslation();
+  const [tab, setTab] = useState<"cards" | "aliases">("cards");
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1">
+        <Button size="sm" variant={tab === "cards" ? "default" : "outline"} onClick={() => setTab("cards")}>
+          {t("cardIndex.tabCards")}
+        </Button>
+        <Button size="sm" variant={tab === "aliases" ? "default" : "outline"} onClick={() => setTab("aliases")}>
+          {t("cardIndex.tabAliases")}
+        </Button>
+      </div>
+      {tab === "cards" ? <MtgCardsTab /> : <MtgAliasesTab />}
+    </div>
+  );
+}
+
+function MtgCardsTab() {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
   const debounced = useDebouncedValue(search, 300);

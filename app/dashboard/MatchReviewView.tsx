@@ -194,6 +194,7 @@ const CONFIGS: Record<Game, GameConfig> = {
     rpcConfirm: "card_index_resolve_mtg_candidate_confirm",
     rpcCreate: "card_index_resolve_mtg_candidate_create",
     rpcReject: "card_index_resolve_mtg_candidate_reject",
+    rpcAlias: "card_index_resolve_mtg_candidate_alias",
     rpcBulkConfirm: "card_index_resolve_mtg_candidates_confirm",
     rpcBulkReject: "card_index_resolve_mtg_candidates_reject",
     confirmIdParam: "p_card_id",
