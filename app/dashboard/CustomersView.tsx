@@ -710,6 +710,7 @@ function CustomerDetail({
 
 function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () => void }) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   const [game, setGame] = useState<string>("pokemon");
   const [label, setLabel] = useState("");
   const [rarities, setRarities] = useState(""); // comma-separated
@@ -720,6 +721,19 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
   const [priceMax, setPriceMax] = useState("");
   const [priority, setPriority] = useState("3");
   const [busy, setBusy] = useState(false);
+
+  // Reset the form whenever the dialog re-opens.
+  useEffect(() => {
+    if (!open) {
+      setLabel("");
+      setRarities("");
+      setSetAfter("");
+      setSetBefore("");
+      setJpOnly(false);
+      setPromoOnly(false);
+      setPriceMax("");
+    }
+  }, [open]);
 
   async function add() {
     if (busy) return;
@@ -742,100 +756,111 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
       price_max_usd: priceMax ? Number(priceMax) : null,
       priority: Number(priority) || 3,
     });
-    setLabel("");
-    setRarities("");
-    setSetAfter("");
-    setSetBefore("");
-    setJpOnly(false);
-    setPromoOnly(false);
-    setPriceMax("");
     setBusy(false);
     onAdded();
+    setOpen(false);
   }
 
   return (
-    <div className="space-y-1 rounded-md border border-dashed p-2">
-      <div className="flex items-center gap-2">
-        <select
-          className={`${selectClass} w-32`}
-          value={game}
-          onChange={(e) => setGame(e.target.value)}
-        >
-          {GAMES.map((g) => (
-            <option key={g} value={g}>
-              {t(`game.${g}` as never)}
-            </option>
-          ))}
-        </select>
-        <Input
-          className="flex-1"
-          placeholder={t("customers.criteriaLabel")}
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-        />
-        <Input
-          className="w-20"
-          placeholder="≤$"
-          value={priceMax}
-          onChange={(e) => setPriceMax(e.target.value)}
-        />
-        <select
-          className={`${selectClass} w-14`}
-          value={priority}
-          onChange={(e) => setPriority(e.target.value)}
-        >
-          {[1, 2, 3, 4, 5].map((p) => (
-            <option key={p} value={p}>
-              P{p}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="flex items-center gap-2">
-        <Input
-          className="flex-1"
-          placeholder={t("customers.criteriaRarities")}
-          value={rarities}
-          onChange={(e) => setRarities(e.target.value)}
-        />
-        <Input
-          className="w-24"
-          placeholder={t("customers.criteriaSetAfter")}
-          value={setAfter}
-          onChange={(e) => setSetAfter(e.target.value)}
-        />
-        <Input
-          className="w-24"
-          placeholder={t("customers.criteriaSetBefore")}
-          value={setBefore}
-          onChange={(e) => setSetBefore(e.target.value)}
-        />
-        <label className="flex items-center gap-1 text-xs">
-          <input
-            type="checkbox"
-            checked={jpOnly}
-            onChange={(e) => setJpOnly(e.target.checked)}
-          />
-          JP
-        </label>
-        <label className="flex items-center gap-1 text-xs">
-          <input
-            type="checkbox"
-            checked={promoOnly}
-            onChange={(e) => setPromoOnly(e.target.checked)}
-          />
-          Promo
-        </label>
-        <Button size="sm" onClick={add} disabled={busy}>
-          <Plus className="size-3.5" />
-        </Button>
-      </div>
-    </div>
+    <>
+      <Button variant="outline" size="sm" className="w-fit" onClick={() => setOpen(true)}>
+        <Plus className="size-3.5" /> {t("customers.criteriaAdd")}
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t("customers.criteriaAdd")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <select
+                className={`${selectClass} w-32`}
+                value={game}
+                onChange={(e) => setGame(e.target.value)}
+              >
+                {GAMES.map((g) => (
+                  <option key={g} value={g}>
+                    {t(`game.${g}` as never)}
+                  </option>
+                ))}
+              </select>
+              <Input
+                className="flex-1"
+                placeholder={t("customers.criteriaLabel")}
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+              />
+              <Input
+                className="w-20"
+                placeholder="≤$"
+                value={priceMax}
+                onChange={(e) => setPriceMax(e.target.value)}
+              />
+              <select
+                className={`${selectClass} w-14`}
+                value={priority}
+                onChange={(e) => setPriority(e.target.value)}
+              >
+                {[1, 2, 3, 4, 5].map((p) => (
+                  <option key={p} value={p}>
+                    P{p}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Input
+              placeholder={t("customers.criteriaRarities")}
+              value={rarities}
+              onChange={(e) => setRarities(e.target.value)}
+            />
+            <div className="flex items-center gap-2">
+              <Input
+                className="flex-1"
+                placeholder={t("customers.criteriaSetAfter")}
+                value={setAfter}
+                onChange={(e) => setSetAfter(e.target.value)}
+              />
+              <Input
+                className="flex-1"
+                placeholder={t("customers.criteriaSetBefore")}
+                value={setBefore}
+                onChange={(e) => setSetBefore(e.target.value)}
+              />
+              <label className="flex items-center gap-1 text-xs">
+                <input
+                  type="checkbox"
+                  checked={jpOnly}
+                  onChange={(e) => setJpOnly(e.target.checked)}
+                />
+                JP
+              </label>
+              <label className="flex items-center gap-1 text-xs">
+                <input
+                  type="checkbox"
+                  checked={promoOnly}
+                  onChange={(e) => setPromoOnly(e.target.checked)}
+                />
+                Promo
+              </label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
+              {t("common.cancel")}
+            </Button>
+            <Button onClick={add} disabled={busy}>
+              {busy ? t("common.saving") : t("common.save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
 function WishlistAdd({ customerId, onAdded }: { customerId: number; onAdded: () => void }) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   const [game, setGame] = useState<string>("pokemon_sealed");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ id: number; label: string }[]>([]);
@@ -852,6 +877,15 @@ function WishlistAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
     return () => clearTimeout(h);
   }, [game, query]);
 
+  // Reset form state whenever the dialog re-opens.
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      setResults([]);
+      setMaxPrice("");
+    }
+  }, [open]);
+
   async function add(id: number) {
     const supabase = createClient();
     await supabase.from("customer_wishlist").insert({
@@ -862,60 +896,84 @@ function WishlistAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
       max_price_usd: maxPrice ? Number(maxPrice) : null,
       priority: Number(priority) || 3,
     });
-    setQuery("");
-    setResults([]);
-    setMaxPrice("");
     onAdded();
+    setOpen(false);
   }
 
   return (
-    <div className="space-y-1 rounded-md border border-dashed p-2">
-      <div className="flex items-center gap-2">
-        <select className={`${selectClass} w-32`} value={game} onChange={(e) => setGame(e.target.value)}>
-          {GAMES.map((g) => (
-            <option key={g} value={g}>
-              {t(`game.${g}` as never)}
-            </option>
-          ))}
-        </select>
-        <Input
-          className="flex-1"
-          placeholder={t("customers.wishlistSearch")}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <Input
-          className="w-20"
-          placeholder="≤$"
-          value={maxPrice}
-          onChange={(e) => setMaxPrice(e.target.value)}
-        />
-        <select
-          className={`${selectClass} w-14`}
-          value={priority}
-          onChange={(e) => setPriority(e.target.value)}
-        >
-          {[1, 2, 3, 4, 5].map((p) => (
-            <option key={p} value={p}>
-              P{p}
-            </option>
-          ))}
-        </select>
-      </div>
-      {results.length > 0 && (
-        <div className="max-h-40 space-y-0.5 overflow-y-auto">
-          {results.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => add(r.id)}
-              className="block w-full truncate rounded px-2 py-1 text-left text-xs hover:bg-muted"
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <>
+      <Button variant="outline" size="sm" className="w-fit" onClick={() => setOpen(true)}>
+        <Plus className="size-3.5" /> {t("customers.wishlistAdd")}
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("customers.wishlistAdd")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <select
+                className={`${selectClass} w-32`}
+                value={game}
+                onChange={(e) => setGame(e.target.value)}
+              >
+                {GAMES.map((g) => (
+                  <option key={g} value={g}>
+                    {t(`game.${g}` as never)}
+                  </option>
+                ))}
+              </select>
+              <Input
+                className="w-20"
+                placeholder="≤$"
+                value={maxPrice}
+                onChange={(e) => setMaxPrice(e.target.value)}
+              />
+              <select
+                className={`${selectClass} w-14`}
+                value={priority}
+                onChange={(e) => setPriority(e.target.value)}
+              >
+                {[1, 2, 3, 4, 5].map((p) => (
+                  <option key={p} value={p}>
+                    P{p}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Input
+              autoFocus
+              placeholder={t("customers.wishlistSearch")}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("customers.wishlistClickToAdd")}
+            </p>
+            {results.length > 0 ? (
+              <div className="max-h-56 space-y-0.5 overflow-y-auto rounded-md border">
+                {results.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => add(r.id)}
+                    className="block w-full truncate px-2 py-1 text-left text-xs hover:bg-muted"
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+            ) : query.trim() ? (
+              <p className="text-xs text-muted-foreground">{t("customers.wishlistNoResults")}</p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
