@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Users, Search, Plus, Trash2, X, Star, Bell, History } from "lucide-react";
+import { Users, Search, Plus, Trash2, X, Star, Bell, History, Filter } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -44,6 +44,23 @@ interface WishlistItem {
   status: string;
   notes: string | null;
   label?: string; // resolved client-side
+}
+interface WishCriteria {
+  criteria_id: number;
+  customer_id: number;
+  game: string;
+  label: string | null;
+  rarities: string[] | null;
+  set_after_code: string | null;
+  set_codes: string[] | null;
+  languages: string[] | null;
+  is_japan_exclusive: boolean | null;
+  is_promo: boolean | null;
+  price_min_usd: number | null;
+  price_max_usd: number | null;
+  priority: number;
+  status: string;
+  notes: string | null;
 }
 // A resolved sale attributed to this customer (from sales_ledger_v).
 interface PurchaseRow {
@@ -309,6 +326,7 @@ function CustomerDetail({
   const [form, setForm] = useState<Customer | null>(customer);
   const [handleRows, setHandleRows] = useState<[string, string][]>([]);
   const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
+  const [criteria, setCriteria] = useState<WishCriteria[]>([]);
   const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
   const [inStockIds, setInStockIds] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -341,12 +359,30 @@ function CustomerDetail({
         .then(({ data }) =>
           setInStockIds(new Set(((data ?? []) as { wishlist_id: number }[]).map((r) => r.wishlist_id))),
         );
+      supabase
+        .from("customer_wish_criteria")
+        .select("*")
+        .eq("customer_id", customer.customer_id)
+        .order("priority")
+        .then(({ data }) => setCriteria((data ?? []) as WishCriteria[]));
     } else {
       setWishlist([]);
+      setCriteria([]);
       setPurchases([]);
       setInStockIds(new Set());
     }
   }, [customer]);
+
+  async function reloadCriteria() {
+    if (!customer) return;
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("customer_wish_criteria")
+      .select("*")
+      .eq("customer_id", customer.customer_id)
+      .order("priority");
+    setCriteria((data ?? []) as WishCriteria[]);
+  }
 
   const totalSpent = purchases.reduce((a, p) => a + Number(p.gross_usd), 0);
 
@@ -564,6 +600,59 @@ function CustomerDetail({
             <WishlistAdd customerId={form.customer_id} onAdded={reloadWishlist} />
           </div>
 
+          {/* Criteria-based wishlist: "SARs after M1", "JP exclusive promos",
+              etc. Feeds the pre-trip shopping list (customer_shopping_list_v)
+              and criterion-matched reach-out (customer_reachout_criteria_v). */}
+          <div className="space-y-2 border-t pt-3">
+            <Label className="flex items-center gap-1.5">
+              <Filter className="size-3.5" /> {t("customers.criteria")}
+            </Label>
+            <div className="space-y-1">
+              {criteria.length === 0 && (
+                <p className="text-xs text-muted-foreground">{t("customers.criteriaEmpty")}</p>
+              )}
+              {criteria.map((c) => (
+                <div key={c.criteria_id} className="flex items-start gap-2 text-sm">
+                  <span className="w-8 shrink-0 text-xs text-muted-foreground">P{c.priority}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate">{c.label || t("customers.criteriaUnlabeled")}</div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {[
+                        c.rarities?.length ? c.rarities.join(", ") : null,
+                        c.set_after_code ? `after ${c.set_after_code}` : null,
+                        c.set_codes?.length ? `sets ${c.set_codes.join(",")}` : null,
+                        c.languages?.length ? c.languages.join("/") : null,
+                        c.is_japan_exclusive ? "JP-only" : null,
+                        c.is_promo ? "promo" : null,
+                        c.price_min_usd != null || c.price_max_usd != null
+                          ? `$${c.price_min_usd ?? 0}-${c.price_max_usd ?? "∞"}`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || t("customers.criteriaNoFilters")}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    onClick={async () => {
+                      const supabase = createClient();
+                      await supabase
+                        .from("customer_wish_criteria")
+                        .delete()
+                        .eq("criteria_id", c.criteria_id);
+                      reloadCriteria();
+                    }}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <CriteriaAdd customerId={form.customer_id} onAdded={reloadCriteria} />
+          </div>
+
           {/* Purchase history - what they've actually bought (drives preferences + reach-out). */}
           <div className="space-y-2 border-t pt-3">
             <Label className="flex items-center gap-1.5">
@@ -609,6 +698,123 @@ function CustomerDetail({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () => void }) {
+  const { t } = useTranslation();
+  const [game, setGame] = useState<string>("pokemon");
+  const [label, setLabel] = useState("");
+  const [rarities, setRarities] = useState(""); // comma-separated
+  const [setAfter, setSetAfter] = useState("");
+  const [jpOnly, setJpOnly] = useState(false);
+  const [promoOnly, setPromoOnly] = useState(false);
+  const [priceMax, setPriceMax] = useState("");
+  const [priority, setPriority] = useState("3");
+  const [busy, setBusy] = useState(false);
+
+  async function add() {
+    if (busy) return;
+    setBusy(true);
+    const supabase = createClient();
+    const raritiesArr = rarities
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    await supabase.from("customer_wish_criteria").insert({
+      customer_id: customerId,
+      game,
+      label: label.trim() || null,
+      rarities: raritiesArr.length ? raritiesArr : null,
+      set_after_code: setAfter.trim() || null,
+      languages: game === "pokemon" || game === "pokemon_sealed" ? ["jp"] : null,
+      is_japan_exclusive: jpOnly ? true : null,
+      is_promo: promoOnly ? true : null,
+      price_max_usd: priceMax ? Number(priceMax) : null,
+      priority: Number(priority) || 3,
+    });
+    setLabel("");
+    setRarities("");
+    setSetAfter("");
+    setJpOnly(false);
+    setPromoOnly(false);
+    setPriceMax("");
+    setBusy(false);
+    onAdded();
+  }
+
+  return (
+    <div className="space-y-1 rounded-md border border-dashed p-2">
+      <div className="flex items-center gap-2">
+        <select
+          className={`${selectClass} w-32`}
+          value={game}
+          onChange={(e) => setGame(e.target.value)}
+        >
+          {GAMES.map((g) => (
+            <option key={g} value={g}>
+              {t(`game.${g}` as never)}
+            </option>
+          ))}
+        </select>
+        <Input
+          className="flex-1"
+          placeholder={t("customers.criteriaLabel")}
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+        />
+        <Input
+          className="w-20"
+          placeholder="≤$"
+          value={priceMax}
+          onChange={(e) => setPriceMax(e.target.value)}
+        />
+        <select
+          className={`${selectClass} w-14`}
+          value={priority}
+          onChange={(e) => setPriority(e.target.value)}
+        >
+          {[1, 2, 3, 4, 5].map((p) => (
+            <option key={p} value={p}>
+              P{p}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          className="flex-1"
+          placeholder={t("customers.criteriaRarities")}
+          value={rarities}
+          onChange={(e) => setRarities(e.target.value)}
+        />
+        <Input
+          className="w-28"
+          placeholder={t("customers.criteriaSetAfter")}
+          value={setAfter}
+          onChange={(e) => setSetAfter(e.target.value)}
+        />
+        <label className="flex items-center gap-1 text-xs">
+          <input
+            type="checkbox"
+            checked={jpOnly}
+            onChange={(e) => setJpOnly(e.target.checked)}
+          />
+          JP
+        </label>
+        <label className="flex items-center gap-1 text-xs">
+          <input
+            type="checkbox"
+            checked={promoOnly}
+            onChange={(e) => setPromoOnly(e.target.checked)}
+          />
+          Promo
+        </label>
+        <Button size="sm" onClick={add} disabled={busy}>
+          <Plus className="size-3.5" />
+        </Button>
+      </div>
+    </div>
   );
 }
 
