@@ -249,17 +249,34 @@ interface QueueData {
   total: number;
 }
 
-async function fetchQueue(cfg: GameConfig, limit: number): Promise<QueueData> {
+// A bucket is one of the curator's mental "files". generated/manual/nonexistant are
+// all rows of the candidates table, split by status + confidence; they share the row
+// UI and the move actions. (aliases + saved are separate tables, fetched elsewhere.)
+type Bucket = "generated" | "manual" | "nonexistant" | "aliases";
+
+// applyBucket narrows a candidates query to one bucket (mutating the PostgREST
+// filter builder). Typed loosely because the builder's generics don't survive the
+// conditional chaining.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyBucket(q: any, bucket: Bucket): any {
+  if (bucket === "nonexistant") return q.eq("status", "rejected");
+  if (bucket === "generated") return q.eq("status", "pending").gte("confidence", 0.7);
+  return q.eq("status", "pending").or("confidence.lt.0.7,confidence.is.null"); // manual
+}
+
+async function fetchQueue(cfg: GameConfig, bucket: Bucket, limit: number): Promise<QueueData> {
   const supabase = createClient();
-  // Total pending, so the header shows the real backlog size (not just the loaded page).
-  const { count: total } = await supabase
-    .from(cfg.candidatesTable)
-    .select("candidate_id", { count: "exact", head: true })
-    .eq("status", "pending");
-  const { data: rows, error } = await supabase
-    .from(cfg.candidatesTable)
-    .select(`candidate_id, source_platform, source_key, source_name, source_raw, source_fields, source_image_url, proposed_id:${cfg.proposedCol}, candidate_ids:${cfg.candidateIdsCol}, confidence, reason`)
-    .eq("status", "pending")
+  // Total in this bucket, so the header shows the real size (not just the loaded page).
+  const { count: total } = await applyBucket(
+    supabase.from(cfg.candidatesTable).select("candidate_id", { count: "exact", head: true }),
+    bucket,
+  );
+  const { data: rows, error } = await applyBucket(
+    supabase
+      .from(cfg.candidatesTable)
+      .select(`candidate_id, source_platform, source_key, source_name, source_raw, source_fields, source_image_url, proposed_id:${cfg.proposedCol}, candidate_ids:${cfg.candidateIdsCol}, confidence, reason`),
+    bucket,
+  )
     .order("confidence", { ascending: false, nullsFirst: false })
     .order("candidate_id", { ascending: true })
     .limit(limit);
@@ -324,12 +341,15 @@ function Anchors({ links }: { links: CatalogLink[] }) {
   );
 }
 
+const BUCKETS: Bucket[] = ["generated", "manual", "nonexistant"];
+
 export default function MatchReviewView() {
   const { t } = useTranslation();
   const [game, setGame] = useState<Game>("pokemon_sealed");
+  const [bucket, setBucket] = useState<Bucket>("generated");
   const [limit, setLimit] = useState(PAGE_SIZE);
   const cfg = CONFIGS[game];
-  const { data, error, isLoading, retry } = useSupabaseQuery(["match-review", game, String(limit)], () => fetchQueue(cfg, limit));
+  const { data, error, isLoading, retry } = useSupabaseQuery(["match-review", game, bucket, String(limit)], () => fetchQueue(cfg, bucket, limit));
   const candidates = data?.candidates ?? [];
   const items = data?.items ?? new Map<number, CatalogItem>();
   const total = data?.total ?? 0;
@@ -358,10 +378,6 @@ export default function MatchReviewView() {
     else { setSelected(new Set()); retry(); }
   }
 
-  const platforms = useMemo(
-    () => Array.from(new Set(candidates.map((c) => c.source_platform))).sort(),
-    [candidates],
-  );
 
   async function confirm(c: Candidate, id: number) {
     setBusyId(c.candidate_id);
@@ -392,14 +408,24 @@ export default function MatchReviewView() {
             </Button>
           ))}
         </div>
+      </div>
+      {/* Buckets: the curator's files, as tabs. Moving a row between buckets is one click. */}
+      <div className="flex items-center gap-2 border-b pb-2">
+        <div className="flex gap-1">
+          {BUCKETS.map((b) => (
+            <Button key={b} size="sm" variant={bucket === b ? "default" : "ghost"}
+              onClick={() => { setBucket(b); setSelected(new Set()); setLimit(PAGE_SIZE); }}>
+              {t(`review.bucket.${b}` as "review.bucket.generated")}
+            </Button>
+          ))}
+        </div>
         {!isLoading && (
           <span className="text-sm text-muted-foreground">
             {t("review.countOf").replace("{shown}", String(candidates.length)).replace("{total}", String(total))}
-            {platforms.length > 0 && ` · ${platforms.join(", ")}`}
           </span>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">{t("review.hint")}</p>
+      <p className="text-xs text-muted-foreground">{t(`review.bucketHint.${bucket}` as "review.bucketHint.generated")}</p>
       {selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
           <span className="text-sm font-medium">{t("review.selected").replace("{n}", String(selected.size))}</span>
@@ -512,29 +538,31 @@ export default function MatchReviewView() {
                     <td className="px-3 py-2">
                       <div className="flex items-center justify-end gap-1">
                         {proposed && (
-                          <Button variant="outline" size="icon" className="size-7" disabled={busy}
-                            title={t("review.confirm")} onClick={() => confirm(c, proposed.id)}>
-                            <Check className="size-3.5 text-green-600" />
+                          <Button variant="outline" size="sm" className="h-7 gap-1 px-2" disabled={busy}
+                            title={t("review.moveSavedConfirm")} onClick={() => confirm(c, proposed.id)}>
+                            <Check className="size-3.5 text-green-600" /> {t("review.toSaved")}
                           </Button>
                         )}
+                        <Button variant="outline" size="sm" className="h-7 gap-1 px-2" disabled={busy}
+                          title={t("review.moveSavedCreate")} onClick={() => setCreateFor(c)}>
+                          <Plus className="size-3.5 text-green-600" /> {t("review.toSaved")}
+                        </Button>
                         <Button variant="outline" size="icon" className="size-7" disabled={busy}
-                          title={t("review.match")} onClick={() => setMatchFor({ c, alias: false })}>
+                          title={t("review.matchExistingTitle")} onClick={() => setMatchFor({ c, alias: false })}>
                           <Search className="size-3.5" />
                         </Button>
                         {cfg.rpcAlias && (
-                          <Button variant="outline" size="icon" className="size-7" disabled={busy}
-                            title={t("review.alias")} onClick={() => setMatchFor({ c, alias: true })}>
-                            <Link2 className="size-3.5" />
+                          <Button variant="outline" size="sm" className="h-7 gap-1 px-2" disabled={busy}
+                            title={t("review.toAliasTitle")} onClick={() => setMatchFor({ c, alias: true })}>
+                            <Link2 className="size-3.5" /> {t("review.toAlias")}
                           </Button>
                         )}
-                        <Button variant="outline" size="icon" className="size-7" disabled={busy}
-                          title={t("review.create")} onClick={() => setCreateFor(c)}>
-                          <Plus className="size-3.5" />
-                        </Button>
-                        <Button variant="outline" size="icon" className="size-7" disabled={busy}
-                          title={t("review.reject")} onClick={() => reject(c)}>
-                          <X className="size-3.5 text-destructive" />
-                        </Button>
+                        {bucket !== "nonexistant" && (
+                          <Button variant="outline" size="sm" className="h-7 gap-1 px-2" disabled={busy}
+                            title={t("review.toNonexistTitle")} onClick={() => reject(c)}>
+                            <X className="size-3.5 text-destructive" /> {t("review.toNonexist")}
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
