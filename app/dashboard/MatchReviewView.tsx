@@ -48,6 +48,7 @@ interface Candidate {
   candidate_ids: number[] | null; // aliased from candidate_(product|card)_ids
   confidence: number | null;
   reason: string | null;
+  matched: { platform: string; id: string }[] | null; // unified: platform ids that matched this card
 }
 
 type Field = { key: string; label: string; kind?: "select"; options?: string[]; full?: boolean };
@@ -64,6 +65,7 @@ interface GameConfig {
   uidCol: string;
   nameCol: string; // search + display column on the catalog table
   numberCol?: string; // card-number column, if the catalog has one (singles/mtg, not sealed)
+  unified?: boolean; // identity-keyed queue with a matched-links set (pokemon, 000131)
   subtitle: (row: Record<string, unknown>) => string;
   rpcConfirm: string;
   rpcCreate: string;
@@ -151,6 +153,7 @@ const CONFIGS: Record<Game, GameConfig> = {
     uidCol: "card_uid",
     nameCol: "regional_name",
     numberCol: "card_number",
+    unified: true,
     subtitle: (r) => joinParts([r.set_code as string, r.card_number as string, r.misc_info as string, r.language as string]),
     rpcConfirm: "card_index_resolve_pokemon_candidate_confirm",
     rpcCreate: "card_index_resolve_pokemon_candidate_create",
@@ -274,7 +277,7 @@ async function fetchQueue(cfg: GameConfig, bucket: Bucket, limit: number): Promi
   const { data: rows, error } = await applyBucket(
     supabase
       .from(cfg.candidatesTable)
-      .select(`candidate_id, source_platform, source_key, source_name, source_raw, source_fields, source_image_url, proposed_id:${cfg.proposedCol}, candidate_ids:${cfg.candidateIdsCol}, confidence, reason`),
+      .select(`candidate_id, source_platform, source_key, source_name, source_raw, source_fields, source_image_url, proposed_id:${cfg.proposedCol}, candidate_ids:${cfg.candidateIdsCol}, confidence, reason${cfg.unified ? ", matched" : ""}`),
     bucket,
   )
     .order("confidence", { ascending: false, nullsFirst: false })
@@ -490,7 +493,9 @@ export default function MatchReviewView() {
                             {joinParts([fields.set_code, fields.card_number, fields.misc_info, fields.product_type, fields.language])}
                           </div>
                           <div className="truncate text-[10px] text-muted-foreground">
-                            {c.source_platform === "unmatched" ? (
+                            {cfg.unified ? (
+                              t("review.srcJp")
+                            ) : c.source_platform === "unmatched" ? (
                               t("review.srcUnmatched")
                             ) : c.source_platform === "tcgplayer" ? (
                               <a href={`https://www.tcgplayer.com/product/${c.source_key}`} target="_blank" rel="noreferrer" className="underline hover:text-primary">
@@ -504,7 +509,24 @@ export default function MatchReviewView() {
                       </div>
                     </td>
                     <td className="px-3 py-2">
-                      {proposed ? (
+                      {cfg.unified ? (
+                        c.matched && c.matched.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {c.matched.map((m) => {
+                              const url = anchorURL(m.platform, m.id);
+                              const label = `${PLATFORM_SHORT[m.platform] ?? m.platform} ${m.id}`;
+                              return url ? (
+                                <a key={m.platform + m.id} href={url} target="_blank" rel="noreferrer"
+                                  className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary">{label}</a>
+                              ) : (
+                                <span key={m.platform + m.id} className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground">{label}</span>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">{t("review.matchedNone")}</span>
+                        )
+                      ) : proposed ? (
                         <div className="min-w-0">
                           <div className="truncate font-medium">{proposed.name}</div>
                           <div className="truncate text-xs text-muted-foreground">
