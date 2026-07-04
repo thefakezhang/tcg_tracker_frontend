@@ -52,6 +52,7 @@ interface WishCriteria {
   label: string | null;
   rarities: string[] | null;
   set_after_code: string | null;
+  set_before_code: string | null;
   set_codes: string[] | null;
   languages: string[] | null;
   is_japan_exclusive: boolean | null;
@@ -619,7 +620,13 @@ function CustomerDetail({
                     <div className="truncate text-xs text-muted-foreground">
                       {[
                         c.rarities?.length ? c.rarities.join(", ") : null,
-                        c.set_after_code ? `after ${c.set_after_code}` : null,
+                        c.set_after_code && c.set_before_code
+                          ? `${c.set_after_code}..${c.set_before_code}`
+                          : c.set_after_code
+                            ? `after ${c.set_after_code}`
+                            : c.set_before_code
+                              ? `before ${c.set_before_code}`
+                              : null,
                         c.set_codes?.length ? `sets ${c.set_codes.join(",")}` : null,
                         c.languages?.length ? c.languages.join("/") : null,
                         c.is_japan_exclusive ? "JP-only" : null,
@@ -707,6 +714,7 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
   const [label, setLabel] = useState("");
   const [rarities, setRarities] = useState(""); // comma-separated
   const [setAfter, setSetAfter] = useState("");
+  const [setBefore, setSetBefore] = useState("");
   const [jpOnly, setJpOnly] = useState(false);
   const [promoOnly, setPromoOnly] = useState(false);
   const [priceMax, setPriceMax] = useState("");
@@ -727,6 +735,7 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
       label: label.trim() || null,
       rarities: raritiesArr.length ? raritiesArr : null,
       set_after_code: setAfter.trim() || null,
+      set_before_code: setBefore.trim() || null,
       languages: game === "pokemon" || game === "pokemon_sealed" ? ["jp"] : null,
       is_japan_exclusive: jpOnly ? true : null,
       is_promo: promoOnly ? true : null,
@@ -736,6 +745,7 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
     setLabel("");
     setRarities("");
     setSetAfter("");
+    setSetBefore("");
     setJpOnly(false);
     setPromoOnly(false);
     setPriceMax("");
@@ -789,10 +799,16 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
           onChange={(e) => setRarities(e.target.value)}
         />
         <Input
-          className="w-28"
+          className="w-24"
           placeholder={t("customers.criteriaSetAfter")}
           value={setAfter}
           onChange={(e) => setSetAfter(e.target.value)}
+        />
+        <Input
+          className="w-24"
+          placeholder={t("customers.criteriaSetBefore")}
+          value={setBefore}
+          onChange={(e) => setSetBefore(e.target.value)}
         />
         <label className="flex items-center gap-1 text-xs">
           <input

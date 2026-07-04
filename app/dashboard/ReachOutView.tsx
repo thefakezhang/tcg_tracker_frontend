@@ -28,6 +28,32 @@ interface ReachoutRow {
   misc_info: string | null;
   qty_on_hand: number;
   avg_cost_usd: number | null;
+  // Discriminator + optional criterion label so grouped rendering can label
+  // criterion-matched rows with the criterion they came from.
+  origin: "wishlist" | "criteria";
+  criteria_label?: string | null;
+}
+
+interface CriteriaReachoutRaw {
+  criteria_id: number;
+  customer_id: number;
+  customer_name: string;
+  handles: Record<string, string> | null;
+  next_followup_at: string | null;
+  label: string | null;
+  game: string;
+  card_id: number | null;
+  product_id: number | null;
+  priority: number;
+  price_max_usd: number | null;
+  item_name: string;
+  english_name: string | null;
+  set_code: string | null;
+  card_number: string | null;
+  misc_info: string | null;
+  rarity: string | null;
+  qty_on_hand: number;
+  avg_cost_usd: number | null;
 }
 
 interface CustomerGroup {
@@ -50,13 +76,36 @@ function itemMeta(r: ReachoutRow): string {
 
 async function fetchReachout(): Promise<ReachoutRow[]> {
   const supabase = createClient();
-  const { data, error } = await supabase
-    .from("customer_reachout_v")
-    .select("*")
-    .order("priority")
-    .limit(1000);
-  if (error) throw error;
-  return (data ?? []) as ReachoutRow[];
+  const [wishlistRes, criteriaRes] = await Promise.all([
+    supabase.from("customer_reachout_v").select("*").order("priority").limit(1000),
+    supabase.from("customer_reachout_criteria_v").select("*").order("priority").limit(1000),
+  ]);
+  if (wishlistRes.error) throw wishlistRes.error;
+  if (criteriaRes.error) throw criteriaRes.error;
+  const wishlistRows: ReachoutRow[] = ((wishlistRes.data ?? []) as Omit<ReachoutRow, "origin" | "criteria_label">[])
+    .map((r) => ({ ...r, origin: "wishlist" as const }));
+  const criteriaRows: ReachoutRow[] = ((criteriaRes.data ?? []) as CriteriaReachoutRaw[]).map((r) => ({
+    // Reuse a stable wishlist_id-like key so React can key rows uniquely;
+    // criterion rows use a synthetic negative id derived from (criteria_id, card_id).
+    wishlist_id: -(r.criteria_id * 1_000_000 + (r.card_id ?? r.product_id ?? 0)),
+    customer_id: r.customer_id,
+    customer_name: r.customer_name,
+    handles: r.handles,
+    next_followup_at: r.next_followup_at,
+    game: r.game,
+    priority: r.priority,
+    max_price_usd: r.price_max_usd,
+    wishlist_notes: null,
+    item_name: r.english_name || r.item_name,
+    set_code: r.set_code,
+    card_number: r.card_number,
+    misc_info: r.misc_info,
+    qty_on_hand: r.qty_on_hand,
+    avg_cost_usd: r.avg_cost_usd,
+    origin: "criteria" as const,
+    criteria_label: r.label,
+  }));
+  return [...wishlistRows, ...criteriaRows];
 }
 
 export default function ReachOutView() {
@@ -162,6 +211,11 @@ export default function ReachOutView() {
                       <span className="min-w-0 flex-1 truncate">
                         {r.item_name}
                         {itemMeta(r) && <span className="text-muted-foreground"> · {itemMeta(r)}</span>}
+                        {r.origin === "criteria" && r.criteria_label && (
+                          <Badge variant="secondary" className="ml-1.5 text-[10px]" title={t("reachout.viaCriterion")}>
+                            {r.criteria_label}
+                          </Badge>
+                        )}
                       </span>
                       <span className="flex shrink-0 items-center gap-2 text-xs tabular-nums text-muted-foreground">
                         <span title={t("reachout.youHold")}>×{r.qty_on_hand}</span>
