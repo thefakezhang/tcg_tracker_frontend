@@ -77,6 +77,7 @@ interface GameConfig {
   createArgs: (c: Candidate, form: Record<string, string>) => Record<string, unknown>;
 }
 
+const PAGE_SIZE = 500; // rows loaded per page in the review queue
 const ART_TYPES = ["NON_FULL_ART", "FULL_ART"];
 const IS_FOIL = ["false", "true"];
 const PRODUCT_TYPES = [
@@ -242,17 +243,23 @@ function anchorURL(platform: string, id: string): string | null {
 interface QueueData {
   candidates: Candidate[];
   items: Map<number, CatalogItem>;
+  total: number;
 }
 
-async function fetchQueue(cfg: GameConfig): Promise<QueueData> {
+async function fetchQueue(cfg: GameConfig, limit: number): Promise<QueueData> {
   const supabase = createClient();
+  // Total pending, so the header shows the real backlog size (not just the loaded page).
+  const { count: total } = await supabase
+    .from(cfg.candidatesTable)
+    .select("candidate_id", { count: "exact", head: true })
+    .eq("status", "pending");
   const { data: rows, error } = await supabase
     .from(cfg.candidatesTable)
     .select(`candidate_id, source_platform, source_key, source_name, source_raw, source_fields, source_image_url, proposed_id:${cfg.proposedCol}, candidate_ids:${cfg.candidateIdsCol}, confidence, reason`)
     .eq("status", "pending")
     .order("confidence", { ascending: false, nullsFirst: false })
     .order("candidate_id", { ascending: true })
-    .limit(200);
+    .limit(limit);
   if (error) throw error;
   const candidates = (rows ?? []) as Candidate[];
 
@@ -289,7 +296,7 @@ async function fetchQueue(cfg: GameConfig): Promise<QueueData> {
       });
     }
   }
-  return { candidates, items };
+  return { candidates, items, total: total ?? candidates.length };
 }
 
 function Anchors({ links }: { links: CatalogLink[] }) {
@@ -317,10 +324,12 @@ function Anchors({ links }: { links: CatalogLink[] }) {
 export default function MatchReviewView() {
   const { t } = useTranslation();
   const [game, setGame] = useState<Game>("pokemon_sealed");
+  const [limit, setLimit] = useState(PAGE_SIZE);
   const cfg = CONFIGS[game];
-  const { data, error, isLoading, retry } = useSupabaseQuery(["match-review", game], () => fetchQueue(cfg));
+  const { data, error, isLoading, retry } = useSupabaseQuery(["match-review", game, String(limit)], () => fetchQueue(cfg, limit));
   const candidates = data?.candidates ?? [];
   const items = data?.items ?? new Map<number, CatalogItem>();
+  const total = data?.total ?? 0;
   const [busyId, setBusyId] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [createFor, setCreateFor] = useState<Candidate | null>(null);
@@ -375,14 +384,14 @@ export default function MatchReviewView() {
         <h1 className="text-lg font-semibold">{t("review.title")}</h1>
         <div className="ml-2 flex gap-1">
           {(["pokemon_sealed", "pokemon", "mtg"] as const).map((g) => (
-            <Button key={g} size="sm" variant={game === g ? "default" : "outline"} onClick={() => { setGame(g); setSelected(new Set()); }}>
+            <Button key={g} size="sm" variant={game === g ? "default" : "outline"} onClick={() => { setGame(g); setSelected(new Set()); setLimit(PAGE_SIZE); }}>
               {t(`game.${g}` as "game.pokemon_sealed")}
             </Button>
           ))}
         </div>
         {!isLoading && (
           <span className="text-sm text-muted-foreground">
-            {t("review.count").replace("{n}", String(candidates.length))}
+            {t("review.countOf").replace("{shown}", String(candidates.length)).replace("{total}", String(total))}
             {platforms.length > 0 && ` · ${platforms.join(", ")}`}
           </span>
         )}
@@ -521,6 +530,14 @@ export default function MatchReviewView() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {!isLoading && candidates.length < total && (
+        <div className="flex justify-center">
+          <Button variant="outline" size="sm" onClick={() => setLimit((n) => n + PAGE_SIZE)}>
+            {t("review.loadMore").replace("{n}", String(Math.min(PAGE_SIZE, total - candidates.length)))}
+          </Button>
         </div>
       )}
 
