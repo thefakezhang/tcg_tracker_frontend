@@ -53,14 +53,18 @@ function tcgURL(platform: string, id: string): string | null {
   return null;
 }
 
-async function fetchIndex(search: string): Promise<IndexCard[]> {
+const CATALOG_PAGE = 500;
+
+async function fetchIndex(search: string, limit: number): Promise<{ cards: IndexCard[]; total: number }> {
   const supabase = createClient();
-  let q = supabase.from("mtg_card_definitions_v").select(COLS).order("regional_name").limit(500);
   const s = search.trim();
-  if (s) {
-    const safe = s.replace(/[%,]/g, " ");
-    q = q.or(`regional_name.ilike.%${safe}%,local_name.ilike.%${safe}%,set_code.ilike.%${safe}%,card_number.ilike.%${safe}%`);
-  }
+  const safe = s.replace(/[%,]/g, " ");
+  const orFilter = `regional_name.ilike.%${safe}%,local_name.ilike.%${safe}%,set_code.ilike.%${safe}%,card_number.ilike.%${safe}%`;
+  let cq = supabase.from("mtg_card_definitions_v").select("card_id", { count: "exact", head: true });
+  if (s) cq = cq.or(orFilter);
+  const { count: total } = await cq;
+  let q = supabase.from("mtg_card_definitions_v").select(COLS).order("regional_name").limit(limit);
+  if (s) q = q.or(orFilter);
   const { data, error } = await q;
   if (error) throw error;
   const rows = (data ?? []) as Omit<IndexCard, "links">[];
@@ -78,10 +82,13 @@ async function fetchIndex(search: string): Promise<IndexCard[]> {
       linkMap.set(l.card_id, arr);
     }
   }
-  return rows.map((r) => ({
-    ...r,
-    links: (linkMap.get(r.card_id) ?? []).sort((a, b) => a.platform_name.localeCompare(b.platform_name)),
-  }));
+  return {
+    cards: rows.map((r) => ({
+      ...r,
+      links: (linkMap.get(r.card_id) ?? []).sort((a, b) => a.platform_name.localeCompare(b.platform_name)),
+    })),
+    total: total ?? rows.length,
+  };
 }
 
 export default function MtgCardIndex() {
@@ -105,9 +112,11 @@ export default function MtgCardIndex() {
 function MtgCardsTab() {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
+  const [limit, setLimit] = useState(CATALOG_PAGE);
   const debounced = useDebouncedValue(search, 300);
-  const { data, error, isLoading, retry } = useSupabaseQuery(["card-index-mtg", debounced], () => fetchIndex(debounced));
-  const cards = data ?? [];
+  const { data, error, isLoading, retry } = useSupabaseQuery(["card-index-mtg", debounced, String(limit)], () => fetchIndex(debounced, limit));
+  const cards = data?.cards ?? [];
+  const total = data?.total ?? 0;
   const [editing, setEditing] = useState<IndexCard | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -116,7 +125,7 @@ function MtgCardsTab() {
       <div className="flex items-center justify-between gap-4">
         {!isLoading && (
           <span className="text-sm text-muted-foreground">
-            {t("cardIndex.count").replace("{n}", String(cards.length))}
+            {t("cardIndex.countOf").replace("{shown}", String(cards.length)).replace("{total}", String(total))}
           </span>
         )}
         <div className="flex items-center gap-2">
@@ -217,6 +226,14 @@ function MtgCardsTab() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {!isLoading && cards.length < total && (
+        <div className="flex justify-center">
+          <Button variant="outline" size="sm" onClick={() => setLimit((n) => n + CATALOG_PAGE)}>
+            {t("cardIndex.loadMore").replace("{n}", String(Math.min(CATALOG_PAGE, total - cards.length)))}
+          </Button>
         </div>
       )}
 

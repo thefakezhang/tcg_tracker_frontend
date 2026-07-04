@@ -44,19 +44,23 @@ interface IndexProduct {
 const PRODUCT_COLS =
   "product_id, product_uid, name, english_name, set_code, product_type, language, misc_info, variant_edition, sealed_condition, image_url";
 
-async function fetchIndex(search: string): Promise<IndexProduct[]> {
+const CATALOG_PAGE = 500;
+
+async function fetchIndex(search: string, limit: number): Promise<{ products: IndexProduct[]; total: number }> {
   const supabase = createClient();
+  const s = search.trim();
+  const safe = s.replace(/[%,]/g, " ");
+  const orFilter = `name.ilike.%${safe}%,english_name.ilike.%${safe}%,set_code.ilike.%${safe}%`;
+  let cq = supabase.from("pokemon_sealed_products").select("product_id", { count: "exact", head: true });
+  if (s) cq = cq.or(orFilter);
+  const { count: total } = await cq;
   let q = supabase
     .from("pokemon_sealed_products")
     .select(PRODUCT_COLS)
     .order("name", { ascending: true })
-    .limit(500);
-  const s = search.trim();
+    .limit(limit);
   if (s) {
-    const safe = s.replace(/[%,]/g, " ");
-    q = q.or(
-      `name.ilike.%${safe}%,english_name.ilike.%${safe}%,set_code.ilike.%${safe}%`,
-    );
+    q = q.or(orFilter);
   }
   const { data, error } = await q;
   if (error) throw error;
@@ -81,12 +85,15 @@ async function fetchIndex(search: string): Promise<IndexProduct[]> {
     }
   }
 
-  return rows.map((r) => ({
-    ...r,
-    links: (linkMap.get(r.product_id) ?? []).sort((a, b) =>
-      a.platform_name.localeCompare(b.platform_name),
-    ),
-  }));
+  return {
+    products: rows.map((r) => ({
+      ...r,
+      links: (linkMap.get(r.product_id) ?? []).sort((a, b) =>
+        a.platform_name.localeCompare(b.platform_name),
+      ),
+    })),
+    total: total ?? rows.length,
+  };
 }
 
 // platformLabel keeps the badges compact and stable in width.
@@ -136,13 +143,15 @@ export default function CardIndexView() {
 function SealedCardIndex() {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
+  const [limit, setLimit] = useState(CATALOG_PAGE);
   const debounced = useDebouncedValue(search, 300);
 
   const { data, error, isLoading, retry } = useSupabaseQuery(
-    ["card-index", debounced],
-    () => fetchIndex(debounced),
+    ["card-index", debounced, String(limit)],
+    () => fetchIndex(debounced, limit),
   );
-  const products = data ?? [];
+  const products = data?.products ?? [];
+  const total = data?.total ?? 0;
   const [editing, setEditing] = useState<IndexProduct | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -152,7 +161,7 @@ function SealedCardIndex() {
         <div className="flex items-center gap-2">
           {!isLoading && (
             <span className="text-sm text-muted-foreground">
-              {t("cardIndex.count").replace("{n}", String(products.length))}
+              {t("cardIndex.countOf").replace("{shown}", String(products.length)).replace("{total}", String(total))}
             </span>
           )}
         </div>
@@ -294,6 +303,14 @@ function SealedCardIndex() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {!isLoading && products.length < total && (
+        <div className="flex justify-center">
+          <Button variant="outline" size="sm" onClick={() => setLimit((n) => n + CATALOG_PAGE)}>
+            {t("cardIndex.loadMore").replace("{n}", String(Math.min(CATALOG_PAGE, total - products.length)))}
+          </Button>
         </div>
       )}
 
