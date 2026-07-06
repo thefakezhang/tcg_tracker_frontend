@@ -73,7 +73,7 @@ interface GameConfig {
   rpcAlias?: string; // resolve candidate as an alias of an existing item (pokemon only)
   rpcBulkConfirm: string; // confirm many (those with a proposed match) in one call
   rpcBulkReject: string; // reject many in one call
-  rpcBulkCreate?: string; // mint many at once from source_fields (generated bucket, pokemon singles only)
+  rpcBulkCreate?: string; // mint many at once from source_fields (generated bucket, all three games)
   confirmIdParam: string; // p_product_id | p_card_id
   createFields: Field[];
   createNameKey: string; // the required field
@@ -115,6 +115,7 @@ const CONFIGS: Record<Game, GameConfig> = {
     rpcReject: "card_index_resolve_candidate_reject",
     rpcBulkConfirm: "card_index_resolve_candidates_confirm",
     rpcBulkReject: "card_index_resolve_candidates_reject",
+    rpcBulkCreate: "card_index_bulk_create_sealed_from_candidates",
     confirmIdParam: "p_product_id",
     createNameKey: "name",
     createFields: [
@@ -208,6 +209,7 @@ const CONFIGS: Record<Game, GameConfig> = {
     rpcAlias: "card_index_resolve_mtg_candidate_alias",
     rpcBulkConfirm: "card_index_resolve_mtg_candidates_confirm",
     rpcBulkReject: "card_index_resolve_mtg_candidates_reject",
+    rpcBulkCreate: "card_index_bulk_create_mtg_from_candidates",
     confirmIdParam: "p_card_id",
     createNameKey: "name",
     createFields: [
