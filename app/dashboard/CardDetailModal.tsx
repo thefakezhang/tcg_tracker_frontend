@@ -52,6 +52,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
+  type CardDefinition,
   type CardRowData,
   type MarketListing,
   type LocationInfo,
@@ -78,10 +79,42 @@ interface DetailListing {
   locationName: string;
   marketRegion: string | null;
   conditionLabel: string;
+  conditionId: number | null;
   listingUrl: string | null;
   // pokemon_market_listings.last_updated; drives the freshness chip next
   // to the location. null when the row predates the column being populated.
   lastUpdated: string | null;
+}
+
+// TCGplayer's product page accepts query params to preselect a specific SKU
+// (language + printing + condition). Deep-linking here saves the manual
+// dropdown clicks after the user opens the listing, and disambiguates which
+// exact SKU the DB price came from (Y'shtola FIC 207 JP non-foil vs EN non-foil
+// share one product page).
+const TCGPLAYER_CONDITION_NAMES: Record<number, string> = {
+  1: "Near Mint",
+  2: "Lightly Played",
+  3: "Moderately Played",
+  4: "Heavily Played",
+  5: "Damaged",
+};
+function enhanceTCGplayerURL(
+  url: string | null,
+  card: CardDefinition,
+  conditionId: number | null,
+): string | null {
+  if (!url || !url.includes("tcgplayer.com/product/")) return url;
+  const params = new URLSearchParams();
+  if (card.language === "en") params.set("Language", "English");
+  else if (card.language === "jp") params.set("Language", "Japanese");
+  if (card.is_foil === true) params.set("Printing", "Foil");
+  else if (card.is_foil === false) params.set("Printing", "Normal");
+  if (conditionId != null && TCGPLAYER_CONDITION_NAMES[conditionId]) {
+    params.set("Condition", TCGPLAYER_CONDITION_NAMES[conditionId]);
+  }
+  const q = params.toString();
+  if (!q) return url;
+  return url + (url.includes("?") ? "&" : "?") + q;
 }
 
 interface CardDetailModalProps {
@@ -253,7 +286,10 @@ export default function CardDetailModal({
         locationName: loc?.name ?? "",
         marketRegion: loc?.marketRegion ?? null,
         conditionLabel,
-        listingUrl: l.listing_url,
+        conditionId: l.condition,
+        listingUrl: card
+          ? enhanceTCGplayerURL(l.listing_url, card.card, l.condition)
+          : l.listing_url,
         lastUpdated: l.last_updated,
       };
     };
