@@ -73,6 +73,7 @@ interface GameConfig {
   rpcAlias?: string; // resolve candidate as an alias of an existing item (pokemon only)
   rpcBulkConfirm: string; // confirm many (those with a proposed match) in one call
   rpcBulkReject: string; // reject many in one call
+  rpcBulkCreate?: string; // mint many at once from source_fields (generated bucket, pokemon singles only)
   confirmIdParam: string; // p_product_id | p_card_id
   createFields: Field[];
   createNameKey: string; // the required field
@@ -161,6 +162,7 @@ const CONFIGS: Record<Game, GameConfig> = {
     rpcAlias: "card_index_resolve_pokemon_candidate_alias",
     rpcBulkConfirm: "card_index_resolve_pokemon_candidates_confirm",
     rpcBulkReject: "card_index_resolve_pokemon_candidates_reject",
+    rpcBulkCreate: "card_index_bulk_create_pokemon_from_candidates",
     confirmIdParam: "p_card_id",
     createNameKey: "regional_name",
     createFields: [
@@ -366,6 +368,20 @@ export default function MatchReviewView() {
     () => candidates.filter((c) => selected.has(c.candidate_id) && c.proposed_id).length,
     [candidates, selected],
   );
+  // Bulk-create is meaningful only for selected candidates that have no proposed
+  // match AND aren't in the "unmatched" marker lane (rejects live there). The
+  // RPC skips ineligible rows server-side too, but grey the button out client-side
+  // when there's nothing to do.
+  const createCount = useMemo(
+    () =>
+      candidates.filter(
+        (c) =>
+          selected.has(c.candidate_id) &&
+          !c.proposed_id &&
+          c.source_platform !== "unmatched",
+      ).length,
+    [candidates, selected],
+  );
   function toggle(id: number) {
     setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }
@@ -435,6 +451,16 @@ export default function MatchReviewView() {
           <Button size="sm" variant="outline" disabled={busyId === -1 || proposedCount === 0} onClick={() => bulk(cfg.rpcBulkConfirm)}>
             <Check className="size-3.5 text-green-600" /> {t("review.bulkConfirm").replace("{n}", String(proposedCount))}
           </Button>
+          {cfg.rpcBulkCreate && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busyId === -1 || createCount === 0}
+              onClick={() => bulk(cfg.rpcBulkCreate!)}
+            >
+              <Plus className="size-3.5 text-blue-600" /> {t("review.bulkCreate").replace("{n}", String(createCount))}
+            </Button>
+          )}
           <Button size="sm" variant="outline" disabled={busyId === -1} onClick={() => bulk(cfg.rpcBulkReject)}>
             <X className="size-3.5 text-destructive" /> {t("review.bulkReject").replace("{n}", String(selected.size))}
           </Button>

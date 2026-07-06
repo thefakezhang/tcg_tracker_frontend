@@ -397,6 +397,7 @@ const en = {
   "review.alias": "Alias to existing card",
   "review.selected": "{n} selected",
   "review.bulkConfirm": "Confirm {n} matched",
+  "review.bulkCreate": "Create {n} new",
   "review.bulkReject": "Reject {n}",
   "review.clearSel": "Clear",
   "review.aliasTitle": "Alias this source text to an existing card",

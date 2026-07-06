@@ -399,6 +399,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "review.alias": "既存カードのエイリアスに",
   "review.selected": "{n}件選択中",
   "review.bulkConfirm": "{n}件を確定",
+  "review.bulkCreate": "{n}件を新規作成",
   "review.bulkReject": "{n}件を却下",
   "review.clearSel": "選択解除",
   "review.aliasTitle": "このソーステキストを既存カードのエイリアスにする",
