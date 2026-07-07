@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ClipboardCheck, Check, X, Plus, Search, Link2, ImageOff, AlertTriangle } from "lucide-react";
+import { ClipboardCheck, Check, X, Plus, Search, Link2, AlertTriangle, GitMerge, Move } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -279,6 +279,148 @@ function formatSourceOrigin(source: string | undefined | null, side: string | un
   const label = SOURCE_LABEL[source] ?? source;
   if (side) return `${label} (${side})`;
   return label;
+}
+
+// CollisionPanel renders a two-part breakdown for a candidate whose match
+// resolver detected an ID collision. Top section is what the incoming
+// candidate claims to be; each collision entry below shows a platform id
+// that already belongs to a different product, with actions for the sealed
+// game only:
+//   - Merge product #Y into #X: the ghost product Y (owner of the colliding
+//     id) gets folded into the correct product X the candidate's identity
+//     resolved to. Moves external ids, market listings, buylist rows,
+//     inventory, price summaries, and deletes Y. Confirms the candidate
+//     against X. This is the "fix the duplicate" path.
+//   - Move id only: keep Y as its own product (it may model a different
+//     shrink-state or misc variant), but move just the platform id from Y
+//     to X. Confirms the candidate against X.
+// Both actions require the candidate's identity to have resolved to an
+// existing product (`proposed_id`); otherwise there's no target to
+// merge INTO, and we surface the info without action buttons.
+//
+// Singles/mtg games pass no callbacks and the panel is read-only for those.
+interface CollisionPanelProps {
+  collisions: CollisionEntry[];
+  incomingIdentity: string[];
+  incomingName: string;
+  incomingSourceExternal: { platform: string; id: string } | null;
+  proposedId: number | null;
+  busy: boolean;
+  onMerge?: (fromId: number, intoId: number) => Promise<void>;
+  onAttach?: (platform: string, id: string, intoId: number) => Promise<void>;
+}
+function CollisionPanel({
+  collisions, incomingIdentity, incomingName, incomingSourceExternal, proposedId, busy, onMerge, onAttach,
+}: CollisionPanelProps) {
+  const { t } = useTranslation();
+  return (
+    <div className="mt-1 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-[10px] space-y-2">
+      <div className="flex items-center gap-1 font-semibold text-destructive">
+        <AlertTriangle className="size-3 shrink-0" />
+        {t("review.idCollision")}
+      </div>
+
+      {/* Incoming candidate: what does the row claim to be? */}
+      <div className="rounded border border-border/60 bg-background/60 p-1.5">
+        <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+          {t("review.collisionIncoming")}
+        </div>
+        <div className="mt-0.5 font-medium">{incomingName}</div>
+        <div className="text-muted-foreground">{incomingIdentity.join(" · ") || "—"}</div>
+        {incomingSourceExternal && (
+          <div className="text-muted-foreground">
+            {(PLATFORM_SHORT[incomingSourceExternal.platform] ?? incomingSourceExternal.platform)}
+            {" #"}
+            {(() => {
+              const url = anchorURL(incomingSourceExternal.platform, incomingSourceExternal.id);
+              return url ? (
+                <a href={url} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-primary">{incomingSourceExternal.id}</a>
+              ) : incomingSourceExternal.id;
+            })()}
+          </div>
+        )}
+        {proposedId != null && (
+          <div className="mt-0.5 text-muted-foreground">
+            {t("review.collisionResolvesTo").replace("{id}", String(proposedId))}
+          </div>
+        )}
+      </div>
+
+      {/* One box per colliding platform id, with resolution actions. */}
+      {collisions.map((coll, i) => {
+        const platformLabel = PLATFORM_SHORT[coll.platform] ?? coll.platform;
+        const url = coll.id_url ?? anchorURL(coll.platform, coll.id);
+        const identityLine = [
+          coll.existing_set_code,
+          coll.existing_card_number,
+        ].filter(Boolean).join(" · ");
+        const canAct = proposedId != null && coll.existing_card_id != null && proposedId !== coll.existing_card_id;
+        return (
+          <div key={`${coll.platform}:${coll.id}:${i}`} className="rounded border border-border/60 bg-background/60 p-1.5">
+            <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+              {t("review.collisionExisting")}
+            </div>
+            <div className="mt-0.5">
+              {url ? (
+                <a href={url} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2 hover:text-primary">
+                  {platformLabel} #{coll.id}
+                </a>
+              ) : (
+                <span className="font-medium">{platformLabel} #{coll.id}</span>
+              )}
+              <span className="text-muted-foreground"> {t("review.collisionOwnedBy")} </span>
+              <span className="font-medium">
+                #{coll.existing_card_id ?? "?"}
+                {coll.existing_name ? ` 「${coll.existing_name}」` : ""}
+              </span>
+            </div>
+            {identityLine && (
+              <div className="text-muted-foreground">{identityLine}</div>
+            )}
+            {canAct && (onMerge || onAttach) && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {onMerge && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onMerge(coll.existing_card_id!, proposedId!)}
+                    className="inline-flex items-center gap-1 rounded border bg-background px-1.5 py-0.5 text-[10px] hover:border-primary hover:text-primary disabled:opacity-50"
+                    title={t("review.collisionMergeHint")
+                      .replace("{from}", String(coll.existing_card_id))
+                      .replace("{into}", String(proposedId))}
+                  >
+                    <GitMerge className="size-3" />
+                    {t("review.collisionMerge")
+                      .replace("{from}", String(coll.existing_card_id))
+                      .replace("{into}", String(proposedId))}
+                  </button>
+                )}
+                {onAttach && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onAttach(coll.platform, coll.id, proposedId!)}
+                    className="inline-flex items-center gap-1 rounded border bg-background px-1.5 py-0.5 text-[10px] hover:border-primary hover:text-primary disabled:opacity-50"
+                    title={t("review.collisionMoveHint")
+                      .replace("{platform}", platformLabel)
+                      .replace("{id}", coll.id)
+                      .replace("{into}", String(proposedId))}
+                  >
+                    <Move className="size-3" />
+                    {t("review.collisionMove")}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <div className="text-[9px] text-muted-foreground">
+        {t("review.collisionHint")}
+      </div>
+    </div>
+  );
 }
 
 // CollisionEntry mirrors the structured record the backend writes into
@@ -620,6 +762,25 @@ export default function MatchReviewView() {
                 // string when the row predates the structured field. Older rows still
                 // render usefully - just without the platform URL.
                 const collisions = parseCollisions(fields);
+                // Fuller identity subtitle: include EVERY sealed axis the backend
+                // stores on source_fields, in the order a curator scans them. Empty
+                // slots stay empty (filter). Same shape works for singles/mtg
+                // because the sealed-only fields resolve to "" there.
+                const identityBits = [
+                  fields.set_code,
+                  fields.card_number,
+                  fields.product_type,
+                  fields.misc_info,
+                  fields.sealed_kind,
+                  fields.sealed_condition && fields.sealed_condition !== "standard"
+                    ? `${fields.sealed_condition}`
+                    : "",
+                  fields.language,
+                ].filter(Boolean);
+                // In practice ~zero candidates carry a source image in the current
+                // pipeline; the empty placeholder is pure visual noise. Only render
+                // the slot when we actually have an image URL.
+                const showImageSlot = Boolean(c.source_image_url);
                 return (
                   <tr key={c.candidate_id} className="border-b align-top last:border-0">
                     <td className="px-2 py-2">
@@ -627,65 +788,68 @@ export default function MatchReviewView() {
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-start gap-2">
-                        {c.source_image_url ? (
+                        {showImageSlot && (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={c.source_image_url} alt="" className="h-10 w-7 shrink-0 rounded border object-cover" />
-                        ) : (
-                          <div className="flex h-10 w-7 shrink-0 items-center justify-center rounded border bg-muted">
-                            <ImageOff className="size-3 text-muted-foreground" />
-                          </div>
+                          <img src={c.source_image_url!} alt="" className="h-10 w-7 shrink-0 rounded border object-cover" />
                         )}
                         <div className="min-w-0">
                           <div className="font-medium">{c.source_name}</div>
                           <div className="truncate text-xs text-muted-foreground">
-                            {joinParts([fields.set_code, fields.card_number, fields.misc_info, fields.product_type, fields.language])}
+                            {identityBits.join(" · ")}
                           </div>
                           {collisions.length > 0 && (
-                            <div className="mt-1 rounded-md border border-destructive/40 bg-destructive/10 p-1.5 text-[10px]">
-                              <div className="flex items-center gap-1 font-semibold text-destructive">
-                                <AlertTriangle className="size-3 shrink-0" />
-                                {t("review.idCollision")}
-                              </div>
-                              <div className="mt-1 space-y-1 text-muted-foreground">
-                                {collisions.map((coll, i) => {
-                                  const platformLabel = PLATFORM_SHORT[coll.platform] ?? coll.platform;
-                                  const idText = `${platformLabel} #${coll.id}`;
-                                  const url = coll.id_url ?? anchorURL(coll.platform, coll.id);
-                                  const identityTail = [coll.existing_set_code, coll.existing_card_number]
-                                    .filter(Boolean)
-                                    .join(" · ");
-                                  return (
-                                    <div key={`${coll.platform}:${coll.id}:${i}`} className="text-foreground/90">
-                                      {url ? (
-                                        <a
-                                          href={url}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="font-medium underline underline-offset-2 hover:text-primary"
-                                        >
-                                          {idText}
-                                        </a>
-                                      ) : (
-                                        <span className="font-medium">{idText}</span>
-                                      )}
-                                      <span className="text-muted-foreground">
-                                        {" "}{t("review.collisionOwnedBy")}{" "}
-                                      </span>
-                                      <span className="font-medium">
-                                        #{coll.existing_card_id ?? "?"}
-                                        {coll.existing_name ? ` 「${coll.existing_name}」` : ""}
-                                      </span>
-                                      {identityTail && (
-                                        <span className="text-muted-foreground"> ({identityTail})</span>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                              <div className="mt-1 text-[9px] text-muted-foreground">
-                                {t("review.collisionHint")}
-                              </div>
-                            </div>
+                            <CollisionPanel
+                              collisions={collisions}
+                              incomingIdentity={identityBits}
+                              incomingName={c.source_name}
+                              incomingSourceExternal={
+                                c.source_platform !== "identity" && c.source_platform !== "unmatched"
+                                  ? { platform: c.source_platform, id: c.source_key }
+                                  : null
+                              }
+                              proposedId={c.proposed_id}
+                              busy={busyId === c.candidate_id}
+                              onMerge={cfg.game === "pokemon_sealed" ? async (fromId: number, intoId: number) => {
+                                setBusyId(c.candidate_id);
+                                try {
+                                  const supabase = createClient();
+                                  const { error: mergeErr } = await supabase.rpc("card_index_merge_sealed_products", {
+                                    p_from_id: fromId,
+                                    p_into_id: intoId,
+                                  });
+                                  if (mergeErr) throw mergeErr;
+                                  const { error: confErr } = await supabase.rpc(cfg.rpcConfirm, {
+                                    p_candidate_id: c.candidate_id,
+                                    [cfg.confirmIdParam]: intoId,
+                                  });
+                                  if (confErr) throw confErr;
+                                  retry();
+                                } finally {
+                                  setBusyId(null);
+                                }
+                              } : undefined}
+                              onAttach={cfg.game === "pokemon_sealed" ? async (platform: string, id: string, intoId: number) => {
+                                setBusyId(c.candidate_id);
+                                try {
+                                  const supabase = createClient();
+                                  const { error: attachErr } = await supabase.rpc("card_index_attach_sealed_link", {
+                                    p_product_id: intoId,
+                                    p_platform: platform,
+                                    p_external_id: id,
+                                    p_source_url: null,
+                                  });
+                                  if (attachErr) throw attachErr;
+                                  const { error: confErr } = await supabase.rpc(cfg.rpcConfirm, {
+                                    p_candidate_id: c.candidate_id,
+                                    [cfg.confirmIdParam]: intoId,
+                                  });
+                                  if (confErr) throw confErr;
+                                  retry();
+                                } finally {
+                                  setBusyId(null);
+                                }
+                              } : undefined}
+                            />
                           )}
                           <div className="truncate text-[10px] text-muted-foreground">
                             {cfg.unified ? (
