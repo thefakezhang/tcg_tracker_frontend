@@ -221,10 +221,25 @@ export default function SealedDetailModal({
       };
     };
 
+    // sealed_condition_enum has three values: 'shrink', 'no_shrink', 'standard'.
+    // Historically the sealed catalog uses 'standard' for the shrink-wrapped
+    // product identity (a legacy schema choice), while retailers writing per-
+    // listing sealed_condition write 'shrink' explicitly (see backend PR #404
+    // for the cardrush-side policy: BUY = shrink always, SELL = 'shrink' /
+    // 'no_shrink' from 未開封 / 開封, silence defaults to shrink). Semantically
+    // 'standard' and 'shrink' mean the same thing - "still in the wrap" - so
+    // treat them as equivalent when filtering listings, otherwise a product
+    // whose identity axis is 'standard' filters out every listing writing
+    // 'shrink' and vice versa. Only 'no_shrink' is a distinct axis.
+    const isShrinkFamily = (v: string) => v === "shrink" || v === "standard";
     const matches = rawListings.filter(
-      (l) =>
-        (condition === "all" || l.sealedCondition === condition) &&
-        (edition === "all" || l.variantEdition === edition)
+      (l) => {
+        const condMatches =
+          condition === "all" ||
+          l.sealedCondition === condition ||
+          (isShrinkFamily(condition) && isShrinkFamily(l.sealedCondition));
+        return condMatches && (edition === "all" || l.variantEdition === edition);
+      }
     );
 
     const sortBuy = (a: SealedListing, b: SealedListing) =>
