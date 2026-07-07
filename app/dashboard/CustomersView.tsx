@@ -708,29 +708,57 @@ function CustomerDetail({
   );
 }
 
+// Pokemon rarity taxonomy (from TCGplayer's extendedData; matches CardBrowser).
+// Used as the option list for the rarities multi-select.
+const POKEMON_RARITY_OPTIONS = [
+  "Common", "Uncommon", "Rare", "Holo Rare", "Double Rare", "Super Rare",
+  "Ultra Rare", "Shiny Rare", "Shiny Secret Rare",
+  "Art Rare", "Special Art Rare", "Hyper Rare", "Triple Rare",
+  "Character Rare", "Character Super Rare", "Trainer Rare", "Prism Rare",
+  "ACE Rare", "Amazing Rare", "Radiant Rare",
+];
+
+interface SetOption { set_code: string; name: string; release_date: string | null; }
+
 function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () => void }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [game, setGame] = useState<string>("pokemon");
   const [label, setLabel] = useState("");
-  const [rarities, setRarities] = useState(""); // comma-separated
+  const [rarities, setRarities] = useState<string[]>([]);
   const [setAfter, setSetAfter] = useState("");
   const [setBefore, setSetBefore] = useState("");
   const [jpOnly, setJpOnly] = useState(false);
   const [promoOnly, setPromoOnly] = useState(false);
+  const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
   const [priority, setPriority] = useState("3");
   const [busy, setBusy] = useState(false);
+  const [sets, setSets] = useState<SetOption[]>([]);
 
-  // Reset the form whenever the dialog re-opens.
+  // Load pokemon sets (JP) newest first so the set-range dropdowns can render
+  // real options instead of free-text - user's #1 complaint was typing "M5"
+  // and not knowing if it resolved. Only for pokemon; MTG uses free text (54k
+  // sets are too many for a dropdown, and users know the codes).
+  useEffect(() => {
+    if (!open || game !== "pokemon") return;
+    const supabase = createClient();
+    supabase.from("pokemon_sets")
+      .select("set_code, name, release_date")
+      .eq("language", "jp")
+      .order("release_date", { ascending: false })
+      .then(({ data }) => setSets((data ?? []) as SetOption[]));
+  }, [open, game]);
+
   useEffect(() => {
     if (!open) {
       setLabel("");
-      setRarities("");
+      setRarities([]);
       setSetAfter("");
       setSetBefore("");
       setJpOnly(false);
       setPromoOnly(false);
+      setPriceMin("");
       setPriceMax("");
     }
   }, [open]);
@@ -739,26 +767,27 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
     if (busy) return;
     setBusy(true);
     const supabase = createClient();
-    const raritiesArr = rarities
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
     await supabase.from("customer_wish_criteria").insert({
       customer_id: customerId,
       game,
       label: label.trim() || null,
-      rarities: raritiesArr.length ? raritiesArr : null,
+      rarities: rarities.length ? rarities : null,
       set_after_code: setAfter.trim() || null,
       set_before_code: setBefore.trim() || null,
       languages: game === "pokemon" || game === "pokemon_sealed" ? ["jp"] : null,
       is_japan_exclusive: jpOnly ? true : null,
       is_promo: promoOnly ? true : null,
+      price_min_usd: priceMin ? Number(priceMin) : null,
       price_max_usd: priceMax ? Number(priceMax) : null,
       priority: Number(priority) || 3,
     });
     setBusy(false);
     onAdded();
     setOpen(false);
+  }
+
+  function toggleRarity(r: string) {
+    setRarities((prev) => prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]);
   }
 
   return (
@@ -771,70 +800,150 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
           <DialogHeader>
             <DialogTitle>{t("customers.criteriaAdd")}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <select
-                className={`${selectClass} w-32`}
-                value={game}
-                onChange={(e) => setGame(e.target.value)}
-              >
-                {GAMES.map((g) => (
-                  <option key={g} value={g}>
-                    {t(`game.${g}` as never)}
-                  </option>
-                ))}
-              </select>
+          <div className="space-y-3">
+            {/* Name (label) on its own row so users can find it. Previous
+                layout hid it as a placeholder in a row of controls. */}
+            <div>
+              <Label className="text-xs mb-1 block">{t("customers.criteriaLabel")}</Label>
               <Input
-                className="flex-1"
-                placeholder={t("customers.criteriaLabel")}
+                placeholder={t("customers.criteriaLabelPlaceholder") as string}
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
               />
-              <Input
-                className="w-20"
-                placeholder="≤$"
-                value={priceMax}
-                onChange={(e) => setPriceMax(e.target.value)}
-              />
-              <select
-                className={`${selectClass} w-14`}
-                value={priority}
-                onChange={(e) => setPriority(e.target.value)}
-              >
-                {[1, 2, 3, 4, 5].map((p) => (
-                  <option key={p} value={p}>
-                    P{p}
-                  </option>
-                ))}
-              </select>
             </div>
-            <Input
-              placeholder={t("customers.criteriaRarities")}
-              value={rarities}
-              onChange={(e) => setRarities(e.target.value)}
-            />
-            <div className="flex items-center gap-2">
-              <Input
-                className="flex-1"
-                placeholder={t("customers.criteriaSetAfter")}
-                value={setAfter}
-                onChange={(e) => setSetAfter(e.target.value)}
-              />
-              <Input
-                className="flex-1"
-                placeholder={t("customers.criteriaSetBefore")}
-                value={setBefore}
-                onChange={(e) => setSetBefore(e.target.value)}
-              />
-              <label className="flex items-center gap-1 text-xs">
+
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Label className="text-xs mb-1 block">{t("common.game")}</Label>
+                <select
+                  className={`${selectClass}`}
+                  value={game}
+                  onChange={(e) => setGame(e.target.value)}
+                >
+                  {GAMES.map((g) => (
+                    <option key={g} value={g}>{t(`game.${g}` as never)}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="w-24">
+                <Label className="text-xs mb-1 block">{t("customers.criteriaPriority")}</Label>
+                <select
+                  className={`${selectClass}`}
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value)}
+                >
+                  {[1, 2, 3, 4, 5].map((p) => (
+                    <option key={p} value={p}>P{p}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Price range - both min and max, so "above $25 below $200" works. */}
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Label className="text-xs mb-1 block">{t("customers.criteriaPriceMin")}</Label>
+                <Input
+                  placeholder="≥$"
+                  value={priceMin}
+                  onChange={(e) => setPriceMin(e.target.value)}
+                />
+              </div>
+              <div className="flex-1">
+                <Label className="text-xs mb-1 block">{t("customers.criteriaPriceMax")}</Label>
+                <Input
+                  placeholder="≤$"
+                  value={priceMax}
+                  onChange={(e) => setPriceMax(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* Rarities as a chip multi-select. Pokemon-only; MTG rarities
+                aren't populated on the catalog side yet. */}
+            {game === "pokemon" && (
+              <div>
+                <Label className="text-xs mb-1 block">{t("customers.criteriaRarities")}</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {POKEMON_RARITY_OPTIONS.map((r) => {
+                    const on = rarities.includes(r);
+                    return (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => toggleRarity(r)}
+                        className={`rounded-full border px-2 py-0.5 text-xs transition ${on ? "bg-primary text-primary-foreground border-primary" : "hover:bg-accent"}`}
+                      >
+                        {r}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Set-range dropdowns. For pokemon we load from pokemon_sets so
+                users pick from a real list; for other games it stays free-text
+                because the catalogs are too large / not populated for a dropdown. */}
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Label className="text-xs mb-1 block">{t("customers.criteriaSetAfter")}</Label>
+                {game === "pokemon" ? (
+                  <select
+                    className={selectClass}
+                    value={setAfter}
+                    onChange={(e) => setSetAfter(e.target.value)}
+                  >
+                    <option value="">-</option>
+                    {sets.map((s) => (
+                      <option key={s.set_code} value={s.set_code}>
+                        {s.set_code} {s.name ? `- ${s.name}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    placeholder={t("customers.criteriaSetAfter") as string}
+                    value={setAfter}
+                    onChange={(e) => setSetAfter(e.target.value)}
+                  />
+                )}
+              </div>
+              <div className="flex-1">
+                <Label className="text-xs mb-1 block">{t("customers.criteriaSetBefore")}</Label>
+                {game === "pokemon" ? (
+                  <select
+                    className={selectClass}
+                    value={setBefore}
+                    onChange={(e) => setSetBefore(e.target.value)}
+                  >
+                    <option value="">-</option>
+                    {sets.map((s) => (
+                      <option key={s.set_code} value={s.set_code}>
+                        {s.set_code} {s.name ? `- ${s.name}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    placeholder={t("customers.criteriaSetBefore") as string}
+                    value={setBefore}
+                    onChange={(e) => setSetBefore(e.target.value)}
+                  />
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-1.5 text-sm">
                 <input
                   type="checkbox"
                   checked={jpOnly}
                   onChange={(e) => setJpOnly(e.target.checked)}
                 />
-                JP
+                JP exclusive
               </label>
-              <label className="flex items-center gap-1 text-xs">
+              <label className="flex items-center gap-1.5 text-sm">
                 <input
                   type="checkbox"
                   checked={promoOnly}
