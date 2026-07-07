@@ -411,6 +411,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "review.srcFrom": "{src} から",
   "review.srcJp": "JPスクレイプ由来",
   "review.matchedNone": "JPのみ（外部IDなし）",
+  "review.idCollision": "ID衝突",
   "review.tierAuto": "自動",
   "review.tierReview": "要確認",
   "review.noResults": "一致する商品がありません。",

@@ -409,6 +409,7 @@ const en = {
   "review.srcFrom": "from {src}",
   "review.srcJp": "from JP scrape",
   "review.matchedNone": "JP-only (no external id)",
+  "review.idCollision": "ID collision",
   "review.tierAuto": "Auto",
   "review.tierReview": "Review",
   "review.noResults": "No matching products.",

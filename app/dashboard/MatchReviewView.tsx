@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ClipboardCheck, Check, X, Plus, Search, Link2, ImageOff } from "lucide-react";
+import { ClipboardCheck, Check, X, Plus, Search, Link2, ImageOff, AlertTriangle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -502,6 +502,15 @@ export default function MatchReviewView() {
                 const picks = (c.candidate_ids ?? []).map((id) => items.get(id)).filter(Boolean) as CatalogItem[];
                 const busy = busyId === c.candidate_id;
                 const fields = c.source_fields ?? {};
+                // Retailer provenance: the unified upsert accumulates every source that
+                // surfaced this card into a `sources` array; fall back to the scalar
+                // `source` for single-source rows. `collision` is set when a matched id
+                // already belongs to a different card (flagged for the curator).
+                const rawSources = (fields as Record<string, unknown>).sources;
+                const sources: string[] = Array.isArray(rawSources)
+                  ? (rawSources as string[])
+                  : fields.source ? [fields.source] : [];
+                const collision = fields.collision;
                 return (
                   <tr key={c.candidate_id} className="border-b align-top last:border-0">
                     <td className="px-2 py-2">
@@ -522,9 +531,19 @@ export default function MatchReviewView() {
                           <div className="truncate text-xs text-muted-foreground">
                             {joinParts([fields.set_code, fields.card_number, fields.misc_info, fields.product_type, fields.language])}
                           </div>
+                          {collision && (
+                            <div
+                              className="mt-0.5 inline-flex items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
+                              title={collision}
+                            >
+                              <AlertTriangle className="size-3 shrink-0" /> {t("review.idCollision")}
+                            </div>
+                          )}
                           <div className="truncate text-[10px] text-muted-foreground">
                             {cfg.unified ? (
-                              t("review.srcJp")
+                              sources.length > 0
+                                ? t("review.srcFrom").replace("{src}", sources.join(" · "))
+                                : t("review.srcJp")
                             ) : c.source_platform === "unmatched" ? (
                               t("review.srcUnmatched")
                             ) : c.source_platform === "tcgplayer" ? (
