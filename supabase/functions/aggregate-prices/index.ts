@@ -15,6 +15,7 @@ serve(async () => {
       for (const game of GAMES) {
         const listingsTable = `${game}_market_listings`;
         const summariesTable = `${game}_price_summaries`;
+        const bySourceTable = `${game}_summary_by_source`;
 
         // Get all distinct tiers
         const tierResult = await conn.queryObject<{ tier: number }>(
@@ -22,12 +23,16 @@ serve(async () => {
         );
         const tiers = tierResult.rows.map((r) => r.tier);
 
-        // Truncate the summaries table before repopulating
+        // Truncate the summaries + by_source tables before repopulating. Both
+        // are derived data - a full rebuild is cheaper than a diff on a table
+        // this size and guarantees that a source removed from market_listings
+        // stops appearing in the summaries after this run.
         await conn.queryObject(`TRUNCATE ${summariesTable}`);
+        await conn.queryObject(`TRUNCATE ${bySourceTable}`);
 
         let totalRows = 0;
 
-        // For each tier, compute non-PSA summaries
+        // For each tier, compute non-PSA summaries + per-source snapshot
         for (const tier of tiers) {
           const count = await computeAndInsert(
             conn,
@@ -38,6 +43,9 @@ serve(async () => {
             tier
           );
           totalRows += count;
+          await insertBySourceCards(
+            conn, listingsTable, bySourceTable, "non-psa", [tier], tier,
+          );
         }
 
         // Compute PSA summaries (no tier filter, tier = -1)
@@ -50,6 +58,9 @@ serve(async () => {
           -1
         );
         totalRows += psaCount;
+        await insertBySourceCards(
+          conn, listingsTable, bySourceTable, "psa", null, -1,
+        );
 
         results[game] = totalRows;
       }
@@ -57,10 +68,16 @@ serve(async () => {
       // Sealed Pokémon products: one summary row per
       // (product_id, sealed_condition, variant_edition). Distinct from cards
       // (no PSA grade, no condition tier), so it uses its own compute path.
+      await conn.queryObject(`TRUNCATE pokemon_sealed_summary_by_source`);
       results["pokemon_sealed"] = await computeAndInsertSealed(
         conn,
         "pokemon_sealed_market_listings",
         "pokemon_sealed_price_summaries"
+      );
+      await insertBySourceSealed(
+        conn,
+        "pokemon_sealed_market_listings",
+        "pokemon_sealed_summary_by_source",
       );
 
       return new Response(
@@ -423,6 +440,167 @@ async function computeAndInsertSealed(
       updated_at = EXCLUDED.updated_at;
   `;
 
+  const result = await conn.queryObject(query);
+  return result.rowCount ?? 0;
+}
+
+// insertBySourceCards fills the per-source snapshot for a game (mtg / pokemon)
+// at one (tier, psaMode) slice. One row per (card_id, tier, psa_grade, side,
+// source), holding that source's best price for the group. Used by the source-
+// toggle filter in the Card Browser (docs/frontend.md).
+//
+// "Best" per source:
+//   - Buy  side: highest normalized_price (highest buylist bid)
+//   - Sell side: lowest normalized_price (lowest live ask)
+//
+// The trick is DISTINCT ON + a signed sort key that flips direction per side:
+// `CASE side WHEN 'buy' THEN -normalized_price ELSE normalized_price END ASC`
+// so a single DISTINCT ON picks max for buy and min for sell without two passes.
+//
+// Dynamic: `source` is the location.name string, populated from whatever
+// locations appear in market_listings for this slice. Adding / removing a
+// source is a data change, not a migration.
+async function insertBySourceCards(
+  // deno-lint-ignore no-explicit-any
+  conn: any,
+  listingsTable: string,
+  bySourceTable: string,
+  psaMode: "non-psa" | "psa",
+  tiers: number[] | null,
+  outputTier: number,
+): Promise<number> {
+  const query = `
+    WITH filtered_listings AS (
+      SELECT
+        ml.card_id,
+        ml.price_type,
+        ml.price,
+        ml.currency,
+        c.symbol AS currency_symbol,
+        ml.psa_grade,
+        ml.condition,
+        l.name AS location_name,
+        l.market_region,
+        ml.price * COALESCE(er.rate, 1) AS normalized_price
+      FROM ${listingsTable} ml
+      JOIN currencies c ON c.code = ml.currency
+      JOIN locations l ON l.location_id = ml.location_id
+      LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
+      WHERE
+        CASE
+          WHEN '${psaMode}' = 'non-psa' THEN ml.psa_grade = 0
+          ELSE ml.psa_grade > 0
+        END
+        AND CASE
+          WHEN '${psaMode}' = 'non-psa' AND $1::int[] IS NOT NULL THEN
+            ml.condition IS NULL OR EXISTS (
+              SELECT 1 FROM conditions cond
+              WHERE cond.condition_id = ml.condition
+                AND cond.tier = ANY($1::int[])
+            )
+          ELSE TRUE
+        END
+    ),
+    labeled AS (
+      SELECT
+        card_id,
+        CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE psa_grade END AS group_grade,
+        CASE WHEN price_type = 'Buy' THEN 'buy' ELSE 'sell' END AS side,
+        location_name AS source,
+        price, currency, currency_symbol, location_name AS location,
+        market_region AS region, normalized_price
+      FROM filtered_listings
+      WHERE price_type IN ('Buy','Sell') AND normalized_price IS NOT NULL
+    ),
+    best AS (
+      SELECT DISTINCT ON (card_id, group_grade, side, source)
+        card_id, group_grade, side, source,
+        price, currency, currency_symbol, location, region, normalized_price
+      FROM labeled
+      ORDER BY card_id, group_grade, side, source,
+        CASE side WHEN 'buy' THEN -normalized_price ELSE normalized_price END ASC
+    )
+    INSERT INTO ${bySourceTable}
+      (card_id, tier, psa_grade, side, source, price, currency, currency_symbol,
+       location, region, normalized_price, updated_at)
+    SELECT
+      card_id, ${outputTier}, group_grade, side, source,
+      price, currency, currency_symbol, location, region, normalized_price, now()
+    FROM best
+    ON CONFLICT (card_id, tier, psa_grade, side, source) DO UPDATE SET
+      price = EXCLUDED.price,
+      currency = EXCLUDED.currency,
+      currency_symbol = EXCLUDED.currency_symbol,
+      location = EXCLUDED.location,
+      region = EXCLUDED.region,
+      normalized_price = EXCLUDED.normalized_price,
+      updated_at = EXCLUDED.updated_at;
+  `;
+  const result = await conn.queryObject(query, [tiers]);
+  return result.rowCount ?? 0;
+}
+
+// insertBySourceSealed fills the per-source snapshot for sealed products. Grain
+// mirrors pokemon_sealed_price_summaries: (product_id, sealed_condition,
+// variant_edition, side, source). No PSA, no tier.
+async function insertBySourceSealed(
+  // deno-lint-ignore no-explicit-any
+  conn: any,
+  listingsTable: string,
+  bySourceTable: string,
+): Promise<number> {
+  const query = `
+    WITH filtered_listings AS (
+      SELECT
+        ml.product_id,
+        ml.sealed_condition,
+        ml.variant_edition,
+        ml.price_type,
+        ml.price,
+        ml.currency,
+        c.symbol AS currency_symbol,
+        l.name AS location_name,
+        l.market_region,
+        ml.price * COALESCE(er.rate, 1) AS normalized_price
+      FROM ${listingsTable} ml
+      JOIN currencies c ON c.code = ml.currency
+      JOIN locations l ON l.location_id = ml.location_id
+      LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
+    ),
+    labeled AS (
+      SELECT
+        product_id, sealed_condition, variant_edition,
+        CASE WHEN price_type = 'Buy' THEN 'buy' ELSE 'sell' END AS side,
+        location_name AS source,
+        price, currency, currency_symbol, location_name AS location,
+        market_region AS region, normalized_price
+      FROM filtered_listings
+      WHERE price_type IN ('Buy','Sell') AND normalized_price IS NOT NULL
+    ),
+    best AS (
+      SELECT DISTINCT ON (product_id, sealed_condition, variant_edition, side, source)
+        product_id, sealed_condition, variant_edition, side, source,
+        price, currency, currency_symbol, location, region, normalized_price
+      FROM labeled
+      ORDER BY product_id, sealed_condition, variant_edition, side, source,
+        CASE side WHEN 'buy' THEN -normalized_price ELSE normalized_price END ASC
+    )
+    INSERT INTO ${bySourceTable}
+      (product_id, sealed_condition, variant_edition, side, source,
+       price, currency, currency_symbol, location, region, normalized_price, updated_at)
+    SELECT
+      product_id, sealed_condition, variant_edition, side, source,
+      price, currency, currency_symbol, location, region, normalized_price, now()
+    FROM best
+    ON CONFLICT (product_id, sealed_condition, variant_edition, side, source) DO UPDATE SET
+      price = EXCLUDED.price,
+      currency = EXCLUDED.currency,
+      currency_symbol = EXCLUDED.currency_symbol,
+      location = EXCLUDED.location,
+      region = EXCLUDED.region,
+      normalized_price = EXCLUDED.normalized_price,
+      updated_at = EXCLUDED.updated_at;
+  `;
   const result = await conn.queryObject(query);
   return result.rowCount ?? 0;
 }
