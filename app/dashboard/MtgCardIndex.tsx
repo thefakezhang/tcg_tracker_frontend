@@ -245,6 +245,7 @@ function MtgCardsTab() {
 const BLANK = {
   name: "", local_name: "", set_code: "", card_number: "",
   language: "en", is_foil: "false", art_type: "NON_FULL_ART", foil_type: "", misc_info: "",
+  image_url: "",
 };
 
 // Create OR edit an mtg variant + manage its platform links. All writes go through
@@ -285,6 +286,7 @@ function MtgCardModal({
       art_type: card.art_type || "NON_FULL_ART",
       foil_type: card.foil_type === "STANDARD" ? "" : card.foil_type ?? "",
       misc_info: card.misc_info === "UNKNOWN" ? "" : card.misc_info ?? "",
+      image_url: card.image_url ?? "",
     });
   }, [card, isCreate, open]);
 
@@ -297,6 +299,9 @@ function MtgCardModal({
       p_name: form.name, p_local_name: form.local_name, p_set_code: form.set_code,
       p_card_number: form.card_number, p_art_type: form.art_type, p_foil_type: form.foil_type,
       p_misc_info: form.misc_info, p_language: form.language, p_is_foil: form.is_foil === "true",
+      // Create passes NULL to keep the universal's image_url alone; edit passes
+      // trimmed value ('' = clear). Different NULL-semantics per RPC (see 000141).
+      p_image_url: isCreate ? (form.image_url.trim() || null) : form.image_url.trim(),
     };
     let rpcError;
     if (isCreate) {
@@ -385,6 +390,24 @@ function MtgCardModal({
           <div className="col-span-2 space-y-1">
             <Label>{t("cardIndex.fMisc")}</Label>
             <Input value={form.misc_info} onChange={(e) => set("misc_info", e.target.value)} placeholder="ショーケース枠, 旧枠仕様, …" />
+          </div>
+          {/* image_url lives on the universal (shared across variants) - editing
+              it here swaps art for every sibling of this printing. That's usually
+              what you want since MTG variants share art. */}
+          <div className="col-span-2 space-y-1">
+            <Label>{t("cardIndex.fImageUrl")}</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                className="flex-1"
+                value={form.image_url}
+                onChange={(e) => set("image_url", e.target.value)}
+                placeholder="https://..."
+              />
+              {form.image_url.trim() && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={form.image_url.trim()} alt="preview" className="h-14 w-10 rounded border object-cover" />
+              )}
+            </div>
           </div>
         </div>
 

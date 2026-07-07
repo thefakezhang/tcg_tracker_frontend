@@ -333,6 +333,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardIndex.fEdition": "エディション",
   "cardIndex.fCondition": "シュリンク状態",
   "cardIndex.fMisc": "その他情報",
+  "cardIndex.fImageUrl": "画像URL",
   "cardIndex.fLocalName": "現地名 (日本語)",
   "cardIndex.fFoil": "フォイル",
   "cardIndex.fArtType": "アートタイプ",

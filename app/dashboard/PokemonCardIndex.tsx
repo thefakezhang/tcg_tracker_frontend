@@ -229,7 +229,7 @@ function CardsTab() {
   );
 }
 
-const BLANK = { regional_name: "", english_name: "", set_code: "", card_number: "", language: "jp", misc_info: "" };
+const BLANK = { regional_name: "", english_name: "", set_code: "", card_number: "", language: "jp", misc_info: "", image_url: "" };
 
 // Create OR edit a singles card_def + manage its platform links. All writes go
 // through the SECURITY DEFINER RPCs (000116).
@@ -267,6 +267,7 @@ function PokemonCardModal({
       card_number: card.card_number ?? "",
       language: card.language ?? "jp",
       misc_info: card.misc_info === "UNKNOWN" ? "" : card.misc_info ?? "",
+      image_url: card.image_url ?? "",
     });
   }, [card, isCreate, open]);
 
@@ -281,11 +282,13 @@ function PokemonCardModal({
         p_regional_name: form.regional_name, p_english_name: form.english_name, p_set_code: form.set_code,
         p_card_number: form.card_number, p_language: form.language, p_misc_info: form.misc_info,
         p_platform: linkId.trim() ? linkPlatform : null, p_external_id: linkId.trim() || null,
+        p_image_url: form.image_url.trim() || null,
       }));
     } else if (card) {
       ({ error: rpcError } = await supabase.rpc("card_index_edit_pokemon_card", {
         p_card_id: card.card_id, p_regional_name: form.regional_name, p_english_name: form.english_name,
         p_set_code: form.set_code, p_card_number: form.card_number, p_language: form.language, p_misc_info: form.misc_info,
+        p_image_url: form.image_url.trim(),
       }));
     }
     setBusy(false);
@@ -349,6 +352,23 @@ function PokemonCardModal({
           <div className="space-y-1">
             <Label>{t("cardIndex.fMisc")}</Label>
             <Input value={form.misc_info} onChange={(e) => set("misc_info", e.target.value)} placeholder="ミラー, 1ED, …" />
+          </div>
+          {/* image_url row spans both columns; a thumbnail previews the URL as
+              the curator pastes it in so obvious 404s / typos are caught before save. */}
+          <div className="col-span-2 space-y-1">
+            <Label>{t("cardIndex.fImageUrl")}</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                className="flex-1"
+                value={form.image_url}
+                onChange={(e) => set("image_url", e.target.value)}
+                placeholder="https://..."
+              />
+              {form.image_url.trim() && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={form.image_url.trim()} alt="preview" className="h-14 w-10 rounded border object-cover" />
+              )}
+            </div>
           </div>
         </div>
 
