@@ -124,21 +124,61 @@ async function searchCatalog(
     .filter(Boolean);
   if (tokens.length === 0) return [];
 
+  // Sealed products carry both a native `name` (usually JP) and an optional
+  // English translation - search both. Before, the picker only matched `name`
+  // + `set_code`, so English queries returned nothing for sealed.
   if (game === "pokemon_sealed") {
-    let q = supabase.from("pokemon_sealed_products").select("product_id, name, set_code");
+    let q = supabase
+      .from("pokemon_sealed_products")
+      .select("product_id, name, english_name, set_code");
     for (const t of tokens) {
-      q = q.or(`name.ilike.%${t}%,set_code.ilike.%${t}%`);
+      q = q.or(`name.ilike.%${t}%,english_name.ilike.%${t}%,set_code.ilike.%${t}%`);
     }
     const { data } = await q.limit(8);
-    return (data ?? []).map((r: { product_id: number; name: string; set_code: string }) => ({
-      id: r.product_id,
-      label: `${r.name}${r.set_code && r.set_code !== "UNKNOWN" ? ` · ${r.set_code}` : ""}`,
-    }));
+    return (data ?? []).map(
+      (r: { product_id: number; name: string; english_name: string | null; set_code: string }) => ({
+        id: r.product_id,
+        label: `${r.english_name || r.name}${
+          r.set_code && r.set_code !== "UNKNOWN" ? ` · ${r.set_code}` : ""
+        }`,
+      }),
+    );
   }
 
-  const table = game === "mtg" ? "mtg_card_definitions_v" : "pokemon_card_definitions";
+  // MTG's flattened view (000128) aliases the English name as `regional_name`
+  // and stores the JP translation as `local_name` - there is no `english_name`
+  // column at all. Selecting or filtering on it errored the query, so MTG
+  // needs its own shape. Pokemon singles keeps the old shape.
+  if (game === "mtg") {
+    let q = supabase
+      .from("mtg_card_definitions_v")
+      .select("card_id, regional_name, local_name, set_code, card_number, misc_info");
+    for (const t of tokens) {
+      q = q.or(
+        `regional_name.ilike.%${t}%,local_name.ilike.%${t}%,set_code.ilike.%${t}%,card_number.ilike.%${t}%,misc_info.ilike.%${t}%`,
+      );
+    }
+    const { data } = await q.limit(8);
+    return (data ?? []).map(
+      (r: {
+        card_id: number;
+        regional_name: string;
+        local_name: string | null;
+        set_code: string;
+        card_number: string;
+        misc_info?: string | null;
+      }) => ({
+        id: r.card_id,
+        label: `${r.regional_name}${r.local_name ? ` / ${r.local_name}` : ""} · ${r.set_code} ${r.card_number}${
+          r.misc_info && r.misc_info !== "UNKNOWN" ? ` (${r.misc_info})` : ""
+        }`,
+      }),
+    );
+  }
+
+  // Pokemon singles.
   let q = supabase
-    .from(table)
+    .from("pokemon_card_definitions")
     .select("card_id, regional_name, english_name, set_code, card_number, misc_info");
   for (const t of tokens) {
     q = q.or(
