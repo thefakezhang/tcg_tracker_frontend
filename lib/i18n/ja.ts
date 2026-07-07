@@ -415,6 +415,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "review.srcJp": "JPスクレイプ由来",
   "review.matchedNone": "JPのみ（外部IDなし）",
   "review.idCollision": "ID衝突",
+  "review.collisionOwnedBy": "は既にカードに紐付けられています：",
+  "review.collisionHint": "IDをクリックしてソースを確認し、統合・分離・却下のいずれかを判断してください。",
   "review.tierAuto": "自動",
   "review.tierReview": "要確認",
   "review.noResults": "一致する商品がありません。",

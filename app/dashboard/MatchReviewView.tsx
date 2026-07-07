@@ -248,8 +248,106 @@ function anchorURL(platform: string, id: string): string | null {
     case "pricecharting": return `https://www.pricecharting.com/game/${id}`;
     case "snkrdunk": return `https://snkrdunk.com/apparels/${id}`;
     case "tcgplayer": return `https://www.tcgplayer.com/product/${id}`;
+    case "cardrush": return `https://www.cardrush-pokemon.jp/product/${id}`;
     default: return null;
   }
+}
+
+// SOURCE_LABEL renders a human-facing name for the source tag the backend
+// writes onto source_fields.source. Kept explicit rather than heuristic so a
+// curator glancing at the row knows exactly which retailer's queue surfaced
+// this candidate. When the tag isn't in this map (unknown / legacy row), we
+// fall back to the raw string so debug info stays visible.
+const SOURCE_LABEL: Record<string, string> = {
+  cardrush_sealed: "Cardrush",
+  snkrdunk_sealed: "Snkrdunk",
+  cardrush: "Cardrush",
+  snkrdunk: "Snkrdunk",
+  pricecharting: "PriceCharting",
+  tcgplayer: "TCGplayer",
+  collectr: "Collectr",
+  hareruya: "Hareruya",
+  fukufuku: "Fukufuku",
+};
+
+// formatSourceOrigin turns (source, side) into "Cardrush (buy)" style text.
+// When the row carries no source tag we fall back to the caller's default
+// label - that keeps the older MatchReview UI's "from JP scrape" behavior for
+// truly-uninformed rows while giving every properly-tagged row a real name.
+function formatSourceOrigin(source: string | undefined | null, side: string | undefined | null): string | null {
+  if (!source) return null;
+  const label = SOURCE_LABEL[source] ?? source;
+  if (side) return `${label} (${side})`;
+  return label;
+}
+
+// CollisionEntry mirrors the structured record the backend writes into
+// source_fields.collisions (PR #402 / internal/matchreview/candidate.go).
+interface CollisionEntry {
+  platform: string;
+  id: string;
+  id_url?: string;
+  existing_card_id?: number;
+  existing_name?: string;
+  existing_set_code?: string;
+  existing_card_number?: string;
+}
+
+// parseCollisions extracts a structured list of colliding-platform-id records
+// out of a candidate's source_fields. New rows (post backend #402) carry a
+// JSON array on `collisions`; older rows only have the legacy `collision`
+// string in the shape:
+//   "platform:id (url?) already on product #N <name> set=X num=Y"
+//   "platform:id already on <core> (card N)"
+// The regex tolerates both. Rows without either field return []. Callers can
+// render nothing when the list is empty.
+function parseCollisions(fields: Record<string, string>): CollisionEntry[] {
+  const rawJSON = fields.collisions;
+  if (rawJSON) {
+    try {
+      const parsed = JSON.parse(rawJSON) as CollisionEntry[];
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch {
+      // fall through to string parsing
+    }
+  }
+  const s = fields.collision;
+  if (!s) return [];
+  // Legacy per-entry format is one of:
+  //   platform:id already on <name> <set> (card N)
+  //   platform:id (url) already on product #N 「name」 set=X num=Y
+  // We split on '; ' first because the string composer joins entries that way.
+  return s
+    .split(/;\s+/)
+    .map((entry) => parseCollisionEntry(entry))
+    .filter((e): e is CollisionEntry => e !== null);
+}
+
+function parseCollisionEntry(entry: string): CollisionEntry | null {
+  // Try the enriched form first: platform:id (url) already on product #N 「name」 set=X num=Y
+  const enriched = entry.match(/^(\w+):(\S+)\s+\((https?:\/\/[^)]+)\)\s+already on product #(\d+)(?:\s+「([^」]*)」)?(?:\s+set=(\S+))?(?:\s+num=(\S+))?/);
+  if (enriched) {
+    return {
+      platform: enriched[1],
+      id: enriched[2],
+      id_url: enriched[3],
+      existing_card_id: Number(enriched[4]),
+      existing_name: enriched[5] || undefined,
+      existing_set_code: enriched[6] || undefined,
+      existing_card_number: enriched[7] || undefined,
+    };
+  }
+  // Legacy compact form: platform:id already on <name> <set> (card N)
+  const legacy = entry.match(/^(\w+):(\S+)\s+already on\s+(.+?)\s+\(card\s+(\d+)\)/);
+  if (legacy) {
+    return {
+      platform: legacy[1],
+      id: legacy[2],
+      existing_card_id: Number(legacy[4]),
+      existing_name: legacy[3].trim() || undefined,
+    };
+  }
+  return null;
 }
 
 interface QueueData {
@@ -504,13 +602,24 @@ export default function MatchReviewView() {
                 const fields = c.source_fields ?? {};
                 // Retailer provenance: the unified upsert accumulates every source that
                 // surfaced this card into a `sources` array; fall back to the scalar
-                // `source` for single-source rows. `collision` is set when a matched id
-                // already belongs to a different card (flagged for the curator).
+                // `source` for single-source rows.
                 const rawSources = (fields as Record<string, unknown>).sources;
                 const sources: string[] = Array.isArray(rawSources)
                   ? (rawSources as string[])
                   : fields.source ? [fields.source] : [];
-                const collision = fields.collision;
+                // Source label: prefer the human name for the tag ("Cardrush (buy)")
+                // over the raw internal string. The unified path may accumulate
+                // multiple sources; join their human names with " · ".
+                const sourceOrigin = fields.source
+                  ? formatSourceOrigin(fields.source, fields.side)
+                  : sources.length > 0
+                    ? sources.map((s) => SOURCE_LABEL[s] ?? s).join(" · ")
+                    : null;
+                // Rich collision breakdown: prefer the structured JSON emitted by
+                // matchreview.Upsert (backend PR #402); parse the legacy `collision`
+                // string when the row predates the structured field. Older rows still
+                // render usefully - just without the platform URL.
+                const collisions = parseCollisions(fields);
                 return (
                   <tr key={c.candidate_id} className="border-b align-top last:border-0">
                     <td className="px-2 py-2">
@@ -531,18 +640,57 @@ export default function MatchReviewView() {
                           <div className="truncate text-xs text-muted-foreground">
                             {joinParts([fields.set_code, fields.card_number, fields.misc_info, fields.product_type, fields.language])}
                           </div>
-                          {collision && (
-                            <div
-                              className="mt-0.5 inline-flex items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
-                              title={collision}
-                            >
-                              <AlertTriangle className="size-3 shrink-0" /> {t("review.idCollision")}
+                          {collisions.length > 0 && (
+                            <div className="mt-1 rounded-md border border-destructive/40 bg-destructive/10 p-1.5 text-[10px]">
+                              <div className="flex items-center gap-1 font-semibold text-destructive">
+                                <AlertTriangle className="size-3 shrink-0" />
+                                {t("review.idCollision")}
+                              </div>
+                              <div className="mt-1 space-y-1 text-muted-foreground">
+                                {collisions.map((coll, i) => {
+                                  const platformLabel = PLATFORM_SHORT[coll.platform] ?? coll.platform;
+                                  const idText = `${platformLabel} #${coll.id}`;
+                                  const url = coll.id_url ?? anchorURL(coll.platform, coll.id);
+                                  const identityTail = [coll.existing_set_code, coll.existing_card_number]
+                                    .filter(Boolean)
+                                    .join(" · ");
+                                  return (
+                                    <div key={`${coll.platform}:${coll.id}:${i}`} className="text-foreground/90">
+                                      {url ? (
+                                        <a
+                                          href={url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="font-medium underline underline-offset-2 hover:text-primary"
+                                        >
+                                          {idText}
+                                        </a>
+                                      ) : (
+                                        <span className="font-medium">{idText}</span>
+                                      )}
+                                      <span className="text-muted-foreground">
+                                        {" "}{t("review.collisionOwnedBy")}{" "}
+                                      </span>
+                                      <span className="font-medium">
+                                        #{coll.existing_card_id ?? "?"}
+                                        {coll.existing_name ? ` 「${coll.existing_name}」` : ""}
+                                      </span>
+                                      {identityTail && (
+                                        <span className="text-muted-foreground"> ({identityTail})</span>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="mt-1 text-[9px] text-muted-foreground">
+                                {t("review.collisionHint")}
+                              </div>
                             </div>
                           )}
                           <div className="truncate text-[10px] text-muted-foreground">
                             {cfg.unified ? (
-                              sources.length > 0
-                                ? t("review.srcFrom").replace("{src}", sources.join(" · "))
+                              sourceOrigin
+                                ? t("review.srcFrom").replace("{src}", sourceOrigin)
                                 : t("review.srcJp")
                             ) : c.source_platform === "unmatched" ? (
                               t("review.srcUnmatched")
