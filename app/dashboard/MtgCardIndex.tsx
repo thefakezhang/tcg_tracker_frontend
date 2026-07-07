@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Search, ImageOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { uploadCardImage } from "@/lib/upload-card-image";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue } from "./use-card-data";
@@ -269,12 +270,14 @@ function MtgCardModal({
   const [error, setError] = useState<string | null>(null);
   const [linkPlatform, setLinkPlatform] = useState("tcgplayer");
   const [linkId, setLinkId] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const set = (k: keyof typeof BLANK, v: string) => setForm((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
     setError(null);
     setLinkId("");
     setLinkPlatform("tcgplayer");
+    setUploadFile(null);
     if (isCreate || !card) setForm({ ...BLANK });
     else setForm({
       name: card.regional_name ?? "",
@@ -304,16 +307,33 @@ function MtgCardModal({
       p_image_url: isCreate ? (form.image_url.trim() || null) : form.image_url.trim(),
     };
     let rpcError;
+    let cardIdForUpload: number | null = null;
     if (isCreate) {
-      ({ error: rpcError } = await supabase.rpc("card_index_create_mtg_card", {
+      const res = await supabase.rpc("card_index_create_mtg_card", {
         ...common,
         p_platform: linkId.trim() ? linkPlatform : null, p_external_id: linkId.trim() || null,
-      }));
+      });
+      rpcError = res.error;
+      if (typeof res.data === "number") cardIdForUpload = res.data;
     } else if (card) {
       ({ error: rpcError } = await supabase.rpc("card_index_edit_mtg_card", { p_card_id: card.card_id, ...common }));
+      cardIdForUpload = card.card_id;
     }
+    if (rpcError) { setBusy(false); setError(rpcError.message); return; }
+
+    // Only upload AFTER the RPC has committed the variant. MTG image_url lives
+    // on the universal (shared across sibling variants), so this write is
+    // visible on every foil/language sibling too.
+    if (uploadFile && cardIdForUpload != null) {
+      const up = await uploadCardImage({ game: "mtg", id: cardIdForUpload, file: uploadFile });
+      if ("error" in up) { setBusy(false); setError(`Upload: ${up.error}`); return; }
+      const { error: setImgErr } = await supabase.rpc("card_index_edit_mtg_card", {
+        p_card_id: cardIdForUpload, ...common, p_image_url: up.url,
+      });
+      if (setImgErr) { setBusy(false); setError(`Set image_url: ${setImgErr.message}`); return; }
+    }
+
     setBusy(false);
-    if (rpcError) { setError(rpcError.message); return; }
     onSaved();
     onOpenChange(false);
   }
@@ -392,8 +412,8 @@ function MtgCardModal({
             <Input value={form.misc_info} onChange={(e) => set("misc_info", e.target.value)} placeholder="ショーケース枠, 旧枠仕様, …" />
           </div>
           {/* image_url lives on the universal (shared across variants) - editing
-              it here swaps art for every sibling of this printing. That's usually
-              what you want since MTG variants share art. */}
+              or uploading here swaps art for every sibling of this printing.
+              That's usually what you want since MTG variants share art. */}
           <div className="col-span-2 space-y-1">
             <Label>{t("cardIndex.fImageUrl")}</Label>
             <div className="flex items-center gap-2">
@@ -402,12 +422,28 @@ function MtgCardModal({
                 value={form.image_url}
                 onChange={(e) => set("image_url", e.target.value)}
                 placeholder="https://..."
+                disabled={uploadFile !== null}
               />
-              {form.image_url.trim() && (
+              <Input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="w-40"
+                onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+              />
+              {(uploadFile || form.image_url.trim()) && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={form.image_url.trim()} alt="preview" className="h-14 w-10 rounded border object-cover" />
+                <img
+                  src={uploadFile ? URL.createObjectURL(uploadFile) : form.image_url.trim()}
+                  alt="preview"
+                  className="h-14 w-10 rounded border object-cover"
+                />
               )}
             </div>
+            {uploadFile && (
+              <p className="text-xs text-muted-foreground">
+                {uploadFile.name} - uploads on save
+              </p>
+            )}
           </div>
         </div>
 

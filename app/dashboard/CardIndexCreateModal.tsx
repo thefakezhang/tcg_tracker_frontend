@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { uploadCardImage } from "@/lib/upload-card-image";
 import { useTranslation } from "@/lib/i18n";
 import {
   Dialog,
@@ -100,6 +101,7 @@ export default function CardIndexCreateModal({
   const [form, setForm] = useState({ ...BLANK });
   const [anchorPlatform, setAnchorPlatform] = useState("pricecharting");
   const [anchorId, setAnchorId] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [prefill, setPrefill] = useState("");
   const set = (k: keyof typeof BLANK, v: string) => setForm((p) => ({ ...p, [k]: v }));
 
@@ -147,7 +149,9 @@ export default function CardIndexCreateModal({
     setBusy(true);
     setError(null);
     const supabase = createClient();
-    const { error: rpcError } = await supabase.rpc("card_index_create_sealed_product", {
+    // create_sealed_product returns bigint (product_id). Grab it so a
+    // deferred user-upload can be attached AFTER commit (see below).
+    const createRes = await supabase.rpc("card_index_create_sealed_product", {
       p_name: form.name,
       p_english_name: form.english_name,
       p_set_code: form.set_code,
@@ -160,11 +164,34 @@ export default function CardIndexCreateModal({
       p_platform: anchorId.trim() ? anchorPlatform : null,
       p_external_id: anchorId.trim() || null,
     });
-    setBusy(false);
-    if (rpcError) {
-      setError(rpcError.message);
+    if (createRes.error) {
+      setBusy(false);
+      setError(createRes.error.message);
       return;
     }
+    const productId = typeof createRes.data === "number" ? createRes.data : null;
+
+    if (uploadFile && productId != null) {
+      const up = await uploadCardImage({ game: "pokemon_sealed", id: productId, file: uploadFile });
+      if ("error" in up) { setBusy(false); setError(`Upload: ${up.error}`); return; }
+      // sealed edit uses a distinct RPC (000105); overwrite image_url with
+      // the uploaded URL now that the product row exists.
+      const { error: setImgErr } = await supabase.rpc("card_index_edit_sealed_product", {
+        p_product_id: productId,
+        p_name: form.name,
+        p_english_name: form.english_name,
+        p_set_code: form.set_code,
+        p_product_type: form.product_type,
+        p_language: form.language,
+        p_misc_info: form.misc_info,
+        p_variant_edition: form.variant_edition,
+        p_sealed_condition: form.sealed_condition,
+        p_image_url: up.url,
+      });
+      if (setImgErr) { setBusy(false); setError(`Set image_url: ${setImgErr.message}`); return; }
+    }
+
+    setBusy(false);
     onCreated();
     onOpenChange(false);
   };
@@ -316,13 +343,39 @@ export default function CardIndexCreateModal({
                 <Label>{t("cardIndex.fMisc")}</Label>
                 <Input value={form.misc_info} onChange={(e) => set("misc_info", e.target.value)} />
               </div>
+              {/* Paste a URL OR upload a file. The upload happens AFTER the
+                  create RPC returns a product_id so an abandoned dialog
+                  never leaks orphan objects in the card-images bucket. */}
               <div className="col-span-2 space-y-1">
                 <Label>{t("cardIndex.fImage")}</Label>
-                <Input
-                  value={form.image_url}
-                  onChange={(e) => set("image_url", e.target.value)}
-                  placeholder="https://…"
-                />
+                <div className="flex items-center gap-2">
+                  <Input
+                    className="flex-1"
+                    value={form.image_url}
+                    onChange={(e) => set("image_url", e.target.value)}
+                    placeholder="https://…"
+                    disabled={uploadFile !== null}
+                  />
+                  <Input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="w-40"
+                    onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                  />
+                  {(uploadFile || form.image_url.trim()) && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={uploadFile ? URL.createObjectURL(uploadFile) : form.image_url.trim()}
+                      alt="preview"
+                      className="h-14 w-10 rounded border object-cover"
+                    />
+                  )}
+                </div>
+                {uploadFile && (
+                  <p className="text-xs text-muted-foreground">
+                    {uploadFile.name} - uploads on save
+                  </p>
+                )}
               </div>
             </div>
 
