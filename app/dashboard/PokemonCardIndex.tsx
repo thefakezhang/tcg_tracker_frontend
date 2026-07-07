@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Search, ImageOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { uploadCardImage } from "@/lib/upload-card-image";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue } from "./use-card-data";
@@ -253,12 +254,17 @@ function PokemonCardModal({
   // new-link inputs (create + edit)
   const [linkPlatform, setLinkPlatform] = useState("tcgplayer");
   const [linkId, setLinkId] = useState("");
+  // uploadFile is held in memory until save() succeeds; we only touch storage
+  // AFTER the RPC returns a card_id so we never leak orphan objects from
+  // abandoned form dialogs.
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const set = (k: keyof typeof BLANK, v: string) => setForm((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
     setError(null);
     setLinkId("");
     setLinkPlatform("tcgplayer");
+    setUploadFile(null);
     if (isCreate || !card) setForm({ ...BLANK });
     else setForm({
       regional_name: card.regional_name ?? "",
@@ -277,22 +283,40 @@ function PokemonCardModal({
     setError(null);
     const supabase = createClient();
     let rpcError;
+    let cardIdForUpload: number | null = null;
     if (isCreate) {
-      ({ error: rpcError } = await supabase.rpc("card_index_create_pokemon_card", {
+      const res = await supabase.rpc("card_index_create_pokemon_card", {
         p_regional_name: form.regional_name, p_english_name: form.english_name, p_set_code: form.set_code,
         p_card_number: form.card_number, p_language: form.language, p_misc_info: form.misc_info,
         p_platform: linkId.trim() ? linkPlatform : null, p_external_id: linkId.trim() || null,
         p_image_url: form.image_url.trim() || null,
-      }));
+      });
+      rpcError = res.error;
+      if (typeof res.data === "number") cardIdForUpload = res.data;
     } else if (card) {
       ({ error: rpcError } = await supabase.rpc("card_index_edit_pokemon_card", {
         p_card_id: card.card_id, p_regional_name: form.regional_name, p_english_name: form.english_name,
         p_set_code: form.set_code, p_card_number: form.card_number, p_language: form.language, p_misc_info: form.misc_info,
         p_image_url: form.image_url.trim(),
       }));
+      cardIdForUpload = card.card_id;
     }
+    if (rpcError) { setBusy(false); setError(rpcError.message); return; }
+
+    // Only touch Supabase Storage AFTER the RPC has committed the row so a
+    // failed save doesn't leak an orphan object.
+    if (uploadFile && cardIdForUpload != null) {
+      const up = await uploadCardImage({ game: "pokemon", id: cardIdForUpload, file: uploadFile });
+      if ("error" in up) { setBusy(false); setError(`Upload: ${up.error}`); return; }
+      const { error: setImgErr } = await supabase.rpc("card_index_edit_pokemon_card", {
+        p_card_id: cardIdForUpload, p_regional_name: form.regional_name, p_english_name: form.english_name,
+        p_set_code: form.set_code, p_card_number: form.card_number, p_language: form.language,
+        p_misc_info: form.misc_info, p_image_url: up.url,
+      });
+      if (setImgErr) { setBusy(false); setError(`Set image_url: ${setImgErr.message}`); return; }
+    }
+
     setBusy(false);
-    if (rpcError) { setError(rpcError.message); return; }
     onSaved();
     onOpenChange(false);
   }
@@ -353,8 +377,10 @@ function PokemonCardModal({
             <Label>{t("cardIndex.fMisc")}</Label>
             <Input value={form.misc_info} onChange={(e) => set("misc_info", e.target.value)} placeholder="ミラー, 1ED, …" />
           </div>
-          {/* image_url row spans both columns; a thumbnail previews the URL as
-              the curator pastes it in so obvious 404s / typos are caught before save. */}
+          {/* image_url row: paste a URL OR upload a file. Uploaded file is
+              held in memory until Save; on save the RPC returns a card_id
+              and we upload to {game}/{card_uid}/user_{ts}.{ext} in Supabase
+              Storage, then set image_url to the resulting public URL. */}
           <div className="col-span-2 space-y-1">
             <Label>{t("cardIndex.fImageUrl")}</Label>
             <div className="flex items-center gap-2">
@@ -363,12 +389,28 @@ function PokemonCardModal({
                 value={form.image_url}
                 onChange={(e) => set("image_url", e.target.value)}
                 placeholder="https://..."
+                disabled={uploadFile !== null}
               />
-              {form.image_url.trim() && (
+              <Input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="w-40"
+                onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+              />
+              {(uploadFile || form.image_url.trim()) && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={form.image_url.trim()} alt="preview" className="h-14 w-10 rounded border object-cover" />
+                <img
+                  src={uploadFile ? URL.createObjectURL(uploadFile) : form.image_url.trim()}
+                  alt="preview"
+                  className="h-14 w-10 rounded border object-cover"
+                />
               )}
             </div>
+            {uploadFile && (
+              <p className="text-xs text-muted-foreground">
+                {uploadFile.name} - uploads on save
+              </p>
+            )}
           </div>
         </div>
 
