@@ -292,6 +292,8 @@ const en = {
   "cardIndex.countOf": "showing {shown} of {total}",
   "cardIndex.loadMore": "Load {n} more",
   "cardIndex.search": "Search name / set…",
+  "cardIndex.sourceFilter": "Filter by source:",
+  "cardIndex.clearFilter": "Clear",
   "cardIndex.hint": "The owned sealed-product catalog: durable uid, identity, platform links, and image. Read-only for now.",
   "cardIndex.hintPokemon": "The owned singles catalog: durable card_uid, identity, and platform links. Create a variant or attach a TCGPlayer id here instead of hand-editing crosswalks.",
   "cardIndex.hintMtg": "The owned mtg catalog: durable card_uid per variant (printing x language x foil), identity, and platform links. Editing the printing re-points to a shared universal; a tcgplayer id can attach to several variants.",

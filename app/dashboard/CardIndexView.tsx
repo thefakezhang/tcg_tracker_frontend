@@ -46,13 +46,45 @@ const PRODUCT_COLS =
 
 const CATALOG_PAGE = 500;
 
-async function fetchIndex(search: string, limit: number): Promise<{ products: IndexProduct[]; total: number }> {
+// The set of platforms sealed products can carry an external ID on. Also
+// drives the chip filter above the results table - pinned here so
+// PLATFORM_SHORT and the filter list can't drift.
+const SEALED_PLATFORMS = ["pricecharting", "tcgplayer", "snkrdunk", "collectr"] as const;
+
+async function fetchIndex(
+  search: string,
+  limit: number,
+  platforms: string[],
+): Promise<{ products: IndexProduct[]; total: number }> {
   const supabase = createClient();
   const s = search.trim();
   const safe = s.replace(/[%,]/g, " ");
   const orFilter = `name.ilike.%${safe}%,english_name.ilike.%${safe}%,set_code.ilike.%${safe}%`;
+
+  // When the operator selected one or more source chips, gate every product
+  // query on the set of product_ids that carry an ID for at least one of
+  // those platforms. Empty selection = no gate (show everything). Fetching
+  // the id list first keeps the count query honest AND avoids a
+  // JOIN-with-DISTINCT dance in PostgREST.
+  let idGate: number[] | null = null;
+  if (platforms.length > 0) {
+    const { data: gateRows, error: gerr } = await supabase
+      .from("pokemon_sealed_external_identifiers")
+      .select("product_id")
+      .in("platform_name", platforms);
+    if (gerr) throw gerr;
+    const seen = new Set<number>();
+    for (const g of (gateRows ?? []) as { product_id: number }[]) seen.add(g.product_id);
+    idGate = Array.from(seen);
+    if (idGate.length === 0) {
+      // Nothing matches the filter; short-circuit before we ask Postgres.
+      return { products: [], total: 0 };
+    }
+  }
+
   let cq = supabase.from("pokemon_sealed_products").select("product_id", { count: "exact", head: true });
   if (s) cq = cq.or(orFilter);
+  if (idGate) cq = cq.in("product_id", idGate);
   const { count: total } = await cq;
   let q = supabase
     .from("pokemon_sealed_products")
@@ -62,6 +94,7 @@ async function fetchIndex(search: string, limit: number): Promise<{ products: In
   if (s) {
     q = q.or(orFilter);
   }
+  if (idGate) q = q.in("product_id", idGate);
   const { data, error } = await q;
   if (error) throw error;
   const rows = (data ?? []) as Omit<IndexProduct, "links">[];
@@ -144,16 +177,29 @@ function SealedCardIndex() {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(CATALOG_PAGE);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
   const debounced = useDebouncedValue(search, 300);
+  // Sorted key so a Set with the same members produces a stable query key
+  // regardless of insertion order.
+  const platformsKey = Array.from(selectedPlatforms).sort().join(",");
 
   const { data, error, isLoading, retry } = useSupabaseQuery(
-    ["card-index", debounced, String(limit)],
-    () => fetchIndex(debounced, limit),
+    ["card-index", debounced, String(limit), platformsKey],
+    () => fetchIndex(debounced, limit, Array.from(selectedPlatforms)),
   );
   const products = data?.products ?? [];
   const total = data?.total ?? 0;
   const [editing, setEditing] = useState<IndexProduct | null>(null);
   const [creating, setCreating] = useState(false);
+
+  function togglePlatform(p: string) {
+    setSelectedPlatforms((prev) => {
+      const next = new Set(prev);
+      if (next.has(p)) next.delete(p);
+      else next.add(p);
+      return next;
+    });
+  }
 
   return (
     <div className="space-y-4">
@@ -179,6 +225,35 @@ function SealedCardIndex() {
             <Plus className="size-4" /> {t("cardIndex.newProduct")}
           </Button>
         </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground">{t("cardIndex.sourceFilter")}</span>
+        {SEALED_PLATFORMS.map((p) => {
+          const active = selectedPlatforms.has(p);
+          return (
+            <button
+              key={p}
+              type="button"
+              onClick={() => togglePlatform(p)}
+              className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
+                active
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              {PLATFORM_SHORT[p] ?? p}
+            </button>
+          );
+        })}
+        {selectedPlatforms.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setSelectedPlatforms(new Set())}
+            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            {t("cardIndex.clearFilter")}
+          </button>
+        )}
       </div>
       <p className="text-xs text-muted-foreground">{t("cardIndex.hint")}</p>
 

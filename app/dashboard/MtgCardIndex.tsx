@@ -56,16 +56,42 @@ function tcgURL(platform: string, id: string): string | null {
 
 const CATALOG_PAGE = 500;
 
-async function fetchIndex(search: string, limit: number): Promise<{ cards: IndexCard[]; total: number }> {
+// Platform axis for the chip filter above the results table. Kept in sync
+// with PLATFORMS/PLATFORM_SHORT above so the filter list can't drift.
+const FILTERABLE_PLATFORMS = ["tcgplayer", "cardmarket"] as const;
+
+async function fetchIndex(
+  search: string,
+  limit: number,
+  platforms: string[],
+): Promise<{ cards: IndexCard[]; total: number }> {
   const supabase = createClient();
   const s = search.trim();
   const safe = s.replace(/[%,]/g, " ");
   const orFilter = `regional_name.ilike.%${safe}%,local_name.ilike.%${safe}%,set_code.ilike.%${safe}%,card_number.ilike.%${safe}%`;
+
+  // Chip filter: gate cards on the ones that carry an ID for any of the
+  // selected platforms. Empty selection = no gate.
+  let idGate: number[] | null = null;
+  if (platforms.length > 0) {
+    const { data: gateRows, error: gerr } = await supabase
+      .from("mtg_external_identifiers")
+      .select("card_id")
+      .in("platform_name", platforms);
+    if (gerr) throw gerr;
+    const seen = new Set<number>();
+    for (const g of (gateRows ?? []) as { card_id: number }[]) seen.add(g.card_id);
+    idGate = Array.from(seen);
+    if (idGate.length === 0) return { cards: [], total: 0 };
+  }
+
   let cq = supabase.from("mtg_card_definitions_v").select("card_id", { count: "exact", head: true });
   if (s) cq = cq.or(orFilter);
+  if (idGate) cq = cq.in("card_id", idGate);
   const { count: total } = await cq;
   let q = supabase.from("mtg_card_definitions_v").select(COLS).order("regional_name").limit(limit);
   if (s) q = q.or(orFilter);
+  if (idGate) q = q.in("card_id", idGate);
   const { data, error } = await q;
   if (error) throw error;
   const rows = (data ?? []) as Omit<IndexCard, "links">[];
@@ -114,12 +140,26 @@ function MtgCardsTab() {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(CATALOG_PAGE);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
   const debounced = useDebouncedValue(search, 300);
-  const { data, error, isLoading, retry } = useSupabaseQuery(["card-index-mtg", debounced, String(limit)], () => fetchIndex(debounced, limit));
+  const platformsKey = Array.from(selectedPlatforms).sort().join(",");
+  const { data, error, isLoading, retry } = useSupabaseQuery(
+    ["card-index-mtg", debounced, String(limit), platformsKey],
+    () => fetchIndex(debounced, limit, Array.from(selectedPlatforms)),
+  );
   const cards = data?.cards ?? [];
   const total = data?.total ?? 0;
   const [editing, setEditing] = useState<IndexCard | null>(null);
   const [creating, setCreating] = useState(false);
+
+  function togglePlatform(p: string) {
+    setSelectedPlatforms((prev) => {
+      const next = new Set(prev);
+      if (next.has(p)) next.delete(p);
+      else next.add(p);
+      return next;
+    });
+  }
 
   return (
     <div className="space-y-4">
@@ -138,6 +178,33 @@ function MtgCardsTab() {
             <Plus className="size-4" /> {t("cardIndex.newCard")}
           </Button>
         </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground">{t("cardIndex.sourceFilter")}</span>
+        {FILTERABLE_PLATFORMS.map((p) => {
+          const active = selectedPlatforms.has(p);
+          return (
+            <button
+              key={p}
+              type="button"
+              onClick={() => togglePlatform(p)}
+              className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
+                active ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              {PLATFORM_SHORT[p] ?? p}
+            </button>
+          );
+        })}
+        {selectedPlatforms.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setSelectedPlatforms(new Set())}
+            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            {t("cardIndex.clearFilter")}
+          </button>
+        )}
       </div>
       <p className="text-xs text-muted-foreground">{t("cardIndex.hintMtg")}</p>
 
