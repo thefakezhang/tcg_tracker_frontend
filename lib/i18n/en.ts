@@ -331,6 +331,7 @@ const en = {
   "cardIndex.fEdition": "Edition",
   "cardIndex.fCondition": "Shrink state",
   "cardIndex.fMisc": "Misc info",
+  "cardIndex.fImageUrl": "Image URL",
   "cardIndex.fLocalName": "Local name (JP)",
   "cardIndex.fFoil": "Foil",
   "cardIndex.fArtType": "Art type",
