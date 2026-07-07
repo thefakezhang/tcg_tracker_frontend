@@ -435,6 +435,11 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
         ? "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400"
         : "border-destructive/50 bg-destructive/10 text-destructive";
   const ribbon = c.variant_attrs && (c.variant_attrs.ribbon_detected || c.variant_attrs.variant_edition);
+  // The banner/marker the variant detector read off the cell (e.g. laurier's
+  // 英語版 / 中国語版 / 未開封 language-packaging label). Shown verbatim so the
+  // curator sees the language/variant the buylist printed, even when the match
+  // fell back to a JP card because the catalog has no sibling to resolve it to.
+  const cellLabel = typeof c.variant_attrs?.cell_label === "string" ? (c.variant_attrs.cell_label as string) : null;
 
   const runSearch = useCallback(async () => {
     const s = dSearch.trim();
@@ -548,6 +553,7 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
             <div className="flex flex-wrap gap-1">
               {conf != null && <Badge variant="outline" className={`font-semibold ${confBadgeClass}`}>{conf}% · {c.match_method}</Badge>}
               {c.card_grading && c.card_grading !== "raw" && <Badge variant="secondary" className="text-[10px]">{c.card_grading}</Badge>}
+              {cellLabel ? <Badge className="text-[10px] border-blue-500/50 bg-blue-500/10 text-blue-700 dark:text-blue-400" variant="outline">{cellLabel}</Badge> : null}
               {ribbon ? <Badge variant="secondary" className="text-[10px]">{t("curation.variant")}</Badge> : null}
             </div>
             {(c.match_score_features != null || c.match_score_embedding != null) && (
