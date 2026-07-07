@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ClipboardCheck, Check, X, Plus, Search, Link2, ImageOff, AlertTriangle } from "lucide-react";
+import { ClipboardCheck, Check, X, Plus, Search, Link2, AlertTriangle, GitMerge, Move } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -248,8 +248,248 @@ function anchorURL(platform: string, id: string): string | null {
     case "pricecharting": return `https://www.pricecharting.com/game/${id}`;
     case "snkrdunk": return `https://snkrdunk.com/apparels/${id}`;
     case "tcgplayer": return `https://www.tcgplayer.com/product/${id}`;
+    case "cardrush": return `https://www.cardrush-pokemon.jp/product/${id}`;
     default: return null;
   }
+}
+
+// SOURCE_LABEL renders a human-facing name for the source tag the backend
+// writes onto source_fields.source. Kept explicit rather than heuristic so a
+// curator glancing at the row knows exactly which retailer's queue surfaced
+// this candidate. When the tag isn't in this map (unknown / legacy row), we
+// fall back to the raw string so debug info stays visible.
+const SOURCE_LABEL: Record<string, string> = {
+  cardrush_sealed: "Cardrush",
+  snkrdunk_sealed: "Snkrdunk",
+  cardrush: "Cardrush",
+  snkrdunk: "Snkrdunk",
+  pricecharting: "PriceCharting",
+  tcgplayer: "TCGplayer",
+  collectr: "Collectr",
+  hareruya: "Hareruya",
+  fukufuku: "Fukufuku",
+};
+
+// formatSourceOrigin turns (source, side) into "Cardrush (buy)" style text.
+// When the row carries no source tag we fall back to the caller's default
+// label - that keeps the older MatchReview UI's "from JP scrape" behavior for
+// truly-uninformed rows while giving every properly-tagged row a real name.
+function formatSourceOrigin(source: string | undefined | null, side: string | undefined | null): string | null {
+  if (!source) return null;
+  const label = SOURCE_LABEL[source] ?? source;
+  if (side) return `${label} (${side})`;
+  return label;
+}
+
+// CollisionPanel renders a two-part breakdown for a candidate whose match
+// resolver detected an ID collision. Top section is what the incoming
+// candidate claims to be; each collision entry below shows a platform id
+// that already belongs to a different product, with actions for the sealed
+// game only:
+//   - Merge product #Y into #X: the ghost product Y (owner of the colliding
+//     id) gets folded into the correct product X the candidate's identity
+//     resolved to. Moves external ids, market listings, buylist rows,
+//     inventory, price summaries, and deletes Y. Confirms the candidate
+//     against X. This is the "fix the duplicate" path.
+//   - Move id only: keep Y as its own product (it may model a different
+//     shrink-state or misc variant), but move just the platform id from Y
+//     to X. Confirms the candidate against X.
+// Both actions require the candidate's identity to have resolved to an
+// existing product (`proposed_id`); otherwise there's no target to
+// merge INTO, and we surface the info without action buttons.
+//
+// Singles/mtg games pass no callbacks and the panel is read-only for those.
+interface CollisionPanelProps {
+  collisions: CollisionEntry[];
+  incomingIdentity: string[];
+  incomingName: string;
+  incomingSourceExternal: { platform: string; id: string } | null;
+  proposedId: number | null;
+  busy: boolean;
+  onMerge?: (fromId: number, intoId: number) => Promise<void>;
+  onAttach?: (platform: string, id: string, intoId: number) => Promise<void>;
+}
+function CollisionPanel({
+  collisions, incomingIdentity, incomingName, incomingSourceExternal, proposedId, busy, onMerge, onAttach,
+}: CollisionPanelProps) {
+  const { t } = useTranslation();
+  return (
+    <div className="mt-1 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-[10px] space-y-2">
+      <div className="flex items-center gap-1 font-semibold text-destructive">
+        <AlertTriangle className="size-3 shrink-0" />
+        {t("review.idCollision")}
+      </div>
+
+      {/* Incoming candidate: what does the row claim to be? */}
+      <div className="rounded border border-border/60 bg-background/60 p-1.5">
+        <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+          {t("review.collisionIncoming")}
+        </div>
+        <div className="mt-0.5 font-medium">{incomingName}</div>
+        <div className="text-muted-foreground">{incomingIdentity.join(" · ") || "—"}</div>
+        {incomingSourceExternal && (
+          <div className="text-muted-foreground">
+            {(PLATFORM_SHORT[incomingSourceExternal.platform] ?? incomingSourceExternal.platform)}
+            {" #"}
+            {(() => {
+              const url = anchorURL(incomingSourceExternal.platform, incomingSourceExternal.id);
+              return url ? (
+                <a href={url} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-primary">{incomingSourceExternal.id}</a>
+              ) : incomingSourceExternal.id;
+            })()}
+          </div>
+        )}
+        {proposedId != null && (
+          <div className="mt-0.5 text-muted-foreground">
+            {t("review.collisionResolvesTo").replace("{id}", String(proposedId))}
+          </div>
+        )}
+      </div>
+
+      {/* One box per colliding platform id, with resolution actions. */}
+      {collisions.map((coll, i) => {
+        const platformLabel = PLATFORM_SHORT[coll.platform] ?? coll.platform;
+        const url = coll.id_url ?? anchorURL(coll.platform, coll.id);
+        const identityLine = [
+          coll.existing_set_code,
+          coll.existing_card_number,
+        ].filter(Boolean).join(" · ");
+        const canAct = proposedId != null && coll.existing_card_id != null && proposedId !== coll.existing_card_id;
+        return (
+          <div key={`${coll.platform}:${coll.id}:${i}`} className="rounded border border-border/60 bg-background/60 p-1.5">
+            <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+              {t("review.collisionExisting")}
+            </div>
+            <div className="mt-0.5">
+              {url ? (
+                <a href={url} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2 hover:text-primary">
+                  {platformLabel} #{coll.id}
+                </a>
+              ) : (
+                <span className="font-medium">{platformLabel} #{coll.id}</span>
+              )}
+              <span className="text-muted-foreground"> {t("review.collisionOwnedBy")} </span>
+              <span className="font-medium">
+                #{coll.existing_card_id ?? "?"}
+                {coll.existing_name ? ` 「${coll.existing_name}」` : ""}
+              </span>
+            </div>
+            {identityLine && (
+              <div className="text-muted-foreground">{identityLine}</div>
+            )}
+            {canAct && (onMerge || onAttach) && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {onMerge && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onMerge(coll.existing_card_id!, proposedId!)}
+                    className="inline-flex items-center gap-1 rounded border bg-background px-1.5 py-0.5 text-[10px] hover:border-primary hover:text-primary disabled:opacity-50"
+                    title={t("review.collisionMergeHint")
+                      .replace("{from}", String(coll.existing_card_id))
+                      .replace("{into}", String(proposedId))}
+                  >
+                    <GitMerge className="size-3" />
+                    {t("review.collisionMerge")
+                      .replace("{from}", String(coll.existing_card_id))
+                      .replace("{into}", String(proposedId))}
+                  </button>
+                )}
+                {onAttach && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onAttach(coll.platform, coll.id, proposedId!)}
+                    className="inline-flex items-center gap-1 rounded border bg-background px-1.5 py-0.5 text-[10px] hover:border-primary hover:text-primary disabled:opacity-50"
+                    title={t("review.collisionMoveHint")
+                      .replace("{platform}", platformLabel)
+                      .replace("{id}", coll.id)
+                      .replace("{into}", String(proposedId))}
+                  >
+                    <Move className="size-3" />
+                    {t("review.collisionMove")}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <div className="text-[9px] text-muted-foreground">
+        {t("review.collisionHint")}
+      </div>
+    </div>
+  );
+}
+
+// CollisionEntry mirrors the structured record the backend writes into
+// source_fields.collisions (PR #402 / internal/matchreview/candidate.go).
+interface CollisionEntry {
+  platform: string;
+  id: string;
+  id_url?: string;
+  existing_card_id?: number;
+  existing_name?: string;
+  existing_set_code?: string;
+  existing_card_number?: string;
+}
+
+// parseCollisions extracts a structured list of colliding-platform-id records
+// out of a candidate's source_fields. New rows (post backend #402) carry a
+// JSON array on `collisions`; older rows only have the legacy `collision`
+// string in the shape:
+//   "platform:id (url?) already on product #N <name> set=X num=Y"
+//   "platform:id already on <core> (card N)"
+// The regex tolerates both. Rows without either field return []. Callers can
+// render nothing when the list is empty.
+function parseCollisions(fields: Record<string, string>): CollisionEntry[] {
+  const rawJSON = fields.collisions;
+  if (rawJSON) {
+    try {
+      const parsed = JSON.parse(rawJSON) as CollisionEntry[];
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch {
+      // fall through to string parsing
+    }
+  }
+  const s = fields.collision;
+  if (!s) return [];
+  // Legacy per-entry format is one of:
+  //   platform:id already on <name> <set> (card N)
+  //   platform:id (url) already on product #N 「name」 set=X num=Y
+  // We split on '; ' first because the string composer joins entries that way.
+  return s
+    .split(/;\s+/)
+    .map((entry) => parseCollisionEntry(entry))
+    .filter((e): e is CollisionEntry => e !== null);
+}
+
+function parseCollisionEntry(entry: string): CollisionEntry | null {
+  // Try the enriched form first: platform:id (url) already on product #N 「name」 set=X num=Y
+  const enriched = entry.match(/^(\w+):(\S+)\s+\((https?:\/\/[^)]+)\)\s+already on product #(\d+)(?:\s+「([^」]*)」)?(?:\s+set=(\S+))?(?:\s+num=(\S+))?/);
+  if (enriched) {
+    return {
+      platform: enriched[1],
+      id: enriched[2],
+      id_url: enriched[3],
+      existing_card_id: Number(enriched[4]),
+      existing_name: enriched[5] || undefined,
+      existing_set_code: enriched[6] || undefined,
+      existing_card_number: enriched[7] || undefined,
+    };
+  }
+  // Legacy compact form: platform:id already on <name> <set> (card N)
+  const legacy = entry.match(/^(\w+):(\S+)\s+already on\s+(.+?)\s+\(card\s+(\d+)\)/);
+  if (legacy) {
+    return {
+      platform: legacy[1],
+      id: legacy[2],
+      existing_card_id: Number(legacy[4]),
+      existing_name: legacy[3].trim() || undefined,
+    };
+  }
+  return null;
 }
 
 interface QueueData {
@@ -504,13 +744,43 @@ export default function MatchReviewView() {
                 const fields = c.source_fields ?? {};
                 // Retailer provenance: the unified upsert accumulates every source that
                 // surfaced this card into a `sources` array; fall back to the scalar
-                // `source` for single-source rows. `collision` is set when a matched id
-                // already belongs to a different card (flagged for the curator).
+                // `source` for single-source rows.
                 const rawSources = (fields as Record<string, unknown>).sources;
                 const sources: string[] = Array.isArray(rawSources)
                   ? (rawSources as string[])
                   : fields.source ? [fields.source] : [];
-                const collision = fields.collision;
+                // Source label: prefer the human name for the tag ("Cardrush (buy)")
+                // over the raw internal string. The unified path may accumulate
+                // multiple sources; join their human names with " · ".
+                const sourceOrigin = fields.source
+                  ? formatSourceOrigin(fields.source, fields.side)
+                  : sources.length > 0
+                    ? sources.map((s) => SOURCE_LABEL[s] ?? s).join(" · ")
+                    : null;
+                // Rich collision breakdown: prefer the structured JSON emitted by
+                // matchreview.Upsert (backend PR #402); parse the legacy `collision`
+                // string when the row predates the structured field. Older rows still
+                // render usefully - just without the platform URL.
+                const collisions = parseCollisions(fields);
+                // Fuller identity subtitle: include EVERY sealed axis the backend
+                // stores on source_fields, in the order a curator scans them. Empty
+                // slots stay empty (filter). Same shape works for singles/mtg
+                // because the sealed-only fields resolve to "" there.
+                const identityBits = [
+                  fields.set_code,
+                  fields.card_number,
+                  fields.product_type,
+                  fields.misc_info,
+                  fields.sealed_kind,
+                  fields.sealed_condition && fields.sealed_condition !== "standard"
+                    ? `${fields.sealed_condition}`
+                    : "",
+                  fields.language,
+                ].filter(Boolean);
+                // In practice ~zero candidates carry a source image in the current
+                // pipeline; the empty placeholder is pure visual noise. Only render
+                // the slot when we actually have an image URL.
+                const showImageSlot = Boolean(c.source_image_url);
                 return (
                   <tr key={c.candidate_id} className="border-b align-top last:border-0">
                     <td className="px-2 py-2">
@@ -518,31 +788,73 @@ export default function MatchReviewView() {
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-start gap-2">
-                        {c.source_image_url ? (
+                        {showImageSlot && (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={c.source_image_url} alt="" className="h-10 w-7 shrink-0 rounded border object-cover" />
-                        ) : (
-                          <div className="flex h-10 w-7 shrink-0 items-center justify-center rounded border bg-muted">
-                            <ImageOff className="size-3 text-muted-foreground" />
-                          </div>
+                          <img src={c.source_image_url!} alt="" className="h-10 w-7 shrink-0 rounded border object-cover" />
                         )}
                         <div className="min-w-0">
                           <div className="font-medium">{c.source_name}</div>
                           <div className="truncate text-xs text-muted-foreground">
-                            {joinParts([fields.set_code, fields.card_number, fields.misc_info, fields.product_type, fields.language])}
+                            {identityBits.join(" · ")}
                           </div>
-                          {collision && (
-                            <div
-                              className="mt-0.5 inline-flex items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
-                              title={collision}
-                            >
-                              <AlertTriangle className="size-3 shrink-0" /> {t("review.idCollision")}
-                            </div>
+                          {collisions.length > 0 && (
+                            <CollisionPanel
+                              collisions={collisions}
+                              incomingIdentity={identityBits}
+                              incomingName={c.source_name}
+                              incomingSourceExternal={
+                                c.source_platform !== "identity" && c.source_platform !== "unmatched"
+                                  ? { platform: c.source_platform, id: c.source_key }
+                                  : null
+                              }
+                              proposedId={c.proposed_id}
+                              busy={busyId === c.candidate_id}
+                              onMerge={cfg.game === "pokemon_sealed" ? async (fromId: number, intoId: number) => {
+                                setBusyId(c.candidate_id);
+                                try {
+                                  const supabase = createClient();
+                                  const { error: mergeErr } = await supabase.rpc("card_index_merge_sealed_products", {
+                                    p_from_id: fromId,
+                                    p_into_id: intoId,
+                                  });
+                                  if (mergeErr) throw mergeErr;
+                                  const { error: confErr } = await supabase.rpc(cfg.rpcConfirm, {
+                                    p_candidate_id: c.candidate_id,
+                                    [cfg.confirmIdParam]: intoId,
+                                  });
+                                  if (confErr) throw confErr;
+                                  retry();
+                                } finally {
+                                  setBusyId(null);
+                                }
+                              } : undefined}
+                              onAttach={cfg.game === "pokemon_sealed" ? async (platform: string, id: string, intoId: number) => {
+                                setBusyId(c.candidate_id);
+                                try {
+                                  const supabase = createClient();
+                                  const { error: attachErr } = await supabase.rpc("card_index_attach_sealed_link", {
+                                    p_product_id: intoId,
+                                    p_platform: platform,
+                                    p_external_id: id,
+                                    p_source_url: null,
+                                  });
+                                  if (attachErr) throw attachErr;
+                                  const { error: confErr } = await supabase.rpc(cfg.rpcConfirm, {
+                                    p_candidate_id: c.candidate_id,
+                                    [cfg.confirmIdParam]: intoId,
+                                  });
+                                  if (confErr) throw confErr;
+                                  retry();
+                                } finally {
+                                  setBusyId(null);
+                                }
+                              } : undefined}
+                            />
                           )}
                           <div className="truncate text-[10px] text-muted-foreground">
                             {cfg.unified ? (
-                              sources.length > 0
-                                ? t("review.srcFrom").replace("{src}", sources.join(" · "))
+                              sourceOrigin
+                                ? t("review.srcFrom").replace("{src}", sourceOrigin)
                                 : t("review.srcJp")
                             ) : c.source_platform === "unmatched" ? (
                               t("review.srcUnmatched")
