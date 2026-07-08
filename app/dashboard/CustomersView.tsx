@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Users, Search, Plus, Trash2, X, Star, Bell, History, Filter } from "lucide-react";
+import { Users, Search, Plus, Trash2, X, Star, Bell, History, Filter, LayoutGrid, List, ImageOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -44,6 +44,7 @@ interface WishlistItem {
   status: string;
   notes: string | null;
   label?: string; // resolved client-side
+  image_url?: string | null; // resolved client-side (for grid view)
 }
 interface WishCriteria {
   criteria_id: number;
@@ -207,14 +208,14 @@ async function searchCatalog(
 async function resolveWishlist(items: WishlistItem[]): Promise<WishlistItem[]> {
   if (!items.length) return items;
   const supabase = createClient();
-  const labels = new Map<string, string>();
+  const meta = new Map<string, { label: string; image_url: string | null }>();
   const singleIds = items.filter((i) => i.card_id).map((i) => i.card_id as number);
   const sealedIds = items.filter((i) => i.product_id).map((i) => i.product_id as number);
   if (singleIds.length) {
     for (const table of ["pokemon_card_definitions", "mtg_card_definitions_v"]) {
       const { data } = await supabase
         .from(table)
-        .select("card_id, regional_name, english_name, set_code, card_number, misc_info")
+        .select("card_id, regional_name, english_name, set_code, card_number, misc_info, image_url")
         .in("card_id", singleIds);
       for (const r of (data ?? []) as {
         card_id: number;
@@ -223,29 +224,30 @@ async function resolveWishlist(items: WishlistItem[]): Promise<WishlistItem[]> {
         set_code: string;
         card_number: string;
         misc_info?: string | null;
+        image_url: string | null;
       }[]) {
-        labels.set(
-          `c${r.card_id}`,
-          `${r.english_name || r.regional_name} · ${r.set_code} ${r.card_number}${
+        meta.set(`c${r.card_id}`, {
+          label: `${r.english_name || r.regional_name} · ${r.set_code} ${r.card_number}${
             r.misc_info && r.misc_info !== "UNKNOWN" ? ` (${r.misc_info})` : ""
           }`,
-        );
+          image_url: r.image_url,
+        });
       }
     }
   }
   if (sealedIds.length) {
     const { data } = await supabase
       .from("pokemon_sealed_products")
-      .select("product_id, name, set_code")
+      .select("product_id, name, set_code, image_url")
       .in("product_id", sealedIds);
-    for (const r of (data ?? []) as { product_id: number; name: string; set_code: string }[]) {
-      labels.set(`p${r.product_id}`, r.name);
+    for (const r of (data ?? []) as { product_id: number; name: string; set_code: string; image_url: string | null }[]) {
+      meta.set(`p${r.product_id}`, { label: r.name, image_url: r.image_url });
     }
   }
-  return items.map((i) => ({
-    ...i,
-    label: i.card_id ? labels.get(`c${i.card_id}`) : labels.get(`p${i.product_id}`),
-  }));
+  return items.map((i) => {
+    const m = i.card_id ? meta.get(`c${i.card_id}`) : meta.get(`p${i.product_id}`);
+    return { ...i, label: m?.label, image_url: m?.image_url ?? null };
+  });
 }
 
 export default function CustomersView() {
@@ -367,6 +369,7 @@ function CustomerDetail({
   const [form, setForm] = useState<Customer | null>(customer);
   const [handleRows, setHandleRows] = useState<[string, string][]>([]);
   const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
+  const [wishlistView, setWishlistView] = useState<"list" | "grid">("list");
   const [criteria, setCriteria] = useState<WishCriteria[]>([]);
   const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
   const [inStockIds, setInStockIds] = useState<Set<number>>(new Set());
@@ -477,6 +480,12 @@ function CustomerDetail({
       .eq("customer_id", form.customer_id)
       .order("priority");
     setWishlist(await resolveWishlist((data ?? []) as WishlistItem[]));
+  }
+
+  async function removeWish(wishlistId: number) {
+    const supabase = createClient();
+    await supabase.from("customer_wishlist").delete().eq("wishlist_id", wishlistId);
+    reloadWishlist();
   }
 
   return (
@@ -599,45 +608,84 @@ function CustomerDetail({
 
           {/* Wishlist */}
           <div className="space-y-2 border-t pt-3">
-            <Label className="flex items-center gap-1.5">
-              <Star className="size-3.5" /> {t("customers.wishlist")}
-            </Label>
-            <div className="space-y-1">
-              {wishlist.length === 0 && (
-                <p className="text-xs text-muted-foreground">{t("customers.wishlistEmpty")}</p>
-              )}
-              {wishlist.map((w) => (
-                <div key={w.wishlist_id} className="flex items-center gap-2 text-sm">
-                  <span className="w-8 shrink-0 text-xs text-muted-foreground">P{w.priority}</span>
-                  <span className="flex-1 truncate">{w.label ?? `#${w.card_id ?? w.product_id}`}</span>
-                  {inStockIds.has(w.wishlist_id) && (
-                    <Badge variant="secondary" className="shrink-0 text-[10px] text-emerald-600">
-                      {t("customers.inStock")}
-                    </Badge>
-                  )}
-                  {w.max_price_usd != null && (
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      ≤${Number(w.max_price_usd).toFixed(0)}
-                    </span>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7"
-                    onClick={async () => {
-                      const supabase = createClient();
-                      await supabase
-                        .from("customer_wishlist")
-                        .delete()
-                        .eq("wishlist_id", w.wishlist_id);
-                      reloadWishlist();
-                    }}
-                  >
-                    <Trash2 className="size-3.5" />
+            <div className="flex items-center justify-between">
+              <Label className="flex items-center gap-1.5">
+                <Star className="size-3.5" /> {t("customers.wishlist")}
+              </Label>
+              {wishlist.length > 0 && (
+                <div className="flex items-center gap-0.5 rounded-md border p-0.5">
+                  <Button type="button" size="icon" className="size-6"
+                    variant={wishlistView === "list" ? "secondary" : "ghost"}
+                    onClick={() => setWishlistView("list")} aria-label={t("customers.wishlistViewList")}>
+                    <List className="size-3.5" />
+                  </Button>
+                  <Button type="button" size="icon" className="size-6"
+                    variant={wishlistView === "grid" ? "secondary" : "ghost"}
+                    onClick={() => setWishlistView("grid")} aria-label={t("customers.wishlistViewGrid")}>
+                    <LayoutGrid className="size-3.5" />
                   </Button>
                 </div>
-              ))}
+              )}
             </div>
+            {wishlist.length === 0 ? (
+              <p className="text-xs text-muted-foreground">{t("customers.wishlistEmpty")}</p>
+            ) : wishlistView === "list" ? (
+              <div className="space-y-1">
+                {wishlist.map((w) => (
+                  <div key={w.wishlist_id} className="flex items-center gap-2 text-sm">
+                    <span className="w-8 shrink-0 text-xs text-muted-foreground">P{w.priority}</span>
+                    <span className="flex-1 truncate">{w.label ?? `#${w.card_id ?? w.product_id}`}</span>
+                    {inStockIds.has(w.wishlist_id) && (
+                      <Badge variant="secondary" className="shrink-0 text-[10px] text-emerald-600">
+                        {t("customers.inStock")}
+                      </Badge>
+                    )}
+                    {w.max_price_usd != null && (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        ≤${Number(w.max_price_usd).toFixed(0)}
+                      </span>
+                    )}
+                    <Button variant="ghost" size="icon" className="size-7" onClick={() => removeWish(w.wishlist_id)}>
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {wishlist.map((w) => (
+                  <div key={w.wishlist_id} className="group relative rounded-md border p-1.5">
+                    <div className="relative mb-1 flex aspect-[3/4] items-center justify-center overflow-hidden rounded bg-muted">
+                      {w.image_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={w.image_url} alt="" loading="lazy" className="h-full w-full object-contain" />
+                      ) : (
+                        <ImageOff className="size-6 text-muted-foreground" />
+                      )}
+                      <span className="absolute left-1 top-1 rounded bg-background/80 px-1 text-[10px] font-medium text-muted-foreground">
+                        P{w.priority}
+                      </span>
+                      {inStockIds.has(w.wishlist_id) && (
+                        <Badge variant="secondary" className="absolute bottom-1 left-1 text-[9px] text-emerald-600">
+                          {t("customers.inStock")}
+                        </Badge>
+                      )}
+                      <Button type="button" variant="secondary" size="icon"
+                        className="absolute right-1 top-1 size-6 opacity-0 transition-opacity group-hover:opacity-100"
+                        onClick={() => removeWish(w.wishlist_id)}>
+                        <Trash2 className="size-3" />
+                      </Button>
+                    </div>
+                    <div className="truncate text-xs" title={w.label ?? undefined}>
+                      {w.label ?? `#${w.card_id ?? w.product_id}`}
+                    </div>
+                    {w.max_price_usd != null && (
+                      <div className="text-[10px] text-muted-foreground">≤${Number(w.max_price_usd).toFixed(0)}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             <WishlistAdd customerId={form.customer_id} onAdded={reloadWishlist} />
           </div>
 

@@ -452,6 +452,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "customers.prefsPlaceholder": "日本のリザードンを収集、未開封が好き…",
   "customers.fNotes": "メモ",
   "customers.wishlist": "ウィッシュリスト",
+  "customers.wishlistViewList": "リスト表示",
+  "customers.wishlistViewGrid": "グリッド表示",
   "customers.wishlistEmpty": "ウィッシュリストはまだありません。",
   "customers.wishlistAdd": "ウィッシュ項目を追加",
   "customers.wishlistSearch": "検索: 名前・弾コード・カード番号…",

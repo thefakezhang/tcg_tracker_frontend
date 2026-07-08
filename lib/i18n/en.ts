@@ -450,6 +450,8 @@ const en = {
   "customers.prefsPlaceholder": "Collects JP Charizards, likes sealed…",
   "customers.fNotes": "Notes",
   "customers.wishlist": "Wishlist",
+  "customers.wishlistViewList": "List view",
+  "customers.wishlistViewGrid": "Grid view",
   "customers.wishlistEmpty": "No wishlist items yet.",
   "customers.wishlistAdd": "Add wishlist item",
   "customers.wishlistSearch": "Search: name, set code, card number…",
