@@ -24,6 +24,7 @@ interface JournalEntry {
 }
 interface TripCapital { trip_id: number; capital_invested_usd: number; cumulative_invested_usd: number; }
 interface TripLite { trip_id: number; name: string; started_at: string | null; }
+interface CashFlowRow { activity: string; source: string; net_usd: number; }
 
 const usd = (n: number) =>
   `$${(n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -44,24 +45,27 @@ export default function FinancesView() {
   const [journal, setJournal] = useState<JournalEntry[]>([]);
   const [caps, setCaps] = useState<TripCapital[]>([]);
   const [trips, setTrips] = useState<Map<number, TripLite>>(new Map());
+  const [cashFlow, setCashFlow] = useState<CashFlowRow[]>([]);
   const [entryOpen, setEntryOpen] = useState(false);
   const [register, setRegister] = useState<GlAccount | null>(null);
 
   const fetchAll = useCallback(async () => {
     const supabase = createClient();
-    const [acc, tb, is, jn, cap, tr] = await Promise.all([
+    const [acc, tb, is, jn, cap, tr, cf] = await Promise.all([
       supabase.from("gl_accounts").select("account_id, code, name, type, is_cash, is_owner").eq("is_active", true).order("sort"),
       supabase.rpc("get_trial_balance"),
       supabase.rpc("get_income_statement"),
       supabase.from("gl_journal").select("entry_id, entry_date, memo, source, gl_journal_lines(amount_usd)").order("entry_date", { ascending: false }).limit(50),
       supabase.rpc("get_trip_capital_invested"),
       supabase.from("trips").select("trip_id, name, started_at"),
+      supabase.rpc("get_cash_flow"),
     ]);
     setAccounts((acc.data as GlAccount[]) ?? []);
     setTrial((tb.data as TrialRow[]) ?? []);
     setIncome((is.data as IncomeRow[]) ?? []);
     setJournal((jn.data as JournalEntry[]) ?? []);
     setCaps((cap.data as TripCapital[]) ?? []);
+    setCashFlow((cf.data as CashFlowRow[]) ?? []);
     const m = new Map<number, TripLite>();
     for (const x of (tr.data as TripLite[]) ?? []) m.set(x.trip_id, x);
     setTrips(m);
@@ -110,6 +114,30 @@ export default function FinancesView() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Cash flow */}
+      {cashFlow.length > 0 && (
+        <Card size="sm">
+          <CardHeader className="pb-2"><CardTitle className="text-sm">{t("gl.cashFlow")}</CardTitle></CardHeader>
+          <CardContent className="text-sm">
+            {["Operating", "Financing", "Transfers"].filter((act) => cashFlow.some((r) => r.activity === act)).map((act) => (
+              <div key={act} className="mb-1">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t(`gl.cf.${act}` as never)}</div>
+                {cashFlow.filter((r) => r.activity === act).map((r) => (
+                  <div key={r.source} className="flex justify-between">
+                    <span className="pl-3 capitalize">{t(`gl.src.${r.source}` as never)}</span>
+                    <span className={`tabular-nums ${r.net_usd < 0 ? "text-destructive" : ""}`}>{usd(Number(r.net_usd))}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+            <div className="mt-1 flex justify-between border-t pt-1 font-semibold">
+              <span>{t("gl.cashOnHand")}</span>
+              <span className="tabular-nums">{usd(cashFlow.reduce((s, r) => s + Number(r.net_usd), 0))}</span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Chart of accounts / trial balance */}
       <Card size="sm">
@@ -209,7 +237,7 @@ export default function FinancesView() {
       <AccountingRollupView />
 
       <JournalEntryDialog accounts={accounts} open={entryOpen} onOpenChange={setEntryOpen} onPosted={fetchAll} />
-      <AccountRegisterModal account={register} onClose={() => setRegister(null)} />
+      <AccountRegisterModal account={register} accounts={accounts} onClose={() => setRegister(null)} onReclassified={fetchAll} />
     </div>
   );
 }
