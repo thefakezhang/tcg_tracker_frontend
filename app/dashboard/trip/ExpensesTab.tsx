@@ -5,6 +5,7 @@ import { Plus, Trash2, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
+import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -39,6 +40,14 @@ export default function ExpensesTab({ tripId }: { tripId: number | null }) {
   const [cur, setCur] = useState("USD");
   const [amt, setAmt] = useState("");
   const [fx, setFx] = useState("1");
+  const { rateFor } = useFxRate();
+
+  // Default the FX field to the live market rate for the chosen currency; the user
+  // can still override. Only drives the add form (edits have no separate FX here).
+  useEffect(() => {
+    const r = rateFor(cur);
+    if (r !== null) setFx(fmtRate(r));
+  }, [cur, rateFor]);
 
   const fetchRows = useCallback(async () => {
     const supabase = createClient();
