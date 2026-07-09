@@ -14,6 +14,7 @@ import MatchReviewView from "./MatchReviewView";
 import CustomersView from "./CustomersView";
 import ReachOutView from "./ReachOutView";
 import ShoppingListView from "./ShoppingListView";
+import FinancesView from "./FinancesView";
 import ExpensesTab from "./trip/ExpensesTab";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
@@ -55,6 +56,9 @@ function DashboardContent() {
   }
   if (activeTripId === -10) {
     return <ShoppingListView key="shopping-list" />;
+  }
+  if (activeTripId === -11) {
+    return <FinancesView key="finances" />;
   }
   if (activeTripId) {
     return <TripDashboard key={`trip-${activeTripId}`} tripId={activeTripId} />;
