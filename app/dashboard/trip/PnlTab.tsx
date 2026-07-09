@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import AccountingRollupView from "../AccountingRollupView";
+import BalanceSheetCard from "../BalanceSheetCard";
 
 interface Pnl {
   import_lot_cost_usd: number;
@@ -15,6 +16,11 @@ interface Pnl {
   export_unrealized_cost_usd: number;
   expenses_usd: number;
   realized_net_usd: number;
+}
+interface TripCapital {
+  trip_id: number;
+  capital_invested_usd: number;
+  cumulative_invested_usd: number;
 }
 
 function Stat({ label, value }: { label: string; value: number }) {
@@ -31,11 +37,16 @@ function Stat({ label, value }: { label: string; value: number }) {
 export default function PnlTab({ tripId }: { tripId: number }) {
   const { t } = useTranslation();
   const [pnl, setPnl] = useState<Pnl | null>(null);
+  const [capital, setCapital] = useState<TripCapital | null>(null);
 
   const fetchPnl = useCallback(async () => {
     const supabase = createClient();
     const { data, error } = await supabase.rpc("get_trip_pnl", { p_trip_id: tripId });
     if (!error && data && data.length > 0) setPnl(data[0] as Pnl);
+    // Per-trip owner capital injected (needs the whole timeline, so it comes back
+    // for every trip; pick this one).
+    const { data: caps } = await supabase.rpc("get_trip_capital_invested");
+    if (caps) setCapital((caps as TripCapital[]).find((c) => c.trip_id === tripId) ?? null);
   }, [tripId]);
 
   useEffect(() => { fetchPnl(); }, [fetchPnl]);
@@ -56,7 +67,14 @@ export default function PnlTab({ tripId }: { tripId: number }) {
             <Stat label={t("trips.netProfit")} value={pnl.realized_net_usd} />
           </div>
         )}
+        {capital && (
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label={t("trips.capitalInvested")} value={capital.capital_invested_usd} />
+            <Stat label={t("trips.capitalCumulative")} value={capital.cumulative_invested_usd} />
+          </div>
+        )}
       </div>
+      <BalanceSheetCard />
       <AccountingRollupView />
     </div>
   );
