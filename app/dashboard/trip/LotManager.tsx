@@ -8,6 +8,7 @@ import { getCardDisplayName, cardMeta, useDebouncedValue } from "../use-card-dat
 import { useLanguage } from "../LanguageContext";
 import { useLotPicker } from "../LotPickerContext";
 import { useSaving } from "@/lib/use-saving";
+import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -101,6 +102,16 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const [cCurrency, setCCurrency] = useState(LEG_DEFAULTS[leg].currency);
   const [cTotal, setCTotal] = useState("");
   const [cFx, setCFx] = useState(LEG_DEFAULTS[leg].fx);
+  const { rateFor } = useFxRate();
+
+  // For a NEW lot, default the FX field to the live market rate for the chosen
+  // currency. Skip when editing (editingLotId set) so an existing lot keeps the
+  // rate it was recorded at.
+  useEffect(() => {
+    if (editingLotId !== null) return;
+    const r = rateFor(cCurrency);
+    if (r !== null) setCFx(fmtRate(r));
+  }, [cCurrency, editingLotId, rateFor]);
 
   // add-card search state
   const [searchGame, setSearchGame] = useState<CardGame>("pokemon");

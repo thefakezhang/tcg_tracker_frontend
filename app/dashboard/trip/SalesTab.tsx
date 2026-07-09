@@ -5,6 +5,7 @@ import { Undo2, ImageOff, ChevronUp, ChevronDown, ChevronsUpDown, Loader2, Penci
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
+import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
 import { useLanguage } from "../LanguageContext";
 import { getCardDisplayName, cardMeta, cardVariant } from "../use-card-data";
 import ReceiptsDialog from "../Receipts";
@@ -129,6 +130,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [lotFx, setLotFx] = useState("0.0067");
   const [lotDate, setLotDate] = useState(new Date().toISOString().slice(0, 10));
   const [lotQty, setLotQty] = useState<Record<string, string>>({});
+  const { rateFor } = useFxRate();
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [sortCol, setSortCol] = useState<"name" | "leg" | "qty" | "avg" | null>(null);
   const [hSearch, setHSearch] = useState("");
@@ -136,6 +138,18 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [sortAsc, setSortAsc] = useState(true);
   const [hSortAsc, setHSortAsc] = useState(false);
   const [groupBy, setGroupBy] = useState<"sale" | "card">("sale");
+
+  // Default the FX fields (single-sale and lot-sale add forms) to the live market
+  // rate for the chosen currency; the user can still override. Edit dialogs use
+  // their own state (eFx/eLotFx) seeded from the stored row, so they're untouched.
+  useEffect(() => {
+    const r = rateFor(currency);
+    if (r !== null) setFx(fmtRate(r));
+  }, [currency, rateFor]);
+  useEffect(() => {
+    const r = rateFor(lotCurrency);
+    if (r !== null) setLotFx(fmtRate(r));
+  }, [lotCurrency, rateFor]);
   const { language } = useLanguage();
 
   const fetchHoldings = useCallback(async () => {
@@ -529,7 +543,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     for (const h of selectedHoldings) q[holdingKey(h)] = String(h.qty_on_hand);
     setLotQty(q);
     setLotGross(""); setLotFees("0"); setLotDate(new Date().toISOString().slice(0, 10)); setLotCustomerId(null);
-    setLotCurrency(selectedLeg === "export" ? "JPY" : "USD"); setLotFx("0.0067");
+    setLotCurrency(selectedLeg === "export" ? "JPY" : "USD"); // setLotFx driven by live-rate effect
     setLotOpen(true);
   }
 
