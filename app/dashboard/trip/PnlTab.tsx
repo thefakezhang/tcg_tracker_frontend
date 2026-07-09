@@ -4,8 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import AccountingRollupView from "../AccountingRollupView";
-import BalanceSheetCard from "../BalanceSheetCard";
 
 interface Pnl {
   import_lot_cost_usd: number;
@@ -70,12 +68,12 @@ export default function PnlTab({ tripId }: { tripId: number }) {
         {capital && (
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat label={t("trips.capitalInvested")} value={capital.capital_invested_usd} />
-            <Stat label={t("trips.capitalCumulative")} value={capital.cumulative_invested_usd} />
           </div>
         )}
+        {capital && (
+          <p className="mt-2 text-xs text-muted-foreground">{t("trips.capitalHint")}</p>
+        )}
       </div>
-      <BalanceSheetCard />
-      <AccountingRollupView />
     </div>
   );
 }
