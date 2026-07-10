@@ -14,6 +14,7 @@ interface Pnl {
   export_unrealized_cost_usd: number;
   expenses_usd: number;
   realized_net_usd: number;
+  net_cash_usd: number;
 }
 interface TripCapital {
   trip_id: number;
@@ -65,12 +66,13 @@ export default function PnlTab({ tripId }: { tripId: number }) {
             <Stat label={t("trips.netProfit")} value={pnl.realized_net_usd} />
           </div>
         )}
-        {capital && (
+        {(capital || pnl) && (
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label={t("trips.capitalInvested")} value={capital.capital_invested_usd} />
+            {capital && <Stat label={t("trips.capitalInvested")} value={capital.capital_invested_usd} />}
+            {pnl && <Stat label={t("trips.netCash")} value={pnl.net_cash_usd} />}
           </div>
         )}
-        {capital && (
+        {(capital || pnl) && (
           <p className="mt-2 text-xs text-muted-foreground">{t("trips.capitalHint")}</p>
         )}
       </div>
