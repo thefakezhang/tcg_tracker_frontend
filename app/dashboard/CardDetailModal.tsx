@@ -72,7 +72,7 @@ const BUYLIST_ENTRY_TABLE: Record<Game, string> = {
   pokemon_sealed: "pokemon_sealed_buylist_entries",
 };
 
-interface DetailListing {
+export interface DetailListing {
   price: number;
   currencySymbol: string;
   currencyCode: string;
@@ -619,7 +619,7 @@ function ListingTables({
   );
 }
 
-function ListingTable({
+export function ListingTable({
   listings,
   conditionHeader,
   t,
