@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Users, Search, Plus, Trash2, X, Star, Bell, History, Filter, LayoutGrid, List, ImageOff } from "lucide-react";
+import { Users, Search, Plus, Trash2, X, Star, Bell, History, Filter, LayoutGrid, List, ImageOff, ExternalLink } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
-import { useDebouncedValue } from "./use-card-data";
+import { useDebouncedValue, fetchLocationMap, fetchRateMap } from "./use-card-data";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +46,20 @@ interface WishlistItem {
   label?: string; // resolved client-side
   image_url?: string | null; // resolved client-side (for grid view)
 }
+// A market-listing row for a wishlisted card, used to show the current per-platform
+// prices + source links inline on each saved wishlist item.
+interface MarketRow {
+  location_id: number;
+  price_type: string; // 'Buy' | 'Sell'
+  price: number;
+  currency: string;
+  condition?: string | null;
+  psa_grade?: number | null;
+  listing_url: string | null;
+}
+// Stable key so listings line up with their wishlist item across games.
+const wishKey = (w: { game: string; card_id: number | null; product_id: number | null }) =>
+  `${w.game}:${w.card_id ?? w.product_id}`;
 interface WishCriteria {
   criteria_id: number;
   customer_id: number;
@@ -250,6 +264,78 @@ async function resolveWishlist(items: WishlistItem[]): Promise<WishlistItem[]> {
   });
 }
 
+// Fetch the current market listings (per-platform prices + source links) for the
+// cards on a wishlist, keyed by wishKey so each item can show its own breakdown.
+async function fetchWishlistListings(items: WishlistItem[]): Promise<Map<string, MarketRow[]>> {
+  const supabase = createClient();
+  const map = new Map<string, MarketRow[]>();
+  const add = (key: string, r: MarketRow) => {
+    const arr = map.get(key) ?? [];
+    arr.push(r);
+    map.set(key, arr);
+  };
+  const pk = items.filter((i) => i.game === "pokemon" && i.card_id).map((i) => i.card_id as number);
+  const mtg = items.filter((i) => i.game === "mtg" && i.card_id).map((i) => i.card_id as number);
+  const sealed = items.filter((i) => i.game === "pokemon_sealed" && i.product_id).map((i) => i.product_id as number);
+  const cardCols = "card_id, location_id, price_type, price, currency, condition, psa_grade, listing_url";
+  if (pk.length) {
+    const { data } = await supabase.from("pokemon_market_listings").select(cardCols).in("card_id", pk);
+    for (const r of (data ?? []) as (MarketRow & { card_id: number })[]) add(`pokemon:${r.card_id}`, r);
+  }
+  if (mtg.length) {
+    const { data } = await supabase.from("mtg_market_listings").select(cardCols).in("card_id", mtg);
+    for (const r of (data ?? []) as (MarketRow & { card_id: number })[]) add(`mtg:${r.card_id}`, r);
+  }
+  if (sealed.length) {
+    const { data } = await supabase
+      .from("pokemon_sealed_market_listings")
+      .select("product_id, location_id, price_type, price, currency, listing_url")
+      .in("product_id", sealed);
+    for (const r of (data ?? []) as (MarketRow & { product_id: number })[]) add(`pokemon_sealed:${r.product_id}`, r);
+  }
+  return map;
+}
+
+// Inline per-platform price breakdown for a wishlisted card: each listing shows the
+// platform, condition/grade, USD price, and links out to the source when available.
+function MarketBreakdown({
+  rows, locations, rateMap,
+}: {
+  rows: MarketRow[] | undefined;
+  locations: Map<number, { name: string; marketRegion: string | null }>;
+  rateMap: Map<string, number>;
+}) {
+  if (!rows || rows.length === 0) return null;
+  const sorted = [...rows].sort(
+    (a, b) => a.price * (rateMap.get(a.currency) ?? 1) - b.price * (rateMap.get(b.currency) ?? 1),
+  );
+  return (
+    <div className="mt-1 space-y-0.5 border-l pl-2">
+      {sorted.map((r, i) => {
+        const usd = r.price * (rateMap.get(r.currency) ?? 1);
+        const body = (
+          <>
+            <span className="flex-1 truncate text-muted-foreground">
+              {locations.get(r.location_id)?.name ?? `#${r.location_id}`}
+              {r.condition ? ` · ${r.condition}` : ""}
+              {r.psa_grade ? ` · PSA${r.psa_grade}` : ""}
+            </span>
+            <Badge variant="outline" className="shrink-0 px-1 py-0 text-[9px]">{r.price_type}</Badge>
+            <span className="shrink-0 tabular-nums">${usd.toFixed(2)}</span>
+            {r.listing_url && <ExternalLink className="size-3 shrink-0 text-muted-foreground" />}
+          </>
+        );
+        return r.listing_url ? (
+          <a key={i} href={r.listing_url} target="_blank" rel="noreferrer"
+            className="flex items-center gap-1.5 text-[10px] hover:underline">{body}</a>
+        ) : (
+          <div key={i} className="flex items-center gap-1.5 text-[10px]">{body}</div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function CustomersView() {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
@@ -370,11 +456,21 @@ function CustomerDetail({
   const [handleRows, setHandleRows] = useState<[string, string][]>([]);
   const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
   const [wishlistView, setWishlistView] = useState<"list" | "grid">("list");
+  const [listings, setListings] = useState<Map<string, MarketRow[]>>(new Map());
+  const [locations, setLocations] = useState<Map<number, { name: string; marketRegion: string | null }>>(new Map());
+  const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
   const [criteria, setCriteria] = useState<WishCriteria[]>([]);
   const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
   const [inStockIds, setInStockIds] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Platform names + FX rates (cached) for the wishlist market breakdown.
+  useEffect(() => {
+    const supabase = createClient();
+    fetchLocationMap(supabase).then(setLocations).catch(() => {});
+    fetchRateMap(supabase).then(setRateMap).catch(() => {});
+  }, []);
 
   useEffect(() => {
     setForm(customer);
@@ -387,7 +483,12 @@ function CustomerDetail({
         .select("*")
         .eq("customer_id", customer.customer_id)
         .order("priority")
-        .then(({ data }) => resolveWishlist((data ?? []) as WishlistItem[]).then(setWishlist));
+        .then(({ data }) =>
+          resolveWishlist((data ?? []) as WishlistItem[]).then((items) => {
+            setWishlist(items);
+            fetchWishlistListings(items).then(setListings).catch(() => {});
+          }),
+        );
       supabase
         .from("sales_ledger_v")
         .select("sale_id, game, regional_name, english_name, set_code, card_number, misc_info, sold_at, quantity, gross_usd, margin_usd")
@@ -411,6 +512,7 @@ function CustomerDetail({
         .then(({ data }) => setCriteria((data ?? []) as WishCriteria[]));
     } else {
       setWishlist([]);
+      setListings(new Map());
       setCriteria([]);
       setPurchases([]);
       setInStockIds(new Set());
@@ -479,7 +581,9 @@ function CustomerDetail({
       .select("*")
       .eq("customer_id", form.customer_id)
       .order("priority");
-    setWishlist(await resolveWishlist((data ?? []) as WishlistItem[]));
+    const items = await resolveWishlist((data ?? []) as WishlistItem[]);
+    setWishlist(items);
+    fetchWishlistListings(items).then(setListings).catch(() => {});
   }
 
   async function removeWish(wishlistId: number) {
@@ -630,24 +734,27 @@ function CustomerDetail({
             {wishlist.length === 0 ? (
               <p className="text-xs text-muted-foreground">{t("customers.wishlistEmpty")}</p>
             ) : wishlistView === "list" ? (
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 {wishlist.map((w) => (
-                  <div key={w.wishlist_id} className="flex items-center gap-2 text-sm">
-                    <span className="w-8 shrink-0 text-xs text-muted-foreground">P{w.priority}</span>
-                    <span className="flex-1 truncate">{w.label ?? `#${w.card_id ?? w.product_id}`}</span>
-                    {inStockIds.has(w.wishlist_id) && (
-                      <Badge variant="secondary" className="shrink-0 text-[10px] text-emerald-600">
-                        {t("customers.inStock")}
-                      </Badge>
-                    )}
-                    {w.max_price_usd != null && (
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        ≤${Number(w.max_price_usd).toFixed(0)}
-                      </span>
-                    )}
-                    <Button variant="ghost" size="icon" className="size-7" onClick={() => removeWish(w.wishlist_id)}>
-                      <Trash2 className="size-3.5" />
-                    </Button>
+                  <div key={w.wishlist_id} className="text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="w-8 shrink-0 text-xs text-muted-foreground">P{w.priority}</span>
+                      <span className="flex-1 truncate">{w.label ?? `#${w.card_id ?? w.product_id}`}</span>
+                      {inStockIds.has(w.wishlist_id) && (
+                        <Badge variant="secondary" className="shrink-0 text-[10px] text-emerald-600">
+                          {t("customers.inStock")}
+                        </Badge>
+                      )}
+                      {w.max_price_usd != null && (
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          ≤${Number(w.max_price_usd).toFixed(0)}
+                        </span>
+                      )}
+                      <Button variant="ghost" size="icon" className="size-7" onClick={() => removeWish(w.wishlist_id)}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                    <MarketBreakdown rows={listings.get(wishKey(w))} locations={locations} rateMap={rateMap} />
                   </div>
                 ))}
               </div>
@@ -682,6 +789,7 @@ function CustomerDetail({
                     {w.max_price_usd != null && (
                       <div className="text-[10px] text-muted-foreground">≤${Number(w.max_price_usd).toFixed(0)}</div>
                     )}
+                    <MarketBreakdown rows={listings.get(wishKey(w))} locations={locations} rateMap={rateMap} />
                   </div>
                 ))}
               </div>
