@@ -7,6 +7,7 @@ import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue, fetchLocationMap, fetchRateMap, fetchConditionsCache } from "./use-card-data";
 import { ListingTable, type DetailListing } from "./CardDetailModal";
+import { toUsd } from "@/lib/money";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -349,7 +350,7 @@ function MarketBreakdown({
   t: (key: TranslationKey) => string;
 }) {
   if (!rows || rows.length === 0) return null;
-  const usd = (l: MarketRow) => l.price * (rateMap.get(l.currency) ?? 1);
+  const usd = (l: MarketRow) => toUsd(l.price, l.currency, rateMap);
   const sell = rows.filter((r) => r.price_type === "Sell").sort((a, b) => usd(a) - usd(b)).map((r) => toDetailListing(r, locations, conditionsMap));
   const buy = rows.filter((r) => r.price_type === "Buy").sort((a, b) => usd(b) - usd(a)).map((r) => toDetailListing(r, locations, conditionsMap));
   if (sell.length === 0 && buy.length === 0) return null;
