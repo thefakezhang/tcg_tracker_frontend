@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Users, Search, Plus, Trash2, X, Star, Bell, History, Filter, LayoutGrid, List, ImageOff, ExternalLink } from "lucide-react";
+import { Users, Search, Plus, Trash2, X, Star, Bell, History, Filter, LayoutGrid, List, ImageOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { useTranslation } from "@/lib/i18n";
+import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
-import { useDebouncedValue, fetchLocationMap, fetchRateMap } from "./use-card-data";
+import { useDebouncedValue, fetchLocationMap, fetchRateMap, fetchConditionsCache } from "./use-card-data";
+import { ListingTable, type DetailListing } from "./CardDetailModal";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -53,9 +54,11 @@ interface MarketRow {
   price_type: string; // 'Buy' | 'Sell'
   price: number;
   currency: string;
-  condition?: string | null;
+  currency_symbol?: string;
+  condition?: number | null;
   psa_grade?: number | null;
   listing_url: string | null;
+  last_updated?: string | null;
 }
 // Stable key so listings line up with their wishlist item across games.
 const wishKey = (w: { game: string; card_id: number | null; product_id: number | null }) =>
@@ -277,61 +280,89 @@ async function fetchWishlistListings(items: WishlistItem[]): Promise<Map<string,
   const pk = items.filter((i) => i.game === "pokemon" && i.card_id).map((i) => i.card_id as number);
   const mtg = items.filter((i) => i.game === "mtg" && i.card_id).map((i) => i.card_id as number);
   const sealed = items.filter((i) => i.game === "pokemon_sealed" && i.product_id).map((i) => i.product_id as number);
-  const cardCols = "card_id, location_id, price_type, price, currency, condition, psa_grade, listing_url";
+  const toRow = (r: Record<string, unknown>): MarketRow => ({
+    location_id: r.location_id as number,
+    price_type: r.price_type as string,
+    price: r.price as number,
+    currency: r.currency as string,
+    currency_symbol: (r.currencies as { symbol: string } | null)?.symbol ?? "",
+    condition: (r.condition as number | null) ?? null,
+    psa_grade: (r.psa_grade as number | null) ?? null,
+    listing_url: (r.listing_url as string | null) ?? null,
+    last_updated: (r.last_updated as string | null) ?? null,
+  });
+  const cardCols = "card_id, location_id, price_type, price, currency, condition, psa_grade, listing_url, last_updated, currencies(symbol)";
   if (pk.length) {
     const { data } = await supabase.from("pokemon_market_listings").select(cardCols).in("card_id", pk);
-    for (const r of (data ?? []) as (MarketRow & { card_id: number })[]) add(`pokemon:${r.card_id}`, r);
+    for (const r of (data ?? []) as Record<string, unknown>[]) add(`pokemon:${r.card_id}`, toRow(r));
   }
   if (mtg.length) {
     const { data } = await supabase.from("mtg_market_listings").select(cardCols).in("card_id", mtg);
-    for (const r of (data ?? []) as (MarketRow & { card_id: number })[]) add(`mtg:${r.card_id}`, r);
+    for (const r of (data ?? []) as Record<string, unknown>[]) add(`mtg:${r.card_id}`, toRow(r));
   }
   if (sealed.length) {
     const { data } = await supabase
       .from("pokemon_sealed_market_listings")
-      .select("product_id, location_id, price_type, price, currency, listing_url")
+      .select("product_id, location_id, price_type, price, currency, listing_url, last_updated, currencies(symbol)")
       .in("product_id", sealed);
-    for (const r of (data ?? []) as (MarketRow & { product_id: number })[]) add(`pokemon_sealed:${r.product_id}`, r);
+    for (const r of (data ?? []) as Record<string, unknown>[]) add(`pokemon_sealed:${r.product_id}`, toRow(r));
   }
   return map;
 }
 
-// Inline per-platform price breakdown for a wishlisted card: each listing shows the
-// platform, condition/grade, USD price, and links out to the source when available.
+// Turn a raw listing into the DetailListing shape the shared ListingTable renders.
+function toDetailListing(
+  l: MarketRow,
+  locations: Map<number, { name: string; marketRegion: string | null }>,
+  conditionsMap: Map<number, number>,
+): DetailListing {
+  let conditionLabel = "";
+  if ((l.psa_grade ?? 0) > 0) conditionLabel = `PSA ${l.psa_grade}`;
+  else if (l.condition != null) {
+    const tier = conditionsMap.get(l.condition);
+    conditionLabel = tier != null ? `Tier ${tier}` : String(l.condition);
+  }
+  const loc = locations.get(l.location_id);
+  return {
+    price: l.price,
+    currencySymbol: l.currency_symbol ?? "",
+    currencyCode: l.currency,
+    locationName: loc?.name ?? "",
+    marketRegion: loc?.marketRegion ?? null,
+    conditionLabel,
+    conditionId: l.condition ?? null,
+    listingUrl: l.listing_url,
+    lastUpdated: l.last_updated ?? null,
+  };
+}
+
+// Per-item market breakdown rendered the same way the card viewer shows it:
+// Sell / Buy tables (price, location + freshness + link, condition), reusing the
+// shared ListingTable so the presentation stays identical.
 function MarketBreakdown({
-  rows, locations, rateMap,
+  rows, locations, conditionsMap, rateMap, t,
 }: {
   rows: MarketRow[] | undefined;
   locations: Map<number, { name: string; marketRegion: string | null }>;
+  conditionsMap: Map<number, number>;
   rateMap: Map<string, number>;
+  t: (key: TranslationKey) => string;
 }) {
   if (!rows || rows.length === 0) return null;
-  const sorted = [...rows].sort(
-    (a, b) => a.price * (rateMap.get(a.currency) ?? 1) - b.price * (rateMap.get(b.currency) ?? 1),
-  );
+  const usd = (l: MarketRow) => l.price * (rateMap.get(l.currency) ?? 1);
+  const sell = rows.filter((r) => r.price_type === "Sell").sort((a, b) => usd(a) - usd(b)).map((r) => toDetailListing(r, locations, conditionsMap));
+  const buy = rows.filter((r) => r.price_type === "Buy").sort((a, b) => usd(b) - usd(a)).map((r) => toDetailListing(r, locations, conditionsMap));
+  if (sell.length === 0 && buy.length === 0) return null;
   return (
-    <div className="mt-1 space-y-0.5 border-l pl-2">
-      {sorted.map((r, i) => {
-        const usd = r.price * (rateMap.get(r.currency) ?? 1);
-        const body = (
-          <>
-            <span className="flex-1 truncate text-muted-foreground">
-              {locations.get(r.location_id)?.name ?? `#${r.location_id}`}
-              {r.condition ? ` · ${r.condition}` : ""}
-              {r.psa_grade ? ` · PSA${r.psa_grade}` : ""}
-            </span>
-            <Badge variant="outline" className="shrink-0 px-1 py-0 text-[9px]">{r.price_type}</Badge>
-            <span className="shrink-0 tabular-nums">${usd.toFixed(2)}</span>
-            {r.listing_url && <ExternalLink className="size-3 shrink-0 text-muted-foreground" />}
-          </>
-        );
-        return r.listing_url ? (
-          <a key={i} href={r.listing_url} target="_blank" rel="noreferrer"
-            className="flex items-center gap-1.5 text-[10px] hover:underline">{body}</a>
-        ) : (
-          <div key={i} className="flex items-center gap-1.5 text-[10px]">{body}</div>
-        );
-      })}
+    <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+      <div>
+        <div className="mb-1 text-[11px] font-medium">{t("modal.sell")}</div>
+        <ListingTable listings={sell} conditionHeader={t("modal.condition")} t={t} />
+      </div>
+      <div>
+        <div className="mb-1 text-[11px] font-medium">{t("modal.buy")}</div>
+        <ListingTable listings={buy} conditionHeader={t("modal.condition")} t={t} />
+      </div>
     </div>
   );
 }
@@ -459,6 +490,7 @@ function CustomerDetail({
   const [listings, setListings] = useState<Map<string, MarketRow[]>>(new Map());
   const [locations, setLocations] = useState<Map<number, { name: string; marketRegion: string | null }>>(new Map());
   const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
+  const [conditionsMap, setConditionsMap] = useState<Map<number, number>>(new Map());
   const [criteria, setCriteria] = useState<WishCriteria[]>([]);
   const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
   const [inStockIds, setInStockIds] = useState<Set<number>>(new Set());
@@ -470,6 +502,7 @@ function CustomerDetail({
     const supabase = createClient();
     fetchLocationMap(supabase).then(setLocations).catch(() => {});
     fetchRateMap(supabase).then(setRateMap).catch(() => {});
+    fetchConditionsCache(supabase).then((c) => setConditionsMap(c.map)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -754,7 +787,7 @@ function CustomerDetail({
                         <Trash2 className="size-3.5" />
                       </Button>
                     </div>
-                    <MarketBreakdown rows={listings.get(wishKey(w))} locations={locations} rateMap={rateMap} />
+                    <MarketBreakdown rows={listings.get(wishKey(w))} locations={locations} conditionsMap={conditionsMap} rateMap={rateMap} t={t} />
                   </div>
                 ))}
               </div>
@@ -789,7 +822,7 @@ function CustomerDetail({
                     {w.max_price_usd != null && (
                       <div className="text-[10px] text-muted-foreground">≤${Number(w.max_price_usd).toFixed(0)}</div>
                     )}
-                    <MarketBreakdown rows={listings.get(wishKey(w))} locations={locations} rateMap={rateMap} />
+                    <MarketBreakdown rows={listings.get(wishKey(w))} locations={locations} conditionsMap={conditionsMap} rateMap={rateMap} t={t} />
                   </div>
                 ))}
               </div>
