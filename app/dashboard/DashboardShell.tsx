@@ -11,6 +11,7 @@ import { TripProvider, useTrips } from "./TripContext";
 import { LotPickerProvider } from "./LotPickerContext";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { AppSidebar } from "./AppSidebar";
+import { viewBySentinel } from "./views";
 
 interface DashboardShellProps {
   user: { email: string; name?: string };
@@ -30,28 +31,10 @@ function DashboardHeader() {
   const activeBuylist = activeBuylistId
     ? buylists.find((b) => b.buylist_id === activeBuylistId)
     : null;
-  const title =
-    activeTripId === -1
-      ? t("inventory.title")
-      : activeTripId === -2
-      ? t("sales.allTitle")
-      : activeTripId === -3
-      ? t("curation.title")
-      : activeTripId === -9
-      ? t("curation.titleSealed")
-      : activeTripId === -5
-      ? t("catalog.index")
-      : activeTripId === -6
-      ? t("review.title")
-      : activeTripId === -7
-      ? t("customers.title")
-      : activeTripId === -8
-      ? t("reachout.title")
-      : activeTripId === -10
-      ? t("shoppingList.title")
-      : activeTripId === -11
-      ? t("finances.title")
-      : activeTrip?.name ?? activeBuylist?.name ?? t(`game.${activeGame}` as TranslationKey);
+  const viewTitleKey = activeTripId != null ? viewBySentinel.get(activeTripId)?.titleKey : undefined;
+  const title = viewTitleKey
+    ? t(viewTitleKey)
+    : activeTrip?.name ?? activeBuylist?.name ?? t(`game.${activeGame}` as TranslationKey);
   const description = activeBuylist?.description;
 
   return (

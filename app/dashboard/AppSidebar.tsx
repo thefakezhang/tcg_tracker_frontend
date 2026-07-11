@@ -32,7 +32,8 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Boxes, ChevronsUpDown, ClipboardCheck, DollarSign, Filter, Globe, Landmark, Library, ListChecks, Loader2, LogOut, Luggage, Map, Package, Plus, Receipt, ScanSearch, Send, ShoppingCart, Sparkles, Squirrel, Users } from "lucide-react";
+import { ChevronsUpDown, DollarSign, Globe, ListChecks, Loader2, LogOut, Luggage, Package, Plus, ShoppingCart, Sparkles, Squirrel } from "lucide-react";
+import { VIEWS, type ViewDef } from "./views";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
 import { useSaving } from "@/lib/use-saving";
@@ -69,6 +70,26 @@ interface AppSidebarProps {
 
 const LANGUAGES = Object.keys(LANGUAGE_LABELS) as Language[];
 const CURRENCIES = Object.keys(CURRENCY_LABELS) as DisplayCurrency[];
+
+// One sidebar nav button for a registry-defined view. Centralizes the paired
+// setActiveTripId + clear-buylist that every top-level nav item used to do by hand.
+function ViewButton({ v }: { v: ViewDef }) {
+  const { t } = useTranslation();
+  const { activeTripId, setActiveTripId } = useTrips();
+  const { setActiveBuylistId } = useBuyList();
+  const Icon = v.icon;
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        isActive={activeTripId === v.sentinel}
+        onClick={() => { setActiveTripId(v.sentinel); setActiveBuylistId(null); }}
+      >
+        <Icon className="size-4" />
+        {t(v.sidebarKey)}
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+}
 
 export function AppSidebar({ user }: AppSidebarProps) {
   const { activeGame, setActiveGame } = useGame();
@@ -159,24 +180,9 @@ export function AppSidebar({ user }: AppSidebarProps) {
           <SidebarGroupLabel>{t("curation.title")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === -3}
-                  onClick={() => { setActiveTripId(-3); setActiveBuylistId(null); }}
-                >
-                  <ScanSearch className="size-4" />
-                  {t("curation.needsReview")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === -9}
-                  onClick={() => { setActiveTripId(-9); setActiveBuylistId(null); }}
-                >
-                  <ScanSearch className="size-4" />
-                  {t("curation.titleSealed")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {VIEWS.filter((v) => v.group === "curation.title").map((v) => (
+                <ViewButton key={v.sentinel} v={v} />
+              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -184,24 +190,9 @@ export function AppSidebar({ user }: AppSidebarProps) {
           <SidebarGroupLabel>{t("catalog.section")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === -5}
-                  onClick={() => { setActiveTripId(-5); setActiveBuylistId(null); }}
-                >
-                  <Library className="size-4" />
-                  {t("catalog.index")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === -6}
-                  onClick={() => { setActiveTripId(-6); setActiveBuylistId(null); }}
-                >
-                  <ClipboardCheck className="size-4" />
-                  {t("review.title")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {VIEWS.filter((v) => v.group === "catalog.section").map((v) => (
+                <ViewButton key={v.sentinel} v={v} />
+              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -209,33 +200,9 @@ export function AppSidebar({ user }: AppSidebarProps) {
           <SidebarGroupLabel>{t("customers.section")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === -7}
-                  onClick={() => { setActiveTripId(-7); setActiveBuylistId(null); }}
-                >
-                  <Users className="size-4" />
-                  {t("customers.title")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === -8}
-                  onClick={() => { setActiveTripId(-8); setActiveBuylistId(null); }}
-                >
-                  <Send className="size-4" />
-                  {t("reachout.title")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === -10}
-                  onClick={() => { setActiveTripId(-10); setActiveBuylistId(null); }}
-                >
-                  <Filter className="size-4" />
-                  {t("shoppingList.title")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {VIEWS.filter((v) => v.group === "customers.section").map((v) => (
+                <ViewButton key={v.sentinel} v={v} />
+              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -243,51 +210,9 @@ export function AppSidebar({ user }: AppSidebarProps) {
           <SidebarGroupLabel>{t("sidebar.trips")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === 0}
-                  onClick={() => { setActiveTripId(0); setActiveBuylistId(null); }}
-                >
-                  <Map className="size-4" />
-                  {t("trips.overviewTitle")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === -1}
-                  onClick={() => { setActiveTripId(-1); setActiveBuylistId(null); }}
-                >
-                  <Boxes className="size-4" />
-                  {t("inventory.title")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === -2}
-                  onClick={() => { setActiveTripId(-2); setActiveBuylistId(null); }}
-                >
-                  <DollarSign className="size-4" />
-                  {t("sales.allTitle")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === -4}
-                  onClick={() => { setActiveTripId(-4); setActiveBuylistId(null); }}
-                >
-                  <Receipt className="size-4" />
-                  {t("expenses.title")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={activeTripId === -11}
-                  onClick={() => { setActiveTripId(-11); setActiveBuylistId(null); }}
-                >
-                  <Landmark className="size-4" />
-                  {t("finances.title")}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {VIEWS.filter((v) => v.group === "sidebar.trips").map((v) => (
+                <ViewButton key={v.sentinel} v={v} />
+              ))}
               {trips.map((tr) => (
                 <SidebarMenuItem key={tr.trip_id}>
                   <SidebarMenuButton
