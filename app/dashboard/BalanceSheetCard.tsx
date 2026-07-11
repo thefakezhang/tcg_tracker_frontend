@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatUsd as usd } from "@/lib/money";
 
 // Business-wide balance sheet (get_balance_sheet RPC). Derived from trip/lot/sale
 // data: Assets (cash + inventory at cost) = Liabilities (0) + Equity (contributed
@@ -18,9 +19,6 @@ interface BalanceSheet {
   reconciliation_usd: number;
   total_equity_usd: number;
 }
-
-const usd = (n: number) =>
-  `$${(n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 function Row({ label, value, bold, muted }: { label: string; value: number; bold?: boolean; muted?: boolean }) {
   return (

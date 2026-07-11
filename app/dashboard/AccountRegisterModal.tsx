@@ -10,6 +10,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import type { GlAccount } from "./JournalEntryDialog";
+import { formatUsd as usd } from "@/lib/money";
 
 interface RegRow {
   entry_date: string;
@@ -20,8 +21,6 @@ interface RegRow {
   running_usd: number;
 }
 
-const usd = (n: number) =>
-  `$${(n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const selectClass =
   "h-7 rounded border bg-transparent px-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring";
 const OPERATIONAL = new Set(["lot", "sale", "expense"]);

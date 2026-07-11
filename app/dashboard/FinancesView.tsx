@@ -13,6 +13,7 @@ import BalanceSheetCard from "./BalanceSheetCard";
 import AccountingRollupView from "./AccountingRollupView";
 import JournalEntryDialog, { type GlAccount } from "./JournalEntryDialog";
 import AccountRegisterModal from "./AccountRegisterModal";
+import { formatUsd as usd } from "@/lib/money";
 
 // Business-level financials, all derived from the general ledger (docs/general_ledger.md).
 
@@ -25,9 +26,6 @@ interface JournalEntry {
 interface TripCapital { trip_id: number; capital_invested_usd: number; cumulative_invested_usd: number; }
 interface TripLite { trip_id: number; name: string; started_at: string | null; }
 interface CashFlowRow { activity: string; source: string; net_usd: number; }
-
-const usd = (n: number) =>
-  `$${(n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // Assets & expenses are debit-normal; show their stored balance. Liabilities,
 // equity, and income are credit-normal (stored negative); flip so each account
