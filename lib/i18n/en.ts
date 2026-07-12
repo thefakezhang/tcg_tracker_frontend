@@ -443,6 +443,7 @@ const en = {
   "review.toAliasTitle": "Record as an alias of an existing card",
   "review.toNonexistTitle": "Mark as non-existant (skip)",
   "review.count": "{n} pending",
+  "review.sourceAll": "All sources",
   "review.countOf": "showing {shown} of {total} pending",
   "review.loadMore": "Load {n} more",
   "review.hint": "Confirm, create, or reject match-gen proposals. Confirm links the source to the product; create mints a new single-source product; reject discards the proposal.",
