@@ -445,6 +445,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "review.toAliasTitle": "既存カードのエイリアスとして記録",
   "review.toNonexistTitle": "存在しないとして除外",
   "review.count": "{n}件保留",
+  "review.sourceAll": "全ソース",
   "review.countOf": "{total}件中{shown}件を表示",
   "review.loadMore": "さらに{n}件読み込む",
   "review.hint": "match-gen の提案を確認・作成・却下します。確認はソースを商品にリンクし、作成は単一ソースの新商品を作成し、却下は提案を破棄します。",

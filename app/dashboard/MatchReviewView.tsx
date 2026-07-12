@@ -242,7 +242,7 @@ const CONFIGS: Record<Game, GameConfig> = {
   },
 };
 
-const PLATFORM_SHORT: Record<string, string> = { pricecharting: "PC", tcgplayer: "TCG", snkrdunk: "SNKR", collectr: "COLL" };
+const PLATFORM_SHORT: Record<string, string> = { pricecharting: "PC", tcgplayer: "TCG", snkrdunk: "SNKR", collectr: "COLL", shinsoku: "SHIN" };
 function anchorURL(platform: string, id: string): string | null {
   switch (platform) {
     case "pricecharting": return `https://www.pricecharting.com/game/${id}`;
@@ -268,6 +268,15 @@ const SOURCE_LABEL: Record<string, string> = {
   collectr: "Collectr",
   hareruya: "Hareruya",
   fukufuku: "Fukufuku",
+  shinsoku: "Shinsoku",
+};
+
+// SOURCE_FILTERS lists the retailer tags a curator can narrow the queue to,
+// per game (the tags each game's pushers actually write). "" = all sources.
+const SOURCE_FILTERS: Record<Game, string[]> = {
+  pokemon_sealed: ["cardrush_sealed", "snkrdunk_sealed", "pricecharting", "tcgplayer"],
+  pokemon: ["cardrush", "collectr", "snkrdunk", "shinsoku", "tcgplayer"],
+  mtg: ["cardrush", "hareruya", "fukufuku", "tcgplayer"],
 };
 
 // formatSourceOrigin turns (source, side) into "Cardrush (buy)" style text.
@@ -513,19 +522,29 @@ function applyBucket(q: any, bucket: Bucket): any {
   return q.eq("status", "pending").or("confidence.lt.0.7,confidence.is.null"); // manual
 }
 
-async function fetchQueue(cfg: GameConfig, bucket: Bucket, limit: number): Promise<QueueData> {
+// applySource narrows a candidates query to one retailer. A row matches when the
+// scalar tag (source_fields.source) OR the accumulated multi-retailer array
+// (source_fields.sources, merged by the unified upsert) carries it. Filtering
+// server-side keeps the header count and pagination honest.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applySource(q: any, source: string): any {
+  if (!source) return q;
+  return q.or(`source_fields->>source.eq.${source},source_fields->sources.cs.["${source}"]`);
+}
+
+async function fetchQueue(cfg: GameConfig, bucket: Bucket, limit: number, source: string): Promise<QueueData> {
   const supabase = createClient();
   // Total in this bucket, so the header shows the real size (not just the loaded page).
-  const { count: total } = await applyBucket(
+  const { count: total } = await applySource(applyBucket(
     supabase.from(cfg.candidatesTable).select("candidate_id", { count: "exact", head: true }),
     bucket,
-  );
-  const { data: rows, error } = await applyBucket(
+  ), source);
+  const { data: rows, error } = await applySource(applyBucket(
     supabase
       .from(cfg.candidatesTable)
       .select(`candidate_id, source_platform, source_key, source_name, source_raw, source_fields, source_image_url, proposed_id:${cfg.proposedCol}, candidate_ids:${cfg.candidateIdsCol}, confidence, reason${cfg.unified ? ", matched" : ""}`),
     bucket,
-  )
+  ), source)
     .order("confidence", { ascending: false, nullsFirst: false })
     .order("candidate_id", { ascending: true })
     .limit(limit);
@@ -596,9 +615,10 @@ export default function MatchReviewView() {
   const { t } = useTranslation();
   const [game, setGame] = useState<Game>("pokemon_sealed");
   const [bucket, setBucket] = useState<Bucket>("generated");
+  const [source, setSource] = useState<string>(""); // "" = all sources
   const [limit, setLimit] = useState(PAGE_SIZE);
   const cfg = CONFIGS[game];
-  const { data, error, isLoading, retry } = useSupabaseQuery(["match-review", game, bucket, String(limit)], () => fetchQueue(cfg, bucket, limit));
+  const { data, error, isLoading, retry } = useSupabaseQuery(["match-review", game, bucket, source, String(limit)], () => fetchQueue(cfg, bucket, limit, source));
   const candidates = data?.candidates ?? [];
   const items = data?.items ?? new Map<number, CatalogItem>();
   const total = data?.total ?? 0;
@@ -666,7 +686,7 @@ export default function MatchReviewView() {
         <h1 className="text-lg font-semibold">{t("review.title")}</h1>
         <div className="ml-2 flex gap-1">
           {(["pokemon_sealed", "pokemon", "mtg"] as const).map((g) => (
-            <Button key={g} size="sm" variant={game === g ? "default" : "outline"} onClick={() => { setGame(g); setSelected(new Set()); setLimit(PAGE_SIZE); }}>
+            <Button key={g} size="sm" variant={game === g ? "default" : "outline"} onClick={() => { setGame(g); setSource(""); setSelected(new Set()); setLimit(PAGE_SIZE); }}>
               {t(`game.${g}` as "game.pokemon_sealed")}
             </Button>
           ))}
@@ -682,6 +702,19 @@ export default function MatchReviewView() {
             </Button>
           ))}
         </div>
+        {/* Per-source filter: narrow the queue to one retailer (e.g. review a
+            newly-added source like Shinsoku in isolation). Server-side, so the
+            count and pagination stay honest. */}
+        <select
+          className="h-8 rounded-md border bg-transparent px-2 text-sm text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          value={source}
+          onChange={(e) => { setSource(e.target.value); setSelected(new Set()); setLimit(PAGE_SIZE); }}
+        >
+          <option value="">{t("review.sourceAll")}</option>
+          {SOURCE_FILTERS[game].map((s) => (
+            <option key={s} value={s}>{SOURCE_LABEL[s] ?? s}</option>
+          ))}
+        </select>
         {!isLoading && (
           <span className="text-sm text-muted-foreground">
             {t("review.countOf").replace("{shown}", String(candidates.length)).replace("{total}", String(total))}
