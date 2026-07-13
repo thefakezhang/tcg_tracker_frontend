@@ -242,13 +242,16 @@ const CONFIGS: Record<Game, GameConfig> = {
   },
 };
 
-const PLATFORM_SHORT: Record<string, string> = { pricecharting: "PC", tcgplayer: "TCG", snkrdunk: "SNKR", collectr: "COLL", shinsoku: "SHIN" };
+const PLATFORM_SHORT: Record<string, string> = { pricecharting: "PC", tcgplayer: "TCG", snkrdunk: "SNKR", collectr: "COLL", shinsoku: "SHIN", cardkingdom: "CK" };
 function anchorURL(platform: string, id: string): string | null {
   switch (platform) {
     case "pricecharting": return `https://www.pricecharting.com/game/${id}`;
     case "snkrdunk": return `https://snkrdunk.com/apparels/${id}`;
     case "tcgplayer": return `https://www.tcgplayer.com/product/${id}`;
     case "cardrush": return `https://www.cardrush-pokemon.jp/product/${id}`;
+    // Card Kingdom sell ids are numeric EC-CUBE product ids; buylist keys
+    // (psa10:…, box:…) have no per-item page.
+    case "cardkingdom": return /^\d+$/.test(id) ? `https://card-kingdom.jp/pokemon/products/detail/${id}` : null;
     default: return null;
   }
 }
@@ -269,13 +272,14 @@ const SOURCE_LABEL: Record<string, string> = {
   hareruya: "Hareruya",
   fukufuku: "Fukufuku",
   shinsoku: "Shinsoku",
+  cardkingdom: "Card Kingdom",
 };
 
 // SOURCE_FILTERS lists the retailer tags a curator can narrow the queue to,
 // per game (the tags each game's pushers actually write). "" = all sources.
 const SOURCE_FILTERS: Record<Game, string[]> = {
-  pokemon_sealed: ["cardrush_sealed", "snkrdunk_sealed", "pricecharting", "tcgplayer"],
-  pokemon: ["cardrush", "collectr", "snkrdunk", "shinsoku", "tcgplayer"],
+  pokemon_sealed: ["cardrush_sealed", "snkrdunk_sealed", "pricecharting", "tcgplayer", "cardkingdom"],
+  pokemon: ["cardrush", "collectr", "snkrdunk", "shinsoku", "cardkingdom", "tcgplayer"],
   mtg: ["cardrush", "hareruya", "fukufuku", "tcgplayer"],
 };
 
