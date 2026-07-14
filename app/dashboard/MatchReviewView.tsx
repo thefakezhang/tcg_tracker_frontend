@@ -242,7 +242,7 @@ const CONFIGS: Record<Game, GameConfig> = {
   },
 };
 
-const PLATFORM_SHORT: Record<string, string> = { pricecharting: "PC", tcgplayer: "TCG", snkrdunk: "SNKR", collectr: "COLL", shinsoku: "SHIN", cardkingdom: "CK", torecabirth: "TB" };
+const PLATFORM_SHORT: Record<string, string> = { pricecharting: "PC", tcgplayer: "TCG", snkrdunk: "SNKR", collectr: "COLL", shinsoku: "SHIN", cardkingdom: "CK", torecabirth: "TB", torecabank: "TBK" };
 function anchorURL(platform: string, id: string): string | null {
   switch (platform) {
     case "pricecharting": return `https://www.pricecharting.com/game/${id}`;
@@ -274,13 +274,14 @@ const SOURCE_LABEL: Record<string, string> = {
   shinsoku: "Shinsoku",
   cardkingdom: "Card Kingdom",
   torecabirth: "Toreca Birth",
+  torecabank: "Toreca Bank",
 };
 
 // SOURCE_FILTERS lists the retailer tags a curator can narrow the queue to,
 // per game (the tags each game's pushers actually write). "" = all sources.
 const SOURCE_FILTERS: Record<Game, string[]> = {
-  pokemon_sealed: ["cardrush_sealed", "snkrdunk_sealed", "pricecharting", "tcgplayer", "cardkingdom"],
-  pokemon: ["cardrush", "collectr", "snkrdunk", "shinsoku", "cardkingdom", "torecabirth", "tcgplayer"],
+  pokemon_sealed: ["cardrush_sealed", "snkrdunk_sealed", "pricecharting", "tcgplayer", "cardkingdom", "torecabank"],
+  pokemon: ["cardrush", "collectr", "snkrdunk", "shinsoku", "cardkingdom", "torecabirth", "torecabank", "tcgplayer"],
   mtg: ["cardrush", "hareruya", "fukufuku", "tcgplayer"],
 };
 
