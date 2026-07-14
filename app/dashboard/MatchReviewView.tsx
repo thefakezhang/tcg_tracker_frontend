@@ -242,7 +242,7 @@ const CONFIGS: Record<Game, GameConfig> = {
   },
 };
 
-const PLATFORM_SHORT: Record<string, string> = { pricecharting: "PC", tcgplayer: "TCG", snkrdunk: "SNKR", collectr: "COLL", shinsoku: "SHIN", cardkingdom: "CK", torecabirth: "TB", torecabank: "TBK" };
+const PLATFORM_SHORT: Record<string, string> = { pricecharting: "PC", tcgplayer: "TCG", snkrdunk: "SNKR", collectr: "COLL", shinsoku: "SHIN", cardkingdom: "CK", torecabirth: "TB", torecabank: "TBK", big_tcg: "BIG" };
 function anchorURL(platform: string, id: string): string | null {
   switch (platform) {
     case "pricecharting": return `https://www.pricecharting.com/game/${id}`;
@@ -252,6 +252,9 @@ function anchorURL(platform: string, id: string): string | null {
     // Card Kingdom sell ids are numeric EC-CUBE product ids; buylist keys
     // (psa10:…, box:…) have no per-item page.
     case "cardkingdom": return /^\d+$/.test(id) ? `https://card-kingdom.jp/pokemon/products/detail/${id}` : null;
+    // BIG TCG sell ids are "sell:NNN" ocnk product ids; buylist ids and
+    // identity keys have no per-item page.
+    case "big_tcg": return /^sell:\d+$/.test(id) ? `https://www.big-toreka.jp/product/${id.slice(5)}` : null;
     default: return null;
   }
 }
@@ -275,13 +278,14 @@ const SOURCE_LABEL: Record<string, string> = {
   cardkingdom: "Card Kingdom",
   torecabirth: "Toreca Birth",
   torecabank: "Toreca Bank",
+  big_tcg: "BIG TCG",
 };
 
 // SOURCE_FILTERS lists the retailer tags a curator can narrow the queue to,
 // per game (the tags each game's pushers actually write). "" = all sources.
 const SOURCE_FILTERS: Record<Game, string[]> = {
-  pokemon_sealed: ["cardrush_sealed", "snkrdunk_sealed", "pricecharting", "tcgplayer", "cardkingdom", "torecabank"],
-  pokemon: ["cardrush", "collectr", "snkrdunk", "shinsoku", "cardkingdom", "torecabirth", "torecabank", "tcgplayer"],
+  pokemon_sealed: ["cardrush_sealed", "snkrdunk_sealed", "pricecharting", "tcgplayer", "cardkingdom", "torecabank", "big_tcg"],
+  pokemon: ["cardrush", "collectr", "snkrdunk", "shinsoku", "cardkingdom", "torecabirth", "torecabank", "big_tcg", "tcgplayer"],
   mtg: ["cardrush", "hareruya", "fukufuku", "tcgplayer"],
 };
 
