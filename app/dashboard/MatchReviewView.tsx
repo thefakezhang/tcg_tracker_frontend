@@ -821,6 +821,19 @@ export default function MatchReviewView() {
                     : "",
                   fields.language,
                 ].filter(Boolean);
+                // The source's OWN descriptor (what the retailer/platform reported for
+                // this listing), shown under the proposed catalog identity so the
+                // curator can eyeball whether the match is right - e.g. Card Ladder's
+                // player / set / number / variation + PSA cert. Empty for sources that
+                // don't carry these raw fields.
+                const sourceBits = [
+                  fields.raw_name,
+                  fields.cl_set,
+                  fields.cl_number,
+                  fields.variation,
+                  fields.grader && fields.grader !== "psa" ? fields.grader : "",
+                  fields.cert ? `cert ${fields.cert}` : "",
+                ].filter(Boolean);
                 // In practice ~zero candidates carry a source image in the current
                 // pipeline; the empty placeholder is pure visual noise. Only render
                 // the slot when we actually have an image URL.
@@ -841,6 +854,11 @@ export default function MatchReviewView() {
                           <div className="truncate text-xs text-muted-foreground">
                             {identityBits.join(" · ")}
                           </div>
+                          {sourceBits.length > 0 && (
+                            <div className="truncate text-[11px] italic text-muted-foreground/70" title="what the source reported (for confirming the match)">
+                              {sourceBits.join(" · ")}
+                            </div>
+                          )}
                           {collisions.length > 0 && (
                             <CollisionPanel
                               collisions={collisions}
