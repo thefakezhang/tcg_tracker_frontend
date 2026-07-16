@@ -37,8 +37,8 @@ interface IndexCard {
 }
 
 const COLS = "card_id, card_uid, regional_name, english_name, set_code, card_number, language, misc_info, image_url";
-const PLATFORMS = ["tcgplayer", "snkrdunk", "pricecharting", "collectr", "cardladder", "tcgplayer_SKU"];
-const PLATFORM_SHORT: Record<string, string> = { tcgplayer: "TCG", snkrdunk: "SNKR", pricecharting: "PC", collectr: "COLL", cardladder: "CL", tcgplayer_SKU: "SKU" };
+const PLATFORMS = ["tcgplayer", "snkrdunk", "pricecharting", "collectr", "cardladder", "surugaya", "expedition_gaming", "tcgplayer_SKU"];
+const PLATFORM_SHORT: Record<string, string> = { tcgplayer: "TCG", snkrdunk: "SNKR", pricecharting: "PC", collectr: "COLL", cardladder: "CL", surugaya: "SRG", expedition_gaming: "EXP", tcgplayer_SKU: "SKU" };
 const selectClass = "h-9 rounded-md border bg-transparent px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
 
 function tcgURL(platform: string, id: string): string | null {
@@ -49,7 +49,7 @@ function tcgURL(platform: string, id: string): string | null {
 
 // Platform axis for the chip filter above the results table. Kept in sync
 // with PLATFORMS/PLATFORM_SHORT above so the filter list can't drift.
-const FILTERABLE_PLATFORMS = ["tcgplayer", "snkrdunk", "pricecharting", "collectr", "cardladder"] as const;
+const FILTERABLE_PLATFORMS = ["tcgplayer", "snkrdunk", "pricecharting", "collectr", "cardladder", "surugaya", "expedition_gaming"] as const;
 
 async function fetchIndex(
   search: string,
