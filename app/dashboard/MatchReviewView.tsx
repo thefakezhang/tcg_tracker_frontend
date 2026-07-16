@@ -280,13 +280,16 @@ const SOURCE_LABEL: Record<string, string> = {
   torecabank: "Toreca Bank",
   big_tcg: "BIG TCG",
   toban: "Kaitori Touban",
+  cardladder: "Card Ladder",
+  surugaya: "Surugaya",
+  expedition_gaming: "Expedition Gaming",
 };
 
 // SOURCE_FILTERS lists the retailer tags a curator can narrow the queue to,
 // per game (the tags each game's pushers actually write). "" = all sources.
 const SOURCE_FILTERS: Record<Game, string[]> = {
-  pokemon_sealed: ["cardrush_sealed", "snkrdunk_sealed", "pricecharting", "tcgplayer", "cardkingdom", "torecabank", "big_tcg", "toban"],
-  pokemon: ["cardrush", "collectr", "snkrdunk", "shinsoku", "cardkingdom", "torecabirth", "torecabank", "big_tcg", "toban", "tcgplayer"],
+  pokemon_sealed: ["cardrush_sealed", "snkrdunk_sealed", "pricecharting", "tcgplayer", "cardkingdom", "torecabank", "big_tcg", "toban", "surugaya"],
+  pokemon: ["cardrush", "collectr", "snkrdunk", "shinsoku", "cardkingdom", "torecabirth", "torecabank", "big_tcg", "toban", "tcgplayer", "cardladder", "surugaya", "expedition_gaming"],
   mtg: ["cardrush", "hareruya", "fukufuku", "tcgplayer"],
 };
 
@@ -851,11 +854,14 @@ export default function MatchReviewView() {
                         )}
                         <div className="min-w-0">
                           <div className="font-medium">{c.source_name}</div>
-                          <div className="truncate text-xs text-muted-foreground">
+                          <div className="text-xs text-muted-foreground break-words">
                             {identityBits.join(" · ")}
                           </div>
                           {sourceBits.length > 0 && (
-                            <div className="truncate text-[11px] italic text-muted-foreground/70" title="what the source reported (for confirming the match)">
+                            // NOT truncated: this is the raw source descriptor the
+                            // curator reads to confirm the match - an ellipsis here
+                            // hides the very field (variation / promo) that decides it.
+                            <div className="text-[11px] italic text-muted-foreground/70 break-words" title="what the source reported (for confirming the match)">
                               {sourceBits.join(" · ")}
                             </div>
                           )}
@@ -942,22 +948,43 @@ export default function MatchReviewView() {
                     </td>
                     <td className="px-3 py-2">
                       {cfg.unified ? (
-                        c.matched && c.matched.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {c.matched.map((m) => {
-                              const url = anchorURL(m.platform, m.id);
-                              const label = `${PLATFORM_SHORT[m.platform] ?? m.platform} ${m.id}`;
-                              return url ? (
-                                <a key={m.platform + m.id} href={url} target="_blank" rel="noreferrer"
-                                  className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary">{label}</a>
-                              ) : (
-                                <span key={m.platform + m.id} className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground">{label}</span>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">{t("review.matchedNone")}</span>
-                        )
+                        <div className="min-w-0 space-y-1">
+                          {proposed ? (
+                            // proposed_id is set: this identity ALREADY exists as a
+                            // curated card. Show it (name + uid) and its confirmed
+                            // platform links so the curator sees this row JOINS an
+                            // existing anchor - it is not a new-card creation. Without
+                            // this, an anchored candidate looked identical to a fresh
+                            // identity (the "no anchor when it clearly should" bug).
+                            <div className="min-w-0">
+                              <div className="text-xs font-medium text-foreground break-words">
+                                {proposed.name}
+                                <span className="ml-1 font-mono text-[10px] text-muted-foreground">{proposed.uid.slice(0, 8)}</span>
+                              </div>
+                              {proposed.links.length > 0 && <Anchors links={proposed.links} />}
+                            </div>
+                          ) : (
+                            <div className="text-xs italic text-muted-foreground">{t("review.newIdentity")}</div>
+                          )}
+                          {c.matched && c.matched.length > 0 && (
+                            // The NEW link(s) this candidate proposes to attach (e.g.
+                            // the Card Ladder cert) - distinct from the existing anchor
+                            // links above.
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">{t("review.adds")}</span>
+                              {c.matched.map((m) => {
+                                const url = anchorURL(m.platform, m.id);
+                                const label = `${PLATFORM_SHORT[m.platform] ?? m.platform} ${m.id}`;
+                                return url ? (
+                                  <a key={m.platform + m.id} href={url} target="_blank" rel="noreferrer"
+                                    className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary">{label}</a>
+                                ) : (
+                                  <span key={m.platform + m.id} className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground">{label}</span>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       ) : proposed ? (
                         <div className="min-w-0">
                           <div className="truncate font-medium">{proposed.name}</div>
