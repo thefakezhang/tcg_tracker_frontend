@@ -282,13 +282,14 @@ const SOURCE_LABEL: Record<string, string> = {
   toban: "Kaitori Touban",
   cardladder: "Card Ladder",
   surugaya: "Surugaya",
+  expedition_gaming: "Expedition Gaming",
 };
 
 // SOURCE_FILTERS lists the retailer tags a curator can narrow the queue to,
 // per game (the tags each game's pushers actually write). "" = all sources.
 const SOURCE_FILTERS: Record<Game, string[]> = {
   pokemon_sealed: ["cardrush_sealed", "snkrdunk_sealed", "pricecharting", "tcgplayer", "cardkingdom", "torecabank", "big_tcg", "toban", "surugaya"],
-  pokemon: ["cardrush", "collectr", "snkrdunk", "shinsoku", "cardkingdom", "torecabirth", "torecabank", "big_tcg", "toban", "tcgplayer", "cardladder", "surugaya"],
+  pokemon: ["cardrush", "collectr", "snkrdunk", "shinsoku", "cardkingdom", "torecabirth", "torecabank", "big_tcg", "toban", "tcgplayer", "cardladder", "surugaya", "expedition_gaming"],
   mtg: ["cardrush", "hareruya", "fukufuku", "tcgplayer"],
 };
 
