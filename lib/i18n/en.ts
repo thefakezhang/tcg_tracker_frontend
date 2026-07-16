@@ -475,6 +475,8 @@ const en = {
   "review.srcFrom": "from {src}",
   "review.srcJp": "from JP scrape",
   "review.matchedNone": "JP-only (no external id)",
+  "review.newIdentity": "New card (will be created)",
+  "review.adds": "adds",
   "review.idCollision": "ID collision",
   "review.collisionOwnedBy": "is already on card",
   "review.collisionHint": "Click the id to inspect on the source; decide whether to merge, keep separate, or reject.",
