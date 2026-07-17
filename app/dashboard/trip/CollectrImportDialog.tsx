@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll, chunkIds } from "@/lib/supabase/select-all";
+import { resolveCard, type MatchStatus } from "./collectr-match";
 import { useTranslation } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,9 +35,6 @@ function parseCSV(text: string): string[][] {
   return rows;
 }
 
-const norm = (s: string) =>
-  s.toLowerCase().replace(/\(jp\)/g, "").replace(/[^a-z0-9]/g, "");
-
 interface PreviewRow {
   idx: number;
   collectrName: string;
@@ -46,6 +44,7 @@ interface PreviewRow {
   marketUsd: number;
   cardId: number | null;
   matchName: string | null;
+  status: MatchStatus;
   include: boolean;
 }
 
@@ -77,7 +76,7 @@ export function CollectrImportDialog({
       const iCat = col("Category"), iName = col("Product Name"), iNum = col("Card Number"),
         iGrade = col("Grade"), iQty = col("Quantity"), iMarket = col("Market Price");
 
-      const parsed: Omit<PreviewRow, "cardId" | "matchName" | "include">[] = [];
+      const parsed: Omit<PreviewRow, "cardId" | "matchName" | "include" | "status">[] = [];
       let skip = 0;
       for (let r = 1; r < grid.length; r++) {
         const cells = grid[r];
@@ -124,17 +123,16 @@ export function CollectrImportDialog({
       }
 
       const out: PreviewRow[] = parsed.map((p) => {
-        const cands = candidates.get(p.number) ?? [];
-        const n = norm(p.collectrName);
-        const hit =
-          cands.find((c) => norm(c.regional_name) === n || (c.english_name && norm(c.english_name) === n)) ??
-          cands.find((c) => norm(c.regional_name).includes(n) || n.includes(norm(c.regional_name))) ??
-          cands[0] ?? null;
+        const { card, status } = resolveCard(candidates.get(p.number) ?? [], p.collectrName);
         return {
           ...p,
-          cardId: hit?.card_id ?? null,
-          matchName: hit ? `${hit.regional_name}` : null,
-          include: !!hit,
+          cardId: card?.card_id ?? null,
+          matchName: card ? card.regional_name : null,
+          status,
+          // Only a confirmed match imports by default. A suggestion rides along
+          // unchecked so the curator opts in, rather than being opted out of a
+          // guess they never saw - rows past MAX_RENDER aren't even displayed.
+          include: status === "confirmed",
         };
       });
       setRows(out);
@@ -166,7 +164,10 @@ export function CollectrImportDialog({
     onImported();
   }
 
-  const matchedCount = rows.filter((r) => r.cardId).length;
+  // "Matched" now means CONFIRMED. Suggestions are counted separately so the
+  // summary can't imply we resolved rows we only guessed at.
+  const matchedCount = rows.filter((r) => r.status === "confirmed").length;
+  const reviewCount = rows.filter((r) => r.status === "review").length;
   const includeCount = rows.filter((r) => r.include && r.cardId).length;
 
   return (
@@ -193,6 +194,7 @@ export function CollectrImportDialog({
               <>
                 <div className="flex items-center gap-3 text-sm">
                   <span>{t("trips.csvRowsSummary", { matched: matchedCount, total: rows.length })}</span>
+                  {reviewCount > 0 && <span className="text-amber-500">{t("trips.csvReviewSummary", { n: reviewCount })}</span>}
                   {skipped > 0 && <span className="text-muted-foreground">{t("trips.csvNonPokemon", { n: skipped })}</span>}
                 </div>
                 <div className="max-h-80 overflow-auto rounded-md border">
@@ -219,7 +221,18 @@ export function CollectrImportDialog({
                             {r.collectrName} <span className="text-muted-foreground">{r.number}{r.grade ? ` · PSA ${r.grade}` : ""}</span>
                           </TableCell>
                           <TableCell className="truncate max-w-[200px]">
-                            {r.matchName ?? <span className="text-destructive">{t("trips.csvNoMatch")}</span>}
+                            {r.matchName ? (
+                              <>
+                                {r.matchName}
+                                {r.status === "review" && (
+                                  <span className="ml-1.5 rounded border border-amber-500/40 px-1 py-0.5 text-[10px] uppercase tracking-wide text-amber-500">
+                                    {t("trips.csvUnconfirmed")}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-destructive">{t("trips.csvNoMatch")}</span>
+                            )}
                           </TableCell>
                           <TableCell>{r.qty}</TableCell>
                           <TableCell>${r.marketUsd}</TableCell>
@@ -228,7 +241,10 @@ export function CollectrImportDialog({
                     </TableBody>
                   </Table>
                   {rows.length > MAX_RENDER && (
-                    <p className="px-3 py-2 text-xs text-muted-foreground">+{rows.length - MAX_RENDER} more (all matched rows import)</p>
+                    // Rows past the render cap can't be reviewed, so only the
+                    // confirmed ones import - an unconfirmed suggestion nobody
+                    // can see must never ride in on a default.
+                    <p className="px-3 py-2 text-xs text-muted-foreground">{t("trips.csvMoreRows", { n: rows.length - MAX_RENDER })}</p>
                   )}
                 </div>
               </>
