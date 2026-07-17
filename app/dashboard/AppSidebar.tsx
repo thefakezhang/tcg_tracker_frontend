@@ -24,6 +24,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -331,36 +332,44 @@ export function AppSidebar({ user }: AppSidebarProps) {
               />
               <DropdownMenuContent side="top" align="start">
                 {/* Flattened from hover-submenus: Base UI submenus auto-closed on
-                    hover here, and inline radio groups are simpler + robust. */}
-                <DropdownMenuLabel className="flex items-center gap-2">
-                  <Globe className="size-4" />
-                  {t("sidebar.language")}
-                </DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={language}
-                  onValueChange={(v) => setLanguage(v as Language)}
-                >
-                  {LANGUAGES.map((lang) => (
-                    <DropdownMenuRadioItem key={lang} value={lang}>
-                      {LANGUAGE_LABELS[lang]}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
+                    hover here, so language/currency are inline radio groups.
+                    DropdownMenuLabel renders base-ui GroupLabel, which REQUIRES a
+                    Group/RadioGroup ancestor for MenuGroupContext - a bare label
+                    in the content throws "MenuGroupContext is missing" the moment
+                    the menu opens. Each label+radiogroup is wrapped in a Group. */}
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="flex items-center gap-2">
+                    <Globe className="size-4" />
+                    {t("sidebar.language")}
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={language}
+                    onValueChange={(v) => setLanguage(v as Language)}
+                  >
+                    {LANGUAGES.map((lang) => (
+                      <DropdownMenuRadioItem key={lang} value={lang}>
+                        {LANGUAGE_LABELS[lang]}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
-                <DropdownMenuLabel className="flex items-center gap-2">
-                  <DollarSign className="size-4" />
-                  {t("sidebar.convertCurrency")}
-                </DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={displayCurrency}
-                  onValueChange={(v) => setDisplayCurrency(v as DisplayCurrency)}
-                >
-                  {CURRENCIES.map((c) => (
-                    <DropdownMenuRadioItem key={c} value={c}>
-                      {CURRENCY_LABELS[c]}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="flex items-center gap-2">
+                    <DollarSign className="size-4" />
+                    {t("sidebar.convertCurrency")}
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={displayCurrency}
+                    onValueChange={(v) => setDisplayCurrency(v as DisplayCurrency)}
+                  >
+                    {CURRENCIES.map((c) => (
+                      <DropdownMenuRadioItem key={c} value={c}>
+                        {CURRENCY_LABELS[c]}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout}>
                   <LogOut className="mr-2 size-4" />
