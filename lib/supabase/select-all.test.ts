@@ -6,7 +6,7 @@
 // flag. Any helper that treats "fewer rows than I asked for" as "that's all of
 // them" passes a naive test and still loses data in production.
 import { describe, it, expect } from "vitest";
-import { selectAll, chunkIds } from "./select-all";
+import { selectAll, selectAllByIds, chunkIds } from "./select-all";
 
 // `cap` stands in for the server's max_rows. Deliberately a parameter: the real
 // value is a server-side dial we cannot read from the client, so the helper must
@@ -96,5 +96,57 @@ describe("chunkIds", () => {
   it("returns nothing for an empty list and one chunk when under size", () => {
     expect(chunkIds([], 200)).toEqual([]);
     expect(chunkIds([1, 2, 3], 200)).toEqual([[1, 2, 3]]);
+  });
+});
+
+// A fake `.in(ids)` table: each id owns `fanout` rows (a card -> its price tiers).
+// Honors .range(from,to) and clamps every page to `cap` (max_rows), and records
+// which ids were actually queried so the dedup guarantee can be asserted.
+function fakeIdTable(idCount: number, fanout: number, cap: number) {
+  const queried: Array<string | number> = [];
+  const build = (chunk: Array<string | number>) => {
+    queried.push(...chunk);
+    const rows = chunk.flatMap((id) => Array.from({ length: fanout }, (_, k) => ({ id, k })));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const b: any = {
+      order: () => b,
+      range: (from: number, to: number) =>
+        Promise.resolve({ data: rows.slice(from, from + Math.min(to - from + 1, cap)), error: null }),
+    };
+    return b;
+  };
+  return { build, queried: () => queried, idCount };
+}
+
+describe("selectAllByIds", () => {
+  it("returns every fan-out row when a chunk's result exceeds the cap", async () => {
+    // 100 ids x 5 rows = 500 rows in one chunk, cap 200: must page within the chunk.
+    const t = fakeIdTable(100, 5, 200);
+    const ids = Array.from({ length: 100 }, (_, i) => i);
+    const got = await selectAllByIds<{ id: number; k: number }>(ids, ["id", "k"], t.build, 1000);
+    expect(got).toHaveLength(500);
+  });
+
+  it("covers every id across multiple chunks", async () => {
+    const t = fakeIdTable(450, 2, 1000);
+    const ids = Array.from({ length: 450 }, (_, i) => i);
+    const got = await selectAllByIds<{ id: number; k: number }>(ids, ["id", "k"], t.build, 200); // 3 chunks
+    expect(got).toHaveLength(900);
+    expect(new Set(got.map((r) => r.id)).size).toBe(450);
+  });
+
+  it("de-duplicates ids before querying", async () => {
+    const t = fakeIdTable(3, 1, 1000);
+    const got = await selectAllByIds<{ id: number }>([7, 7, 7, 8], ["id"], t.build, 500);
+    expect(got).toHaveLength(2); // ids 7 and 8, once each (proves the dedup)
+    // Only the two distinct ids ever reach the query (build may be re-invoked per
+    // page, so assert the distinct set, not the call count).
+    expect([...new Set(t.queried())].sort()).toEqual([7, 8]);
+  });
+
+  it("short-circuits on an empty id list", async () => {
+    const t = fakeIdTable(0, 1, 1000);
+    expect(await selectAllByIds([], ["id"], t.build)).toHaveLength(0);
+    expect(t.queried()).toHaveLength(0); // no request at all
   });
 });

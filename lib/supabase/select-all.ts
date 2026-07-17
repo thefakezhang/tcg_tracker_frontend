@@ -90,3 +90,30 @@ export function chunkIds<T>(ids: T[], size = 500): T[][] {
   for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
   return out;
 }
+
+/**
+ * Fetch every row matching an `.in(col, ids)` filter, safe on BOTH axes: the id
+ * list is chunked so the request URL never overflows, and each chunk's result is
+ * paged so a fan-out (one id -> many rows, e.g. a card -> its price-summary tiers)
+ * can't be truncated at the PostgREST cap. Use whenever the filter is a
+ * caller-supplied id list whose matched-row count is a function of the data.
+ *
+ * `build(chunk)` must return a FRESH builder with the chunk applied as the
+ * `.in(...)`; `orderBy` must be a total order over the result (see selectAll).
+ * `ids` is de-duplicated first, since a repeated id only widens the URL.
+ */
+export async function selectAllByIds<T>(
+  ids: Array<string | number>,
+  orderBy: string[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  build: (chunk: Array<string | number>) => any,
+  chunkSize = 500,
+): Promise<T[]> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return [];
+  const out: T[] = [];
+  for (const chunk of chunkIds(unique, chunkSize)) {
+    out.push(...(await selectAll<T>(() => build(chunk), orderBy)));
+  }
+  return out;
+}

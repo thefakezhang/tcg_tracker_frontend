@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Trash2, Check, Pencil, Upload, ImageOff, RotateCcw, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll, selectAllByIds } from "@/lib/supabase/select-all";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { getCardDisplayName, cardMeta, useDebouncedValue } from "../use-card-data";
 import { useLanguage } from "../LanguageContext";
@@ -143,19 +144,27 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     const supabase = createClient();
     const out: LotLine[] = [];
     for (const game of ["pokemon", "mtg"] as CardGame[]) {
-      const { data } = await supabase
-        .from(LINE_TABLE[game])
-        .select("line_id, card_id, condition_id, quantity, price_override_usd, allocated_cost_usd")
-        .eq("lot_id", lotId);
-      const rows = (data as { line_id: number; card_id: number; condition_id: number; quantity: number; price_override_usd: number | null; allocated_cost_usd: number }[]) ?? [];
+      // A lot has no fixed line count, so page the lines instead of letting
+      // PostgREST cap them at 1000 (a dropped line = a card silently missing
+      // from the lot). Key: line_id.
+      const rows = await selectAll<{ line_id: number; card_id: number; condition_id: number; quantity: number; price_override_usd: number | null; allocated_cost_usd: number }>(
+        () => supabase.from(LINE_TABLE[game]).select("line_id, card_id, condition_id, quantity, price_override_usd, allocated_cost_usd").eq("lot_id", lotId),
+        ["line_id"],
+      );
       if (rows.length === 0) continue;
       const nameTable = game === "pokemon" ? "pokemon_card_definitions" : "mtg_card_definitions_v";
       const cols = game === "pokemon"
         ? "card_id, regional_name, english_name, set_code, card_number, misc_info, image_url"
         : "card_id, regional_name, set_code, card_number, image_url";
-      const { data: defs } = await supabase.from(nameTable).select(cols).in("card_id", rows.map((r) => r.card_id));
+      // Def lookup is 1 row per id, but a big lot's id list would overflow the
+      // .in() URL and a >1000 result would truncate; chunk + page it.
+      const defs = await selectAllByIds<{ card_id: number; regional_name: string; english_name?: string | null; set_code: string; card_number: string | null; misc_info?: string | null; image_url: string | null }>(
+        rows.map((r) => r.card_id),
+        ["card_id"],
+        (chunk) => supabase.from(nameTable).select(cols).in("card_id", chunk),
+      );
       const defMap = new Map<number, { regionalName: string; englishName: string | null; setCode: string; cardNumber: string | null; miscInfo: string | null; imageUrl: string | null }>();
-      for (const d of (defs as unknown as { card_id: number; regional_name: string; english_name?: string | null; set_code: string; card_number: string | null; misc_info?: string | null; image_url: string | null }[]) ?? []) {
+      for (const d of defs) {
         defMap.set(d.card_id, { regionalName: d.regional_name, englishName: d.english_name ?? null, setCode: d.set_code, cardNumber: d.card_number, miscInfo: d.misc_info ?? null, imageUrl: d.image_url });
       }
       for (const r of rows) {
@@ -168,16 +177,18 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
         });
       }
     }
-    const { data: sealedRows } = await supabase
-      .from(SEALED_TABLE)
-      .select("line_id, product_id, sealed_condition, variant_edition, quantity, price_override_usd, allocated_cost_usd")
-      .eq("lot_id", lotId);
-    const srows = (sealedRows as { line_id: number; product_id: number; sealed_condition: string; variant_edition: string; quantity: number; price_override_usd: number | null; allocated_cost_usd: number }[]) ?? [];
+    const srows = await selectAll<{ line_id: number; product_id: number; sealed_condition: string; variant_edition: string; quantity: number; price_override_usd: number | null; allocated_cost_usd: number }>(
+      () => supabase.from(SEALED_TABLE).select("line_id, product_id, sealed_condition, variant_edition, quantity, price_override_usd, allocated_cost_usd").eq("lot_id", lotId),
+      ["line_id"],
+    );
     if (srows.length > 0) {
-      const { data: prods } = await supabase
-        .from("pokemon_sealed_products").select("product_id, name, set_code, image_url").in("product_id", srows.map((r) => r.product_id));
+      const prods = await selectAllByIds<{ product_id: number; name: string; set_code: string; image_url: string | null }>(
+        srows.map((r) => r.product_id),
+        ["product_id"],
+        (chunk) => supabase.from("pokemon_sealed_products").select("product_id, name, set_code, image_url").in("product_id", chunk),
+      );
       const pMap = new Map<number, { name: string; setCode: string; imageUrl: string | null }>();
-      for (const p of (prods as { product_id: number; name: string; set_code: string; image_url: string | null }[]) ?? []) {
+      for (const p of prods) {
         pMap.set(p.product_id, { name: p.name, setCode: p.set_code, imageUrl: p.image_url });
       }
       for (const r of srows) {
