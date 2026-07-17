@@ -10,8 +10,15 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 // Pokemon singles text-variance aliases (docs/card_index_curation_console.md).
-// An alias maps a source text tuple → a target platform id (TCGID); the fallback
+// An alias maps a source text tuple → a target card (by card_uid); the fallback
 // matcher reads this table live, so add/remove here is effective on the next run.
+
+interface CardTarget {
+  regional_name: string;
+  set_code: string;
+  card_number: string;
+  misc_info: string;
+}
 
 interface Alias {
   alias_id: number;
@@ -20,25 +27,26 @@ interface Alias {
   card_number: string;
   misc_info: string;
   language: string;
-  platform_name: string;
-  external_reference_id: string;
+  card_uid: string;
+  // The card this alias resolves to, embedded via the card_uid FK.
+  target: CardTarget | null;
 }
 
 async function fetchAliases(search: string): Promise<Alias[]> {
   const supabase = createClient();
   let q = supabase
     .from("pokemon_card_aliases")
-    .select("alias_id, regional_name, set_code, card_number, misc_info, language, platform_name, external_reference_id")
+    .select("alias_id, regional_name, set_code, card_number, misc_info, language, card_uid, target:pokemon_card_definitions(regional_name, set_code, card_number, misc_info)")
     .order("regional_name")
     .limit(300);
   const s = search.trim();
   if (s) {
     const safe = s.replace(/[%,]/g, " ");
-    q = q.or(`regional_name.ilike.%${safe}%,external_reference_id.ilike.%${safe}%,set_code.ilike.%${safe}%,card_number.ilike.%${safe}%`);
+    q = q.or(`regional_name.ilike.%${safe}%,set_code.ilike.%${safe}%,card_number.ilike.%${safe}%`);
   }
   const { data, error } = await q;
   if (error) throw error;
-  return (data ?? []) as Alias[];
+  return (data ?? []) as unknown as Alias[];
 }
 
 const BLANK = { regional_name: "", set_code: "", card_number: "", misc_info: "", language: "jp", platform: "tcgplayer", external_id: "" };
@@ -134,8 +142,19 @@ export default function PokemonAliasesTab() {
                         .join(" · ")}
                     </span>
                   </td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
-                    {a.platform_name} {a.external_reference_id}
+                  <td className="px-3 py-2">
+                    {a.target ? (
+                      <>
+                        <span className="font-medium">{a.target.regional_name}</span>{" "}
+                        <span className="text-xs text-muted-foreground">
+                          {[a.target.set_code !== "UNKNOWN" ? a.target.set_code : null, a.target.card_number, a.target.misc_info !== "UNKNOWN" ? a.target.misc_info : null]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right">
                     <Button variant="ghost" size="icon" className="size-7" disabled={busy} onClick={() => remove(a.alias_id)} title={t("aliases.remove")}>
