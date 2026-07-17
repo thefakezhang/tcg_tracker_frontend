@@ -4,11 +4,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { type Game, useGame } from "./GameContext";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
-import {
-  type Language,
-  useLanguage,
-  LANGUAGE_LABELS,
-} from "./LanguageContext";
+import { useLanguage } from "./LanguageContext";
 import {
   Sidebar,
   SidebarContent,
@@ -23,17 +19,11 @@ import {
 } from "@/components/ui/sidebar";
 import {
   DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
+import { AccountMenuContent } from "./AccountMenuContent";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { ChevronsUpDown, DollarSign, Globe, ListChecks, Loader2, LogOut, Luggage, Package, Plus, ShoppingCart, Sparkles, Squirrel } from "lucide-react";
+import { ChevronsUpDown, ListChecks, Loader2, Luggage, Package, Plus, ShoppingCart, Sparkles, Squirrel } from "lucide-react";
 import { VIEWS, type ViewDef } from "./views";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
@@ -51,11 +41,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
-import {
-  type DisplayCurrency,
-  useCurrency,
-  CURRENCY_LABELS,
-} from "./CurrencyContext";
+import { useCurrency } from "./CurrencyContext";
 
 const GAME_ICONS: Record<Game, React.ReactNode> = {
   pokemon: <Squirrel className="size-4" />,
@@ -68,9 +54,6 @@ const GAMES: Game[] = ["pokemon", "mtg", "pokemon_sealed"];
 interface AppSidebarProps {
   user: { email: string; name?: string };
 }
-
-const LANGUAGES = Object.keys(LANGUAGE_LABELS) as Language[];
-const CURRENCIES = Object.keys(CURRENCY_LABELS) as DisplayCurrency[];
 
 // One sidebar nav button for a registry-defined view. Centralizes the paired
 // setActiveTripId + clear-buylist that every top-level nav item used to do by hand.
@@ -330,52 +313,14 @@ export function AppSidebar({ user }: AppSidebarProps) {
                   </SidebarMenuButton>
                 }
               />
-              <DropdownMenuContent side="top" align="start">
-                {/* Flattened from hover-submenus: Base UI submenus auto-closed on
-                    hover here, so language/currency are inline radio groups.
-                    DropdownMenuLabel renders base-ui GroupLabel, which REQUIRES a
-                    Group/RadioGroup ancestor for MenuGroupContext - a bare label
-                    in the content throws "MenuGroupContext is missing" the moment
-                    the menu opens. Each label+radiogroup is wrapped in a Group. */}
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel className="flex items-center gap-2">
-                    <Globe className="size-4" />
-                    {t("sidebar.language")}
-                  </DropdownMenuLabel>
-                  <DropdownMenuRadioGroup
-                    value={language}
-                    onValueChange={(v) => setLanguage(v as Language)}
-                  >
-                    {LANGUAGES.map((lang) => (
-                      <DropdownMenuRadioItem key={lang} value={lang}>
-                        {LANGUAGE_LABELS[lang]}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel className="flex items-center gap-2">
-                    <DollarSign className="size-4" />
-                    {t("sidebar.convertCurrency")}
-                  </DropdownMenuLabel>
-                  <DropdownMenuRadioGroup
-                    value={displayCurrency}
-                    onValueChange={(v) => setDisplayCurrency(v as DisplayCurrency)}
-                  >
-                    {CURRENCIES.map((c) => (
-                      <DropdownMenuRadioItem key={c} value={c}>
-                        {CURRENCY_LABELS[c]}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleLogout}>
-                  <LogOut className="mr-2 size-4" />
-                  {t("sidebar.logOut")}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
+              <AccountMenuContent
+                t={t}
+                language={language}
+                onLanguageChange={setLanguage}
+                currency={displayCurrency}
+                onCurrencyChange={setDisplayCurrency}
+                onLogout={handleLogout}
+              />
             </DropdownMenu>
           </SidebarMenuItem>
         </SidebarMenu>
