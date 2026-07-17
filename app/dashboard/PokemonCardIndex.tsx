@@ -11,6 +11,7 @@ import { useDebouncedValue } from "./use-card-data";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { MultiSelectFilter } from "@/components/ui/multi-select-filter";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import PokemonAliasesTab from "./PokemonAliasesTab";
@@ -185,31 +186,15 @@ function CardsTab() {
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground">{t("cardIndex.sourceFilter")}</span>
-        {FILTERABLE_PLATFORMS.map((p) => {
-          const active = selectedPlatforms.has(p);
-          return (
-            <button
-              key={p}
-              type="button"
-              onClick={() => togglePlatform(p)}
-              className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
-                active ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              {PLATFORM_SHORT[p] ?? p}
-            </button>
-          );
-        })}
-        {selectedPlatforms.size > 0 && (
-          <button
-            type="button"
-            onClick={() => setSelectedPlatforms(new Set())}
-            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-          >
-            {t("cardIndex.clearFilter")}
-          </button>
-        )}
+        <MultiSelectFilter
+          options={FILTERABLE_PLATFORMS}
+          labels={PLATFORM_SHORT}
+          selected={selectedPlatforms}
+          onToggle={togglePlatform}
+          onClear={() => setSelectedPlatforms(new Set())}
+          allLabel={t("cardIndex.sourceAll")}
+          clearLabel={t("cardIndex.clearFilter")}
+        />
       </div>
       <p className="text-xs text-muted-foreground">{t("cardIndex.hintPokemon")}</p>
 
