@@ -35,23 +35,24 @@ const usd = (n: number) => "$" + Math.round(n).toLocaleString();
 
 async function fetchPosition(): Promise<Position> {
   const supabase = createClient();
-  const [h, s, e] = await Promise.all([
-    supabase.from("inventory_holdings_v").select("leg, total_cost_usd"),
-    supabase.from("sales_ledger_v").select("margin_usd, is_reverted"),
-    supabase.from("trip_expenses").select("amount_usd"),
-  ]);
-  let invImport = 0, invExport = 0;
-  for (const r of (h.data as { leg: string | null; total_cost_usd: number }[] | null) ?? []) {
-    const cost = Number(r.total_cost_usd ?? 0);
-    if ((r.leg ?? "").trim() === "export") invExport += cost; else invImport += cost;
-  }
-  let margin = 0;
-  for (const r of (s.data as { margin_usd: number; is_reverted: boolean }[] | null) ?? []) {
-    if (!r.is_reverted) margin += Number(r.margin_usd ?? 0);
-  }
-  const expenses = ((e.data as { amount_usd: number }[] | null) ?? [])
-    .reduce((a, r) => a + Number(r.amount_usd ?? 0), 0);
-  return { invImport, invExport, invCost: invImport + invExport, margin, expenses };
+  // Server-side aggregate (migration 000165). This used to select every row of
+  // three views and sum them in the browser - but sales_ledger_v grows
+  // unbounded, so once sales passed PostgREST's 1000-row cap the response was
+  // silently truncated and the headline margin under-reported with no error.
+  // The RPC returns one row, so the transfer is O(1) and truncation is
+  // impossible; it also surfaces query errors instead of the old code's silent
+  // `?? []` that turned a failed fetch into a $0 sum.
+  const { data, error } = await supabase.rpc("trip_position").single();
+  if (error) throw error;
+  const r = data as {
+    inv_import_usd: number; inv_export_usd: number; margin_usd: number; expenses_usd: number;
+  };
+  const invImport = Number(r.inv_import_usd ?? 0);
+  const invExport = Number(r.inv_export_usd ?? 0);
+  return {
+    invImport, invExport, invCost: invImport + invExport,
+    margin: Number(r.margin_usd ?? 0), expenses: Number(r.expenses_usd ?? 0),
+  };
 }
 
 function Stat({ label, value, sub, valueClassName }: { label: string; value: string; sub?: string; valueClassName?: string }) {
