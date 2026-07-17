@@ -151,6 +151,27 @@ Each context follows the same pattern:
   - `conditionsCache` — condition_id → tier mapping + available tiers
   - `locationMapCache` — location_id → name
 
+### The PostgREST 1000-row cap (read this before writing any query)
+
+PostgREST truncates **every** response at `max_rows` (1000, `supabase/config.toml`) and signals it **nowhere**: no error, no flag, just a short array.
+A query that asks for more rows than the cap returns a plausible, complete-looking, wrong answer.
+This is the single easiest way to ship a silent data bug in this app, and it has already happened twice.
+
+Rules:
+
+- A read whose row count is bounded by a page size **you** control (`.limit(200)` then one row per id) is fine.
+- A read whose row count is a function of the **data** must page. Use `selectAll` (`lib/supabase/select-all.ts`), passing a **total order** (a unique key) so paging cannot drop or repeat rows across page boundaries.
+  Two shapes qualify: a **fan-out** (one card -> its ~6 platform links; one number -> its many defs) and any unbounded `.eq()`/`.in()` scan.
+- Never fetch an id list in order to feed it back as a `.in(...)` filter.
+  It truncates *and* it overflows the URL. Express it as a server-side `!inner` join instead (see the platform chip gates in `PokemonCardIndex` / `MtgCardIndex` / `CardIndexView`).
+  This shape is the nastiest variant: the truncated read is an *input* to the next query, so the page and its `count` agree with each other and the UI looks internally consistent while being ~97% wrong.
+- `.limit(n)` with `n` > 1000 is a fiction; PostgREST clamps it. `.limit(1000)` is worse, because a full page and a truncated page are then byte-identical.
+- Do **not** assume the cap's value in code. It is a server-side dial we cannot read from the client, and hardcoding it means a lowered cap silently reintroduces the bug. `selectAll` advances by rows actually returned and stops only on an empty page, so it is correct for any cap.
+
+Prior incidents, both silent: the match-review queue fetched 2,907 anchor rows for a 500-card page and rendered 61% of the page as if those cards had **no** external links (a curator would create a duplicate of a card that already exists); the Collectr import chunked by 200 card_numbers, which fan out to thousands of defs, so a truncated candidate list made the matcher fall through to `cands[0]` and write the **wrong** card_id into lot lines.
+
+`lib/supabase/select-all.test.ts` is the regression guard (`npm test`). Its fake emulates the clamp; keep the "cap smaller than PAGE" case.
+
 ### Price Display & Currency Conversion
 
 Prices flow through two layers:
@@ -248,7 +269,7 @@ The listings tables have a foreign key to `currencies` — queries join via `cur
 - **"UNKNOWN" as null**: Card fields (`card_number`, `misc_info`) may contain the string `"UNKNOWN"`. Treat these as null/empty throughout the UI. Never display "UNKNOWN" to users.
 - **"use client"**: All dashboard components are client components. Server components are only used for layouts and the auth callback route.
 - **localStorage keys**: `language`, `displayCurrency` — used for persisting user preferences.
-- **No test framework** is currently configured.
+- **Tests**: vitest, run with `npm test` (`*.test.ts` next to the code under test). There is no component/DOM harness - the suite covers pure logic and data-access helpers where a silent wrong answer is possible (see `lib/supabase/select-all.test.ts`). Add to it rather than reaching for a browser test.
 - **shadcn/ui components** live in `components/ui/`. These are generated files — customize only when needed, prefer wrapping over modifying.
 - **Icons**: Import from `lucide-react`. Don't add other icon libraries.
 - **Type safety**: Translation keys are type-checked. Supabase queries return `unknown` records that are explicitly cast in mapping functions.

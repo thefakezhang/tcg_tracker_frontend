@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll, chunkIds } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import {
@@ -98,13 +99,24 @@ export function CollectrImportDialog({
       const supabase = createClient();
       const numbers = [...new Set(parsed.map((p) => p.number).filter(Boolean))];
       const candidates = new Map<string, { card_id: number; regional_name: string; english_name: string | null }[]>();
-      for (let i = 0; i < numbers.length; i += 200) {
-        const chunk = numbers.slice(i, i + 200);
-        const { data } = await supabase
-          .from("pokemon_card_definitions")
-          .select("card_id, regional_name, english_name, card_number")
-          .in("card_number", chunk);
-        for (const d of (data as { card_id: number; regional_name: string; english_name: string | null; card_number: string }[]) ?? []) {
+      // Chunking bounds the NUMBERS per request, not the rows they return:
+      // card_number is far from unique (avg ~2.47 defs per number, and the era
+      // marker 旧裏 alone owns 1,295), so a 200-number chunk can ask for
+      // thousands of rows and PostgREST silently caps the answer at 1000.
+      // A truncated chunk is worse than a missing one here: it hands the
+      // matcher below a PARTIAL candidate list, so the exact-name match that
+      // should win is absent and the `cands[0]` fallback attaches a WRONG
+      // card_id to the lot line. selectAll pages until the chunk is complete
+      // (and throws on error, which the bare `data` destructure used to eat).
+      for (const chunk of chunkIds(numbers, 200)) {
+        const data = await selectAll<{ card_id: number; regional_name: string; english_name: string | null; card_number: string }>(
+          () => supabase
+            .from("pokemon_card_definitions")
+            .select("card_id, regional_name, english_name, card_number")
+            .in("card_number", chunk),
+          ["card_id"], // the PK: a total order, so paging can't drop or repeat a def
+        );
+        for (const d of data) {
           const list = candidates.get(d.card_number) ?? [];
           list.push(d);
           candidates.set(d.card_number, list);

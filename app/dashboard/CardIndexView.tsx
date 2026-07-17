@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Library, Search, ImageOff, Pencil, Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue } from "./use-card-data";
@@ -62,53 +63,56 @@ async function fetchIndex(
   const orFilter = `name.ilike.%${safe}%,english_name.ilike.%${safe}%,set_code.ilike.%${safe}%`;
 
   // When the operator selected one or more source chips, gate every product
-  // query on the set of product_ids that carry an ID for at least one of
-  // those platforms. Empty selection = no gate (show everything). Fetching
-  // the id list first keeps the count query honest AND avoids a
-  // JOIN-with-DISTINCT dance in PostgREST.
-  let idGate: number[] | null = null;
-  if (platforms.length > 0) {
-    const { data: gateRows, error: gerr } = await supabase
-      .from("pokemon_sealed_external_identifiers")
-      .select("product_id")
-      .in("platform_name", platforms);
-    if (gerr) throw gerr;
-    const seen = new Set<number>();
-    for (const g of (gateRows ?? []) as { product_id: number }[]) seen.add(g.product_id);
-    idGate = Array.from(seen);
-    if (idGate.length === 0) {
-      // Nothing matches the filter; short-circuit before we ask Postgres.
-      return { products: [], total: 0 };
-    }
-  }
+  // query on the products carrying an ID for at least one of those platforms.
+  // Empty selection = no gate (show everything).
+  //
+  // Expressed as an inner join in Postgres. The previous approach read the id
+  // list into the client, which PostgREST truncates at 1000 rows with no error:
+  // sealed is small enough that a single chip stays under the cap today, but
+  // pricecharting + snkrdunk + tcgplayer together already select 1,007 rows, so
+  // products silently disappeared from multi-chip filters - and the same
+  // truncated list gated the count, so nothing looked wrong. Same bug as the
+  // singles indexes, only masked by a smaller catalog. See lib/supabase/select-all.ts.
+  const gated = platforms.length > 0;
+  const gateSelect = gated ? ", pokemon_sealed_external_identifiers!inner(platform_name)" : "";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const applyGate = (q: any) =>
+    gated ? q.in("pokemon_sealed_external_identifiers.platform_name", platforms) : q;
 
-  let cq = supabase.from("pokemon_sealed_products").select("product_id", { count: "exact", head: true });
+  let cq = supabase.from("pokemon_sealed_products").select(`product_id${gateSelect}`, { count: "exact", head: true });
   if (s) cq = cq.or(orFilter);
-  if (idGate) cq = cq.in("product_id", idGate);
+  cq = applyGate(cq);
   const { count: total } = await cq;
   let q = supabase
     .from("pokemon_sealed_products")
-    .select(PRODUCT_COLS)
+    .select(`${PRODUCT_COLS}${gateSelect}`)
     .order("name", { ascending: true })
     .limit(limit);
   if (s) {
     q = q.or(orFilter);
   }
-  if (idGate) q = q.in("product_id", idGate);
+  q = applyGate(q);
   const { data, error } = await q;
   if (error) throw error;
-  const rows = (data ?? []) as Omit<IndexProduct, "links">[];
+  // Drop the join-only embed so it can't leak into the rendered product object.
+  const rows = ((data ?? []) as Record<string, unknown>[]).map(
+    ({ pokemon_sealed_external_identifiers: _gate, ...r }) => r,
+  ) as unknown as Omit<IndexProduct, "links">[];
 
   // Batch-fetch the platform links for these products (avoids an N+1 join).
   const ids = rows.map((r) => r.product_id);
   const linkMap = new Map<number, ProductLink[]>();
   if (ids.length) {
-    const { data: links, error: lerr } = await supabase
-      .from("pokemon_sealed_external_identifiers")
-      .select("product_id, platform_name, external_reference_id")
-      .in("product_id", ids);
-    if (lerr) throw lerr;
-    for (const l of (links ?? []) as ({ product_id: number } & ProductLink)[]) {
+    // Fans out ~1 row per platform per product, so a full page outgrows the
+    // PostgREST 1000-row cap and anchors vanish silently. See selectAll.
+    const links = await selectAll<{ product_id: number } & ProductLink>(
+      () => supabase
+        .from("pokemon_sealed_external_identifiers")
+        .select("product_id, platform_name, external_reference_id")
+        .in("product_id", ids),
+      ["product_id", "platform_name"],
+    );
+    for (const l of links) {
       const arr = linkMap.get(l.product_id) ?? [];
       arr.push({
         platform_name: l.platform_name,

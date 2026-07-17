@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ClipboardCheck, Check, X, Plus, Search, Link2, AlertTriangle, GitMerge, Move } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { Button } from "@/components/ui/button";
@@ -573,21 +574,27 @@ async function fetchQueue(cfg: GameConfig, bucket: Bucket, limit: number, source
   const items = new Map<number, CatalogItem>();
   if (ids.size) {
     const idList = [...ids];
-    const { data: crows, error: cerr } = await supabase.from(cfg.catalogTable).select(cfg.catalogSelect).in(cfg.idCol, idList);
-    if (cerr) throw cerr;
-    const { data: links, error: lerr } = await supabase
-      .from(cfg.extIdsTable)
-      .select(`${cfg.idCol}, platform_name, external_reference_id`)
-      .in(cfg.idCol, idList);
-    if (lerr) throw lerr;
+    // Both reads MUST page: the catalog select returns one row per id and so
+    // outgrows the PostgREST cap once the curator hits "load more" past 1000
+    // rows (a truncated catalog row makes an EXISTING card render as "create
+    // new" - a duplicate waiting to happen), and the link select fans out ~6
+    // rows per card, so it truncates on the very first page. See selectAll.
+    const crows = await selectAll<Record<string, unknown>>(
+      () => supabase.from(cfg.catalogTable).select(cfg.catalogSelect).in(cfg.idCol, idList),
+      [cfg.idCol],
+    );
+    const links = await selectAll<Record<string, unknown>>(
+      () => supabase.from(cfg.extIdsTable).select(`${cfg.idCol}, platform_name, external_reference_id`).in(cfg.idCol, idList),
+      [cfg.idCol, "platform_name"], // (id, platform) is unique: a total order, so paging can't drop rows
+    );
     const linkMap = new Map<number, CatalogLink[]>();
-    for (const l of (links ?? []) as Record<string, unknown>[]) {
+    for (const l of links) {
       const id = l[cfg.idCol] as number;
       const arr = linkMap.get(id) ?? [];
       arr.push({ platform_name: l.platform_name as string, external_reference_id: l.external_reference_id as string });
       linkMap.set(id, arr);
     }
-    for (const r of (crows ?? []) as Record<string, unknown>[]) {
+    for (const r of crows) {
       const id = r[cfg.idCol] as number;
       items.set(id, {
         id,
