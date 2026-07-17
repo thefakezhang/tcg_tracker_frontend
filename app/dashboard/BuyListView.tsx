@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, EyeOff, Eye, Hash, ImageOff, Layers, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll, selectAllByIds } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { useHeader } from "./HeaderContext";
 import { useBuyList } from "./BuyListContext";
@@ -140,26 +141,28 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
           ? "pokemon_card_definitions"
           : "mtg_card_definitions_v";
 
-      const { data: entries } = await supabase
-        .from(entryTable)
-        .select("entry_id, card_id, psa_grade, target_price_usd")
-        .eq("buylist_id", buylistId);
+      // A buylist has no fixed size, so page the entries rather than let
+      // PostgREST silently cap them at 1000 (a lost entry = a card missing from
+      // the list with no error).
+      const entries = await selectAll<Record<string, unknown>>(
+        () => supabase.from(entryTable).select("entry_id, card_id, psa_grade, target_price_usd").eq("buylist_id", buylistId),
+        ["entry_id"],
+      );
+      if (entries.length === 0) continue;
 
-      if (!entries || entries.length === 0) continue;
+      const cardIds = entries.map((e) => e.card_id as string);
 
-      const cardIds = entries.map((e: Record<string, unknown>) => e.card_id as string);
-
-      // Fetch summaries with joined card defs
-      // For each entry, match on card_id + tier/psa_grade
-      const { data: summaries } = await supabase
-        .from(summaryTable)
-        .select(
-          `*, ${cardTable}!inner(${cardDefCols(game)})`
-        )
-        .in("card_id", cardIds);
+      // Summaries fan out (~3 tiers/psa rows per card), so this both chunks the
+      // card_id list and pages each chunk. Truncation here would drop a tier and
+      // silently misprice the entry rather than error. Key: (card_id, tier, psa).
+      const summaries = await selectAllByIds<SummaryRow>(
+        cardIds,
+        ["card_id", "tier", "psa_grade"],
+        (chunk) => supabase.from(summaryTable).select(`*, ${cardTable}!inner(${cardDefCols(game)})`).in("card_id", chunk),
+      );
 
       const summaryMap = new Map<string, SummaryRow>();
-      for (const s of (summaries ?? []) as unknown as SummaryRow[]) {
+      for (const s of summaries) {
         // Key by card_id:psa_grade:tier
         const key = `${s.card_id}:${s.psa_grade}:${s.tier}`;
         summaryMap.set(key, s);
@@ -238,22 +241,23 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
     // Sealed products: separate entry table keyed on
     // product_id + sealed_condition + variant_edition (not card_id + psa_grade).
     {
-      const { data: entries } = await supabase
-        .from("pokemon_sealed_buylist_entries")
-        .select("entry_id, product_id, sealed_condition, variant_edition, target_price_usd")
-        .eq("buylist_id", buylistId);
+      const entries = await selectAll<Record<string, unknown>>(
+        () => supabase.from("pokemon_sealed_buylist_entries").select("entry_id, product_id, sealed_condition, variant_edition, target_price_usd").eq("buylist_id", buylistId),
+        ["entry_id"],
+      );
 
-      if (entries && entries.length > 0) {
-        const productIds = entries.map(
-          (e: Record<string, unknown>) => e.product_id as number
+      if (entries.length > 0) {
+        const productIds = entries.map((e) => e.product_id as number);
+        // pokemon_sealed_summaries_v exposes product_id as card_id; page on its
+        // grain (card_id, sealed_condition, variant_edition).
+        const summaries = await selectAllByIds<SealedSummaryRow>(
+          productIds,
+          ["card_id", "sealed_condition", "variant_edition"],
+          (chunk) => supabase.from("pokemon_sealed_summaries_v").select("*").in("card_id", chunk),
         );
-        const { data: summaries } = await supabase
-          .from("pokemon_sealed_summaries_v")
-          .select("*")
-          .in("card_id", productIds);
 
         const summaryMap = new Map<string, SealedSummaryRow>();
-        for (const s of (summaries ?? []) as unknown as SealedSummaryRow[]) {
+        for (const s of summaries) {
           summaryMap.set(`${s.card_id}:${s.sealed_condition}:${s.variant_edition}`, s);
         }
 
