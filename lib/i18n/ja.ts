@@ -356,7 +356,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardIndex.countOf": "{total}件中{shown}件を表示",
   "cardIndex.loadMore": "さらに{n}件読み込む",
   "cardIndex.search": "名前 / セットで検索…",
-  "cardIndex.sourceFilter": "取引先で絞り込み：",
+  "cardIndex.sourceAll": "すべての取引先",
   "cardIndex.clearFilter": "クリア",
   "cardIndex.hint": "管理対象の未開封商品カタログ：永続UID・識別情報・プラットフォームリンク・画像。現在は閲覧のみ。",
   "cardIndex.hintPokemon": "管理対象のシングルカタログ：永続card_uid・識別情報・プラットフォームリンク。クロスウォークを手編集せず、ここでバリアント作成やTCGPlayer ID紐付けができます。",
