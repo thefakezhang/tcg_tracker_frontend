@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { ShoppingCart, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { Input } from "@/components/ui/input";
@@ -38,14 +39,18 @@ interface ShoppingRow {
 
 async function fetchShoppingList(): Promise<ShoppingRow[]> {
   const supabase = createClient();
-  const { data, error } = await supabase
-    .from("customer_shopping_list_v")
-    .select("*")
-    .order("interested_customers", { ascending: false })
-    .order("top_priority", { ascending: true })
-    .limit(2000);
-  if (error) throw error;
-  return (data ?? []) as ShoppingRow[];
+  // `.limit(2000)` was a fiction: PostgREST clamps every response to max_rows
+  // (1000), so the ceiling read as "up to 2000" while silently dropping row
+  // 1001+. Page instead, on the view's identity (game, card_id, product_id) -
+  // a total order, so paging can't drop or repeat a row.
+  const rows = await selectAll<ShoppingRow>(
+    () => supabase.from("customer_shopping_list_v").select("*"),
+    ["game", "card_id", "product_id"],
+  );
+  // selectAll pages in key order; restore the display order the query used to
+  // impose (most-wanted first, then priority).
+  rows.sort((a, b) => b.interested_customers - a.interested_customers || a.top_priority - b.top_priority);
+  return rows;
 }
 
 function itemMeta(r: ShoppingRow): string {

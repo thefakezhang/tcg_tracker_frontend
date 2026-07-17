@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Send, Search, Bell } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { Input } from "@/components/ui/input";
@@ -76,15 +77,24 @@ function itemMeta(r: ReachoutRow): string {
 
 async function fetchReachout(): Promise<ReachoutRow[]> {
   const supabase = createClient();
-  const [wishlistRes, criteriaRes] = await Promise.all([
-    supabase.from("customer_reachout_v").select("*").order("priority").limit(1000),
-    supabase.from("customer_reachout_criteria_v").select("*").order("priority").limit(1000),
+  // `.limit(1000)` sat exactly ON PostgREST's max_rows, so a full page and a
+  // truncated page were byte-identical - the follow-up list would silently lose
+  // everyone past row 1000 with no signal. Page on each view's grain instead:
+  // customer_reachout_v keys on wishlist_id; the criteria view is one row per
+  // (criterion x matching stock item), i.e. (criteria_id, game, card_id,
+  // product_id). Priority (the display sort) is re-applied below.
+  const [wishlistData, criteriaData] = await Promise.all([
+    selectAll<Omit<ReachoutRow, "origin" | "criteria_label">>(
+      () => supabase.from("customer_reachout_v").select("*"),
+      ["wishlist_id"],
+    ),
+    selectAll<CriteriaReachoutRaw>(
+      () => supabase.from("customer_reachout_criteria_v").select("*"),
+      ["criteria_id", "game", "card_id", "product_id"],
+    ),
   ]);
-  if (wishlistRes.error) throw wishlistRes.error;
-  if (criteriaRes.error) throw criteriaRes.error;
-  const wishlistRows: ReachoutRow[] = ((wishlistRes.data ?? []) as Omit<ReachoutRow, "origin" | "criteria_label">[])
-    .map((r) => ({ ...r, origin: "wishlist" as const }));
-  const criteriaRows: ReachoutRow[] = ((criteriaRes.data ?? []) as CriteriaReachoutRaw[]).map((r) => ({
+  const wishlistRows: ReachoutRow[] = wishlistData.map((r) => ({ ...r, origin: "wishlist" as const }));
+  const criteriaRows: ReachoutRow[] = criteriaData.map((r) => ({
     // Reuse a stable wishlist_id-like key so React can key rows uniquely;
     // criterion rows use a synthetic negative id derived from (criteria_id, card_id).
     wishlist_id: -(r.criteria_id * 1_000_000 + (r.card_id ?? r.product_id ?? 0)),
@@ -105,7 +115,10 @@ async function fetchReachout(): Promise<ReachoutRow[]> {
     origin: "criteria" as const,
     criteria_label: r.label,
   }));
-  return [...wishlistRows, ...criteriaRows];
+  // selectAll pages in key order, so re-impose the priority order the two
+  // `.order("priority")` queries used to provide (the grouping below keys off
+  // priority; keeping rows priority-sorted preserves within-customer order too).
+  return [...wishlistRows, ...criteriaRows].sort((a, b) => a.priority - b.priority);
 }
 
 export default function ReachOutView() {
