@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Search, ImageOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll } from "@/lib/supabase/select-all";
 import { uploadCardImage } from "@/lib/upload-card-image";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -61,41 +62,51 @@ async function fetchIndex(
   const safe = s.replace(/[%,]/g, " ");
   const orFilter = `regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,set_code.ilike.%${safe}%,card_number.ilike.%${safe}%`;
 
-  // When the operator selected one or more source chips, gate every card
-  // query on the card_ids that carry an ID for at least one of those
-  // platforms. Empty selection = no gate.
-  let idGate: number[] | null = null;
-  if (platforms.length > 0) {
-    const { data: gateRows, error: gerr } = await supabase
-      .from("pokemon_external_identifiers")
-      .select("card_id")
-      .in("platform_name", platforms);
-    if (gerr) throw gerr;
-    const seen = new Set<number>();
-    for (const g of (gateRows ?? []) as { card_id: number }[]) seen.add(g.card_id);
-    idGate = Array.from(seen);
-    if (idGate.length === 0) return { cards: [], total: 0 };
-  }
+  // When the operator selected one or more source chips, gate every card query
+  // on the cards carrying an ID for at least one of those platforms. Empty
+  // selection = no gate.
+  //
+  // This is an INNER JOIN pushed into Postgres, not a fetch-ids-then-filter
+  // round trip. Reading the id list into the client cannot work here: the list
+  // is sized by the data, not by a page (tcgplayer alone owns 29,849 rows), so
+  // it blew PostgREST's silent 1000-row cap and gated the catalog on ~3% of its
+  // ids - and because the same truncated list gated the COUNT, the header
+  // agreed with the lie instead of exposing it. Sending 29,849 ids back up as a
+  // `.in(...)` would also overflow the URL. See lib/supabase/select-all.ts.
+  const gated = platforms.length > 0;
+  // The embed exists only to filter; `platform_name` is the cheapest column
+  // that makes the join expressible. !inner drops cards with no matching link.
+  const gateSelect = gated ? ", pokemon_external_identifiers!inner(platform_name)" : "";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const applyGate = (q: any) => (gated ? q.in("pokemon_external_identifiers.platform_name", platforms) : q);
 
-  let cq = supabase.from("pokemon_card_definitions").select("card_id", { count: "exact", head: true });
+  let cq = supabase.from("pokemon_card_definitions").select(`card_id${gateSelect}`, { count: "exact", head: true });
   if (s) cq = cq.or(orFilter);
-  if (idGate) cq = cq.in("card_id", idGate);
+  cq = applyGate(cq);
   const { count: total } = await cq;
-  let q = supabase.from("pokemon_card_definitions").select(COLS).order("regional_name").limit(limit);
+  let q = supabase.from("pokemon_card_definitions").select(`${COLS}${gateSelect}`).order("regional_name").limit(limit);
   if (s) q = q.or(orFilter);
-  if (idGate) q = q.in("card_id", idGate);
+  q = applyGate(q);
   const { data, error } = await q;
   if (error) throw error;
-  const rows = (data ?? []) as Omit<IndexCard, "links">[];
+  // Drop the join-only embed so it can't leak into the rendered card object.
+  const rows = ((data ?? []) as Record<string, unknown>[]).map(
+    ({ pokemon_external_identifiers: _gate, ...r }) => r,
+  ) as unknown as Omit<IndexCard, "links">[];
   const ids = rows.map((r) => r.card_id);
   const linkMap = new Map<number, CardLink[]>();
   if (ids.length) {
-    const { data: links, error: lerr } = await supabase
-      .from("pokemon_external_identifiers")
-      .select("card_id, platform_name, external_reference_id")
-      .in("card_id", ids);
-    if (lerr) throw lerr;
-    for (const l of (links ?? []) as ({ card_id: number } & CardLink)[]) {
+    // One card fans out to ~6 platform links, so a full catalog page (500) asks
+    // for ~3000 rows and PostgREST silently truncates at 1000 - cards past the
+    // cutoff would render with no anchors at all. selectAll pages instead.
+    const links = await selectAll<{ card_id: number } & CardLink>(
+      () => supabase
+        .from("pokemon_external_identifiers")
+        .select("card_id, platform_name, external_reference_id")
+        .in("card_id", ids),
+      ["card_id", "platform_name"],
+    );
+    for (const l of links) {
       const arr = linkMap.get(l.card_id) ?? [];
       arr.push({ platform_name: l.platform_name, external_reference_id: l.external_reference_id });
       linkMap.set(l.card_id, arr);

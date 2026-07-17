@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Search, ImageOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll } from "@/lib/supabase/select-all";
 import { uploadCardImage } from "@/lib/upload-card-image";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -72,38 +73,43 @@ async function fetchIndex(
 
   // Chip filter: gate cards on the ones that carry an ID for any of the
   // selected platforms. Empty selection = no gate.
-  let idGate: number[] | null = null;
-  if (platforms.length > 0) {
-    const { data: gateRows, error: gerr } = await supabase
-      .from("mtg_external_identifiers")
-      .select("card_id")
-      .in("platform_name", platforms);
-    if (gerr) throw gerr;
-    const seen = new Set<number>();
-    for (const g of (gateRows ?? []) as { card_id: number }[]) seen.add(g.card_id);
-    idGate = Array.from(seen);
-    if (idGate.length === 0) return { cards: [], total: 0 };
-  }
+  //
+  // Pushed into Postgres as an inner join rather than fetched as an id list:
+  // mtg_external_identifiers holds 418,096 rows (268,916 for tcgplayer alone),
+  // so the old read-the-ids-back approach was truncated to 1000 by PostgREST
+  // and silently filtered the catalog on 0.37% of its ids, count included.
+  // PostgREST resolves this embed through the view via the base table's FK.
+  const gated = platforms.length > 0;
+  const gateSelect = gated ? ", mtg_external_identifiers!inner(platform_name)" : "";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const applyGate = (q: any) => (gated ? q.in("mtg_external_identifiers.platform_name", platforms) : q);
 
-  let cq = supabase.from("mtg_card_definitions_v").select("card_id", { count: "exact", head: true });
+  let cq = supabase.from("mtg_card_definitions_v").select(`card_id${gateSelect}`, { count: "exact", head: true });
   if (s) cq = cq.or(orFilter);
-  if (idGate) cq = cq.in("card_id", idGate);
+  cq = applyGate(cq);
   const { count: total } = await cq;
-  let q = supabase.from("mtg_card_definitions_v").select(COLS).order("regional_name").limit(limit);
+  let q = supabase.from("mtg_card_definitions_v").select(`${COLS}${gateSelect}`).order("regional_name").limit(limit);
   if (s) q = q.or(orFilter);
-  if (idGate) q = q.in("card_id", idGate);
+  q = applyGate(q);
   const { data, error } = await q;
   if (error) throw error;
-  const rows = (data ?? []) as Omit<IndexCard, "links">[];
+  // Drop the join-only embed so it can't leak into the rendered card object.
+  const rows = ((data ?? []) as Record<string, unknown>[]).map(
+    ({ mtg_external_identifiers: _gate, ...r }) => r,
+  ) as unknown as Omit<IndexCard, "links">[];
   const ids = rows.map((r) => r.card_id);
   const linkMap = new Map<number, CardLink[]>();
   if (ids.length) {
-    const { data: links, error: lerr } = await supabase
-      .from("mtg_external_identifiers")
-      .select("card_id, platform_name, external_reference_id")
-      .in("card_id", ids);
-    if (lerr) throw lerr;
-    for (const l of (links ?? []) as ({ card_id: number } & CardLink)[]) {
+    // Fans out ~1 row per platform per card, so a full page outgrows the
+    // PostgREST 1000-row cap and anchors vanish silently. See selectAll.
+    const links = await selectAll<{ card_id: number } & CardLink>(
+      () => supabase
+        .from("mtg_external_identifiers")
+        .select("card_id, platform_name, external_reference_id")
+        .in("card_id", ids),
+      ["card_id", "platform_name"],
+    );
+    for (const l of links) {
       const arr = linkMap.get(l.card_id) ?? [];
       arr.push({ platform_name: l.platform_name, external_reference_id: l.external_reference_id });
       linkMap.set(l.card_id, arr);
