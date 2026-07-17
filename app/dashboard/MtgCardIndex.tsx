@@ -5,6 +5,8 @@ import { Search, ImageOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
 import { uploadCardImage } from "@/lib/upload-card-image";
+import { platformUrl } from "@/lib/platform-url";
+import { ZoomableImage } from "@/components/ui/zoomable-image";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue } from "./use-card-data";
@@ -51,10 +53,6 @@ const PLATFORM_SHORT: Record<string, string> = { tcgplayer: "TCG", tcgplayer_SKU
 const ART_TYPES = ["NON_FULL_ART", "FULL_ART"];
 const selectClass = "h-9 rounded-md border bg-transparent px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
 
-function tcgURL(platform: string, id: string): string | null {
-  if (platform === "tcgplayer") return `https://www.tcgplayer.com/product/${id}`;
-  return null;
-}
 
 const CATALOG_PAGE = 500;
 
@@ -171,11 +169,12 @@ function MtgCardsTab() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
-        {!isLoading && (
-          <span className="text-sm text-muted-foreground">
-            {t("cardIndex.countOf").replace("{shown}", String(cards.length)).replace("{total}", String(total))}
-          </span>
-        )}
+        {/* Always reserve the count row so the search group doesn't jump when it
+            appears (see PokemonCardIndex). */}
+        <span className="min-h-5 text-sm text-muted-foreground">
+          {!isLoading &&
+            t("cardIndex.countOf").replace("{shown}", String(cards.length)).replace("{total}", String(total))}
+        </span>
         <div className="flex items-center gap-2">
           <div className="relative w-72">
             <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -222,8 +221,7 @@ function MtgCardsTab() {
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-3">
                       {c.image_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={c.image_url} alt="" className="h-10 w-7 rounded border object-cover" />
+                        <ZoomableImage src={c.image_url} className="h-10 w-7 rounded border object-cover" />
                       ) : (
                         <div className="flex h-10 w-7 items-center justify-center rounded border bg-muted">
                           <ImageOff className="size-3 text-muted-foreground" />
@@ -258,7 +256,7 @@ function MtgCardsTab() {
                         <span className="text-xs text-muted-foreground">{t("cardIndex.noLinks")}</span>
                       ) : (
                         c.links.map((l) => {
-                          const url = tcgURL(l.platform_name, l.external_reference_id);
+                          const url = platformUrl(l.platform_name, l.external_reference_id);
                           const label = `${PLATFORM_SHORT[l.platform_name] ?? l.platform_name} ${l.external_reference_id}`;
                           return url ? (
                             <a key={l.platform_name + l.external_reference_id} href={url} target="_blank" rel="noreferrer" className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted">

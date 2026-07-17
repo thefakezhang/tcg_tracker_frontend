@@ -5,6 +5,8 @@ import { Search, ImageOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
 import { uploadCardImage } from "@/lib/upload-card-image";
+import { platformUrl } from "@/lib/platform-url";
+import { ZoomableImage } from "@/components/ui/zoomable-image";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue } from "./use-card-data";
@@ -43,12 +45,6 @@ const PLATFORMS = ["tcgplayer", "snkrdunk", "pricecharting", "collectr", "cardla
 const PLATFORM_SHORT: Record<string, string> = { tcgplayer: "TCG", snkrdunk: "SNKR", pricecharting: "PC", collectr: "COLL", cardladder: "CL", surugaya: "SRG", expedition_gaming: "EXP", tcgplayer_SKU: "SKU" };
 const selectClass = "h-9 rounded-md border bg-transparent px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
 
-function tcgURL(platform: string, id: string): string | null {
-  if (platform === "tcgplayer") return `https://www.tcgplayer.com/product/${id}`;
-  if (platform === "pricecharting") return `https://www.pricecharting.com/game/${id}`;
-  return null;
-}
-
 // Platform axis for the chip filter above the results table. Kept in sync
 // with PLATFORMS/PLATFORM_SHORT above so the filter list can't drift.
 const FILTERABLE_PLATFORMS = ["tcgplayer", "snkrdunk", "pricecharting", "collectr", "cardladder", "surugaya", "expedition_gaming"] as const;
@@ -61,7 +57,28 @@ async function fetchIndex(
   const supabase = createClient();
   const s = search.trim();
   const safe = s.replace(/[%,]/g, " ");
-  const orFilter = `regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,set_code.ilike.%${safe}%,card_number.ilike.%${safe}%`;
+  let orFilter = `regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,set_code.ilike.%${safe}%,card_number.ilike.%${safe}%`;
+
+  // Also match a card by an external id (any platform) or its card_uid, so the
+  // search bar finds a card by a snkrdunk/tcgplayer/pricecharting id or the uid
+  // shown in the row. Both live outside pokemon_card_definitions, so resolve the
+  // term to card_ids first and OR that set into the name search. The ext-id
+  // lookup is a plain (<=1000) read: a real id search matches a handful, and a
+  // term broad enough to exceed that is a name search, which the OR still covers.
+  if (s) {
+    const idHits = new Set<number>();
+    const { data: extRows } = await supabase
+      .from("pokemon_external_identifiers")
+      .select("card_id")
+      .ilike("external_reference_id", `%${safe}%`);
+    for (const r of (extRows ?? []) as { card_id: number }[]) idHits.add(r.card_id);
+    // A full uuid is an exact card_uid match (uuid columns can't be ILIKE'd).
+    if (/^[0-9a-fA-F-]{36}$/.test(s)) {
+      const { data: uidRows } = await supabase.from("pokemon_card_definitions").select("card_id").eq("card_uid", s);
+      for (const r of (uidRows ?? []) as { card_id: number }[]) idHits.add(r.card_id);
+    }
+    if (idHits.size) orFilter += `,card_id.in.(${[...idHits].join(",")})`;
+  }
 
   // When the operator selected one or more source chips, gate every card query
   // on the cards carrying an ID for at least one of those platforms. Empty
@@ -170,11 +187,14 @@ function CardsTab() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
-        {!isLoading && (
-          <span className="text-sm text-muted-foreground">
-            {t("cardIndex.countOf").replace("{shown}", String(cards.length)).replace("{total}", String(total))}
-          </span>
-        )}
+        {/* Reserve the count's row even while loading so the search group stays
+            put - previously the count was `{!isLoading && ...}`, so with
+            justify-between the search snapped from left to right when the count
+            appeared. A min-height keeps the row height stable too. */}
+        <span className="min-h-5 text-sm text-muted-foreground">
+          {!isLoading &&
+            t("cardIndex.countOf").replace("{shown}", String(cards.length)).replace("{total}", String(total))}
+        </span>
         <div className="flex items-center gap-2">
           <div className="relative w-72">
             <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -221,8 +241,7 @@ function CardsTab() {
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-3">
                       {c.image_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={c.image_url} alt="" className="h-10 w-7 rounded border object-cover" />
+                        <ZoomableImage src={c.image_url} className="h-10 w-7 rounded border object-cover" />
                       ) : (
                         <div className="flex h-10 w-7 items-center justify-center rounded border bg-muted">
                           <ImageOff className="size-3 text-muted-foreground" />
@@ -251,7 +270,7 @@ function CardsTab() {
                         <span className="text-xs text-muted-foreground">{t("cardIndex.noLinks")}</span>
                       ) : (
                         c.links.map((l) => {
-                          const url = tcgURL(l.platform_name, l.external_reference_id);
+                          const url = platformUrl(l.platform_name, l.external_reference_id);
                           const label = `${PLATFORM_SHORT[l.platform_name] ?? l.platform_name} ${l.external_reference_id}`;
                           return url ? (
                             <a key={l.platform_name + l.external_reference_id} href={url} target="_blank" rel="noreferrer" className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted">
@@ -318,6 +337,9 @@ function PokemonCardModal({
   // new-link inputs (create + edit)
   const [linkPlatform, setLinkPlatform] = useState("tcgplayer");
   const [linkId, setLinkId] = useState("");
+  // On CREATE a card can be given several external ids: staged here, then
+  // attached after the card row exists (the create RPC only seeds one anchor).
+  const [newLinks, setNewLinks] = useState<{ platform: string; id: string }[]>([]);
   // uploadFile is held in memory until save() succeeds; we only touch storage
   // AFTER the RPC returns a card_id so we never leak orphan objects from
   // abandoned form dialogs.
@@ -328,6 +350,7 @@ function PokemonCardModal({
     setError(null);
     setLinkId("");
     setLinkPlatform("tcgplayer");
+    setNewLinks([]);
     setUploadFile(null);
     if (isCreate || !card) setForm({ ...BLANK });
     else setForm({
@@ -349,14 +372,26 @@ function PokemonCardModal({
     let rpcError;
     let cardIdForUpload: number | null = null;
     if (isCreate) {
+      // Every staged link, plus a not-yet-added one still in the input row.
+      const staged = [...newLinks, ...(linkId.trim() ? [{ platform: linkPlatform, id: linkId.trim() }] : [])];
       const res = await supabase.rpc("card_index_create_pokemon_card", {
         p_regional_name: form.regional_name, p_english_name: form.english_name, p_set_code: form.set_code,
         p_card_number: form.card_number, p_language: form.language, p_misc_info: form.misc_info,
-        p_platform: linkId.trim() ? linkPlatform : null, p_external_id: linkId.trim() || null,
+        p_platform: staged[0]?.platform ?? null, p_external_id: staged[0]?.id ?? null,
         p_image_url: form.image_url.trim() || null,
       });
       rpcError = res.error;
       if (typeof res.data === "number") cardIdForUpload = res.data;
+      // The create RPC seeds the first anchor; attach any remaining links now
+      // that the card row exists. Stop on the first error so it surfaces.
+      if (!rpcError && cardIdForUpload != null) {
+        for (const l of staged.slice(1)) {
+          const { error: ae } = await supabase.rpc("card_index_attach_pokemon_link", {
+            p_card_id: cardIdForUpload, p_platform: l.platform, p_external_id: l.id,
+          });
+          if (ae) { rpcError = ae; break; }
+        }
+      }
     } else if (card) {
       ({ error: rpcError } = await supabase.rpc("card_index_edit_pokemon_card", {
         p_card_id: card.card_id, p_regional_name: form.regional_name, p_english_name: form.english_name,
@@ -494,16 +529,44 @@ function PokemonCardModal({
               ))}
             </div>
           )}
+          {/* Links staged for a new card (create only). The create RPC seeds the
+              first; save() attaches the rest. */}
+          {isCreate && newLinks.length > 0 && (
+            <div className="space-y-1">
+              {newLinks.map((l, i) => (
+                <div key={l.platform + l.id + i} className="flex items-center gap-2 text-sm">
+                  <span className="w-24 shrink-0 text-xs text-muted-foreground">{PLATFORM_SHORT[l.platform] ?? l.platform}</span>
+                  <span className="flex-1 truncate font-mono text-xs">{l.id}</span>
+                  <Button variant="ghost" size="icon" className="size-7" disabled={busy}
+                    onClick={() => setNewLinks((p) => p.filter((_, j) => j !== i))}>
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <select className={`${selectClass} w-28`} value={linkPlatform} onChange={(e) => setLinkPlatform(e.target.value)}>
               {PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
             <Input className="flex-1" placeholder={t("cardIndex.linkIdPlaceholder")} value={linkId} onChange={(e) => setLinkId(e.target.value)} />
-            {!isCreate && (
-              <Button variant="outline" size="sm" disabled={busy || !linkId.trim()} onClick={addLink}>
-                {t("cardIndex.addLink")}
-              </Button>
-            )}
+            {/* Create stages the link into the list; edit attaches it to the
+                existing card immediately (existing behavior). */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy || !linkId.trim()}
+              onClick={
+                isCreate
+                  ? () => {
+                      setNewLinks((p) => [...p, { platform: linkPlatform, id: linkId.trim() }]);
+                      setLinkId("");
+                    }
+                  : addLink
+              }
+            >
+              {t("cardIndex.addLink")}
+            </Button>
           </div>
           <p className="text-xs text-muted-foreground">{isCreate ? t("cardIndex.anchorHint") : t("cardIndex.linkHintPokemon")}</p>
         </div>

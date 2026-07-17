@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Library, Search, ImageOff, Pencil, Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
+import { platformUrl } from "@/lib/platform-url";
+import { ZoomableImage } from "@/components/ui/zoomable-image";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue } from "./use-card-data";
@@ -142,16 +144,6 @@ const PLATFORM_SHORT: Record<string, string> = {
   collectr: "COLL",
 };
 
-function platformLinkURL(platform: string, id: string): string | null {
-  switch (platform) {
-    case "pricecharting":
-      return `https://www.pricecharting.com/game/${id}`;
-    case "snkrdunk":
-      return `https://snkrdunk.com/apparels/${id}`;
-    default:
-      return null;
-  }
-}
 
 // CardIndexView is the dispatcher: a shared header + a per-catalog selector
 // (independent of the global game switcher, which scopes the price browser).
@@ -267,12 +259,7 @@ function SealedCardIndex() {
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-3">
                       {p.image_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={p.image_url}
-                          alt=""
-                          className="h-10 w-7 rounded border object-cover"
-                        />
+                        <ZoomableImage src={p.image_url} className="h-10 w-7 rounded border object-cover" />
                       ) : (
                         <div className="flex h-10 w-7 items-center justify-center rounded border bg-muted">
                           <ImageOff className="size-3 text-muted-foreground" />
@@ -321,7 +308,7 @@ function SealedCardIndex() {
                         </span>
                       ) : (
                         p.links.map((l) => {
-                          const url = platformLinkURL(l.platform_name, l.external_reference_id);
+                          const url = platformUrl(l.platform_name, l.external_reference_id, "sealed");
                           const label = `${PLATFORM_SHORT[l.platform_name] ?? l.platform_name} ${l.external_reference_id}`;
                           return url ? (
                             <a
