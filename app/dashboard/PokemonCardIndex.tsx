@@ -348,6 +348,9 @@ function PokemonCardModal({
   const [mergeResults, setMergeResults] = useState<IndexCard[]>([]);
   const [mergeTarget, setMergeTarget] = useState<IndexCard | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Create a sibling edition variant (same identity, different misc) - for the
+  // edition-collapse case where the catalog has only one of 1ED / アンリミ.
+  const [variantMisc, setVariantMisc] = useState("");
   const set = (k: keyof typeof BLANK, v: string) => setForm((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
@@ -369,6 +372,7 @@ function PokemonCardModal({
     setMergeResults([]);
     setMergeTarget(null);
     setConfirmDelete(false);
+    setVariantMisc("");
   }, [card, isCreate, open]);
 
   // Debounced search for a merge target (any card but this one).
@@ -486,6 +490,28 @@ function PokemonCardModal({
     onOpenChange(false);
   }
 
+  // Create a sibling card with THIS card's identity but a different misc - the
+  // missing edition (e.g. アンリミ next to a 1ED, or vice versa) that a source
+  // needs so its slabs stop collapsing onto the one existing printing.
+  async function doCreateVariant() {
+    if (!card || !variantMisc.trim()) return;
+    setBusy(true);
+    setError(null);
+    const supabase = createClient();
+    const { data, error: e } = await supabase.rpc("card_index_create_pokemon_card", {
+      p_regional_name: form.regional_name, p_english_name: form.english_name,
+      p_set_code: form.set_code, p_card_number: form.card_number, p_language: form.language,
+      p_misc_info: variantMisc.trim(),
+      p_platform: null, p_external_id: null,
+      p_image_url: form.image_url.trim() || null,
+    });
+    setBusy(false);
+    if (e) { setError(e.message); return; }
+    if (data == null) { setError(t("cardIndex.variantExists")); return; }
+    onSaved();
+    onOpenChange(false);
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
@@ -584,6 +610,29 @@ function PokemonCardModal({
           </div>
           <p className="text-xs text-muted-foreground">{isCreate ? t("cardIndex.anchorHint") : t("cardIndex.linkHintPokemon")}</p>
         </div>
+
+        {/* Create an edition variant (edit only): a sibling card sharing this
+            identity but a different misc - the missing 1ED/アンリミ printing. */}
+        {!isCreate && card && (
+          <div className="space-y-2 rounded-md border p-3">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <Plus className="size-3.5" /> {t("cardIndex.createVariantTitle")}
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                className="flex-1"
+                placeholder={t("cardIndex.createVariantPlaceholder")}
+                value={variantMisc}
+                onChange={(e) => setVariantMisc(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") doCreateVariant(); }}
+              />
+              <Button variant="outline" size="sm" disabled={busy || !variantMisc.trim()} onClick={doCreateVariant}>
+                {t("cardIndex.createVariant")}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">{t("cardIndex.createVariantHint")}</p>
+          </div>
+        )}
 
         {/* Danger zone (edit only): merge this card into a survivor, or delete a
             spurious card. Both go through the SECURITY DEFINER RPCs (000172). */}
