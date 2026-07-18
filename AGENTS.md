@@ -101,6 +101,10 @@ app/
 components/ui/            # shadcn/ui primitives (do not edit directly unless customizing)
 lib/
   utils.ts                # cn() utility (clsx + tailwind-merge)
+  card-search.ts          # Shared search-term semantics for every curator card search
+                          # (Card Index catalogs, curation override picker, match-review
+                          # dialog): name/set/number text, card uid (full or the displayed
+                          # 8-hex prefix), and exact platform external id all resolve.
   i18n/
     index.ts              # useTranslation() hook, t() function, TranslationKey type
     en.ts                 # English translations (source of truth for keys)

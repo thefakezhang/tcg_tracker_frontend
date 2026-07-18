@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Library, Search, ImageOff, Pencil, Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { externalIdMatches, searchOrFilter } from "@/lib/card-search";
 import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -61,7 +62,16 @@ async function fetchIndex(
   const supabase = createClient();
   const s = search.trim();
   const safe = s.replace(/[%,]/g, " ");
-  const orFilter = `name.ilike.%${safe}%,english_name.ilike.%${safe}%,set_code.ilike.%${safe}%`;
+  // Text term + product_uid (full or displayed 8-hex prefix) + exact platform
+  // external id - shared semantics with the curation pickers (lib/card-search).
+  const extIds = await externalIdMatches(supabase, "pokemon_sealed_external_identifiers", "product_id", s);
+  const orFilter = searchOrFilter(
+    [`name.ilike.%${safe}%`, `english_name.ilike.%${safe}%`, `set_code.ilike.%${safe}%`],
+    s,
+    "product_uid",
+    "product_id",
+    extIds,
+  );
 
   // When the operator selected one or more source chips, gate every product
   // query on the products carrying an ID for at least one of those platforms.
