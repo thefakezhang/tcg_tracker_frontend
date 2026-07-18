@@ -784,11 +784,11 @@ export default function MatchReviewView() {
                     ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < candidates.length; }}
                     onChange={toggleAll} />
                 </th>
-                <th className="w-[24%] px-3 py-2 font-medium">{t("review.colSource")}</th>
-                <th className="w-[30%] px-3 py-2 font-medium">{t("review.colMatch")}</th>
-                <th className="w-[22%] px-3 py-2 font-medium">{t("review.colAnchors")}</th>
+                <th className="w-[22%] px-3 py-2 font-medium">{t("review.colSource")}</th>
+                <th className="w-[24%] px-3 py-2 font-medium">{t("review.colMatch")}</th>
+                <th className="w-[18%] px-3 py-2 font-medium">{t("review.colAnchors")}</th>
                 <th className="w-[10%] px-3 py-2 font-medium">{t("review.colConfidence")}</th>
-                <th className="w-[12%] px-3 py-2 font-medium" />
+                <th className="w-[24%] px-3 py-2 font-medium" />
               </tr>
             </thead>
             <tbody>
@@ -832,20 +832,35 @@ export default function MatchReviewView() {
                     : "",
                   fields.language,
                 ].filter(Boolean);
-                // The source's OWN raw descriptor (what the retailer/platform reported
-                // for this listing), shown under the proposed catalog identity so the
-                // curator can eyeball whether the match is right. Read from GENERIC
-                // keys every converter populates - never source-specific names, so this
-                // shared UI stays source-agnostic. Empty slots (a source that doesn't
-                // carry a field) filter out.
-                const sourceBits = [
-                  fields.raw_name,
-                  fields.raw_set,
-                  fields.raw_number,
-                  fields.raw_variant,
-                  fields.grade && fields.grade !== "psa" ? fields.grade : "",
-                  fields.cert ? `cert ${fields.cert}` : "",
-                ].filter(Boolean);
+                // Each source's OWN raw descriptor (what the retailer/platform reported),
+                // shown under the proposed catalog identity so the curator can eyeball the
+                // match. Read per-source from source_fields.by_source.{platform} (generic
+                // keys every converter populates - never source-specific names), with a
+                // fallback to the flat generic keys for pre-migration / confirmed rows.
+                // One line per source.
+                const descLine = (d: Record<string, string>) =>
+                  [
+                    d.raw_name,
+                    d.raw_set,
+                    d.raw_number,
+                    d.raw_variant,
+                    d.grade && d.grade !== "psa" ? d.grade : "",
+                    d.cert ? `cert ${d.cert}` : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
+                const bySource = (fields as Record<string, unknown>).by_source as
+                  | Record<string, Record<string, string>>
+                  | undefined;
+                const flatText = descLine(fields as Record<string, string>);
+                const sourceLines: { source: string; text: string }[] =
+                  bySource && typeof bySource === "object"
+                    ? Object.entries(bySource)
+                        .map(([src, d]) => ({ source: src, text: descLine(d ?? {}) }))
+                        .filter((l) => l.text)
+                    : flatText
+                      ? [{ source: (fields.source as string) ?? "", text: flatText }]
+                      : [];
                 // In practice ~zero candidates carry a source image in the current
                 // pipeline; the empty placeholder is pure visual noise. Only render
                 // the slot when we actually have an image URL.
@@ -866,12 +881,16 @@ export default function MatchReviewView() {
                           <div className="text-xs text-muted-foreground break-words">
                             {identityBits.join(" · ")}
                           </div>
-                          {sourceBits.length > 0 && (
-                            // NOT truncated: this is the raw source descriptor the
-                            // curator reads to confirm the match - an ellipsis here
-                            // hides the very field (the variant / promo) that decides it.
-                            <div className="text-[11px] italic text-muted-foreground/70 break-words" title="what the source reported (for confirming the match)">
-                              {sourceBits.join(" · ")}
+                          {sourceLines.length > 0 && (
+                            // NOT truncated: this is the raw descriptor the curator reads
+                            // to confirm the match - an ellipsis here hides the very field
+                            // (the variant / promo) that decides it. One line per source.
+                            <div className="text-[11px] italic text-muted-foreground/70 break-words" title="what each source reported (for confirming the match)">
+                              {sourceLines.map((l) => (
+                                <div key={l.source}>
+                                  {l.source ? `${SOURCE_LABEL[l.source] ?? l.source}: ${l.text}` : l.text}
+                                </div>
+                              ))}
                             </div>
                           )}
                           {collisions.length > 0 && (
@@ -1025,8 +1044,8 @@ export default function MatchReviewView() {
                       )}
                       {c.reason && <div className="mt-0.5 truncate text-[10px] text-muted-foreground" title={c.reason}>{c.reason}</div>}
                     </td>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center justify-end gap-1">
+                    <td className="px-3 py-2 align-top">
+                      <div className="flex flex-wrap items-center justify-end gap-1">
                         {proposed && (
                           <Button variant="outline" size="sm" className="h-7 gap-1 px-2" disabled={busy}
                             title={t("review.moveSavedConfirm")} onClick={() => confirm(c, proposed.id)}>
