@@ -831,17 +831,18 @@ export default function MatchReviewView() {
                     : "",
                   fields.language,
                 ].filter(Boolean);
-                // The source's OWN descriptor (what the retailer/platform reported for
-                // this listing), shown under the proposed catalog identity so the
-                // curator can eyeball whether the match is right - e.g. Card Ladder's
-                // player / set / number / variation + PSA cert. Empty for sources that
-                // don't carry these raw fields.
+                // The source's OWN raw descriptor (what the retailer/platform reported
+                // for this listing), shown under the proposed catalog identity so the
+                // curator can eyeball whether the match is right. Read from GENERIC
+                // keys every converter populates - never source-specific names, so this
+                // shared UI stays source-agnostic. Empty slots (a source that doesn't
+                // carry a field) filter out.
                 const sourceBits = [
                   fields.raw_name,
-                  fields.cl_set,
-                  fields.cl_number,
-                  fields.variation,
-                  fields.grader && fields.grader !== "psa" ? fields.grader : "",
+                  fields.raw_set,
+                  fields.raw_number,
+                  fields.raw_variant,
+                  fields.grade && fields.grade !== "psa" ? fields.grade : "",
                   fields.cert ? `cert ${fields.cert}` : "",
                 ].filter(Boolean);
                 // In practice ~zero candidates carry a source image in the current
@@ -867,7 +868,7 @@ export default function MatchReviewView() {
                           {sourceBits.length > 0 && (
                             // NOT truncated: this is the raw source descriptor the
                             // curator reads to confirm the match - an ellipsis here
-                            // hides the very field (variation / promo) that decides it.
+                            // hides the very field (the variant / promo) that decides it.
                             <div className="text-[11px] italic text-muted-foreground/70 break-words" title="what the source reported (for confirming the match)">
                               {sourceBits.join(" · ")}
                             </div>
