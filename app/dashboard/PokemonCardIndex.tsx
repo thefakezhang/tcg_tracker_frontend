@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, ImageOff, Pencil, Plus, Trash2 } from "lucide-react";
+import { Search, ImageOff, Pencil, Plus, Trash2, GitMerge } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
 import { uploadCardImage } from "@/lib/upload-card-image";
@@ -322,6 +322,12 @@ function PokemonCardModal({
   // AFTER the RPC returns a card_id so we never leak orphan objects from
   // abandoned form dialogs.
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  // Merge/delete (edit only). Merge folds THIS card into a chosen survivor and
+  // deletes this one; delete removes a spurious card outright.
+  const [mergeSearch, setMergeSearch] = useState("");
+  const [mergeResults, setMergeResults] = useState<IndexCard[]>([]);
+  const [mergeTarget, setMergeTarget] = useState<IndexCard | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const set = (k: keyof typeof BLANK, v: string) => setForm((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
@@ -339,7 +345,28 @@ function PokemonCardModal({
       misc_info: card.misc_info === "UNKNOWN" ? "" : card.misc_info ?? "",
       image_url: card.image_url ?? "",
     });
+    setMergeSearch("");
+    setMergeResults([]);
+    setMergeTarget(null);
+    setConfirmDelete(false);
   }, [card, isCreate, open]);
+
+  // Debounced search for a merge target (any card but this one).
+  useEffect(() => {
+    const q = mergeSearch.trim();
+    if (!q || !card || mergeTarget) { setMergeResults([]); return; }
+    const timer = setTimeout(async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("pokemon_card_definitions")
+        .select("card_id, card_uid, regional_name, english_name, set_code, card_number, language, misc_info, image_url")
+        .or(`regional_name.ilike.%${q}%,english_name.ilike.%${q}%`)
+        .neq("card_uid", card.card_uid)
+        .limit(8);
+      setMergeResults(((data as IndexCard[]) ?? []).map((c) => ({ ...c, links: [] })));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [mergeSearch, card, mergeTarget]);
 
   async function save() {
     if (!form.regional_name.trim()) { setError(t("cardIndex.nameRequired")); return; }
@@ -405,6 +432,36 @@ function PokemonCardModal({
     const supabase = createClient();
     await supabase.rpc("card_index_remove_pokemon_link", { p_card_id: card.card_id, p_platform: platform });
     setBusy(false);
+    onSaved();
+    onOpenChange(false);
+  }
+
+  // Merge THIS card into the chosen survivor (moves links/listings/inventory,
+  // adds redirect aliases, deletes this card). Server-side RPC 000172.
+  async function doMerge() {
+    if (!card || !mergeTarget) return;
+    setBusy(true);
+    setError(null);
+    const supabase = createClient();
+    const { error: e } = await supabase.rpc("card_index_merge_pokemon_card", {
+      p_from_uid: card.card_uid, p_into_uid: mergeTarget.card_uid,
+    });
+    setBusy(false);
+    if (e) { setError(e.message); return; }
+    onSaved();
+    onOpenChange(false);
+  }
+
+  // Delete a spurious card. The RPC refuses if the card carries inventory/sales
+  // (that message surfaces here so the curator merges instead).
+  async function doDelete() {
+    if (!card) return;
+    setBusy(true);
+    setError(null);
+    const supabase = createClient();
+    const { error: e } = await supabase.rpc("card_index_delete_pokemon_card", { p_card_uid: card.card_uid });
+    setBusy(false);
+    if (e) { setError(e.message); setConfirmDelete(false); return; }
     onSaved();
     onOpenChange(false);
   }
@@ -507,6 +564,58 @@ function PokemonCardModal({
           </div>
           <p className="text-xs text-muted-foreground">{isCreate ? t("cardIndex.anchorHint") : t("cardIndex.linkHintPokemon")}</p>
         </div>
+
+        {/* Danger zone (edit only): merge this card into a survivor, or delete a
+            spurious card. Both go through the SECURITY DEFINER RPCs (000172). */}
+        {!isCreate && card && (
+          <div className="space-y-3 rounded-md border border-destructive/40 p-3">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <GitMerge className="size-3.5" /> {t("cardIndex.mergeTitle")}
+            </div>
+            {mergeTarget ? (
+              <div className="flex items-center gap-2">
+                <span className="flex-1 truncate text-sm">
+                  {t("cardIndex.mergeInto")}: <span className="font-medium">{mergeTarget.regional_name}</span>
+                  <span className="ml-1 text-xs text-muted-foreground">{mergeTarget.set_code} {mergeTarget.card_number} {mergeTarget.misc_info}</span>
+                </span>
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => setMergeTarget(null)}>{t("common.cancel")}</Button>
+                <Button variant="destructive" size="sm" disabled={busy} onClick={doMerge}>{t("cardIndex.mergeConfirm")}</Button>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <Input placeholder={t("cardIndex.mergeSearchPokemon")} value={mergeSearch} onChange={(e) => setMergeSearch(e.target.value)} />
+                {mergeResults.length > 0 && (
+                  <div className="max-h-40 overflow-auto rounded border">
+                    {mergeResults.map((r) => (
+                      <button key={r.card_uid} type="button"
+                        className="flex w-full items-center gap-2 px-2 py-1 text-left text-sm hover:bg-muted"
+                        onClick={() => { setMergeTarget(r); setMergeResults([]); setMergeSearch(""); }}>
+                        <span className="flex-1 truncate">{r.regional_name}{r.english_name ? ` / ${r.english_name}` : ""}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">{r.set_code} {r.card_number} {r.misc_info}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">{t("cardIndex.mergeHintPokemon")}</p>
+              </div>
+            )}
+            <div className="flex items-center justify-between border-t border-destructive/20 pt-2">
+              {confirmDelete ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">{t("cardIndex.deleteConfirm")}</span>
+                  <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirmDelete(false)}>{t("common.cancel")}</Button>
+                  <Button variant="destructive" size="sm" disabled={busy} onClick={doDelete}>
+                    <Trash2 className="size-3.5" /> {t("cardIndex.delete")}
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" disabled={busy} onClick={() => setConfirmDelete(true)}>
+                  <Trash2 className="size-3.5" /> {t("cardIndex.deleteCard")}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
         <DialogFooter>
