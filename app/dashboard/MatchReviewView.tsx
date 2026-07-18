@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ClipboardCheck, Check, X, Plus, Search, Link2, AlertTriangle, GitMerge, Move } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { externalIdMatches, searchOrFilter } from "@/lib/card-search";
 import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -1118,13 +1119,17 @@ function MatchToExisting({
     const setc = f.set_code ?? "";
     const num = f.card_number ?? "";
     const h = setTimeout(async () => {
-      let query = createClient().from(cfg.catalogTable).select(cfg.catalogSelect);
+      const client = createClient();
+      let query = client.from(cfg.catalogTable).select(cfg.catalogSelect);
       if (q) {
-        // Free search across name + set code + card number.
+        // Free search across name + set code + card number, plus the card's
+        // uid (full or displayed 8-hex prefix) and an exact platform external
+        // id - shared semantics with the Card Index (lib/card-search).
         const safe = q.replace(/[%,]/g, " ");
+        const extIds = await externalIdMatches(client, cfg.extIdsTable, cfg.idCol, q);
         const parts = [`${cfg.nameCol}.ilike.%${safe}%`, `set_code.ilike.%${safe}%`];
         if (cfg.numberCol) parts.push(`${cfg.numberCol}.ilike.%${safe}%`);
-        query = query.or(parts.join(","));
+        query = query.or(searchOrFilter(parts, q, cfg.uidCol, cfg.idCol, extIds));
       } else if (setc) {
         // Default: your existing cards for this exact set (+ number), i.e. "what you already have".
         query = query.eq("set_code", setc);

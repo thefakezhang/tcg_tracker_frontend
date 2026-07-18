@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Search, ImageOff, Pencil, Plus, Trash2, GitMerge } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
+import { externalIdMatches, searchOrFilter } from "@/lib/card-search";
 import { uploadCardImage } from "@/lib/upload-card-image";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -61,7 +62,21 @@ async function fetchIndex(
   const supabase = createClient();
   const s = search.trim();
   const safe = s.replace(/[%,]/g, " ");
-  const orFilter = `regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,set_code.ilike.%${safe}%,card_number.ilike.%${safe}%`;
+  // Text term + card_uid (full or displayed 8-hex prefix) + exact platform
+  // external id - shared semantics with the curation pickers (lib/card-search).
+  const extIds = await externalIdMatches(supabase, "pokemon_external_identifiers", "card_id", s);
+  const orFilter = searchOrFilter(
+    [
+      `regional_name.ilike.%${safe}%`,
+      `english_name.ilike.%${safe}%`,
+      `set_code.ilike.%${safe}%`,
+      `card_number.ilike.%${safe}%`,
+    ],
+    s,
+    "card_uid",
+    "card_id",
+    extIds,
+  );
 
   // When the operator selected one or more source chips, gate every card query
   // on the cards carrying an ID for at least one of those platforms. Empty
@@ -170,11 +185,16 @@ function CardsTab() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
-        {!isLoading && (
-          <span className="text-sm text-muted-foreground">
-            {t("cardIndex.countOf").replace("{shown}", String(cards.length)).replace("{total}", String(total))}
-          </span>
-        )}
+        {/* Always-mounted left slot: when the count span unmounted during
+            loading, justify-between collapsed to one child and the search
+            bar jumped to the left edge on every load cycle. */}
+        <div className="flex items-center gap-2">
+          {!isLoading && (
+            <span className="text-sm text-muted-foreground">
+              {t("cardIndex.countOf").replace("{shown}", String(cards.length)).replace("{total}", String(total))}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <div className="relative w-72">
             <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
