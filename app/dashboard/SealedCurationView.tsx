@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { AutoApproveModal } from "./AutoApproveModal";
+import { Bot } from "lucide-react";
 
 // Image-buylist curation for SEALED products. Sibling to CurationView.tsx —
 // same shape, but reads pokemon_sealed_image_buylist_candidates and matches
@@ -26,7 +28,7 @@ import { Badge } from "@/components/ui/badge";
 // Reviews AI-detected sealed candidates (crop vs matched product) and
 // promotes / rejects them via the SECURITY DEFINER RPCs (the browser can't
 // write status directly).
-type Status = "needs_review" | "pending";
+type Status = "needs_review" | "pending" | "auto_approved";
 
 // Confidence bands power the section grouping, the batch-approve target, and
 // the keyboard-nav flat order. Kept in a fixed high→low sequence so a
@@ -121,6 +123,16 @@ export default function SealedCurationView() {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [batchProgress, setBatchProgress] = useState<number | null>(null);
   const [selectedBuyer, setSelectedBuyer] = useState<string | null>(null); // null = all buyers
+  const [autoApproveOpen, setAutoApproveOpen] = useState(false);
+  // One-slot undo history. Populated by approve / reject / sendBack after
+  // they resolve; consumed by the `u` shortcut and the top-banner Undo
+  // button. Auto-clears after 10s.
+  const [lastAction, setLastAction] = useState<{ candidateId: number; label: string } | null>(null);
+  useEffect(() => {
+    if (!lastAction) return;
+    const t = setTimeout(() => setLastAction(null), 10_000);
+    return () => clearTimeout(t);
+  }, [lastAction]);
 
   const fetchCandidates = useCallback(async (st: Status): Promise<Candidate[]> => {
     const supabase = createClient();
@@ -199,24 +211,41 @@ export default function SealedCurationView() {
     const ok = await save(async () => { const { error } = await fn(); if (error) throw error; });
     if (ok) retry();
   }
-  const approve = useCallback((c: Candidate, o?: { productId?: number; condition?: string | null; priceJpy?: number | null; notes?: string | null }) =>
-    act(() => supabase.rpc("promote_sealed_image_buylist_candidate", {
+  // Wrap the RPC calls so a successful action populates lastAction, which
+  // powers the top-banner Undo button + `u` shortcut.
+  const approve = useCallback(async (c: Candidate, o?: { productId?: number; condition?: string | null; priceJpy?: number | null; notes?: string | null }) => {
+    await act(() => supabase.rpc("promote_sealed_image_buylist_candidate", {
       p_candidate_id: c.candidate_id,
       p_product_id: o?.productId ?? null, p_sealed_condition: o?.condition ?? null,
       p_price_jpy: o?.priceJpy ?? null, p_curator_notes: o?.notes ?? null,
-    })),
-  // supabase + save + retry are stable within a render pass; act closes over
-  // them from the enclosing scope.
+    }));
+    setLastAction({ candidateId: c.candidate_id, label: t("curation.undo.approvedLabel", { id: c.candidate_id }) });
+  // supabase + save + retry + t are stable within a render pass; act closes
+  // over them from the enclosing scope.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  []);
-  const reject = useCallback((c: Candidate, notes?: string | null) =>
-    act(() => supabase.rpc("reject_sealed_image_buylist_candidate", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null })),
+  }, []);
+  const reject = useCallback(async (c: Candidate, notes?: string | null) => {
+    await act(() => supabase.rpc("reject_sealed_image_buylist_candidate", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null }));
+    setLastAction({ candidateId: c.candidate_id, label: t("curation.undo.rejectedLabel", { id: c.candidate_id }) });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  []);
-  const sendBack = useCallback((c: Candidate, notes?: string | null) =>
-    act(() => supabase.rpc("mark_sealed_image_buylist_candidate_needs_review", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null })),
+  }, []);
+  const sendBack = useCallback(async (c: Candidate, notes?: string | null) => {
+    await act(() => supabase.rpc("mark_sealed_image_buylist_candidate_needs_review", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null }));
+    setLastAction({ candidateId: c.candidate_id, label: t("curation.undo.deferredLabel", { id: c.candidate_id }) });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  []);
+  }, []);
+  const undo = useCallback(async () => {
+    if (!lastAction) return;
+    const cid = lastAction.candidateId;
+    setLastAction(null);
+    const { error } = await supabase.rpc("undo_sealed_image_buylist_candidate_action", { p_candidate_id: cid });
+    if (error) {
+      setLastAction({ candidateId: cid, label: t("curation.undo.failedLabel", { msg: error.message }) });
+      return;
+    }
+    retry();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastAction]);
 
   // Batch approve every candidate in a band that has a matched card. One
   // save/retry cycle for the whole batch — otherwise each per-item RPC would
@@ -273,11 +302,14 @@ export default function SealedCurationView() {
       } else if (e.key === "d" && cur && status === "pending") {
         e.preventDefault();
         sendBack(cur);
+      } else if (e.key === "u" && lastAction) {
+        e.preventDefault();
+        undo();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [flat, selectedIdx, status, approve, reject, sendBack]);
+  }, [flat, selectedIdx, status, approve, reject, sendBack, undo, lastAction]);
 
   // Scroll the selected card into view whenever the selection index changes.
   useEffect(() => {
@@ -290,13 +322,20 @@ export default function SealedCurationView() {
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">{t("curation.titleSealed")}</h1>
-        <Tabs value={status} onValueChange={(v) => setStatus(String(v) as Status)}>
-          <TabsList>
-            <TabsTrigger value="needs_review">{t("curation.needsReview")}</TabsTrigger>
-            <TabsTrigger value="pending">{t("curation.pending")}</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setAutoApproveOpen(true)}>
+            <Bot className="size-4 mr-1" />{t("curation.autoApprove.buttonLabel")}
+          </Button>
+          <Tabs value={status} onValueChange={(v) => setStatus(String(v) as Status)}>
+            <TabsList>
+              <TabsTrigger value="needs_review">{t("curation.needsReview")}</TabsTrigger>
+              <TabsTrigger value="pending">{t("curation.pending")}</TabsTrigger>
+              <TabsTrigger value="auto_approved">{t("curation.autoApproved")}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
       </div>
+      <AutoApproveModal open={autoApproveOpen} onOpenChange={setAutoApproveOpen} onRunComplete={retry} />
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <span>{t("curation.hint")}</span>
         <span className="inline-flex items-center gap-1">
@@ -318,7 +357,25 @@ export default function SealedCurationView() {
             <span>{t("curation.kbdDefer")}</span>
           </span>
         )}
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">u</kbd>
+          <span>{t("curation.kbdUndo")}</span>
+        </span>
       </div>
+
+      {/* Undo banner. Shows the last action for 10s or until dismissed / re-fired
+          via the `u` shortcut. */}
+      {lastAction && (
+        <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-xs">
+          <span>{lastAction.label}</span>
+          <Button variant="ghost" size="sm" className="h-6 ml-auto" onClick={() => undo()}>
+            {t("curation.undoAction")}
+          </Button>
+          <Button variant="ghost" size="icon" className="size-6" onClick={() => setLastAction(null)}>
+            <X className="size-3" />
+          </Button>
+        </div>
+      )}
 
       {/* Per-buyer filter chips. Horizontal scrollable list so many buyers
           stay one glance away without wrapping the layout. Chips render only
