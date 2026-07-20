@@ -17,6 +17,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import type { ReviewQueueGame } from "./ReviewQueueNavigationContext";
 
 // Match review queue (docs/card_index_curation_console.md): the curator empties the
 // cloud candidate table the backend fills. One component, driven by a per-game
@@ -24,7 +25,7 @@ import {
 // process). Each row stores only the source side + a pointer to the proposed
 // catalog item; the catalog side is resolved from that pointer, never duplicated.
 
-type Game = "pokemon_sealed" | "pokemon" | "mtg";
+type Game = ReviewQueueGame;
 
 interface CatalogLink {
   platform_name: string;
@@ -642,11 +643,19 @@ function Anchors({ links }: { links: CatalogLink[] }) {
 
 const BUCKETS: Bucket[] = ["generated", "manual", "nonexistant"];
 
-export default function MatchReviewView() {
+export interface MatchReviewViewProps {
+  initialGame?: Game;
+  initialSource?: string;
+}
+
+export default function MatchReviewView({
+  initialGame = "pokemon_sealed",
+  initialSource = "",
+}: MatchReviewViewProps = {}) {
   const { t } = useTranslation();
-  const [game, setGame] = useState<Game>("pokemon_sealed");
+  const [game, setGame] = useState<Game>(initialGame);
   const [bucket, setBucket] = useState<Bucket>("generated");
-  const [source, setSource] = useState<string>(""); // "" = all sources
+  const [source, setSource] = useState<string>(initialSource); // "" = all sources
   const [limit, setLimit] = useState(PAGE_SIZE);
   const cfg = CONFIGS[game];
   const { data, error, isLoading, retry } = useSupabaseQuery(["match-review", game, bucket, source, String(limit)], () => fetchQueue(cfg, bucket, limit, source));
@@ -661,6 +670,12 @@ export default function MatchReviewView() {
   const [createFor, setCreateFor] = useState<Candidate | null>(null);
   const [matchFor, setMatchFor] = useState<{ c: Candidate; alias: boolean } | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const sourceOptions = useMemo(
+    () => source && !SOURCE_FILTERS[game].includes(source)
+      ? [source, ...SOURCE_FILTERS[game]]
+      : SOURCE_FILTERS[game],
+    [game, source],
+  );
 
   const proposedCount = useMemo(
     () => candidates.filter((c) => selected.has(c.candidate_id) && c.proposed_id).length,
@@ -754,12 +769,13 @@ export default function MatchReviewView() {
             newly-added source like Shinsoku in isolation). Server-side, so the
             count and pagination stay honest. */}
         <select
+          aria-label={t("review.sourceFilter")}
           className="h-8 rounded-md border bg-transparent px-2 text-sm text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           value={source}
           onChange={(e) => { setSource(e.target.value); setSelected(new Set()); setLimit(PAGE_SIZE); }}
         >
           <option value="">{t("review.sourceAll")}</option>
-          {SOURCE_FILTERS[game].map((s) => (
+          {sourceOptions.map((s) => (
             <option key={s} value={s}>{SOURCE_LABEL[s] ?? s}</option>
           ))}
         </select>
