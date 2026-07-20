@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,13 @@ export type CardRefreshVerdict = {
   card_id: number;
   queued: QueuedEntry[];
   already_pending: string[];
+  not_targetable: string[];
+};
+
+/** card_refresh_targets: what a refresh WOULD do, queueing nothing. */
+type CardRefreshTargets = {
+  card_id: number;
+  targetable: QueuedEntry[];
   not_targetable: string[];
 };
 
@@ -40,6 +47,30 @@ export function RefreshPricesAction({
   const [busy, setBusy] = useState(false);
   const [verdicts, setVerdicts] = useState<CardRefreshVerdict[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Ask the backend whether these cards can benefit from a refresh at all. The
+  // source matrix deliberately lives in the RPC - that is what lets a shop which
+  // starts storing a durable per-card handle show up here with no frontend
+  // change - so asking is the only honest way to decide whether to offer the
+  // button. card_refresh_targets is read-only and queues nothing.
+  const [targets, setTargets] = useState<CardRefreshTargets[] | null>(null);
+  const idsKey = cardIds.join(",");
+  useEffect(() => {
+    let cancelled = false;
+    const ids = idsKey ? idsKey.split(",").map(Number) : [];
+    if (!ids.length) {
+      setTargets([]);
+      return;
+    }
+    (async () => {
+      const supabase = createClient();
+      const { data } = await supabase.rpc("card_refresh_targets", { p_card_ids: ids });
+      if (!cancelled) setTargets((data ?? []) as CardRefreshTargets[]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [idsKey]);
 
   const run = async () => {
     if (!cardIds.length || busy) return;
@@ -81,6 +112,12 @@ export function RefreshPricesAction({
     cardIds.length > 1
       ? t("refreshPrices.buttonN", { count: cardIds.length })
       : t("refreshPrices.button");
+
+  // Absence is the default: offer no button at all when nothing about these
+  // cards can actually be refreshed (never a disabled one). Also render nothing
+  // until the answer is known, so a button never flashes in and then vanishes.
+  const anyTargetable = (targets ?? []).some((v) => v.targetable.length > 0);
+  if (targets === null || !anyTargetable) return null;
 
   return (
     <div className="flex flex-col gap-1">
