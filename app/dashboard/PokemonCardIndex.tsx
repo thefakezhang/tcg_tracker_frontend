@@ -15,12 +15,20 @@ import { Button } from "@/components/ui/button";
 import { MultiSelectFilter } from "@/components/ui/multi-select-filter";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import PokemonAliasesTab from "./PokemonAliasesTab";
+import PokemonMatchesTab from "./PokemonMatchesTab";
 
 // Card Index editor for pokemon SINGLES (Stage 2-A). Mirrors the sealed catalog
 // surface over the card_index_*_pokemon_* RPCs so variant adds + TCGID links go
 // through the UI + the durable card_uid, not hand-SQL. Platform id is a link, not
 // an anchor (one id can attach to several variant cards), so link add never evicts.
+
+// What card_index_attach_pokemon_link returns (R1). The attach resolves every
+// pending candidate the card now FULLY covers, and reports an id it silently
+// overwrote in that (card, platform) slot.
+interface AttachReport {
+  resolved: { candidate_id: number; source_name: string }[];
+  replaced_id: string | null;
+}
 
 interface CardLink {
   platform_name: string;
@@ -141,18 +149,18 @@ const CATALOG_PAGE = 500;
 
 export default function PokemonCardIndex() {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<"cards" | "aliases">("cards");
+  const [tab, setTab] = useState<"cards" | "matches">("cards");
   return (
     <div className="space-y-4">
       <div className="flex gap-1">
         <Button size="sm" variant={tab === "cards" ? "default" : "outline"} onClick={() => setTab("cards")}>
           {t("cardIndex.tabCards")}
         </Button>
-        <Button size="sm" variant={tab === "aliases" ? "default" : "outline"} onClick={() => setTab("aliases")}>
-          {t("cardIndex.tabAliases")}
+        <Button size="sm" variant={tab === "matches" ? "default" : "outline"} onClick={() => setTab("matches")}>
+          {t("cardIndex.tabMatches")}
         </Button>
       </div>
-      {tab === "cards" ? <CardsTab /> : <PokemonAliasesTab />}
+      {tab === "cards" ? <CardsTab /> : <PokemonMatchesTab />}
     </div>
   );
 }
@@ -338,6 +346,13 @@ function PokemonCardModal({
   // new-link inputs (create + edit)
   const [linkPlatform, setLinkPlatform] = useState("tcgplayer");
   const [linkId, setLinkId] = useState("");
+  // Local mirror of the card's links. The attach flow keeps the modal OPEN (an
+  // operator attaching one id usually has several), so the rendered list cannot
+  // come from the `card` prop - that snapshot goes stale the moment we attach.
+  const [links, setLinks] = useState<CardLink[]>(card?.links ?? []);
+  // What the last attach actually did: which queued candidates it answered, and
+  // whether it silently overwrote an id that was already in that slot.
+  const [attachInfo, setAttachInfo] = useState<AttachReport | null>(null);
   // uploadFile is held in memory until save() succeeds; we only touch storage
   // AFTER the RPC returns a card_id so we never leak orphan objects from
   // abandoned form dialogs.
@@ -358,6 +373,8 @@ function PokemonCardModal({
     setLinkId("");
     setLinkPlatform("tcgplayer");
     setUploadFile(null);
+    setLinks(card?.links ?? []);
+    setAttachInfo(null);
     if (isCreate || !card) setForm({ ...BLANK });
     else setForm({
       regional_name: card.regional_name ?? "",
@@ -438,26 +455,35 @@ function PokemonCardModal({
 
   async function addLink() {
     if (!card || !linkId.trim()) return;
+    const id = linkId.trim();
     setBusy(true);
+    setError(null);
     const supabase = createClient();
-    const { error: e } = await supabase.rpc("card_index_attach_pokemon_link", {
-      p_card_id: card.card_id, p_platform: linkPlatform, p_external_id: linkId.trim(),
+    const { data, error: e } = await supabase.rpc("card_index_attach_pokemon_link", {
+      p_card_id: card.card_id, p_platform: linkPlatform, p_external_id: id,
     });
     setBusy(false);
     if (e) { setError(e.message); return; }
+    // Mirror the upsert locally: one id per (card, platform).
+    setLinks((prev) => [...prev.filter((l) => l.platform_name !== linkPlatform), { platform_name: linkPlatform, external_reference_id: id }]);
+    setAttachInfo((data ?? null) as AttachReport | null);
     setLinkId("");
     onSaved();
-    onOpenChange(false);
+    // Deliberately NOT closing: the attach may have answered queued candidates
+    // or replaced an existing id, and closing would throw that report away
+    // before the operator ever sees it.
   }
 
   async function removeLink(platform: string) {
     if (!card) return;
     setBusy(true);
     const supabase = createClient();
-    await supabase.rpc("card_index_remove_pokemon_link", { p_card_id: card.card_id, p_platform: platform });
+    const { error: e } = await supabase.rpc("card_index_remove_pokemon_link", { p_card_id: card.card_id, p_platform: platform });
     setBusy(false);
+    if (e) { setError(e.message); return; }
+    setLinks((prev) => prev.filter((l) => l.platform_name !== platform));
+    setAttachInfo(null);
     onSaved();
-    onOpenChange(false);
   }
 
   // Merge THIS card into the chosen survivor (moves links/listings/inventory,
@@ -584,9 +610,9 @@ function PokemonCardModal({
         {/* Links: on create, one optional anchor; on edit, list + add/remove. */}
         <div className="space-y-2 border-t pt-3">
           <Label>{t("cardIndex.links")}</Label>
-          {!isCreate && card && card.links.length > 0 && (
+          {!isCreate && card && links.length > 0 && (
             <div className="space-y-1">
-              {card.links.map((l) => (
+              {links.map((l) => (
                 <div key={l.platform_name} className="flex items-center gap-2 text-sm">
                   <span className="w-24 shrink-0 text-xs text-muted-foreground">{PLATFORM_SHORT[l.platform_name] ?? l.platform_name}</span>
                   <span className="flex-1 truncate font-mono text-xs">{l.external_reference_id}</span>
@@ -608,6 +634,18 @@ function PokemonCardModal({
               </Button>
             )}
           </div>
+          {attachInfo?.replaced_id && (
+            <p className="text-xs text-amber-600 dark:text-amber-500">
+              {t("cardIndex.attachReplaced")}{" "}
+              <span className="select-all font-mono">{attachInfo.replaced_id}</span>
+            </p>
+          )}
+          {attachInfo && attachInfo.resolved.length > 0 && (
+            <p className="text-xs text-emerald-600 dark:text-emerald-500">
+              {t("cardIndex.attachResolved").replace("{n}", String(attachInfo.resolved.length))}{" "}
+              {attachInfo.resolved.map((r) => r.source_name).join(", ")}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">{isCreate ? t("cardIndex.anchorHint") : t("cardIndex.linkHintPokemon")}</p>
         </div>
 

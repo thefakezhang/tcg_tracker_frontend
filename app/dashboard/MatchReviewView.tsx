@@ -72,7 +72,11 @@ interface GameConfig {
   rpcConfirm: string;
   rpcCreate: string;
   rpcReject: string;
-  rpcAlias?: string; // resolve candidate as an alias of an existing item (pokemon only)
+  // Resolve a candidate as an alias of an existing item. MTG ONLY: pokemon
+  // dropped it in W4 - Confirm binds match memory server-side, so "alias" is no
+  // longer a separate verb the operator has to choose. Removing the key here is
+  // what hides the button, since the UI gates on it.
+  rpcAlias?: string;
   rpcBulkConfirm: string; // confirm many (those with a proposed match) in one call
   rpcBulkReject: string; // reject many in one call
   rpcBulkCreate?: string; // mint many at once from source_fields (generated bucket, all three games)
@@ -163,7 +167,6 @@ const CONFIGS: Record<Game, GameConfig> = {
     rpcConfirm: "card_index_resolve_pokemon_candidate_confirm",
     rpcCreate: "card_index_resolve_pokemon_candidate_create",
     rpcReject: "card_index_resolve_pokemon_candidate_reject",
-    rpcAlias: "card_index_resolve_pokemon_candidate_alias",
     rpcBulkConfirm: "card_index_resolve_pokemon_candidates_confirm",
     rpcBulkReject: "card_index_resolve_pokemon_candidates_reject",
     rpcBulkCreate: "card_index_bulk_create_pokemon_from_candidates",
@@ -526,7 +529,13 @@ interface QueueData {
 // A bucket is one of the curator's mental "files". generated/manual/nonexistant are
 // all rows of the candidates table, split by status + confidence; they share the row
 // UI and the move actions. (aliases + saved are separate tables, fetched elsewhere.)
-type Bucket = "generated" | "manual" | "nonexistant" | "aliases";
+// What the bulk resolve RPCs report back.
+interface BulkResult {
+  confirmed?: number;
+  skipped?: number;
+}
+
+type Bucket = "generated" | "manual" | "nonexistant";
 
 // applyBucket narrows a candidates query to one bucket (mutating the PostgREST
 // filter builder). Typed loosely because the builder's generics don't survive the
@@ -646,6 +655,9 @@ export default function MatchReviewView() {
   const total = data?.total ?? 0;
   const [busyId, setBusyId] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Survives the selection clear that follows a successful bulk action, so the
+  // result is still on screen after the strip it came from unmounts.
+  const [status, setStatus] = useState<string | null>(null);
   const [createFor, setCreateFor] = useState<Candidate | null>(null);
   const [matchFor, setMatchFor] = useState<{ c: Candidate; alias: boolean } | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -677,10 +689,24 @@ export default function MatchReviewView() {
   async function bulk(rpc: string) {
     setBusyId(-1);
     setErr(null);
-    const { error: e } = await createClient().rpc(rpc, { p_ids: [...selected] });
+    const { data, error: e } = await createClient().rpc(rpc, { p_ids: [...selected] });
     setBusyId(null);
-    if (e) setErr(e.message);
-    else { setSelected(new Set()); retry(); }
+    if (e) { setErr(e.message); return; }
+    // The bulk RPCs RETURN what they actually did; these counts used to be
+    // discarded, so a bulk that silently skipped rows looked identical to one
+    // that applied to every row.
+    const r = data as BulkResult | null;
+    if (r && typeof r.confirmed === "number") {
+      setStatus(
+        t("review.bulkResult")
+          .replace("{n}", String(r.confirmed))
+          .replace("{skipped}", String(r.skipped ?? 0)),
+      );
+    } else {
+      setStatus(null);
+    }
+    setSelected(new Set());
+    retry();
   }
 
 
@@ -767,6 +793,7 @@ export default function MatchReviewView() {
         </div>
       )}
       {err && <p className="text-sm text-destructive">{err}</p>}
+      {status && <p className="text-sm text-muted-foreground">{status}</p>}
 
       {error ? (
         <QueryError onRetry={retry} />
