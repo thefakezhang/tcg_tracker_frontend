@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/table";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
+import { SourceRunsPanel } from "./SourceRunsPanel";
 
 type HealthRow = {
   run_date: string;
@@ -189,6 +190,8 @@ export default function SourceHealthView() {
       )}
 
       <p className="text-muted-foreground text-xs">{t("health.legend")}</p>
+
+      <SourceRunsPanel />
     </div>
   );
 }
