@@ -16,6 +16,9 @@ import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { SourceRunsPanel } from "./SourceRunsPanel";
 import { DuplicateConflictsPanel } from "./DuplicateConflictsPanel";
+import { useBuyList } from "./BuyListContext";
+import { useTrips } from "./TripContext";
+import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNavigationContext";
 
 type HealthRow = {
   run_date: string;
@@ -55,11 +58,38 @@ const levelClass: Record<Level, string> = {
   bad: "text-destructive font-medium",
 };
 
-function Cell({ value, tone, delta }: { value: string; tone: Level; delta?: string }) {
-  return (
-    <TableCell className={levelClass[tone]}>
+function Cell({
+  value,
+  tone,
+  delta,
+  drillLabel,
+  onDrillDown,
+}: {
+  value: string;
+  tone: Level;
+  delta?: string;
+  drillLabel?: string;
+  onDrillDown?: () => void;
+}) {
+  const content = (
+    <>
       {value}
       {delta && <span className="text-muted-foreground ml-1 text-[10px]">{delta}</span>}
+    </>
+  );
+  return (
+    <TableCell className={levelClass[tone]}>
+      {tone === "bad" && onDrillDown ? (
+        <button
+          type="button"
+          aria-label={drillLabel}
+          title={drillLabel}
+          onClick={onDrillDown}
+          className="cursor-pointer underline decoration-dotted underline-offset-4 hover:decoration-solid"
+        >
+          {content}
+        </button>
+      ) : content}
     </TableCell>
   );
 }
@@ -72,6 +102,9 @@ function Cell({ value, tone, delta }: { value: string; tone: Level; delta?: stri
  */
 export default function SourceHealthView() {
   const { t } = useTranslation();
+  const { setActiveTripId } = useTrips();
+  const { setActiveBuylistId } = useBuyList();
+  const { openReviewQueue } = useReviewQueueNavigation();
   const [rows, setRows] = useState<HealthRow[]>([]);
   const [prev, setPrev] = useState<Map<string, HealthRow>>(new Map());
   const [runDate, setRunDate] = useState<string | null>(null);
@@ -126,6 +159,19 @@ export default function SourceHealthView() {
     [prev, rows],
   );
 
+  const drillToQueue = useCallback((source: string) => {
+    // Source-health candidate metrics are computed from pokemon_match_candidates,
+    // so the corresponding blast-radius queue is always the Pokémon singles tab.
+    openReviewQueue({ game: "pokemon", source });
+    setActiveBuylistId(null);
+    setActiveTripId(MATCH_REVIEW_SENTINEL);
+  }, [openReviewQueue, setActiveBuylistId, setActiveTripId]);
+
+  const drillProps = (source: string) => ({
+    drillLabel: t("health.reviewSource", { source }),
+    onDrillDown: () => drillToQueue(source),
+  });
+
   return (
     <div className="space-y-3 p-4">
       <div className="flex items-center gap-3">
@@ -174,15 +220,17 @@ export default function SourceHealthView() {
                   <Cell
                     value={r.freshness_p50_hours == null ? "-" : `${Math.round(r.freshness_p50_hours)}h`}
                     tone={level.freshness(r.freshness_p50_hours)}
+                    {...drillProps(r.source)}
                   />
                   <Cell
                     value={r.match_rate == null ? "-" : `${Math.round(r.match_rate * 100)}%`}
                     tone={level.matchRate(r.match_rate)}
+                    {...drillProps(r.source)}
                   />
                   <TableCell>{r.unmatched_queue_depth ?? 0}</TableCell>
-                  <Cell value={String(r.drift_count ?? 0)} tone={level.drift(r.drift_count)} />
-                  <Cell value={String(r.guard_trips ?? 0)} tone={level.guard(r.guard_trips)} />
-                  <Cell value={String(r.refresh_failures ?? 0)} tone={level.failures(r.refresh_failures)} />
+                  <Cell value={String(r.drift_count ?? 0)} tone={level.drift(r.drift_count)} {...drillProps(r.source)} />
+                  <Cell value={String(r.guard_trips ?? 0)} tone={level.guard(r.guard_trips)} {...drillProps(r.source)} />
+                  <Cell value={String(r.refresh_failures ?? 0)} tone={level.failures(r.refresh_failures)} {...drillProps(r.source)} />
                 </TableRow>
               ))}
             </TableBody>

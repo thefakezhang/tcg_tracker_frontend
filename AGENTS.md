@@ -229,6 +229,14 @@ When a platform has a stable public search route, the modal links directly to a 
 - Link attach keeps the edit modal open and mirrors the upsert locally so the operator can see any replaced id and every pending review candidate the RPC resolved.
 - New-card creation stages multiple links, seeds the first through `card_index_create_pokemon_card`, and attaches the remaining links after the new card id exists.
 
+### Source-health drill-down (D4)
+
+- Every red metric in `SourceHealthView` is a button that opens the Pokémon Match Review queue with that health row's exact source filter.
+- Dashboard navigation is sentinel-based rather than URL-based.
+`ReviewQueueNavigationContext` carries a one-shot `{ game, source }` target to `RoutedMatchReviewView`; the route captures and consumes it so a later ordinary sidebar visit starts unfiltered.
+- `MatchReviewView` accepts `initialGame` and `initialSource` props.
+Its source predicate remains server-side so the filtered count and pagination describe the same source slice.
+
 ### Buy Lists
 
 - `BuyListContext.tsx` manages buy list state and CRUD operations via Supabase.

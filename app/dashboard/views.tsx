@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import {
   Boxes, ClipboardCheck, DollarSign, Filter, Landmark, Library,
   Map as MapIcon, Receipt, ScanSearch, Send, Users, Activity, type LucideIcon } from "lucide-react";
@@ -16,6 +16,23 @@ import ReachOutView from "./ReachOutView";
 import ShoppingListView from "./ShoppingListView";
 import FinancesView from "./FinancesView";
 import ExpensesTab from "./trip/ExpensesTab";
+import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNavigationContext";
+
+function RoutedMatchReviewView() {
+  const { target, consumeTarget } = useReviewQueueNavigation();
+  // Capture once. Clearing the context must not clear the props on this mounted
+  // queue, but it must make the next ordinary sidebar visit unfiltered.
+  const initialTarget = useRef(target);
+  useEffect(() => {
+    if (initialTarget.current) consumeTarget();
+  }, [consumeTarget]);
+  return (
+    <MatchReviewView
+      initialGame={initialTarget.current?.game}
+      initialSource={initialTarget.current?.source}
+    />
+  );
+}
 
 // Single source of truth for the top-level dashboard views. Previously the
 // sentinel-number -> view mapping was hand-duplicated across page.tsx (which
@@ -37,7 +54,7 @@ export const VIEWS: ViewDef[] = [
   { sentinel: -9, group: "curation.title", icon: ScanSearch, sidebarKey: "curation.titleSealed", titleKey: "curation.titleSealed", render: () => <SealedCurationView key="sealed-curation" /> },
   { sentinel: -12, group: "curation.title", icon: Activity, sidebarKey: "sidebar.sourceHealth", titleKey: "health.title", render: () => <SourceHealthView key="source-health" /> },
   { sentinel: -5, group: "catalog.section", icon: Library, sidebarKey: "catalog.index", titleKey: "catalog.index", render: () => <CardIndexView key="card-index" /> },
-  { sentinel: -6, group: "catalog.section", icon: ClipboardCheck, sidebarKey: "review.title", titleKey: "review.title", render: () => <MatchReviewView key="match-review" /> },
+  { sentinel: MATCH_REVIEW_SENTINEL, group: "catalog.section", icon: ClipboardCheck, sidebarKey: "review.title", titleKey: "review.title", render: () => <RoutedMatchReviewView key="match-review" /> },
   { sentinel: -7, group: "customers.section", icon: Users, sidebarKey: "customers.title", titleKey: "customers.title", render: () => <CustomersView key="customers" /> },
   { sentinel: -8, group: "customers.section", icon: Send, sidebarKey: "reachout.title", titleKey: "reachout.title", render: () => <ReachOutView key="reachout" /> },
   { sentinel: -10, group: "customers.section", icon: Filter, sidebarKey: "shoppingList.title", titleKey: "shoppingList.title", render: () => <ShoppingListView key="shopping-list" /> },
