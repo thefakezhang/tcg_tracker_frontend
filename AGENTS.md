@@ -237,6 +237,18 @@ When a platform has a stable public search route, the modal links directly to a 
 - `MatchReviewView` accepts `initialGame` and `initialSource` props.
 Its source predicate remains server-side so the filtered count and pagination describe the same source slice.
 
+### Events calendar (S6)
+
+- `EventsCalendarView.tsx` is the manual event workflow and month surface registered under Catalog.
+It reads every `market_events` row with `selectAll`, supports add/edit, confirms rumored rows in one click, and turns unexplained cohort breaks into prefilled entry forms.
+- `market-events.ts` owns the frontend event types, inclusive date-range calendar helpers, event tones, and the exact key shared by holdings and exposure rows.
+- `UpcomingEventsStrip.tsx` renders the next two events within 90 days in the dashboard header without taking over the page title or header actions.
+- `InventoryView.tsx` reads `inventory_reprint_exposure_v` and renders reprint-risk badges in both list and grid modes.
+Scope matching stays in the database view so the calendar and inventory cannot disagree.
+- Events are labels only.
+No frontend event action changes a market listing, signal, price, or ranking.
+- Backend contract and feeder operations are documented in `docs/events_calendar.md` in the backend repository.
+
 ### Buy Lists
 
 - `BuyListContext.tsx` manages buy list state and CRUD operations via Supabase.

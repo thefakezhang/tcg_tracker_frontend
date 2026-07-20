@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { ImageOff } from "lucide-react";
+import { AlertTriangle, ImageOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll, selectAllByIds } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useLanguage } from "./LanguageContext";
@@ -15,6 +16,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { holdingExposureKey, type InventoryExposure } from "./market-events";
 
 // Master inventory = everything currently on hand, across all trips and both
 // legs. inventory_holdings_v aggregates qty_remaining by SKU+leg; image_url and
@@ -38,6 +40,7 @@ interface Holding {
   total_cost_usd: number;
   imageUrl: string | null;
   englishName: string | null;
+  reprintEvents: InventoryExposure[];
 }
 
 export default function InventoryView() {
@@ -49,22 +52,36 @@ export default function InventoryView() {
 
   const fetchHoldings = useCallback(async (): Promise<Holding[]> => {
     const supabase = createClient();
-    const { data, error } = await supabase
-      .from("inventory_holdings_v")
-      .select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd")
-      .order("total_cost_usd", { ascending: false });
-    if (error) throw error;
-    const rows = ((data as Omit<Holding, "imageUrl" | "englishName">[]) ?? []).map(
-      (h) => ({ ...h, imageUrl: null as string | null, englishName: null as string | null })
+    const holdingsData = await selectAll<Omit<Holding, "imageUrl" | "englishName" | "reprintEvents">>(
+      () => supabase.from("inventory_holdings_v").select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd"),
+      ["game", "item_type", "leg", "card_id", "product_id", "condition_id", "psa_grade", "sealed_condition", "variant_edition"],
     );
+    const rows = holdingsData.map(
+      (h) => ({ ...h, imageUrl: null as string | null, englishName: null as string | null, reprintEvents: [] as InventoryExposure[] })
+    ).sort((a, b) => Number(b.total_cost_usd) - Number(a.total_cost_usd));
+
+    const exposures = await selectAll<InventoryExposure>(
+      () => supabase.from("inventory_reprint_exposure_v").select("game, item_type, leg, card_id, product_id, condition_id, psa_grade, sealed_condition, variant_edition, event_id, event_title, event_kind, starts_on, ends_on, confidence, source_url"),
+      ["game", "leg", "card_id", "product_id", "condition_id", "psa_grade", "sealed_condition", "variant_edition", "event_id"],
+    );
+    const exposureMap = new Map<string, InventoryExposure[]>();
+    for (const exposure of exposures) {
+      const key = holdingExposureKey(exposure);
+      exposureMap.set(key, [...(exposureMap.get(key) ?? []), exposure]);
+    }
+    for (const row of rows) row.reprintEvents = exposureMap.get(holdingExposureKey(row)) ?? [];
 
     // batch-fetch image_url (+ english_name for pokemon) by id, per source table
     const byGame = (g: string) => rows.filter((r) => r.game === g);
     const fetchDefs = async (table: string, idCol: string, ids: number[], cols: string) => {
       if (ids.length === 0) return new Map<number, { image_url: string | null; english_name?: string | null }>();
-      const { data: defs } = await supabase.from(table).select(cols).in(idCol, ids);
+      const defs = await selectAllByIds<Record<string, unknown>>(
+        ids,
+        [idCol],
+        (chunk) => supabase.from(table).select(cols).in(idCol, chunk),
+      );
       const m = new Map<number, { image_url: string | null; english_name?: string | null }>();
-      for (const d of (defs as unknown as Record<string, unknown>[]) ?? []) m.set(d[idCol] as number, { image_url: (d.image_url as string) ?? null, english_name: (d.english_name as string) ?? null });
+      for (const d of defs) m.set(d[idCol] as number, { image_url: (d.image_url as string) ?? null, english_name: (d.english_name as string) ?? null });
       return m;
     };
     const [pkm, mtg, sealed] = await Promise.all([
@@ -154,6 +171,7 @@ export default function InventoryView() {
                   <Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge>
                   <span className="truncate">{detail(h)}</span>
                 </div>
+                {h.reprintEvents.length > 0 && <Badge variant="outline" className="border-amber-500/50 text-[10px] text-amber-300" title={h.reprintEvents.map((event) => event.event_title).join("; ")}><AlertTriangle className="size-3" />{t("inventory.reprintRisk", { n: h.reprintEvents.length })}</Badge>}
                 <div className="flex items-center justify-between text-xs">
                   <span>×{h.qty_on_hand}</span>
                   <span>${Number(h.total_cost_usd).toFixed(2)}</span>
@@ -170,6 +188,7 @@ export default function InventoryView() {
               <TableHead>{t("trips.item")}</TableHead>
               <TableHead className="w-20">{t("trips.leg")}</TableHead>
               <TableHead className="w-28">{t("inventory.detail")}</TableHead>
+              <TableHead className="w-32">{t("inventory.eventRisk")}</TableHead>
               <TableHead className="w-16">{t("trips.qty")}</TableHead>
               <TableHead className="w-24">{t("trips.avgCost")}</TableHead>
               <TableHead className="w-28">{t("inventory.totalCostCol")}</TableHead>
@@ -181,13 +200,14 @@ export default function InventoryView() {
                 <TableCell className="truncate max-w-[320px]">{label(h)} <span className="text-muted-foreground">· {cardMeta(h.set_code, h.card_number, h.misc_info)}</span></TableCell>
                 <TableCell><Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge></TableCell>
                 <TableCell className="text-xs text-muted-foreground">{detail(h)}</TableCell>
+                <TableCell>{h.reprintEvents.length > 0 ? <Badge variant="outline" className="border-amber-500/50 text-amber-300" title={h.reprintEvents.map((event) => `${event.starts_on}: ${event.event_title}`).join("; ")}><AlertTriangle className="size-3" />{t("inventory.reprintRisk", { n: h.reprintEvents.length })}</Badge> : <span className="text-xs text-muted-foreground">{t("inventory.noEventRisk")}</span>}</TableCell>
                 <TableCell>{h.qty_on_hand}</TableCell>
                 <TableCell>${h.avg_cost_usd}</TableCell>
                 <TableCell>${Number(h.total_cost_usd).toFixed(2)}</TableCell>
               </TableRow>
             ))}
             {!isLoading && rows.length === 0 && (
-              <TableRow><TableCell colSpan={6} className="text-muted-foreground">{t("inventory.empty")}</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} className="text-muted-foreground">{t("inventory.empty")}</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
