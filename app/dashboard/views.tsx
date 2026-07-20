@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import {
-  Boxes, ClipboardCheck, DollarSign, Filter, Landmark, Library,
+  Boxes, CalendarDays, ClipboardCheck, DollarSign, Filter, Landmark, Library,
   Map as MapIcon, Receipt, ScanSearch, Send, Users, Activity, type LucideIcon } from "lucide-react";
 import type { TranslationKey } from "@/lib/i18n";
 import TripsOverview from "./TripsOverview";
@@ -11,6 +11,7 @@ import SealedCurationView from "./SealedCurationView";
 import CardIndexView from "./CardIndexView";
 import MatchReviewView from "./MatchReviewView";
 import SourceHealthView from "./SourceHealthView";
+import EventsCalendarView from "./EventsCalendarView";
 import CustomersView from "./CustomersView";
 import ReachOutView from "./ReachOutView";
 import ShoppingListView from "./ShoppingListView";
@@ -55,6 +56,7 @@ export const VIEWS: ViewDef[] = [
   { sentinel: -12, group: "curation.title", icon: Activity, sidebarKey: "sidebar.sourceHealth", titleKey: "health.title", render: () => <SourceHealthView key="source-health" /> },
   { sentinel: -5, group: "catalog.section", icon: Library, sidebarKey: "catalog.index", titleKey: "catalog.index", render: () => <CardIndexView key="card-index" /> },
   { sentinel: MATCH_REVIEW_SENTINEL, group: "catalog.section", icon: ClipboardCheck, sidebarKey: "review.title", titleKey: "review.title", render: () => <RoutedMatchReviewView key="match-review" /> },
+  { sentinel: -13, group: "catalog.section", icon: CalendarDays, sidebarKey: "events.title", titleKey: "events.title", render: () => <EventsCalendarView key="events-calendar" /> },
   { sentinel: -7, group: "customers.section", icon: Users, sidebarKey: "customers.title", titleKey: "customers.title", render: () => <CustomersView key="customers" /> },
   { sentinel: -8, group: "customers.section", icon: Send, sidebarKey: "reachout.title", titleKey: "reachout.title", render: () => <ReachOutView key="reachout" /> },
   { sentinel: -10, group: "customers.section", icon: Filter, sidebarKey: "shoppingList.title", titleKey: "shoppingList.title", render: () => <ShoppingListView key="shopping-list" /> },

@@ -13,6 +13,7 @@ import { ReviewQueueNavigationProvider } from "./ReviewQueueNavigationContext";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { AppSidebar } from "./AppSidebar";
 import { viewBySentinel } from "./views";
+import UpcomingEventsStrip from "./UpcomingEventsStrip";
 
 interface DashboardShellProps {
   user: { email: string; name?: string };
@@ -51,8 +52,9 @@ function DashboardHeader() {
       ) : (
         <h1 className="ml-2 text-lg font-semibold">{title}</h1>
       )}
+      <div className="ml-4 min-w-0 flex-1"><UpcomingEventsStrip /></div>
       {headerActions && (
-        <div className="ml-auto flex items-center gap-2">{headerActions}</div>
+        <div className="ml-3 flex items-center gap-2">{headerActions}</div>
       )}
     </header>
   );
