@@ -81,6 +81,43 @@ function nullsLastNumber(
 
 type TranslateFn = (key: import("@/lib/i18n").TranslationKey) => string;
 
+/**
+ * Checkbox column for multi-select (redesign R6). Views opt in by prepending it
+ * to their column list; views that don't are unaffected.
+ * Clicks are stopped from bubbling so ticking a row never opens the detail modal.
+ */
+export const selectColumn: ColumnDef<CardRowData> = {
+  id: "select",
+  enableSorting: false,
+  size: 32,
+  header: ({ table }) => (
+    <input
+      type="checkbox"
+      aria-label="Select all rows on this page"
+      className="size-3.5 cursor-pointer align-middle"
+      checked={table.getIsAllPageRowsSelected()}
+      ref={(el) => {
+        if (el) {
+          el.indeterminate =
+            table.getIsSomePageRowsSelected() && !table.getIsAllPageRowsSelected();
+        }
+      }}
+      onChange={(e) => table.toggleAllPageRowsSelected(e.target.checked)}
+      onClick={(e) => e.stopPropagation()}
+    />
+  ),
+  cell: ({ row }) => (
+    <input
+      type="checkbox"
+      aria-label="Select row"
+      className="size-3.5 cursor-pointer align-middle"
+      checked={row.getIsSelected()}
+      onChange={(e) => row.toggleSelected(e.target.checked)}
+      onClick={(e) => e.stopPropagation()}
+    />
+  ),
+};
+
 export function createColumns(t: TranslateFn, language: Language = "en"): ColumnDef<CardRowData>[] {
   return [
     {

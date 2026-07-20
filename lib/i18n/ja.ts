@@ -20,6 +20,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardBrowser.tierNone": "なし",
   "cardBrowser.tierItem": "ティア {tier}",
   "cardBrowser.error": "エラー: {message}",
+  "cardBrowser.selectedCount": "{count}件を選択中",
   "refreshPrices.button": "価格を更新",
   "refreshPrices.buttonN": "価格を更新 ({count}件)",
   "refreshPrices.queued": "受付済み",
