@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RowSelectionState } from "@tanstack/react-table";
-import { ChevronDown, Hash, Layers, RefreshCw } from "lucide-react";
+import { ChevronDown, CircleAlert, Hash, Layers, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -44,6 +44,8 @@ import {
 } from "@/components/ui/card";
 import { ImageOff } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
+import { useExitBasis, type ExitPercentile } from "./ExitBasisContext";
+import { exitValue, isHighValueWeakEvidence } from "./grade-signals";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -65,6 +67,7 @@ export default function CardBrowser() {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const { activeGame, psaMode, setPsaMode } = useGame();
+  const { exitPercentile, setExitPercentile } = useExitBasis();
   const { setHeaderActions } = useHeader();
   const [search, setSearch] = useState("");
   const [searchCardNumber, setSearchCardNumber] = useState("");
@@ -84,6 +87,7 @@ export default function CardBrowser() {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
   const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
+  const [weakEvidenceOnly, setWeakEvidenceOnly] = useState(false);
 
   const [refreshOpen, setRefreshOpen] = useState(false);
   // Multi-select for targeted price refresh (redesign R6). Pokemon singles only -
@@ -109,9 +113,15 @@ export default function CardBrowser() {
       roiCeiling: roiCeiling !== "" ? Number(roiCeiling) : null,
       sortColumn,
       sortAsc,
+      exitPercentile,
       page,
       pageSize,
     });
+
+  const visibleData = useMemo(
+    () => weakEvidenceOnly ? data.filter((row) => isHighValueWeakEvidence(row.signal)) : data,
+    [data, weakEvidenceOnly],
+  );
 
   // A card can occupy two rows (PSA and non-PSA share a card_id), so dedupe -
   // the RPC should be asked once per card.
@@ -134,6 +144,7 @@ export default function CardBrowser() {
     setRarity("");
     setPromosOnly(false);
     setJpExclusiveOnly(false);
+    setWeakEvidenceOnly(false);
     setMinBuyPrice("");
     setMinSellPrice("");
     setRoiFloor("");
@@ -322,6 +333,32 @@ export default function CardBrowser() {
           </AlertDialogContent>
         </AlertDialog>
         <div className="ml-auto flex items-center gap-2">
+          {activeGame === "pokemon" && (
+            <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+              {t("evidence.exitBasis")}
+              <select
+                className="h-8 rounded-md border bg-background px-2 text-foreground"
+                value={exitPercentile}
+                onChange={(event) => setExitPercentile(Number(event.target.value) as ExitPercentile)}
+              >
+                <option value={10}>P10</option>
+                <option value={25}>P25</option>
+                <option value={50}>P50</option>
+              </select>
+            </label>
+          )}
+          {activeGame === "pokemon" && (
+            <Button
+              variant={weakEvidenceOnly ? "default" : "outline"}
+              size="sm"
+              className="shrink-0"
+              onClick={() => setWeakEvidenceOnly((value) => !value)}
+              title={t("evidence.weakFilterHelp")}
+            >
+              <CircleAlert className="size-4" />
+              {t("evidence.weakFilter")}
+            </Button>
+          )}
           {psaMode === "non-psa" && availableTiers.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -387,7 +424,7 @@ export default function CardBrowser() {
               : [selectColumn, ...createColumns(t, language)],
           [t, language, activeGame],
         )}
-        data={data}
+        data={visibleData}
         loading={loading}
         sorting={sorting}
         onSortingChange={handleSortingChange}
@@ -417,6 +454,7 @@ export default function CardBrowser() {
                 : null;
             const buyEntry = row.prices.highestBuy;
             const sellEntry = row.prices.lowestSell;
+            const conservativeExit = exitValue(row.signal, exitPercentile);
 
             return (
               <Card
@@ -474,11 +512,17 @@ export default function CardBrowser() {
                     <span className="text-muted-foreground">{t("column.roi")}</span>
                     <span>{row.roi !== null ? `${Math.round(row.roi * 100) / 100}%` : "\u2014"}</span>
                   </div>
+                  {activeGame === "pokemon" && (
+                    <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
+                      <span className="text-muted-foreground">P{exitPercentile} {t("column.conservativeExit")}</span>
+                      <span>{conservativeExit == null ? "-" : `¥${Math.round(conservativeExit).toLocaleString()}`}</span>
+                    </div>
+                  )}
                 </CardFooter>
               </Card>
             );
           },
-          [t]
+          [t, language, activeGame, exitPercentile]
         )}
       />
 

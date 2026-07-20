@@ -10,6 +10,7 @@ import { BuyListProvider, useBuyList } from "./BuyListContext";
 import { TripProvider, useTrips } from "./TripContext";
 import { LotPickerProvider } from "./LotPickerContext";
 import { ReviewQueueNavigationProvider } from "./ReviewQueueNavigationContext";
+import { ExitBasisProvider } from "./ExitBasisContext";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { AppSidebar } from "./AppSidebar";
 import { viewBySentinel } from "./views";
@@ -64,6 +65,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
   return (
     <LanguageProvider>
       <CurrencyProvider>
+      <ExitBasisProvider>
       <GameProvider>
         <BuyListProvider>
         <TripProvider>
@@ -83,6 +85,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
         </TripProvider>
         </BuyListProvider>
       </GameProvider>
+      </ExitBasisProvider>
       </CurrencyProvider>
     </LanguageProvider>
   );

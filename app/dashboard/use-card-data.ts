@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { type Game, type PsaMode } from "./GameContext";
+import { exitValue, latestSignals, signalForRow, type GradeSignal } from "./grade-signals";
+import type { ExitPercentile } from "./ExitBasisContext";
+import { selectAllByIds } from "@/lib/supabase/select-all";
 
 // Sealed entries point at the sealed tables/views for type-exhaustiveness; the
 // sealed tab uses its own hook (use-sealed-data.ts), so the card path here never
@@ -112,6 +115,7 @@ export interface CardRowData {
   psaGrade?: number;
   prices: PriceSummary;
   roi: number | null;
+  signal?: GradeSignal | null;
 }
 
 // Cache exchange rates per session
@@ -283,6 +287,7 @@ export function useCardData(options: {
   roiCeiling: number | null;
   sortColumn: string;
   sortAsc: boolean;
+  exitPercentile: ExitPercentile;
   page: number;
   pageSize: number;
 }): {
@@ -311,6 +316,7 @@ export function useCardData(options: {
     roiCeiling,
     sortColumn,
     sortAsc,
+    exitPercentile,
     page,
     pageSize,
   } = options;
@@ -333,7 +339,7 @@ export function useCardData(options: {
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, rarity, promosOnly, jpExclusiveOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, page, pageSize]);
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, rarity, promosOnly, jpExclusiveOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -399,7 +405,12 @@ export function useCardData(options: {
 
     // Sorting
     const cardDefSortCols = ["regional_name", "card_number", "set_code", "foil_type", "language"];
-    if (cardDefSortCols.includes(sortColumn)) {
+    if (sortColumn === "conservativeExit") {
+      // The signal lives in a separate versioned table, so PostgREST cannot
+      // order this summary query by it. Keep pagination stable, then sort the
+      // loaded page after the matching latest-model signals are attached.
+      query = query.order("card_id", { ascending: true });
+    } else if (cardDefSortCols.includes(sortColumn)) {
       query = query.order(sortColumn, {
         ascending: sortAsc,
         nullsFirst: false,
@@ -439,9 +450,38 @@ export function useCardData(options: {
       return;
     }
 
-    const cardRows = ((rows ?? []) as unknown as SummaryRow[]).map((row) =>
+    let cardRows = ((rows ?? []) as unknown as SummaryRow[]).map((row) =>
       summaryRowToCardRow(row, cardDefTable)
     );
+
+    if (activeGame === "pokemon" && cardRows.length > 0) {
+      const cardIds = [...new Set(cardRows.map((row) => Number(row.card.card_id)))];
+      try {
+        const signalRows = await selectAllByIds<Record<string, unknown>>(
+          cardIds,
+          ["card_id", "psa_grade", "model_version"],
+          (chunk) => supabase
+            .from("pokemon_grade_signals")
+            .select("card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, flags")
+            .in("card_id", chunk),
+        );
+        if (abort.signal.aborted) return;
+        const signals = latestSignals(signalRows);
+        cardRows = cardRows.map((row) => ({ ...row, signal: signalForRow(row, signals) }));
+        if (sortColumn === "conservativeExit") {
+          cardRows.sort((a, b) => {
+            const av = exitValue(a.signal, exitPercentile);
+            const bv = exitValue(b.signal, exitPercentile);
+            if (av == null && bv == null) return 0;
+            if (av == null) return 1;
+            if (bv == null) return -1;
+            return sortAsc ? av - bv : bv - av;
+          });
+        }
+      } catch (signalError) {
+        console.error("Failed to load grade signals:", signalError);
+      }
+    }
 
     setData(cardRows);
     setTotalCount(count ?? 0);

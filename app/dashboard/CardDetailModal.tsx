@@ -66,6 +66,7 @@ import { useLanguage } from "./LanguageContext";
 import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
 import { RefreshPricesAction } from "./RefreshPricesAction";
+import GradeEvidencePanel from "./GradeEvidencePanel";
 
 const BUYLIST_ENTRY_TABLE: Record<Game, string> = {
   pokemon: "pokemon_buylist_entries",
@@ -340,14 +341,14 @@ export default function CardDetailModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-3xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-6xl">
         <DialogHeader>
-          <div className="flex gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
             {def.image_url && (
               <img
                 src={def.image_url}
                 alt={getCardDisplayName(def, language)}
-                className="h-64 w-auto rounded-md object-contain shrink-0"
+                className="h-44 w-full rounded-md object-contain sm:h-64 sm:w-auto sm:shrink-0"
               />
             )}
             <div className="flex min-w-0 flex-col gap-1">
@@ -471,6 +472,14 @@ export default function CardDetailModal({
               </TabsContent>
             )}
           </Tabs>
+        )}
+
+        {activeGame === "pokemon" && (
+          <GradeEvidencePanel
+            cardId={Number(def.card_id)}
+            setCode={def.set_code}
+            listingFreshnessLabel={t("evidence.listingFreshness")}
+          />
         )}
 
         {card && (buylists.length > 0 || onRemoveFromBuylist) && (
@@ -605,7 +614,7 @@ function ListingTables({
   t: (key: import("@/lib/i18n").TranslationKey) => string;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-4 pt-2">
+    <div className="grid grid-cols-1 gap-4 pt-2 sm:grid-cols-2">
       <div>
         <h3 className="text-sm font-medium mb-2">{t("modal.sell")}</h3>
         <ListingTable
