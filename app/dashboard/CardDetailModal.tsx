@@ -65,6 +65,7 @@ import {
 import { useLanguage } from "./LanguageContext";
 import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
+import { RefreshPricesAction } from "./RefreshPricesAction";
 
 const BUYLIST_ENTRY_TABLE: Record<Game, string> = {
   pokemon: "pokemon_buylist_entries",
@@ -384,6 +385,12 @@ export default function CardDetailModal({
                     <span className="select-none">🇯🇵 {t("modal.jpExclusive")}</span>
                   </label>
                 )}
+              </div>
+              {/* On-demand price refresh for this card (redesign R6). The RPC's
+                  verdict renders inline; freshness itself stays on FreshnessChip,
+                  which turns green once a queued refresh lands. */}
+              <div className="mt-2">
+                <RefreshPricesAction cardIds={[Number(def.card_id)]} />
               </div>
             </div>
           </div>
