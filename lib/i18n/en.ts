@@ -20,6 +20,7 @@ const en = {
   "cardBrowser.error": "Error: {message}",
   "cardBrowser.selectedCount": "{count} selected",
   "refreshPrices.button": "Refresh prices",
+  "refreshPrices.inFlight": "Refreshing",
   "refreshPrices.buttonN": "Refresh prices ({count})",
   "refreshPrices.queued": "Queued",
   "refreshPrices.alreadyPending": "Already queued",
