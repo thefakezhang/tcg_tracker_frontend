@@ -117,7 +117,7 @@ export default function PokemonMatchesTab() {
     }
     setBusy(true);
     setFormErr(null);
-    const { error: e } = await createClient().rpc("card_index_bind_pokemon_alias", {
+    const { error: e } = await createClient().rpc("card_index_bind_pokemon_match", {
       p_regional_name: form.regional_name,
       p_set_code: form.set_code,
       p_card_number: form.card_number,
@@ -139,7 +139,7 @@ export default function PokemonMatchesTab() {
   async function remove(id: number) {
     setBusy(true);
     setFormErr(null);
-    const { error: e } = await createClient().rpc("card_index_remove_pokemon_alias", { p_alias_id: id });
+    const { error: e } = await createClient().rpc("card_index_remove_pokemon_match", { p_match_id: id });
     setBusy(false);
     if (e) {
       // Deleting memory is destructive curation; a silent failure would leave the
