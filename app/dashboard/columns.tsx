@@ -10,6 +10,7 @@ import { type Language } from "./LanguageContext";
 import { useExitBasis } from "./ExitBasisContext";
 import { exitValue } from "./grade-signals";
 import { useTranslation } from "@/lib/i18n";
+import { DecisionActions } from "./DecisionActions";
 
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
   const { displayCurrency, convertPrice } = useCurrency();
@@ -231,6 +232,12 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
       cell: ({ row }) => <ConservativeExitCell row={row.original} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
+    },
+    {
+      id: "decision",
+      enableSorting: false,
+      header: () => t("decision.title"),
+      cell: ({ row }) => <DecisionActions row={row.original} compact />,
     },
   ];
 }

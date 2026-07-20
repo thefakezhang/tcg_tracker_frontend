@@ -17,7 +17,7 @@ interface Cond {
 }
 
 type AddToLotProps =
-  | { mode: "single"; game: "pokemon" | "mtg"; cardId: string | number; psaGrade: number }
+  | { mode: "single"; game: "pokemon" | "mtg"; cardId: string | number; psaGrade: number; decisionSnapshot?: Record<string, unknown> }
   | { mode: "sealed"; productId: string | number; sealedCondition: string; variantEdition: string };
 
 // Mirrors the "Add to Buy List" popover, but a lot line also needs a quantity
@@ -70,6 +70,7 @@ export function AddToLotPopover(props: AddToLotProps) {
       await addCardLine({
         lotId: lot.lot_id, game: props.game, cardId: props.cardId, conditionId,
         psaGrade: Math.max(0, Math.floor(Number(grade) || 0)), quantity: n, overrideUsd: ov,
+        browserSnapshot: props.decisionSnapshot,
       });
     } else {
       await addSealedLine({

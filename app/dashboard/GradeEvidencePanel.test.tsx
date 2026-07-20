@@ -56,7 +56,18 @@ describe("GradeEvidencePanel", () => {
     render(
       <LanguageProvider>
         <ExitBasisProvider>
-          <GradeEvidencePanel cardId={42} setCode="M6" listingFreshnessLabel="Listing freshness lives below" />
+          <GradeEvidencePanel
+            card={{
+              key: "42:10",
+              card: { card_id: "42", regional_name: "Test", set_code: "M6", card_number: "1", misc_info: null, image_url: null },
+              psaGrade: 10,
+              prices: { highestBuy: null, lowestSell: null },
+              roi: null,
+            }}
+            cardId={42}
+            setCode="M6"
+            listingFreshnessLabel="Listing freshness lives below"
+          />
         </ExitBasisProvider>
       </LanguageProvider>,
     );
