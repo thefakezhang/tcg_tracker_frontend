@@ -3,6 +3,7 @@
 import React from "react";
 import {
   ColumnDef,
+  RowSelectionState,
   SortingState,
   VisibilityState,
   flexRender,
@@ -42,6 +43,11 @@ interface DataTableProps<TData, TValue> {
   viewMode?: "list" | "grid";
   renderGridItem?: (row: TData) => React.ReactNode;
   serverPagination?: ServerPagination;
+  // Optional row selection. Views that pass none behave exactly as before -
+  // selection is off unless a caller opts in by supplying the handler.
+  rowSelection?: RowSelectionState;
+  onRowSelectionChange?: (selection: RowSelectionState) => void;
+  getRowId?: (row: TData, index: number) => string;
 }
 
 export function DataTable<TData, TValue>({
@@ -55,14 +61,27 @@ export function DataTable<TData, TValue>({
   viewMode = "list",
   renderGridItem,
   serverPagination,
+  rowSelection,
+  onRowSelectionChange,
+  getRowId,
 }: DataTableProps<TData, TValue>) {
   const { t } = useTranslation();
   const table = useReactTable({
     data,
     columns,
+    getRowId,
+    enableRowSelection: !!onRowSelectionChange,
+    onRowSelectionChange: onRowSelectionChange
+      ? (updater) => {
+          const next =
+            typeof updater === "function" ? updater(rowSelection ?? {}) : updater;
+          onRowSelectionChange(next);
+        }
+      : undefined,
     state: {
       sorting,
       columnVisibility,
+      ...(rowSelection ? { rowSelection } : {}),
     },
     onSortingChange: (updater) => {
       const next =

@@ -18,6 +18,7 @@ const en = {
   "cardBrowser.tierNone": "None",
   "cardBrowser.tierItem": "Tier {tier}",
   "cardBrowser.error": "Error: {message}",
+  "cardBrowser.selectedCount": "{count} selected",
   "refreshPrices.button": "Refresh prices",
   "refreshPrices.buttonN": "Refresh prices ({count})",
   "refreshPrices.queued": "Queued",

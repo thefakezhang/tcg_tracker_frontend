@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { RowSelectionState } from "@tanstack/react-table";
 import { ChevronDown, Hash, Layers, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,8 +27,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
 import { useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
+import { RefreshPricesAction } from "./RefreshPricesAction";
 import { useLanguage } from "./LanguageContext";
-import { createColumns, createMtgColumns, PriceCell } from "./columns";
+import { createColumns, createMtgColumns, PriceCell, selectColumn } from "./columns";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
 import { Badge } from "@/components/ui/badge";
@@ -83,6 +85,10 @@ export default function CardBrowser() {
   const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
 
   const [refreshOpen, setRefreshOpen] = useState(false);
+  // Multi-select for targeted price refresh (redesign R6). Pokemon singles only -
+  // request_card_refresh resolves pokemon cards.
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const selectionEnabled = activeGame === "pokemon";
 
   const { data, loading, error, availableTiers, totalCount, refetch, refresh } =
     useCardData({
@@ -106,6 +112,17 @@ export default function CardBrowser() {
       pageSize,
     });
 
+  // A card can occupy two rows (PSA and non-PSA share a card_id), so dedupe -
+  // the RPC should be asked once per card.
+  const selectedCardIds = useMemo(() => {
+    if (!selectionEnabled) return [];
+    const ids = new Set<number>();
+    for (const row of data) {
+      if (rowSelection[row.key]) ids.add(Number(row.card.card_id));
+    }
+    return [...ids];
+  }, [data, rowSelection, selectionEnabled]);
+
   // Reset filters on game change
   useEffect(() => {
     setSearch("");
@@ -125,9 +142,16 @@ export default function CardBrowser() {
     if (activeGame === "mtg") setPsaMode("non-psa");
   }, [activeGame, setPsaMode]);
 
+  // Selection is page-local (row ids come from the current page), so a selection
+  // made under different filters or on another page is meaningless - clear it.
+  useEffect(() => {
+    setRowSelection({});
+  }, [page]);
+
   // Reset page when filters change
   useEffect(() => {
     setPage(0);
+    setRowSelection({});
   }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, rarity, promosOnly, jpExclusiveOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
@@ -340,12 +364,24 @@ export default function CardBrowser() {
         <p className="text-destructive text-sm">{t("cardBrowser.error", { message: error })}</p>
       )}
 
+      {/* Multi-select refresh (redesign R6). The action hides itself when none of
+          the selected cards has a refreshable source, so this strip only appears
+          when there is something to actually do. */}
+      {selectionEnabled && selectedCardIds.length > 0 && (
+        <div className="flex items-center gap-3">
+          <span className="text-muted-foreground text-xs">
+            {t("cardBrowser.selectedCount", { count: selectedCardIds.length })}
+          </span>
+          <RefreshPricesAction cardIds={selectedCardIds} />
+        </div>
+      )}
+
       <DataTable
         columns={useMemo(
           () =>
             activeGame === "mtg"
               ? createMtgColumns(t, language)
-              : createColumns(t, language),
+              : [selectColumn, ...createColumns(t, language)],
           [t, language, activeGame],
         )}
         data={data}
@@ -355,6 +391,9 @@ export default function CardBrowser() {
         columnVisibility={columnVisibility}
         onRowClick={setSelectedCard}
         viewMode={viewMode}
+        getRowId={(row) => row.key}
+        rowSelection={selectionEnabled ? rowSelection : undefined}
+        onRowSelectionChange={selectionEnabled ? setRowSelection : undefined}
         serverPagination={{
           page,
           pageSize,
