@@ -199,6 +199,17 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 - Column definitions created by `createColumns(t, showSecond)` in `columns.tsx`.
 - Features: sorting (with nulls-last), pagination (50 rows/page), column visibility, row click handler.
 - `PriceCell` component handles currency conversion via `useCurrency()`.
+- **Optional row selection**: pass `rowSelection` / `onRowSelectionChange` / `getRowId`. All three are optional, so a view passing none is unaffected. Opt in by prepending the `selectColumn` export from `columns.tsx` (its checkbox stops click propagation, so ticking a row does not fire `onRowClick`).
+
+### Targeted price refresh (redesign R6)
+
+- `RefreshPricesAction.tsx` requests an on-demand refresh for one or many cards via the `request_card_refresh` RPC and renders the verdict inline: queued (with an ETA from the source's lane), already queued, or not targetable.
+- **The button is absent, never disabled**, when nothing about the selected cards can be refreshed. It asks `card_refresh_targets` (read-only; queues nothing) to decide.
+- **Do not derive targetability client-side.** The source matrix lives in the RPC on purpose, so a shop that starts storing a durable per-card handle appears in the UI with no frontend change; duplicating the matrix here would break that.
+- `RefreshInFlightStrip.tsx` polls `refresh_requests` for outstanding `pending`/`running` rows and renders per-source counts; it renders nothing when nothing is in flight. Polling is deliberate - no realtime dependency.
+- `CardBrowser` wires the multi-select (Pokémon only - the RPC resolves pokemon cards). Selection is page-local and clears when the page or filters change; selected ids are deduped because PSA and non-PSA rows share a `card_id`.
+- Freshness itself stays on `FreshnessChip` (`last_updated`) - a completed refresh turns the dots green with no extra plumbing.
+- Backend contract: `docs/targeted_refresh.md` in the backend repo.
 
 ### Card Detail Modal
 
