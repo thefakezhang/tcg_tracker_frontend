@@ -86,6 +86,9 @@ app/
     AppSidebar.tsx        # Navigation, game picker, buy lists, user settings menu
     CardBrowser.tsx       # Search filters + data table + modal trigger
     CardDetailModal.tsx   # Card detail dialog with buy/sell listing tables + add to buy list
+    GradeEvidencePanel.tsx # Per-grade bands, comps, demand, flags, and event annotations
+    grade-signals.ts      # Typed S2 signal parser and conservative-exit helpers
+    ExitBasisContext.tsx  # Persisted P10/P25/P50 conservative-exit setting
     BuyListContext.tsx     # Buy list state + CRUD operations (fetch, create, delete, add/remove entries)
     BuyListView.tsx       # Buy list card view (merges pokemon + mtg entries, list/grid with compact toggle)
     data-table.tsx        # Generic TanStack React Table wrapper
@@ -132,11 +135,12 @@ Providers wrap in this order inside `DashboardShell.tsx`:
 ```
 LanguageProvider
   CurrencyProvider
-    GameProvider
-      BuyListProvider
-        HeaderProvider
-          SidebarProvider
-            AppSidebar + SidebarInset (header + main)
+    ExitBasisProvider
+      GameProvider
+        BuyListProvider
+          HeaderProvider
+            SidebarProvider
+              AppSidebar + SidebarInset (header + main)
 ```
 
 Each context follows the same pattern:
@@ -218,6 +222,22 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 - Has its own tier filter dropdown.
 - Uses `useCurrency()` for price conversion in `ListingTable`.
 - "Add to Buy List" button (popover) lets users save cards to any buy list.
+
+### Per-grade evidence panel (S3)
+
+- `GradeEvidencePanel.tsx` reads the latest `pokemon_grade_signals` model row per card and grade, Card Ladder sold comps, bid locations, and applicable market events.
+All data-dependent reads page through `selectAll`; browser-page signal fanout uses `selectAllByIds`.
+- Each grade keeps its evidence components visible: P10/P25/P50/P75 bands, trend, recent and lifetime comp counts, demand, JP bid and held age, population, population velocity, price per population, cohort, and warning flags.
+A missing sold-comp series renders a source-only summary instead of a fabricated sparkline.
+- Sold-comp sparklines are inline SVG and mark global, matching-set, and explicit-card events when they fall inside the observed date range.
+- `computed_at` is labeled as signal freshness.
+Listing freshness remains the separate per-row `FreshnessChip`, since recomputing a signal and refreshing a shop listing are different clocks.
+- `ExitBasisContext` persists P10, P25, or P50 in local storage with P25 as the default.
+The Card Browser conservative-exit column shows the selected band, source tier, comp counts, and flags inline and is sortable within the server-loaded page.
+- The high-value weak-evidence control surfaces loaded rows at or above ¥50,000 whose signal is not Tier 1 or Tier 2.
+It is an explicit operator filter, not a hidden ranking penalty.
+- Goals: expose the evidence behind every grade-level exit and make uncertainty actionable on desktop and phone.
+Non-goals: S3 does not calculate costs, annualized returns, raw-to-grade EV, or an opaque score; those belong to S4 and later calibration work.
 
 ### Card Index link attachment (R1)
 
