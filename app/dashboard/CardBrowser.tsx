@@ -28,6 +28,7 @@ import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
 import { useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
 import { RefreshPricesAction } from "./RefreshPricesAction";
+import { RefreshInFlightStrip } from "./RefreshInFlightStrip";
 import { useLanguage } from "./LanguageContext";
 import { createColumns, createMtgColumns, PriceCell, selectColumn } from "./columns";
 import { DataTable } from "./data-table";
@@ -367,6 +368,8 @@ export default function CardBrowser() {
       {/* Multi-select refresh (redesign R6). The action hides itself when none of
           the selected cards has a refreshable source, so this strip only appears
           when there is something to actually do. */}
+      {selectionEnabled && <RefreshInFlightStrip />}
+
       {selectionEnabled && selectedCardIds.length > 0 && (
         <div className="flex items-center gap-3">
           <span className="text-muted-foreground text-xs">

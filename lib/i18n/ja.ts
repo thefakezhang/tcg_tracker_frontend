@@ -22,6 +22,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardBrowser.error": "エラー: {message}",
   "cardBrowser.selectedCount": "{count}件を選択中",
   "refreshPrices.button": "価格を更新",
+  "refreshPrices.inFlight": "更新中",
   "refreshPrices.buttonN": "価格を更新 ({count}件)",
   "refreshPrices.queued": "受付済み",
   "refreshPrices.alreadyPending": "受付済み (処理待ち)",
