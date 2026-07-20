@@ -219,6 +219,16 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 - Uses `useCurrency()` for price conversion in `ListingTable`.
 - "Add to Buy List" button (popover) lets users save cards to any buy list.
 
+### Card Index link attachment (R1)
+
+- `lib/platform-url.ts` is the single frontend source for platform item links, copied-product-URL parsing, platform inference, and direct search links.
+- The Pokémon Card Index accepts either a bare external id or a supported product URL.
+A recognized URL changes the platform selector to the detected platform and extracts only the id; an unknown URL is shown but cannot be attached.
+- The format hint under the field is platform-specific and localized.
+When a platform has a stable public search route, the modal links directly to a search built from the card's Japanese name and set.
+- Link attach keeps the edit modal open and mirrors the upsert locally so the operator can see any replaced id and every pending review candidate the RPC resolved.
+- New-card creation stages multiple links, seeds the first through `card_index_create_pokemon_card`, and attaches the remaining links after the new card id exists.
+
 ### Buy Lists
 
 - `BuyListContext.tsx` manages buy list state and CRUD operations via Supabase.
