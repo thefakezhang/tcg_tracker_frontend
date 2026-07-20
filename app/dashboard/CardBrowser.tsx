@@ -46,6 +46,7 @@ import { ImageOff } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 import { useExitBasis, type ExitPercentile } from "./ExitBasisContext";
 import { exitValue, isHighValueWeakEvidence } from "./grade-signals";
+import DecisionWatchlist from "./DecisionWatchlist";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -88,6 +89,7 @@ export default function CardBrowser() {
   const [pageSize, setPageSize] = useState(50);
   const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
   const [weakEvidenceOnly, setWeakEvidenceOnly] = useState(false);
+  const [surface, setSurface] = useState<"browse" | "watchlist">("browse");
 
   const [refreshOpen, setRefreshOpen] = useState(false);
   // Multi-select for targeted price refresh (redesign R6). Pokemon singles only -
@@ -192,8 +194,22 @@ export default function CardBrowser() {
     psa_grade: psaMode === "psa",
   };
 
+  const surfaceTabs = (
+    <Tabs value={surface} onValueChange={(value) => setSurface(String(value) as "browse" | "watchlist")}>
+      <TabsList>
+        <TabsTrigger value="browse">{t("decision.browse")}</TabsTrigger>
+        <TabsTrigger value="watchlist">{t("decision.watchlist")}</TabsTrigger>
+      </TabsList>
+    </Tabs>
+  );
+
+  if (activeGame === "pokemon" && surface === "watchlist") {
+    return <div className="space-y-4">{surfaceTabs}<DecisionWatchlist /></div>;
+  }
+
   return (
     <div className="space-y-4">
+      {activeGame === "pokemon" && surfaceTabs}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Input
           type="text"

@@ -67,6 +67,7 @@ import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
 import { RefreshPricesAction } from "./RefreshPricesAction";
 import GradeEvidencePanel from "./GradeEvidencePanel";
+import { decisionSnapshot } from "./DecisionActions";
 
 const BUYLIST_ENTRY_TABLE: Record<Game, string> = {
   pokemon: "pokemon_buylist_entries",
@@ -476,6 +477,7 @@ export default function CardDetailModal({
 
         {activeGame === "pokemon" && (
           <GradeEvidencePanel
+            card={card}
             cardId={Number(def.card_id)}
             setCode={def.set_code}
             listingFreshnessLabel={t("evidence.listingFreshness")}
@@ -594,6 +596,7 @@ export default function CardDetailModal({
               game={activeGame as "pokemon" | "mtg"}
               cardId={card.card.card_id}
               psaGrade={activeTab === "psa" ? (card.psaGrade ?? 0) : 0}
+              decisionSnapshot={decisionSnapshot(card, card.signal)}
             />
           </div>
         )}

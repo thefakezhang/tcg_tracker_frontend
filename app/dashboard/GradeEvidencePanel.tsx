@@ -10,6 +10,8 @@ import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { useLanguage } from "./LanguageContext";
 import { useExitBasis } from "./ExitBasisContext";
 import { fetchLocationMap } from "./use-card-data";
+import type { CardRowData } from "./use-card-data";
+import { DecisionActions } from "./DecisionActions";
 import {
   eventAppliesToCard,
   exitValue,
@@ -20,6 +22,7 @@ import {
 } from "./grade-signals";
 
 interface GradeEvidencePanelProps {
+  card: CardRowData;
   cardId: number;
   setCode: string;
   listingFreshnessLabel: string;
@@ -127,11 +130,13 @@ function GradeEvidenceCard({
   sales,
   events,
   bidLocation,
+  card,
 }: {
   signal: GradeSignal;
   sales: SlabSale[];
   events: SignalEvent[];
   bidLocation: string | null;
+  card: CardRowData;
 }) {
   const { t } = useTranslation();
   const { exitPercentile } = useExitBasis();
@@ -192,11 +197,14 @@ function GradeEvidenceCard({
         <Metric label={t("evidence.cohort")} value={signal.cohort ?? "-"} />
         <Metric label={t("evidence.model")} value={signal.modelVersion} />
       </div>
+      <div className="mt-3 flex justify-end border-t pt-3">
+        <DecisionActions row={card} grade={signal.psaGrade} signal={signal} />
+      </div>
     </section>
   );
 }
 
-export default function GradeEvidencePanel({ cardId, setCode, listingFreshnessLabel }: GradeEvidencePanelProps) {
+export default function GradeEvidencePanel({ card, cardId, setCode, listingFreshnessLabel }: GradeEvidencePanelProps) {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const { exitPercentile, setExitPercentile } = useExitBasis();
@@ -290,6 +298,7 @@ export default function GradeEvidencePanel({ cardId, setCode, listingFreshnessLa
               sales={sales.filter((sale) => sale.grade === signal.psaGrade)}
               events={events}
               bidLocation={signal.bestJpBidLocation == null ? null : locations.get(signal.bestJpBidLocation) ?? null}
+              card={card}
             />
           ))}
         </div>
