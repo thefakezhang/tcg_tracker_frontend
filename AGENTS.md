@@ -89,7 +89,8 @@ app/
     GradeEvidencePanel.tsx # Per-grade bands, comps, demand, flags, and event annotations
     grade-signals.ts      # Typed S2 signal parser and conservative-exit helpers
     ExitBasisContext.tsx  # Persisted P10/P25/P50 conservative-exit setting
-    DecisionActions.tsx   # Shared Pass/Watch controls and immutable snapshot builder
+    DecisionActions.tsx   # Shared Watch/Dismiss controls and immutable snapshot builder
+    opportunity-exposures.ts # Automatic actual-listing exposure payloads and RPC writer
     DecisionWatchlist.tsx # Active watch rules with at-watch versus D1-current prices
     BuyListContext.tsx     # Buy list state + CRUD operations (fetch, create, delete, add/remove entries)
     BuyListView.tsx       # Buy list card view (merges pokemon + mtg entries, list/grid with compact toggle)
@@ -242,14 +243,21 @@ Non-goals: S3 does not calculate costs, annualized returns, raw-to-grade EV, or 
 
 ### Decision journal (D2)
 
-- `DecisionActions` is the one Pass/Watch control used by Card Browser rows and every grade card in `GradeEvidencePanel`.
-It sends the exact grade signal plus browser prices and ROI to `record_deal_decision`; an optional reason can be prepared without adding a required confirmation step.
+- `CardBrowser` records the actual purchasable opportunity on each visible Pokémon row, and `CardDetailModal` records each actual Sell listing when opened.
+`opportunity-exposures.ts` builds stable candidate keys and sends batches to `record_deal_opportunity_exposures`.
+Card Ladder, Collectr, and PriceCharting are excluded because they are indicator sources rather than inventory the operator can buy.
+- `DecisionActions` is the one Watch and optional Dismiss control used by Card Browser rows and every grade card in `GradeEvidencePanel`.
+There is no routine Pass action.
+Watch sends the exact grade signal plus browser prices and ROI to `record_deal_decision`.
+Dismiss calls `dismiss_deal_opportunity` and requires a reason for the exceptional deliberate rejection.
 - Watch is one primitive, not a second client list.
 The RPC writes the `watched` decision and active `price_below_exit` alert rule atomically; `DecisionWatchlist` reads `active_deal_watchlist_v` and shows at-watch versus the latest D1 price event.
 - Pokémon `LotPickerContext.addCardLine` calls `add_pokemon_lot_line_with_decision`, which creates the lot line and Bought decision in one database transaction.
 The operator never needs a separate Bought tap, and a failed decision insert cannot leave an unjournaled purchase.
 - The decision snapshot is not a score.
 It preserves the full signal row, source flags, displayed market inputs, and an explicit no-signal flag for later calibration.
+- Exposure capture is non-blocking, and backend deduplication preserves the first snapshot while repeated views extend the decision window.
+- Phone controls keep 44px targets and wrap within the row or panel instead of widening the page.
 - Backend architecture, retention, and verification are documented in `docs/decision_journal.md` in the backend repository.
 
 ### Card Index link attachment (R1)

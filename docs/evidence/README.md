@@ -12,8 +12,11 @@ The fixture deliberately covers a Card Ladder series with an event marker, a sou
 
 ## Responsive decision controls
 
-Phone-width Card Browser sessions default to the grid surface, where every card exposes Pass and Watch without horizontal scrolling.
+Phone-width Card Browser sessions default to the grid surface, where every card exposes Watch and a compact optional Dismiss action without horizontal scrolling.
+There is no routine Pass button.
+Visible actual marketplace opportunities and opened detail listings are recorded automatically, while indicator-only sources are excluded.
+Dismiss opens a reason field only for an exceptional deliberate rejection.
 The list surface keeps its decision column pinned to the right and hides secondary economics columns until enough desktop width is available.
 Browser toolbars and card-detail footers wrap instead of increasing the page width.
-Primary phone controls use a 44px minimum target, including store-sighting fields, Pass, Watch, reason, pagination, modal close, refresh, and lot actions.
+Primary phone controls use a 44px minimum target, including store-sighting fields, Watch, Dismiss, dismissal reason, pagination, modal close, refresh, and lot actions.
 The store-sighting form exposes an explicit Raw or PSA 1 through PSA 10 selector, preselected from the browser row while remaining editable before save.

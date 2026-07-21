@@ -40,7 +40,8 @@ vi.mock("./data-table", () => ({
     </div>
   ),
 }));
-vi.mock("./DecisionActions", () => ({ DecisionActions: () => <div><button>decision.pass</button><button>decision.watch</button></div> }));
+vi.mock("./DecisionActions", () => ({ DecisionActions: () => <div><button>decision.watch</button><button aria-label="decision.dismissOpportunity" /></div> }));
+vi.mock("./opportunity-exposures", () => ({ browserOpportunityPayloads: () => [], recordOpportunityExposures: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("./DecisionWatchlist", () => ({ default: () => <div>watchlist surface</div> }));
 vi.mock("./RefreshPricesAction", () => ({ RefreshPricesAction: () => null }));
 vi.mock("./RefreshInFlightStrip", () => ({ RefreshInFlightStrip: () => null }));
@@ -65,13 +66,13 @@ describe("CardBrowser surfaces", () => {
     expect(screen.getByText("watchlist surface")).toBeTruthy();
   });
 
-  it("defaults phones to the grid with decision actions on every card", async () => {
+  it("defaults phones to the grid with Watch and optional Dismiss on every card", async () => {
     vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
 
     render(<CardBrowser />);
 
     await waitFor(() => expect(screen.getByTestId("browse-table").getAttribute("data-view-mode")).toBe("grid"));
-    expect(screen.getByRole("button", { name: "decision.pass" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "decision.watch" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "decision.dismissOpportunity" })).toBeTruthy();
   });
 });
