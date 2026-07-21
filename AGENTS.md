@@ -86,6 +86,11 @@ app/
     AppSidebar.tsx        # Navigation, game picker, buy lists, user settings menu
     CardBrowser.tsx       # Search filters + data table + modal trigger
     CardDetailModal.tsx   # Card detail dialog with buy/sell listing tables + add to buy list
+    GradeEvidencePanel.tsx # Per-grade bands, comps, demand, flags, and event annotations
+    grade-signals.ts      # Typed S2 signal parser and conservative-exit helpers
+    ExitBasisContext.tsx  # Persisted P10/P25/P50 conservative-exit setting
+    DecisionActions.tsx   # Shared Pass/Watch controls and immutable snapshot builder
+    DecisionWatchlist.tsx # Active watch rules with at-watch versus D1-current prices
     BuyListContext.tsx     # Buy list state + CRUD operations (fetch, create, delete, add/remove entries)
     BuyListView.tsx       # Buy list card view (merges pokemon + mtg entries, list/grid with compact toggle)
     data-table.tsx        # Generic TanStack React Table wrapper
@@ -132,11 +137,12 @@ Providers wrap in this order inside `DashboardShell.tsx`:
 ```
 LanguageProvider
   CurrencyProvider
-    GameProvider
-      BuyListProvider
-        HeaderProvider
-          SidebarProvider
-            AppSidebar + SidebarInset (header + main)
+    ExitBasisProvider
+      GameProvider
+        BuyListProvider
+          HeaderProvider
+            SidebarProvider
+              AppSidebar + SidebarInset (header + main)
 ```
 
 Each context follows the same pattern:
@@ -218,8 +224,33 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 - Has its own tier filter dropdown.
 - Uses `useCurrency()` for price conversion in `ListingTable`.
 - "Add to Buy List" button (popover) lets users save cards to any buy list.
-- For Pokémon, the PSA tab also reads the latest `pokemon_grade_signals` row per grade and renders D3 population, band-price-per-pop, and 30-day population velocity.
-  Population velocity stays explicitly unavailable until the delta-only observation history spans at least 14 days.
+### Per-grade evidence panel (S3)
+
+- `GradeEvidencePanel.tsx` reads the latest `pokemon_grade_signals` model row per card and grade, Card Ladder sold comps, bid locations, and applicable market events.
+All data-dependent reads page through `selectAll`; browser-page signal fanout uses `selectAllByIds`.
+- Each grade keeps its evidence components visible: P10/P25/P50/P75 bands, trend, recent and lifetime comp counts, demand, JP bid and held age, population, population velocity, price per population, cohort, and warning flags.
+A missing sold-comp series renders a source-only summary instead of a fabricated sparkline.
+- Sold-comp sparklines are inline SVG and mark global, matching-set, and explicit-card events when they fall inside the observed date range.
+- `computed_at` is labeled as signal freshness.
+Listing freshness remains the separate per-row `FreshnessChip`, since recomputing a signal and refreshing a shop listing are different clocks.
+- `ExitBasisContext` persists P10, P25, or P50 in local storage with P25 as the default.
+The Card Browser conservative-exit column shows the selected band, source tier, comp counts, and flags inline and is sortable within the server-loaded page.
+- The high-value weak-evidence control surfaces loaded rows at or above ¥50,000 whose signal is not Tier 1 or Tier 2.
+It is an explicit operator filter, not a hidden ranking penalty.
+- Goals: expose the evidence behind every grade-level exit and make uncertainty actionable on desktop and phone.
+Non-goals: S3 does not calculate costs, annualized returns, raw-to-grade EV, or an opaque score; those belong to S4 and later calibration work.
+
+### Decision journal (D2)
+
+- `DecisionActions` is the one Pass/Watch control used by Card Browser rows and every grade card in `GradeEvidencePanel`.
+It sends the exact grade signal plus browser prices and ROI to `record_deal_decision`; an optional reason can be prepared without adding a required confirmation step.
+- Watch is one primitive, not a second client list.
+The RPC writes the `watched` decision and active `price_below_exit` alert rule atomically; `DecisionWatchlist` reads `active_deal_watchlist_v` and shows at-watch versus the latest D1 price event.
+- Pokémon `LotPickerContext.addCardLine` calls `add_pokemon_lot_line_with_decision`, which creates the lot line and Bought decision in one database transaction.
+The operator never needs a separate Bought tap, and a failed decision insert cannot leave an unjournaled purchase.
+- The decision snapshot is not a score.
+It preserves the full signal row, source flags, displayed market inputs, and an explicit no-signal flag for later calibration.
+- Backend architecture, retention, and verification are documented in `docs/decision_journal.md` in the backend repository.
 
 ### Card Index link attachment (R1)
 
@@ -240,6 +271,18 @@ When a platform has a stable public search route, the modal links directly to a 
 `ReviewQueueNavigationContext` carries a one-shot `{ game, source }` target to `RoutedMatchReviewView`; the route captures and consumes it so a later ordinary sidebar visit starts unfiltered.
 - `MatchReviewView` accepts `initialGame` and `initialSource` props.
 Its source predicate remains server-side so the filtered count and pagination describe the same source slice.
+
+### Events calendar (S6)
+
+- `EventsCalendarView.tsx` is the manual event workflow and month surface registered under Catalog.
+It reads every `market_events` row with `selectAll`, supports add/edit, confirms rumored rows in one click, and turns unexplained cohort breaks into prefilled entry forms.
+- `market-events.ts` owns the frontend event types, inclusive date-range calendar helpers, event tones, and the exact key shared by holdings and exposure rows.
+- `UpcomingEventsStrip.tsx` renders the next two events within 90 days in the dashboard header without taking over the page title or header actions.
+- `InventoryView.tsx` reads `inventory_reprint_exposure_v` and renders reprint-risk badges in both list and grid modes.
+Scope matching stays in the database view so the calendar and inventory cannot disagree.
+- Events are labels only.
+No frontend event action changes a market listing, signal, price, or ranking.
+- Backend contract and feeder operations are documented in `docs/events_calendar.md` in the backend repository.
 
 ### Buy Lists
 

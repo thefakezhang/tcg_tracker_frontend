@@ -7,6 +7,10 @@ import { type CardRowData, type PriceEntry, getCardDisplayName } from "./use-car
 import { conditionLabel, editionLabel, productTypeLabel } from "./use-sealed-data";
 import { useCurrency } from "./CurrencyContext";
 import { type Language } from "./LanguageContext";
+import { useExitBasis } from "./ExitBasisContext";
+import { exitValue } from "./grade-signals";
+import { useTranslation } from "@/lib/i18n";
+import { DecisionActions } from "./DecisionActions";
 
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
   const { displayCurrency, convertPrice } = useCurrency();
@@ -41,6 +45,30 @@ export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }:
 function formatRoi(roi: number | null): string {
   if (roi === null) return "\u2014";
   return `${Math.round(roi * 100) / 100}%`;
+}
+
+export function ConservativeExitCell({ row }: { row: CardRowData }) {
+  const { t } = useTranslation();
+  const { exitPercentile } = useExitBasis();
+  const signal = row.signal;
+  const value = exitValue(signal, exitPercentile);
+  if (!signal || value == null) return <span className="text-muted-foreground">-</span>;
+  const flags = [
+    signal.flags.thin_evidence ? t("evidence.thinShort") : null,
+    signal.flags.cohort_derived ? t("evidence.cohortShort") : null,
+    signal.flags.inversion_derived ? t("evidence.inversionShort") : null,
+  ].filter(Boolean);
+  return (
+    <div className="min-w-28">
+      <div className="font-medium tabular-nums">¥{Math.round(value).toLocaleString()}</div>
+      <div className="text-[10px] text-muted-foreground">
+        P{exitPercentile} · {t("evidence.compCountShort", { recent: signal.compCountRecent ?? 0, lifetime: signal.compCountLifetime ?? 0 })}
+      </div>
+      <div className="text-[10px] capitalize text-muted-foreground">
+        {signal.tier?.replaceAll("_", " ") ?? t("evidence.unknownSource")}{flags.length ? ` · ${flags.join(", ")}` : ""}
+      </div>
+    </div>
+  );
 }
 
 function SortableHeader({
@@ -196,6 +224,20 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
       cell: ({ getValue }) => formatRoi((getValue() as number | undefined) ?? null),
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
+    },
+    {
+      id: "conservativeExit",
+      accessorFn: (row) => row.signal?.bandP25 ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.conservativeExit")} />,
+      cell: ({ row }) => <ConservativeExitCell row={row.original} />,
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+    {
+      id: "decision",
+      enableSorting: false,
+      header: () => t("decision.title"),
+      cell: ({ row }) => <DecisionActions row={row.original} compact />,
     },
   ];
 }

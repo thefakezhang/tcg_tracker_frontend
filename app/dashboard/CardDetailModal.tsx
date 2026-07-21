@@ -66,6 +66,8 @@ import { useLanguage } from "./LanguageContext";
 import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
 import { RefreshPricesAction } from "./RefreshPricesAction";
+import GradeEvidencePanel from "./GradeEvidencePanel";
+import { decisionSnapshot } from "./DecisionActions";
 
 const BUYLIST_ENTRY_TABLE: Record<Game, string> = {
   pokemon: "pokemon_buylist_entries",
@@ -85,14 +87,6 @@ export interface DetailListing {
   // pokemon_market_listings.last_updated; drives the freshness chip next
   // to the location. null when the row predates the column being populated.
   lastUpdated: string | null;
-}
-
-interface PopulationSignal {
-  psaGrade: number;
-  pop: number;
-  popVelocity: number | null;
-  bandP50Jpy: number | null;
-  computedAt: string;
 }
 
 // TCGplayer's product page accepts query params to preselect a specific SKU
@@ -157,7 +151,6 @@ export default function CardDetailModal({
   const { buylists, addToBuylist } = useBuyList();
   const [addedTo, setAddedTo] = useState<string | null>(null);
   const [rawListings, setRawListings] = useState<MarketListing[]>([]);
-  const [populationSignals, setPopulationSignals] = useState<PopulationSignal[]>([]);
   const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
   const [locationMap, setLocationMap] = useState<Map<number, LocationInfo>>(
     new Map()
@@ -231,7 +224,7 @@ export default function CardDetailModal({
 
     async function fetchListings() {
       const supabase = createClient();
-      const [{ data: raw }, rates, locations, conditionsData, signalResult] =
+      const [{ data: raw }, rates, locations, conditionsData] =
         await Promise.all([
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
@@ -242,14 +235,6 @@ export default function CardDetailModal({
           fetchRateMap(supabase),
           fetchLocationMap(supabase),
           fetchConditionsCache(supabase),
-          activeGame === "pokemon"
-            ? supabase
-                .from("pokemon_grade_signals")
-                .select("psa_grade, pop, pop_velocity, band_p50, computed_at")
-                .eq("card_id", card!.card.card_id)
-                .not("pop", "is", null)
-                .order("computed_at", { ascending: false })
-            : Promise.resolve({ data: null, error: null }),
         ]);
 
       if (cancelled) return;
@@ -271,24 +256,6 @@ export default function CardDetailModal({
       );
 
       setRawListings(listings);
-      const latestByGrade = new Map<number, PopulationSignal>();
-      for (const row of signalResult.data ?? []) {
-        const rawSignal = row as Record<string, unknown>;
-        const psaGrade = Number(rawSignal.psa_grade);
-        if (latestByGrade.has(psaGrade)) continue;
-        latestByGrade.set(psaGrade, {
-          psaGrade,
-          pop: Number(rawSignal.pop),
-          popVelocity:
-            rawSignal.pop_velocity == null ? null : Number(rawSignal.pop_velocity),
-          bandP50Jpy:
-            rawSignal.band_p50 == null ? null : Number(rawSignal.band_p50),
-          computedAt: String(rawSignal.computed_at),
-        });
-      }
-      setPopulationSignals(
-        [...latestByGrade.values()].sort((a, b) => b.psaGrade - a.psaGrade)
-      );
       setRateMap(rates);
       setLocationMap(locations);
       setConditionsMap(conditionsData.map);
@@ -375,14 +342,14 @@ export default function CardDetailModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-3xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-6xl">
         <DialogHeader>
-          <div className="flex gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
             {def.image_url && (
               <img
                 src={def.image_url}
                 alt={getCardDisplayName(def, language)}
-                className="h-64 w-auto rounded-md object-contain shrink-0"
+                className="h-44 w-full rounded-md object-contain sm:h-64 sm:w-auto sm:shrink-0"
               />
             )}
             <div className="flex min-w-0 flex-col gap-1">
@@ -503,10 +470,18 @@ export default function CardDetailModal({
                   conditionHeader={t("modal.psaGrade")}
                   t={t}
                 />
-                <PopulationEvidence signals={populationSignals} t={t} />
               </TabsContent>
             )}
           </Tabs>
+        )}
+
+        {activeGame === "pokemon" && (
+          <GradeEvidencePanel
+            card={card}
+            cardId={Number(def.card_id)}
+            setCode={def.set_code}
+            listingFreshnessLabel={t("evidence.listingFreshness")}
+          />
         )}
 
         {card && (buylists.length > 0 || onRemoveFromBuylist) && (
@@ -621,6 +596,7 @@ export default function CardDetailModal({
               game={activeGame as "pokemon" | "mtg"}
               cardId={card.card.card_id}
               psaGrade={activeTab === "psa" ? (card.psaGrade ?? 0) : 0}
+              decisionSnapshot={decisionSnapshot(card, card.signal)}
             />
           </div>
         )}
@@ -641,7 +617,7 @@ function ListingTables({
   t: (key: import("@/lib/i18n").TranslationKey) => string;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-4 pt-2">
+    <div className="grid grid-cols-1 gap-4 pt-2 sm:grid-cols-2">
       <div>
         <h3 className="text-sm font-medium mb-2">{t("modal.sell")}</h3>
         <ListingTable
@@ -659,71 +635,6 @@ function ListingTables({
         />
       </div>
     </div>
-  );
-}
-
-function PopulationEvidence({
-  signals,
-  t,
-}: {
-  signals: PopulationSignal[];
-  t: (
-    key: import("@/lib/i18n").TranslationKey,
-    params?: Record<string, string | number>
-  ) => string;
-}) {
-  if (signals.length === 0) return null;
-
-  return (
-    <section className="mt-4 border-t pt-4" aria-labelledby="population-evidence-title">
-      <div className="mb-2 flex items-baseline justify-between gap-3">
-        <h3 id="population-evidence-title" className="text-sm font-medium">
-          {t("modal.populationEvidence")}
-        </h3>
-        <span className="text-xs text-muted-foreground">
-          {t("modal.signalsComputed", {
-            date: new Date(signals[0].computedAt).toLocaleDateString(),
-          })}
-        </span>
-      </div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {signals.map((signal) => {
-          const pricePerPop =
-            signal.bandP50Jpy != null && signal.pop > 0
-              ? signal.bandP50Jpy / signal.pop
-              : null;
-          return (
-            <div key={signal.psaGrade} className="rounded-md border bg-muted/20 p-3">
-              <div className="mb-2 text-sm font-medium">PSA {signal.psaGrade}</div>
-              <dl className="space-y-1.5 text-xs">
-                <div className="flex justify-between gap-3">
-                  <dt className="text-muted-foreground">{t("modal.population")}</dt>
-                  <dd className="font-mono tabular-nums">{signal.pop.toLocaleString()}</dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-muted-foreground">{t("modal.pricePerPop")}</dt>
-                  <dd className="font-mono tabular-nums">
-                    {pricePerPop == null
-                      ? t("modal.unknown")
-                      : `¥${Math.round(pricePerPop).toLocaleString()}`}
-                  </dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-muted-foreground">{t("modal.popVelocity")}</dt>
-                  <dd className="font-mono tabular-nums">
-                    {signal.popVelocity == null
-                      ? t("modal.awaitingHistory")
-                      : t("modal.popPerMonth", {
-                          value: signal.popVelocity.toFixed(1),
-                        })}
-                  </dd>
-                </div>
-              </dl>
-            </div>
-          );
-        })}
-      </div>
-    </section>
   );
 }
 

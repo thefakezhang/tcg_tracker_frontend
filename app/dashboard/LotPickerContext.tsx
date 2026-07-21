@@ -30,6 +30,7 @@ export interface AddCardLineArgs {
   quantity: number;
   overrideUsd?: number | null;
   marketValueUsd?: number | null;
+  browserSnapshot?: Record<string, unknown>;
 }
 
 export interface AddSealedLineArgs {
@@ -70,7 +71,21 @@ export function LotPickerProvider({ children }: { children: React.ReactNode }) {
 
   const addCardLine = useCallback(async (a: AddCardLineArgs) => {
     const supabase = createClient();
-    await supabase.from(LINE_TABLE[a.game]).insert({
+    if (a.game === "pokemon") {
+      const { error } = await supabase.rpc("add_pokemon_lot_line_with_decision", {
+        p_lot_id: a.lotId,
+        p_card_id: Number(a.cardId),
+        p_condition_id: a.conditionId,
+        p_psa_grade: a.psaGrade ?? 0,
+        p_quantity: a.quantity,
+        p_price_override_usd: a.overrideUsd ?? null,
+        p_market_value_usd: a.marketValueUsd ?? null,
+        p_browser_snapshot: a.browserSnapshot ?? {},
+      });
+      if (error) throw error;
+      return;
+    }
+    const { error } = await supabase.from(LINE_TABLE[a.game]).insert({
       lot_id: a.lotId,
       card_id: a.cardId,
       condition_id: a.conditionId,
@@ -79,6 +94,7 @@ export function LotPickerProvider({ children }: { children: React.ReactNode }) {
       price_override_usd: a.overrideUsd ?? null,
       market_value_usd: a.marketValueUsd ?? null,
     });
+    if (error) throw error;
   }, []);
 
   const addSealedLine = useCallback(async (a: AddSealedLineArgs) => {
