@@ -327,7 +327,8 @@ function formatSourceOrigin(source: string | undefined | null, side: string | un
 // existing product (`proposed_id`); otherwise there's no target to
 // merge INTO, and we surface the info without action buttons.
 //
-// Singles/mtg games pass no callbacks and the panel is read-only for those.
+// Pokemon singles can move the exact colliding link into the proposed card.
+// MTG remains read-only until it has the same server-validated move contract.
 interface CollisionPanelProps {
   collisions: CollisionEntry[];
   incomingIdentity: string[];
@@ -336,7 +337,7 @@ interface CollisionPanelProps {
   proposedId: number | null;
   busy: boolean;
   onMerge?: (fromId: number, intoId: number) => Promise<void>;
-  onAttach?: (platform: string, id: string, intoId: number) => Promise<void>;
+  onAttach?: (fromId: number, platform: string, id: string, intoId: number) => Promise<void>;
 }
 function CollisionPanel({
   collisions, incomingIdentity, incomingName, incomingSourceExternal, proposedId, busy, onMerge, onAttach,
@@ -428,7 +429,7 @@ function CollisionPanel({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => onAttach(coll.platform, coll.id, proposedId!)}
+                    onClick={() => onAttach(coll.existing_card_id!, coll.platform, coll.id, proposedId!)}
                     className="inline-flex items-center gap-1 rounded border bg-background px-1.5 py-0.5 text-[10px] hover:border-primary hover:text-primary disabled:opacity-50"
                     title={t("review.collisionMoveHint")
                       .replace("{platform}", platformLabel)
@@ -967,8 +968,9 @@ export default function MatchReviewView({
                                   setBusyId(null);
                                 }
                               } : undefined}
-                              onAttach={cfg.game === "pokemon_sealed" ? async (platform: string, id: string, intoId: number) => {
+                              onAttach={cfg.game === "pokemon_sealed" ? async (_fromId: number, platform: string, id: string, intoId: number) => {
                                 setBusyId(c.candidate_id);
+                                setErr(null);
                                 try {
                                   const supabase = createClient();
                                   const { error: attachErr } = await supabase.rpc("card_index_attach_sealed_link", {
@@ -984,6 +986,29 @@ export default function MatchReviewView({
                                   });
                                   if (confErr) throw confErr;
                                   retry();
+                                } catch (moveErr) {
+                                  setErr(moveErr instanceof Error ? moveErr.message : String(moveErr));
+                                } finally {
+                                  setBusyId(null);
+                                }
+                              } : cfg.game === "pokemon" ? async (fromId: number, platform: string, id: string, intoId: number) => {
+                                setBusyId(c.candidate_id);
+                                setErr(null);
+                                try {
+                                  const { error: moveErr } = await createClient().rpc(
+                                    "card_index_resolve_pokemon_candidate_move_link",
+                                    {
+                                      p_candidate_id: c.candidate_id,
+                                      p_card_id: intoId,
+                                      p_from_card_id: fromId,
+                                      p_platform: platform,
+                                      p_external_reference_id: id,
+                                    },
+                                  );
+                                  if (moveErr) throw moveErr;
+                                  retry();
+                                } catch (moveErr) {
+                                  setErr(moveErr instanceof Error ? moveErr.message : String(moveErr));
                                 } finally {
                                   setBusyId(null);
                                 }
