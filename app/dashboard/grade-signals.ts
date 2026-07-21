@@ -137,11 +137,11 @@ export function signalForRow(row: CardRowData, signals: GradeSignal[]): GradeSig
   return signals.find((signal) => signal.cardId === Number(row.card.card_id) && signal.psaGrade === grade) ?? null;
 }
 
-export function isHighValueWeakEvidence(signal: GradeSignal | null | undefined): boolean {
+export function isHighValueWeakEvidence(signal: GradeSignal | null | undefined, jpyUsd: number | null | undefined): boolean {
   if (!signal) return false;
-  // Grade bands are USD. JP bids are JPY and cannot be used as a fallback
-  // without the as-of exchange rate, so keep this filter currency-safe.
-  if (signal.bandP50 == null || signal.bandP50 < 300) return false;
+  // Grade bands are JPY. Convert the median with the loaded as-of rate before
+  // applying the USD product threshold; no FX means no currency-safe verdict.
+  if (signal.bandP50 == null || jpyUsd == null || jpyUsd <= 0 || signal.bandP50 * jpyUsd < 300) return false;
   return signal.tier !== "tier_1" && signal.tier !== "tier_2";
 }
 
