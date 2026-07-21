@@ -68,7 +68,7 @@ export default function StoreSightingForm({
   }
 
   return (
-    <form className="rounded-lg border bg-card p-3" onSubmit={save}>
+    <form className="min-w-0 rounded-lg border bg-card p-3" onSubmit={save}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h4 className="flex items-center gap-2 text-sm font-semibold"><Store className="size-4" />{t("decision.storeSighting")}</h4>
@@ -80,24 +80,24 @@ export default function StoreSightingForm({
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.2fr_1fr_auto_1.2fr_auto] xl:items-end">
         <label className="text-xs text-muted-foreground">
           {t("decision.storeName")}
-          <Input className="mt-1" required value={storeName} onChange={(event) => { setStoreName(event.target.value); setSaved(false); }} />
+          <Input className="mt-1 h-11 sm:h-8" required value={storeName} onChange={(event) => { setStoreName(event.target.value); setSaved(false); }} />
         </label>
         <label className="text-xs text-muted-foreground">
           {t("economics.askingPrice")}
-          <Input className="mt-1" type="number" min="0" step="any" inputMode="decimal" required value={price} onChange={(event) => { onPriceChange(event.target.value); setSaved(false); }} placeholder={t("economics.askingPlaceholder")} />
+          <Input className="mt-1 h-11 sm:h-8" type="number" min="0" step="any" inputMode="decimal" required value={price} onChange={(event) => { onPriceChange(event.target.value); setSaved(false); }} placeholder={t("economics.askingPlaceholder")} />
         </label>
         <label className="text-xs text-muted-foreground">
           {t("decision.currency")}
-          <select className="mt-1 h-8 w-full rounded-md border bg-background px-3 text-sm text-foreground" value={currency} onChange={(event) => { onCurrencyChange(event.target.value as "JPY" | "USD"); setSaved(false); }}>
+          <select className="mt-1 h-11 w-full rounded-md border bg-background px-3 text-sm text-foreground sm:h-8" value={currency} onChange={(event) => { onCurrencyChange(event.target.value as "JPY" | "USD"); setSaved(false); }}>
             <option value="JPY">JPY</option>
             <option value="USD">USD</option>
           </select>
         </label>
         <label className="text-xs text-muted-foreground">
           {t("decision.sightingNote")}
-          <Input className="mt-1" value={note} onChange={(event) => { setNote(event.target.value); setSaved(false); }} />
+          <Input className="mt-1 h-11 sm:h-8" value={note} onChange={(event) => { setNote(event.target.value); setSaved(false); }} />
         </label>
-        <Button type="submit" disabled={busy || storeName.trim() === "" || Number(price) <= 0}>
+        <Button className="min-h-11 whitespace-normal sm:min-h-8" type="submit" disabled={busy || storeName.trim() === "" || Number(price) <= 0}>
           {saved ? <Check className="size-4" /> : <Store className="size-4" />}
           {busy ? t("decision.savingSighting") : saved ? t("decision.sightingSaved") : t("decision.saveSighting")}
         </Button>

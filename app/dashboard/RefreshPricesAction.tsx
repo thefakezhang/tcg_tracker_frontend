@@ -121,7 +121,7 @@ export function RefreshPricesAction({
 
   return (
     <div className="flex flex-col gap-1">
-      <Button variant="outline" size={size} onClick={run} disabled={busy || cardIds.length === 0}>
+      <Button className="min-h-11 whitespace-normal sm:min-h-0" variant="outline" size={size} onClick={run} disabled={busy || cardIds.length === 0}>
         {busy ? (
           <LoaderCircle className="size-4 animate-spin" />
         ) : (

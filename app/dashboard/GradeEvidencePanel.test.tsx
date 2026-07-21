@@ -143,6 +143,8 @@ describe("GradeEvidencePanel", () => {
 
     await waitFor(() => expect(screen.getByText("No computed grade signals are available for this card yet.")).toBeTruthy());
     expect(screen.getAllByLabelText("Sticker / asking price")).toHaveLength(1);
+    expect(screen.getByLabelText("Store").className).toContain("h-11");
+    expect(screen.getByRole("button", { name: "Save store sighting" }).className).toContain("min-h-11");
     fireEvent.change(screen.getByLabelText("Store"), { target: { value: "Card shop A" } });
     fireEvent.change(screen.getByLabelText("Sticker / asking price"), { target: { value: "12000" } });
     fireEvent.click(screen.getByRole("button", { name: "Save store sighting" }));

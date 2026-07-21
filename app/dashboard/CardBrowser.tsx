@@ -47,6 +47,7 @@ import { useTranslation } from "@/lib/i18n";
 import { useExitBasis, type ExitPercentile } from "./ExitBasisContext";
 import { exitValue, isHighValueWeakEvidence } from "./grade-signals";
 import DecisionWatchlist from "./DecisionWatchlist";
+import { DecisionActions } from "./DecisionActions";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -90,6 +91,10 @@ export default function CardBrowser() {
   const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
   const [weakEvidenceOnly, setWeakEvidenceOnly] = useState(false);
   const [surface, setSurface] = useState<"browse" | "watchlist">("browse");
+
+  useEffect(() => {
+    if (window.matchMedia?.("(max-width: 639px)").matches) setViewMode("grid");
+  }, []);
 
   const [refreshOpen, setRefreshOpen] = useState(false);
   // Multi-select for targeted price refresh (redesign R6). Pokemon singles only -
@@ -198,7 +203,7 @@ export default function CardBrowser() {
 
   const surfaceTabs = (
     <Tabs value={surface} onValueChange={(value) => setSurface(String(value) as "browse" | "watchlist")}>
-      <TabsList>
+      <TabsList className="h-11 sm:h-8">
         <TabsTrigger value="browse">{t("decision.browse")}</TabsTrigger>
         <TabsTrigger value="watchlist">{t("decision.watchlist")}</TabsTrigger>
       </TabsList>
@@ -212,7 +217,7 @@ export default function CardBrowser() {
   return (
     <div className="space-y-4">
       {activeGame === "pokemon" && surfaceTabs}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 [&_input]:h-11 sm:[&_input]:h-8">
         <Input
           type="text"
           placeholder={t("cardBrowser.namePlaceholder")}
@@ -237,7 +242,7 @@ export default function CardBrowser() {
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <Button variant="outline" className="shrink-0" />
+              <Button variant="outline" className="h-11 shrink-0 sm:h-8" />
             }
           >
             {sellRegion === "all" ? t("cardBrowser.regionAll") : sellRegion}
@@ -256,7 +261,7 @@ export default function CardBrowser() {
         </DropdownMenu>
         {activeGame === "pokemon" && (
           <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="outline" className="shrink-0" />}>
+            <DropdownMenuTrigger render={<Button variant="outline" className="h-11 shrink-0 sm:h-8" />}>
               {promosOnly ? t("cardBrowser.promosOnly") : rarity || t("cardBrowser.rarityAll")}
               <ChevronDown className="ml-1 size-4" />
             </DropdownMenuTrigger>
@@ -280,7 +285,7 @@ export default function CardBrowser() {
         {activeGame === "pokemon" && (
           <Button
             variant={jpExclusiveOnly ? "default" : "outline"}
-            className="shrink-0"
+            className="h-11 shrink-0 sm:h-8"
             onClick={() => setJpExclusiveOnly((v) => !v)}
           >
             {t("cardBrowser.jpExclusiveOnly")}
@@ -291,37 +296,37 @@ export default function CardBrowser() {
           placeholder={t("cardBrowser.minBuyPrice")}
           value={minBuyPrice}
           onChange={(e) => setMinBuyPrice(e.target.value)}
-          className="min-w-0 flex-1"
+          className="h-11 min-w-0 flex-1 sm:h-8"
         />
         <Input
           type="number"
           placeholder={t("cardBrowser.minSellPrice")}
           value={minSellPrice}
           onChange={(e) => setMinSellPrice(e.target.value)}
-          className="min-w-0 flex-1"
+          className="h-11 min-w-0 flex-1 sm:h-8"
         />
         <Input
           type="number"
           placeholder={t("cardBrowser.roiFloor")}
           value={roiFloor}
           onChange={(e) => setRoiFloor(e.target.value)}
-          className="min-w-0 flex-1"
+          className="h-11 min-w-0 flex-1 sm:h-8"
         />
         <Input
           type="number"
           placeholder={t("cardBrowser.roiCeiling")}
           value={roiCeiling}
           onChange={(e) => setRoiCeiling(e.target.value)}
-          className="min-w-0 flex-1"
+          className="h-11 min-w-0 flex-1 sm:h-8"
         />
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Tabs
           value={viewMode}
           onValueChange={(v) => setViewMode(String(v) as "list" | "grid")}
           className="shrink-0"
         >
-          <TabsList>
+          <TabsList className="h-11 sm:h-8">
             <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
             <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
           </TabsList>
@@ -333,7 +338,7 @@ export default function CardBrowser() {
                 variant="outline"
                 size="icon"
                 disabled={loading}
-                className="shrink-0"
+                className="size-11 shrink-0 sm:size-8"
               />
             }
           >
@@ -350,12 +355,12 @@ export default function CardBrowser() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center justify-end gap-2 xl:ml-auto xl:w-auto">
           {activeGame === "pokemon" && (
             <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
               {t("evidence.exitBasis")}
               <select
-                className="h-8 rounded-md border bg-background px-2 text-foreground"
+                className="h-11 rounded-md border bg-background px-2 text-foreground sm:h-8"
                 value={exitPercentile}
                 onChange={(event) => setExitPercentile(Number(event.target.value) as ExitPercentile)}
               >
@@ -369,7 +374,7 @@ export default function CardBrowser() {
             <Button
               variant={weakEvidenceOnly ? "default" : "outline"}
               size="sm"
-              className="shrink-0"
+              className="h-11 shrink-0 px-3 text-sm sm:h-7 sm:px-2.5 sm:text-[0.8rem]"
               onClick={() => setWeakEvidenceOnly((value) => !value)}
               title={t("evidence.weakFilterHelp")}
             >
@@ -381,7 +386,7 @@ export default function CardBrowser() {
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
-                  <Button variant="outline" className="shrink-0" />
+                  <Button variant="outline" className="h-11 shrink-0 sm:h-8" />
                 }
               >
                 {t("cardBrowser.tierPrefix")}{selectedTier}
@@ -407,7 +412,7 @@ export default function CardBrowser() {
               onValueChange={(v) => setPsaMode(String(v) === "psa" ? "psa" : "non-psa")}
               className="shrink-0"
             >
-              <TabsList>
+              <TabsList className="h-11 sm:h-8">
                 <TabsTrigger value="non-psa">{t("modal.tabNonPsa")}</TabsTrigger>
                 <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
               </TabsList>
@@ -529,6 +534,11 @@ export default function CardBrowser() {
                     <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
                       <span className="text-muted-foreground">P{exitPercentile} {t("column.conservativeExit")}</span>
                       <span>{conservativeExit == null ? "-" : `¥${Math.round(conservativeExit).toLocaleString()}`}</span>
+                    </div>
+                  )}
+                  {activeGame === "pokemon" && (
+                    <div className="flex w-full justify-end border-t border-foreground/10 pt-2">
+                      <DecisionActions row={row} />
                     </div>
                   )}
                 </CardFooter>

@@ -54,21 +54,21 @@ export function DecisionActions({ row, grade, signal, compact = false }: {
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-1" onClick={(event) => event.stopPropagation()}>
-      <Button variant="outline" size="sm" disabled={busy} className={compact ? "h-7 px-2 text-xs" : undefined} onClick={() => record("passed")}>
+      <Button variant="outline" size="sm" disabled={busy} className={compact ? "h-11 px-3 text-sm sm:h-7 sm:px-2 sm:text-xs" : "h-11 px-3 text-sm sm:h-7 sm:px-2.5 sm:text-[0.8rem]"} onClick={() => record("passed")}>
         {saved === "passed" ? <Check className="size-3.5" /> : <X className="size-3.5" />}
         {saved === "passed" ? t("decision.passed") : t("decision.pass")}
       </Button>
-      <Button variant="outline" size="sm" disabled={busy} className={compact ? "h-7 px-2 text-xs" : undefined} onClick={() => record("watched")}>
+      <Button variant="outline" size="sm" disabled={busy} className={compact ? "h-11 px-3 text-sm sm:h-7 sm:px-2 sm:text-xs" : "h-11 px-3 text-sm sm:h-7 sm:px-2.5 sm:text-[0.8rem]"} onClick={() => record("watched")}>
         {saved === "watched" ? <Check className="size-3.5" /> : <Eye className="size-3.5" />}
         {saved === "watched" ? t("decision.watching") : t("decision.watch")}
       </Button>
       <Popover>
-        <PopoverTrigger render={<Button variant="ghost" size="icon" className="size-7" aria-label={t("decision.reason")} />}>
+        <PopoverTrigger render={<Button variant="ghost" size="icon" className="size-11 sm:size-7" aria-label={t("decision.reason")} />}>
           <MessageSquare className="size-3.5" />
         </PopoverTrigger>
         <PopoverContent className="w-64 p-3" align="end">
           <label className="text-xs text-muted-foreground">{t("decision.reasonOptional")}</label>
-          <Input className="mt-2 h-8" value={reason} onChange={(event) => setReason(event.target.value)} />
+          <Input className="mt-2 h-11 sm:h-8" value={reason} onChange={(event) => setReason(event.target.value)} />
         </PopoverContent>
       </Popover>
     </div>

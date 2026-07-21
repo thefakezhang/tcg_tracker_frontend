@@ -97,7 +97,7 @@ export function DataTable<TData, TValue>({
   const sp = serverPagination;
 
   return (
-    <div>
+    <div className="min-w-0">
       {viewMode === "grid" && renderGridItem ? (
         loading && table.getRowModel().rows.length === 0 ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
@@ -124,7 +124,7 @@ export function DataTable<TData, TValue>({
           </div>
         )
       ) : (
-        <div className="rounded-md border">
+        <div className="min-w-0 rounded-md border">
           <Table>
             <TableHeader>
               {table.getHeaderGroups().map((headerGroup) => (
@@ -168,14 +168,19 @@ export function DataTable<TData, TValue>({
                     className={onRowClick ? "cursor-pointer" : undefined}
                     onClick={() => onRowClick?.(row.original)}
                   >
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext()
-                        )}
-                      </TableCell>
-                    ))}
+                    {row.getVisibleCells().map((cell) => {
+                      const meta = cell.column.columnDef.meta as
+                        | { className?: string }
+                        | undefined;
+                      return (
+                        <TableCell key={cell.id} className={meta?.className}>
+                          {flexRender(
+                            cell.column.columnDef.cell,
+                            cell.getContext()
+                          )}
+                        </TableCell>
+                      );
+                    })}
                   </TableRow>
                 ))
               ) : (
@@ -193,11 +198,11 @@ export function DataTable<TData, TValue>({
         </div>
       )}
       {sp && (
-        <div className="flex items-center justify-between py-4">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">{t("dataTable.rowsPerPage")}</span>
             <select
-              className="h-8 rounded-md border bg-background px-2 text-sm"
+              className="h-11 rounded-md border bg-background px-2 text-sm sm:h-8"
               value={sp.pageSize}
               onChange={(e) => sp.onPageSizeChange(Number(e.target.value))}
             >
@@ -208,13 +213,14 @@ export function DataTable<TData, TValue>({
               ))}
             </select>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">
               {t("dataTable.pageOf", { current: sp.page + 1, total: sp.totalPages })}
             </span>
             <Button
               variant="outline"
               size="sm"
+              className="h-11 px-3 text-sm sm:h-7 sm:px-2.5 sm:text-[0.8rem]"
               onClick={() => sp.onPageChange(sp.page - 1)}
               disabled={sp.page <= 0}
             >
@@ -223,6 +229,7 @@ export function DataTable<TData, TValue>({
             <Button
               variant="outline"
               size="sm"
+              className="h-11 px-3 text-sm sm:h-7 sm:px-2.5 sm:text-[0.8rem]"
               onClick={() => sp.onPageChange(sp.page + 1)}
               disabled={sp.page >= sp.totalPages - 1}
             >

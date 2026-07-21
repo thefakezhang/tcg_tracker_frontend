@@ -328,9 +328,9 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
             <span className="inline-flex items-center gap-1"><Users className="size-3" />{listingFreshnessLabel}</span>
           </div>
         </div>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <label className="flex min-h-11 items-center gap-2 text-xs text-muted-foreground sm:min-h-0">
           {t("evidence.exitBasis")}
-          <select className="h-8 rounded-md border bg-background px-2 text-foreground" value={exitPercentile} onChange={(event) => setExitPercentile(Number(event.target.value) as 10 | 25 | 50)}>
+          <select className="h-11 rounded-md border bg-background px-2 text-foreground sm:h-8" value={exitPercentile} onChange={(event) => setExitPercentile(Number(event.target.value) as 10 | 25 | 50)}>
             <option value={10}>P10</option>
             <option value={25}>P25</option>
             <option value={50}>P50</option>
