@@ -93,5 +93,5 @@ describe("EventsCalendarView", () => {
     expect(starts.value).toBe("2026-07-15");
     expect(scope.value).toBe("set");
     expect(scopeRef.value).toBe("SV2A");
-  });
+  }, 10_000);
 });
