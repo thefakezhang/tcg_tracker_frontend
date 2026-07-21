@@ -91,6 +91,7 @@ app/
     ExitBasisContext.tsx  # Persisted P10/P25/P50 conservative-exit setting
     DecisionActions.tsx   # Shared Pass/Watch controls and immutable snapshot builder
     DecisionWatchlist.tsx # Active watch rules with at-watch versus D1-current prices
+    PurchasePlannerView.tsx # Pre-order card plan, customer assignments, backups, coverage, and readiness review
     BuyListContext.tsx     # Buy list state + CRUD operations (fetch, create, delete, add/remove entries)
     BuyListView.tsx       # Buy list card view (merges pokemon + mtg entries, list/grid with compact toggle)
     data-table.tsx        # Generic TanStack React Table wrapper
@@ -106,6 +107,7 @@ app/
 components/ui/            # shadcn/ui primitives (do not edit directly unless customizing)
 lib/
   utils.ts                # cn() utility (clsx + tailwind-merge)
+  purchase-planning.ts    # Planner read-model types, demand ordering, and summary calculations
   card-search.ts          # Shared search-term semantics for every curator card search
                           # (Card Index catalogs, curation override picker, match-review
                           # dialog): name/set/number text, card uid (full or the displayed
@@ -294,6 +296,22 @@ No frontend event action changes a market listing, signal, price, or ranking.
 - Sidebar shows all buy lists with a create dialog (uses Field/FieldGroup/Label pattern).
 - Clicking a game in sidebar clears `activeBuylistId` to return to CardBrowser.
 
+### Customer purchase planner
+
+- `PurchasePlannerView.tsx` is the pre-order workspace registered under Customers.
+It keeps purchase intent separate from inventory and presents the same plan through card-oriented and customer-oriented tabs.
+- A plan line is an exact catalog item and grade with quantity, source availability, observed source price, and landed cost.
+- Primary assignments consume both the line quantity and the selected wishlist or criteria quantity.
+Ranked backups point to a primary assignment but consume neither capacity until a later promotion.
+- The candidate view deduplicates a customer who matches through multiple demand origins while the assignment form still records the exact origin being satisfied.
+- Requested and committed demand appears in the coverage tab even when no planned card can satisfy it.
+The operator must record deferred, unavailable, or out-of-scope outcomes when leaving demand uncovered intentionally.
+- The review dialog calls database validation immediately before both the ready and ordered transitions.
+Blockers stop the transition, while warnings require explicit acknowledgement.
+- `CustomersView.tsx` captures quantity, intent, expiry, and grade bounds on exact wants and quantity, intent, and expiry on criteria wants.
+- `lib/purchase-planning.ts` contains pure ordering and summary behavior covered by `lib/purchase-planning.test.ts`.
+- Backend architecture and invariants are documented in `docs/customer_purchase_planning.md` in the backend repository.
+
 ### Sealed Products (Pokémon)
 
 The **Sealed** tab is a parallel path to the card browser (`Game` union includes `"pokemon_sealed"`),
@@ -338,6 +356,11 @@ own data hook and modal, because sealed products differ structurally from cards:
 | `pokemon_sealed_price_summaries` | (product_id, sealed_condition, variant_edition) PK, best_buy_*, best_sell_*, roi, updated_at |
 | `pokemon_sealed_summaries_v` / `_best_v` (views) | flat card-shaped projection of summaries+products; `_best_v` = DISTINCT ON product (best ROI) |
 | `pokemon_sealed_buylist_entries` | entry_id (PK), buylist_id (FK→buylists), product_id (FK→pokemon_sealed_products), sealed_condition, variant_edition, target_price_usd, notes, added_at |
+| `customer_wishlist` / `customer_wish_criteria` | exact or broad customer demand, priority, target quantity, intent, optional expiry, and price or grade constraints |
+| `purchase_plans` | plan_id, name, status, trip_id, budget, reviewed_at, ordered_at |
+| `purchase_plan_lines` | exact card or sealed product, grade, planned quantity, source snapshot, original price, and landed cost |
+| `purchase_plan_allocations` | primary or ranked backup customer, demand origin, quantity, price expectation, and lifecycle status |
+| `purchase_plan_lines_v` / `purchase_plan_coverage_v` | card-oriented allocation ledger and customer-oriented demand coverage ledger |
 
 Sealed enums: `sealed_condition_enum` (shrink/no_shrink/standard), `sealed_edition_enum` (1ed/unlimited/standard).
 

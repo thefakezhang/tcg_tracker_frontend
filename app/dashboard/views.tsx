@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import {
   Boxes, CalendarDays, ClipboardCheck, DollarSign, Filter, Landmark, Library,
-  Map as MapIcon, Receipt, ScanSearch, Send, Users, Activity, type LucideIcon } from "lucide-react";
+  Map as MapIcon, Receipt, ScanSearch, Send, ShoppingBasket, Users, Activity, type LucideIcon } from "lucide-react";
 import type { TranslationKey } from "@/lib/i18n";
 import TripsOverview from "./TripsOverview";
 import InventoryView from "./InventoryView";
@@ -15,6 +15,7 @@ import EventsCalendarView from "./EventsCalendarView";
 import CustomersView from "./CustomersView";
 import ReachOutView from "./ReachOutView";
 import ShoppingListView from "./ShoppingListView";
+import PurchasePlannerView from "./PurchasePlannerView";
 import FinancesView from "./FinancesView";
 import ExpensesTab from "./trip/ExpensesTab";
 import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNavigationContext";
@@ -60,6 +61,7 @@ export const VIEWS: ViewDef[] = [
   { sentinel: -7, group: "customers.section", icon: Users, sidebarKey: "customers.title", titleKey: "customers.title", render: () => <CustomersView key="customers" /> },
   { sentinel: -8, group: "customers.section", icon: Send, sidebarKey: "reachout.title", titleKey: "reachout.title", render: () => <ReachOutView key="reachout" /> },
   { sentinel: -10, group: "customers.section", icon: Filter, sidebarKey: "shoppingList.title", titleKey: "shoppingList.title", render: () => <ShoppingListView key="shopping-list" /> },
+  { sentinel: -14, group: "customers.section", icon: ShoppingBasket, sidebarKey: "purchasePlanner.title", titleKey: "purchasePlanner.title", render: () => <PurchasePlannerView key="purchase-planner" /> },
   { sentinel: 0, group: "sidebar.trips", icon: MapIcon, sidebarKey: "trips.overviewTitle", titleKey: "trips.overviewTitle", render: () => <TripsOverview key="trips-overview" /> },
   { sentinel: -1, group: "sidebar.trips", icon: Boxes, sidebarKey: "inventory.title", titleKey: "inventory.title", render: () => <InventoryView key="inventory" /> },
   { sentinel: -2, group: "sidebar.trips", icon: DollarSign, sidebarKey: "sales.allTitle", titleKey: "sales.allTitle", render: () => <SalesView key="sales" /> },
