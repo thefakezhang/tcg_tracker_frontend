@@ -19,7 +19,9 @@ describe("decisionSnapshot", () => {
       bandP10: 80, bandP25: 90, bandP50: 100, bandP75: 110, lastSaleJpy: 100, lastSaleAt: null,
       trendSlope: null, trendDirection: "flat", compCountRecent: 4, compCountLifetime: 8,
       listingCount: 2, sellThrough: 0.5, clearingVsAsk: 0.9, daysToExitEst: 20,
-      cohort: "Test", pop: 10, popVelocity: 1, flags: {},
+      cohort: "Test", pop: 10, popVelocity: 1, entryAtDefault: 70, netAtDefault: 10,
+      annualizedAtDefault: 0.2, exitPlatform: "ebay", rawToGradeEvUsd: null,
+      relativeValuePct: 0.1, flags: {},
     };
     const snapshot = decisionSnapshot(row, signal);
     expect(snapshot.signal).toEqual(signal);

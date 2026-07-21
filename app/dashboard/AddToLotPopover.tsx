@@ -17,7 +17,7 @@ interface Cond {
 }
 
 type AddToLotProps =
-  | { mode: "single"; game: "pokemon" | "mtg"; cardId: string | number; psaGrade: number; decisionSnapshot?: Record<string, unknown> }
+  | { mode: "single"; game: "pokemon" | "mtg"; cardId: string | number; psaGrade: number; decisionSnapshot?: Record<string, unknown>; entryPriceUsd?: number | null }
   | { mode: "sealed"; productId: string | number; sealedCondition: string; variantEdition: string };
 
 // Mirrors the "Add to Buy List" popover, but a lot line also needs a quantity
@@ -62,7 +62,7 @@ export function AddToLotPopover(props: AddToLotProps) {
     // The override is entered in the chosen lot's currency; convert to the
     // stored USD via that lot's FX rate (USD lots pass through unchanged).
     const ovNative = override.trim() === "" ? null : Number(override);
-    const ov = ovNative == null ? null
+    const ov = ovNative == null ? (props.mode === "single" ? props.entryPriceUsd ?? null : null)
       : lot.orig_currency === "USD" ? ovNative
       : Math.round(ovNative * (lot.fx_rate_used || 1) * 1e6) / 1e6;
     if (props.mode === "single") {

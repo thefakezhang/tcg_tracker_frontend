@@ -37,6 +37,12 @@ export interface GradeSignal {
   cohort: string | null;
   pop: number | null;
   popVelocity: number | null;
+  entryAtDefault: number | null;
+  netAtDefault: number | null;
+  annualizedAtDefault: number | null;
+  exitPlatform: string | null;
+  rawToGradeEvUsd: number | null;
+  relativeValuePct: number | null;
   flags: GradeSignalFlags;
 }
 
@@ -96,6 +102,12 @@ export function parseGradeSignal(row: Record<string, unknown>): GradeSignal {
     cohort: row.cohort == null ? null : String(row.cohort),
     pop: nullableNumber(row.pop),
     popVelocity: nullableNumber(row.pop_velocity),
+    entryAtDefault: nullableNumber(row.entry_at_default),
+    netAtDefault: nullableNumber(row.net_at_default),
+    annualizedAtDefault: nullableNumber(row.annualized_at_default),
+    exitPlatform: row.exit_platform == null ? null : String(row.exit_platform),
+    rawToGradeEvUsd: nullableNumber(row.raw_to_grade_ev_usd),
+    relativeValuePct: nullableNumber(row.relative_value_pct),
     flags,
   };
 }
@@ -127,8 +139,9 @@ export function signalForRow(row: CardRowData, signals: GradeSignal[]): GradeSig
 
 export function isHighValueWeakEvidence(signal: GradeSignal | null | undefined): boolean {
   if (!signal) return false;
-  const value = signal.bandP50 ?? signal.bestJpBidJpy;
-  if (value == null || value < 50_000) return false;
+  // Grade bands are USD. JP bids are JPY and cannot be used as a fallback
+  // without the as-of exchange rate, so keep this filter currency-safe.
+  if (signal.bandP50 == null || signal.bandP50 < 300) return false;
   return signal.tier !== "tier_1" && signal.tier !== "tier_2";
 }
 
