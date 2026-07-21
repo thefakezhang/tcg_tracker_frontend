@@ -22,6 +22,7 @@ import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNa
 
 type HealthRow = {
   run_date: string;
+  computed_at: string;
   source: string;
   rows_written: number | null;
   match_rate: number | null;
@@ -122,6 +123,7 @@ export default function SourceHealthView() {
   const [rows, setRows] = useState<HealthRow[]>([]);
   const [prev, setPrev] = useState<Map<string, HealthRow>>(new Map());
   const [runDate, setRunDate] = useState<string | null>(null);
+  const [computedAt, setComputedAt] = useState<string | null>(null);
   const [calibration, setCalibration] = useState<CalibrationRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -154,12 +156,18 @@ export default function SourceHealthView() {
     if (all.length === 0) {
       setRows([]);
       setRunDate(null);
+      setComputedAt(null);
       return;
     }
     const latest = all[0].run_date;
     const priorDate = all.find((r) => r.run_date !== latest)?.run_date ?? null;
+    const latestRows = all.filter((r) => r.run_date === latest);
     setRunDate(latest);
-    setRows(all.filter((r) => r.run_date === latest).sort((a, b) => a.source.localeCompare(b.source)));
+    setComputedAt(latestRows.reduce<string | null>((newest, row) => {
+      if (!row.computed_at) return newest;
+      return newest == null || row.computed_at > newest ? row.computed_at : newest;
+    }, null));
+    setRows(latestRows.sort((a, b) => a.source.localeCompare(b.source)));
     setPrev(new Map(all.filter((r) => r.run_date === priorDate).map((r) => [r.source, r])));
   }, []);
 
@@ -196,12 +204,23 @@ export default function SourceHealthView() {
     onDrillDown: () => drillToQueue(source),
   });
 
+  const snapshotAgeHours = computedAt == null
+    ? null
+    : Math.max(0, (Date.now() - new Date(computedAt).getTime()) / 3_600_000);
+
   return (
     <div className="space-y-3 p-4">
-      <div className="flex items-center gap-3">
-        <h2 className="text-sm font-medium">
-          {runDate ? t("health.asOf", { date: runDate }) : t("health.title")}
-        </h2>
+      <div className="flex flex-wrap items-center gap-3">
+        <div>
+          <h2 className="text-sm font-medium">
+            {runDate ? t("health.asOf", { date: runDate }) : t("health.title")}
+          </h2>
+          {computedAt && (
+            <p className="text-muted-foreground text-xs">
+              {t("health.computedAt", { time: new Date(computedAt).toLocaleString() })}
+            </p>
+          )}
+        </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
           {loading ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
           {t("health.reload")}
@@ -209,6 +228,12 @@ export default function SourceHealthView() {
       </div>
 
       {error && <p className="text-destructive text-sm">{error}</p>}
+
+      {snapshotAgeHours != null && snapshotAgeHours >= 30 && (
+        <p className="text-amber-600 dark:text-amber-400 text-sm" role="status">
+          {t("health.snapshotStale", { hours: Math.floor(snapshotAgeHours) })}
+        </p>
+      )}
 
       {!loading && rows.length === 0 && !error && (
         <p className="text-muted-foreground text-sm">{t("health.empty")}</p>
