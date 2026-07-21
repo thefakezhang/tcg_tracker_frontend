@@ -6,6 +6,12 @@ import { type Game, type PsaMode } from "./GameContext";
 import { exitValue, latestSignals, signalForRow, type GradeSignal } from "./grade-signals";
 import type { ExitPercentile } from "./ExitBasisContext";
 import { selectAllByIds } from "@/lib/supabase/select-all";
+import {
+  bestOpportunity,
+  parseExitCostProfile,
+  type CalculatedDealEconomics,
+  type ExitCostProfile,
+} from "./deal-economics";
 
 // Sealed entries point at the sealed tables/views for type-exhaustiveness; the
 // sealed tab uses its own hook (use-sealed-data.ts), so the card path here never
@@ -116,6 +122,20 @@ export interface CardRowData {
   prices: PriceSummary;
   roi: number | null;
   signal?: GradeSignal | null;
+  deal?: CalculatedDealEconomics | null;
+  rawToGradeEvUsd?: number | null;
+  rawToGradeNetUsd?: number | null;
+  dealRelativeValuePct?: number | null;
+  exitCostProfile?: ExitCostProfile | null;
+  jpyUsd?: number | null;
+  fxAsOf?: string | null;
+  changepoint?: {
+    detectedOn: string;
+    direction: string;
+    magnitude: number;
+    eventTitle: string | null;
+    unexplained: boolean;
+  } | null;
 }
 
 // Cache exchange rates per session
@@ -196,6 +216,10 @@ const SORT_COLUMN_MAP: Record<string, string> = {
   lowestSell: "best_sell_normalized",
   highestBuy: "best_buy_normalized",
   psa_grade: "psa_grade",
+  annualized: "deal_annualized",
+  dealNet: "deal_net_usd",
+  rawToGrade: "raw_to_grade_ev_usd",
+  relativeValue: "deal_relative_value_pct",
 };
 
 interface SummaryRow {
@@ -215,6 +239,12 @@ interface SummaryRow {
   best_sell_region: string | null;
   best_sell_normalized: number | null;
   roi: number | null;
+  best_opportunity_grade: number | null;
+  deal_net_usd: number | null;
+  deal_annualized: number | null;
+  raw_to_grade_ev_usd: number | null;
+  deal_relative_value_pct: number | null;
+  deal_updated_at: string | null;
   // Joined card definition (keyed by the actual table name at runtime)
   [key: string]: unknown;
 }
@@ -254,6 +284,8 @@ function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRowData {
     psaGrade: row.psa_grade > 0 ? row.psa_grade : undefined,
     prices,
     roi: row.roi ?? null,
+    rawToGradeEvUsd: row.raw_to_grade_ev_usd == null ? null : Number(row.raw_to_grade_ev_usd),
+    dealRelativeValuePct: row.deal_relative_value_pct == null ? null : Number(row.deal_relative_value_pct),
   };
 }
 
@@ -457,21 +489,66 @@ export function useCardData(options: {
     if (activeGame === "pokemon" && cardRows.length > 0) {
       const cardIds = [...new Set(cardRows.map((row) => Number(row.card.card_id)))];
       try {
-        const signalRows = await selectAllByIds<Record<string, unknown>>(
-          cardIds,
-          ["card_id", "psa_grade", "model_version"],
-          (chunk) => supabase
-            .from("pokemon_grade_signals")
-            .select("card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, flags")
-            .in("card_id", chunk),
-        );
+        const changepointCutoff = new Date();
+        changepointCutoff.setDate(changepointCutoff.getDate() - 180);
+        const [signalRows, profileResult, fxResult, changepointResult] = await Promise.all([
+          selectAllByIds<Record<string, unknown>>(
+            cardIds,
+            ["card_id", "psa_grade", "model_version"],
+            (chunk) => supabase
+              .from("pokemon_grade_signals")
+              .select("card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, entry_at_default, net_at_default, annualized_at_default, exit_platform, raw_to_grade_ev_usd, relative_value_pct, flags")
+              .in("card_id", chunk),
+          ),
+          supabase.from("exit_cost_profiles").select("platform, fee_pct, fixed_fee, shipping_jpy, grading_cost_jpy, grading_days, margin_pct, floor_usd, updated_at").eq("platform", "ebay").maybeSingle(),
+          supabase.from("exchange_rates").select("rate, last_updated").eq("from_currency", "JPY").eq("to_currency", "USD").maybeSingle(),
+          supabase.from("cohort_changepoint_annotations_v").select("cohort, detected_on, direction, magnitude, event_title, unexplained").gte("detected_on", changepointCutoff.toISOString().slice(0, 10)).order("detected_on", { ascending: false }),
+        ]);
         if (abort.signal.aborted) return;
         const signals = latestSignals(signalRows);
-        cardRows = cardRows.map((row) => ({ ...row, signal: signalForRow(row, signals) }));
-        if (sortColumn === "conservativeExit") {
+        const profile = profileResult.data ? parseExitCostProfile(profileResult.data as Record<string, unknown>) : null;
+        const jpyUsd = fxResult.data?.rate == null ? null : Number(fxResult.data.rate);
+        const fxAsOf = fxResult.data?.last_updated == null ? null : String(fxResult.data.last_updated);
+        const byCard = new Map<number, GradeSignal[]>();
+        const changepoints = new Map<string, { detectedOn: string; direction: string; magnitude: number; eventTitle: string | null; unexplained: boolean }>();
+        for (const row of (changepointResult.data ?? []) as Record<string, unknown>[]) {
+          const cohort = String(row.cohort);
+          if (!changepoints.has(cohort)) changepoints.set(cohort, {
+            detectedOn: String(row.detected_on), direction: String(row.direction), magnitude: Number(row.magnitude),
+            eventTitle: row.event_title == null ? null : String(row.event_title), unexplained: Boolean(row.unexplained),
+          });
+        }
+        for (const signal of signals) {
+          const list = byCard.get(signal.cardId) ?? [];
+          list.push(signal);
+          byCard.set(signal.cardId, list);
+        }
+        cardRows = cardRows.map((row) => {
+          const cardSignals = byCard.get(Number(row.card.card_id)) ?? [];
+          const deal = profile && jpyUsd ? bestOpportunity(cardSignals, exitPercentile, profile, jpyUsd) : null;
+          const rawEV = cardSignals.find((signal) => signal.rawToGradeEvUsd != null)?.rawToGradeEvUsd ?? row.rawToGradeEvUsd ?? null;
+          const rawEntry = row.psaGrade == null ? row.prices.lowestSell?.normalizedPrice ?? null : null;
+          return {
+            ...row,
+            signal: signalForRow(row, signals),
+            deal,
+            rawToGradeEvUsd: rawEV,
+            rawToGradeNetUsd: rawEV != null && rawEntry != null ? rawEV - rawEntry : null,
+            dealRelativeValuePct: deal?.signal.relativeValuePct ?? row.dealRelativeValuePct ?? null,
+            exitCostProfile: profile,
+            jpyUsd,
+            fxAsOf,
+            changepoint: deal?.signal.cohort ? changepoints.get(deal.signal.cohort) ?? null : null,
+          };
+        });
+        if (sortColumn === "conservativeExit" || (exitPercentile !== 25 && ["annualized", "dealNet"].includes(sortColumn))) {
           cardRows.sort((a, b) => {
-            const av = exitValue(a.signal, exitPercentile);
-            const bv = exitValue(b.signal, exitPercentile);
+            const av = sortColumn === "conservativeExit"
+              ? exitValue(a.signal, exitPercentile)
+              : sortColumn === "annualized" ? a.deal?.annualized ?? null : a.deal?.netPnlUsd ?? null;
+            const bv = sortColumn === "conservativeExit"
+              ? exitValue(b.signal, exitPercentile)
+              : sortColumn === "annualized" ? b.deal?.annualized ?? null : b.deal?.netPnlUsd ?? null;
             if (av == null && bv == null) return 0;
             if (av == null) return 1;
             if (bv == null) return -1;

@@ -166,10 +166,14 @@ export default function CardDetailModal({
   const [savingTargetPrice, setSavingTargetPrice] = useState(false);
   const [jpExclusive, setJpExclusive] = useState(false);
   const [savingJp, setSavingJp] = useState(false);
+  const [askingPrice, setAskingPrice] = useState("");
+  const [askingCurrency, setAskingCurrency] = useState<"JPY" | "USD">("JPY");
 
   // Sync the manual JP-exclusive flag from the opened card.
   useEffect(() => {
     setJpExclusive(!!card?.card.is_japan_exclusive);
+    setAskingPrice("");
+    setAskingCurrency("JPY");
   }, [card]);
 
   const toggleJpExclusive = useCallback(async () => {
@@ -339,6 +343,10 @@ export default function CardDetailModal({
     def.card_number && def.card_number !== "UNKNOWN" ? def.card_number : null;
   const misc =
     def.misc_info && def.misc_info !== "UNKNOWN" ? def.misc_info : null;
+  const askingNumber = Number(askingPrice);
+  const askingPriceUsd = askingPrice.trim() === "" || !Number.isFinite(askingNumber) || askingNumber <= 0
+    ? null
+    : askingCurrency === "USD" ? askingNumber : askingNumber * (rateMap.get("JPY") ?? 0);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -481,6 +489,10 @@ export default function CardDetailModal({
             cardId={Number(def.card_id)}
             setCode={def.set_code}
             listingFreshnessLabel={t("evidence.listingFreshness")}
+            askingPrice={askingPrice}
+            askingCurrency={askingCurrency}
+            onAskingPriceChange={setAskingPrice}
+            onAskingCurrencyChange={setAskingCurrency}
           />
         )}
 
@@ -597,6 +609,7 @@ export default function CardDetailModal({
               cardId={card.card.card_id}
               psaGrade={activeTab === "psa" ? (card.psaGrade ?? 0) : 0}
               decisionSnapshot={decisionSnapshot(card, card.signal)}
+              entryPriceUsd={askingPriceUsd}
             />
           </div>
         )}

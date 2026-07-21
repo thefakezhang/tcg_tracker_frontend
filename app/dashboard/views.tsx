@@ -53,9 +53,9 @@ export interface ViewDef {
 export const VIEWS: ViewDef[] = [
   { sentinel: -3, group: "curation.title", icon: ScanSearch, sidebarKey: "curation.needsReview", titleKey: "curation.title", render: () => <CurationView key="curation" /> },
   { sentinel: -9, group: "curation.title", icon: ScanSearch, sidebarKey: "curation.titleSealed", titleKey: "curation.titleSealed", render: () => <SealedCurationView key="sealed-curation" /> },
-  { sentinel: -12, group: "curation.title", icon: Activity, sidebarKey: "sidebar.sourceHealth", titleKey: "health.title", render: () => <SourceHealthView key="source-health" /> },
   { sentinel: -5, group: "catalog.section", icon: Library, sidebarKey: "catalog.index", titleKey: "catalog.index", render: () => <CardIndexView key="card-index" /> },
   { sentinel: MATCH_REVIEW_SENTINEL, group: "catalog.section", icon: ClipboardCheck, sidebarKey: "review.title", titleKey: "review.title", render: () => <RoutedMatchReviewView key="match-review" /> },
+  { sentinel: -12, group: "catalog.section", icon: Activity, sidebarKey: "sidebar.sourceHealth", titleKey: "health.title", render: () => <SourceHealthView key="source-health" /> },
   { sentinel: -13, group: "catalog.section", icon: CalendarDays, sidebarKey: "events.title", titleKey: "events.title", render: () => <EventsCalendarView key="events-calendar" /> },
   { sentinel: -7, group: "customers.section", icon: Users, sidebarKey: "customers.title", titleKey: "customers.title", render: () => <CustomersView key="customers" /> },
   { sentinel: -8, group: "customers.section", icon: Send, sidebarKey: "reachout.title", titleKey: "reachout.title", render: () => <ReachOutView key="reachout" /> },

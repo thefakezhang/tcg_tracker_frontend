@@ -14,6 +14,8 @@ import AccountingRollupView from "./AccountingRollupView";
 import JournalEntryDialog, { type GlAccount } from "./JournalEntryDialog";
 import AccountRegisterModal from "./AccountRegisterModal";
 import { formatUsd as usd } from "@/lib/money";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import ExitCostSettings from "./ExitCostSettings";
 
 // Business-level financials, all derived from the general ledger (docs/general_ledger.md).
 
@@ -46,6 +48,7 @@ export default function FinancesView() {
   const [cashFlow, setCashFlow] = useState<CashFlowRow[]>([]);
   const [entryOpen, setEntryOpen] = useState(false);
   const [register, setRegister] = useState<GlAccount | null>(null);
+  const [section, setSection] = useState<"overview" | "exit-costs">("overview");
 
   const fetchAll = useCallback(async () => {
     const supabase = createClient();
@@ -90,6 +93,10 @@ export default function FinancesView() {
 
   return (
     <div className="space-y-6">
+      <Tabs value={section} onValueChange={(value) => setSection(value as "overview" | "exit-costs")}>
+        <TabsList><TabsTrigger value="overview">{t("finances.overview")}</TabsTrigger><TabsTrigger value="exit-costs">{t("economics.costProfiles")}</TabsTrigger></TabsList>
+      </Tabs>
+      {section === "exit-costs" ? <ExitCostSettings /> : <>
       <div className="flex justify-end">
         <Button size="sm" onClick={() => setEntryOpen(true)}><Plus className="size-4 mr-1" />{t("gl.newEntry")}</Button>
       </div>
@@ -236,6 +243,7 @@ export default function FinancesView() {
 
       <JournalEntryDialog accounts={accounts} open={entryOpen} onOpenChange={setEntryOpen} onPosted={fetchAll} />
       <AccountRegisterModal account={register} accounts={accounts} onClose={() => setRegister(null)} onReclassified={fetchAll} />
+      </>}
     </div>
   );
 }

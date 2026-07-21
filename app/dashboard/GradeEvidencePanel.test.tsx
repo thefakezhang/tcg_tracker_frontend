@@ -7,7 +7,21 @@ import { ExitBasisProvider } from "./ExitBasisContext";
 import GradeEvidencePanel from "./GradeEvidencePanel";
 import { selectAll } from "@/lib/supabase/select-all";
 
-vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({}) }));
+vi.mock("@/lib/supabase/client", () => ({
+  createClient: () => ({
+    from: (table: string) => {
+      const result = table === "exit_cost_profiles"
+        ? { data: { platform: "ebay", fee_pct: 0.136, fixed_fee: 0.4, shipping_jpy: 1000, grading_cost_jpy: 3500, grading_days: 45, margin_pct: 0.15, floor_usd: 0, updated_at: "2026-07-20T00:00:00Z" } }
+        : { data: { rate: 0.0065, last_updated: "2026-07-20T00:00:00Z" } };
+      const chain = {
+        select: () => chain,
+        eq: () => chain,
+        maybeSingle: () => Promise.resolve(result),
+      };
+      return chain;
+    },
+  }),
+}));
 vi.mock("@/lib/supabase/select-all", () => ({ selectAll: vi.fn() }));
 vi.mock("./use-card-data", () => ({
   fetchLocationMap: vi.fn().mockResolvedValue(new Map([[5, { name: "cardrush", marketRegion: "JP" }]])),
@@ -22,10 +36,10 @@ const signal = {
   best_jp_bid_jpy: 60_000,
   best_jp_bid_location: 5,
   best_jp_bid_age_days: 12,
-  band_p10: 80_000,
-  band_p25: 90_000,
-  band_p50: 100_000,
-  band_p75: 120_000,
+  band_p10: 800,
+  band_p25: 900,
+  band_p50: 1000,
+  band_p75: 1200,
   trend_direction: "rising",
   comp_count_recent: 2,
   comp_count_lifetime: 8,
@@ -73,7 +87,7 @@ describe("GradeEvidencePanel", () => {
     );
 
     await waitFor(() => expect(screen.getByText("PSA 10")).toBeTruthy());
-    expect(screen.getAllByText("¥90,000")).toHaveLength(2);
+    expect(screen.getAllByText("$900.00")).toHaveLength(2);
     expect(screen.getByText("Thin evidence")).toBeTruthy();
     expect(screen.getByText("Cohort-derived 40% own")).toBeTruthy();
     expect(screen.getByText("50%")).toBeTruthy();

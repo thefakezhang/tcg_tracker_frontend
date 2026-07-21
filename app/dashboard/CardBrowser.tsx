@@ -83,7 +83,7 @@ export default function CardBrowser() {
   const [roiFloor, setRoiFloor] = useState<string>("");
   const [roiCeiling, setRoiCeiling] = useState<string>("");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
-  const [sortColumn, setSortColumn] = useState("roi");
+  const [sortColumn, setSortColumn] = useState(activeGame === "pokemon" ? "annualized" : "roi");
   const [sortAsc, setSortAsc] = useState(false);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
@@ -151,6 +151,8 @@ export default function CardBrowser() {
     setMinSellPrice("");
     setRoiFloor("");
     setRoiCeiling("");
+    setSortColumn(activeGame === "pokemon" ? "annualized" : "roi");
+    setSortAsc(false);
     setPage(0);
     // MTG isn't PSA-graded — keep it in non-PSA (condition) mode.
     if (activeGame === "mtg") setPsaMode("non-psa");

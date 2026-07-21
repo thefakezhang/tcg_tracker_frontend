@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDownRight, ArrowRight, ArrowUpRight, CircleAlert, Database, Gauge, LineChart, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
@@ -20,18 +21,27 @@ import {
   type SignalEvent,
   type SlabSale,
 } from "./grade-signals";
+import { calculateDealEconomics, parseExitCostProfile, type ExitCostProfile } from "./deal-economics";
 
 interface GradeEvidencePanelProps {
   card: CardRowData;
   cardId: number;
   setCode: string;
   listingFreshnessLabel: string;
+  askingPrice?: string;
+  askingCurrency?: "JPY" | "USD";
+  onAskingPriceChange?: (value: string) => void;
+  onAskingCurrencyChange?: (value: "JPY" | "USD") => void;
 }
 
-const SIGNAL_COLUMNS = "card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, flags";
+const SIGNAL_COLUMNS = "card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, entry_at_default, net_at_default, annualized_at_default, exit_platform, raw_to_grade_ev_usd, relative_value_pct, flags";
 
 function moneyJpy(value: number | null): string {
   return value == null ? "-" : `¥${Math.round(value).toLocaleString()}`;
+}
+
+function moneyUsd(value: number | null): string {
+  return value == null ? "-" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value);
 }
 
 function percentage(value: number | null): string {
@@ -131,12 +141,18 @@ function GradeEvidenceCard({
   events,
   bidLocation,
   card,
+  askingUsd,
+  profile,
+  jpyUsd,
 }: {
   signal: GradeSignal;
   sales: SlabSale[];
   events: SignalEvent[];
   bidLocation: string | null;
   card: CardRowData;
+  askingUsd: number | null;
+  profile: ExitCostProfile | null;
+  jpyUsd: number | null;
 }) {
   const { t } = useTranslation();
   const { exitPercentile } = useExitBasis();
@@ -144,6 +160,9 @@ function GradeEvidenceCard({
   const basis = exitValue(signal, exitPercentile);
   const pricePerPop = basis != null && signal.pop != null && signal.pop > 0 ? basis / signal.pop : null;
   const hasSparkline = sales.filter((sale) => sale.saleDate).length >= 2;
+  const economics = askingUsd != null && profile && jpyUsd
+    ? calculateDealEconomics(signal, exitPercentile, askingUsd, profile, jpyUsd, card.psaGrade == null)
+    : null;
 
   return (
     <section className="rounded-lg border bg-card p-3 shadow-xs">
@@ -155,7 +174,7 @@ function GradeEvidenceCard({
         </div>
         <div className="text-right">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">P{exitPercentile} {t("evidence.conservativeExit")}</div>
-          <div className="font-semibold tabular-nums">{moneyJpy(basis)}</div>
+          <div className="font-semibold tabular-nums">{moneyUsd(basis)}</div>
         </div>
       </div>
 
@@ -166,10 +185,10 @@ function GradeEvidenceCard({
       )}
 
       <div className="mt-3 grid grid-cols-4 gap-2 rounded-md bg-muted/40 p-2">
-        <Metric label="P10" value={moneyJpy(signal.bandP10)} />
-        <Metric label="P25" value={moneyJpy(signal.bandP25)} />
-        <Metric label="P50" value={moneyJpy(signal.bandP50)} />
-        <Metric label="P75" value={moneyJpy(signal.bandP75)} />
+        <Metric label="P10" value={moneyUsd(signal.bandP10)} />
+        <Metric label="P25" value={moneyUsd(signal.bandP25)} />
+        <Metric label="P50" value={moneyUsd(signal.bandP50)} />
+        <Metric label="P75" value={moneyUsd(signal.bandP75)} />
       </div>
 
       <div className="mt-3">
@@ -191,12 +210,29 @@ function GradeEvidenceCard({
         <Metric label={t("evidence.bestJpBid")} value={<span>{moneyJpy(signal.bestJpBidJpy)}{bidLocation ? <span className="block text-xs font-normal text-muted-foreground">{bidLocation}</span> : null}</span>} />
         <Metric label={t("evidence.bidHeld")} value={signal.bestJpBidAgeDays == null ? t("evidence.unknown") : t("evidence.days", { count: signal.bestJpBidAgeDays })} />
         <Metric label={t("evidence.population")} value={signal.pop ?? "-"} />
-        <Metric label={t("evidence.pricePerPop")} value={pricePerPop == null ? "-" : moneyJpy(pricePerPop)} />
+        <Metric label={t("evidence.pricePerPop")} value={pricePerPop == null ? "-" : moneyUsd(pricePerPop)} />
         <Metric label={t("evidence.popVelocity")} value={signal.popVelocity == null ? t("evidence.notEnoughHistory") : `${signal.popVelocity >= 0 ? "+" : ""}${signal.popVelocity.toFixed(1)}`} />
         <Metric label={t("evidence.exitEstimate")} value={signal.daysToExitEst == null ? "-" : t("evidence.days", { count: Math.round(signal.daysToExitEst) })} />
         <Metric label={t("evidence.cohort")} value={signal.cohort ?? "-"} />
         <Metric label={t("evidence.model")} value={signal.modelVersion} />
+        <Metric label={t("economics.rawEv")} value={moneyUsd(signal.rawToGradeEvUsd)} />
+        <Metric label={t("economics.relativeValue")} value={percentage(signal.relativeValuePct)} />
       </div>
+      {askingUsd != null && (
+        <div className="mt-3 rounded-md border bg-muted/30 p-3">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide">{t("economics.whatIf")}</div>
+          {economics ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Metric label={t("economics.entry")} value={moneyUsd(economics.entryUsd)} />
+              <Metric label={t("economics.netProceeds")} value={moneyUsd(economics.netProceedsUsd)} />
+              <Metric label={t("economics.netProfit")} value={moneyUsd(economics.netPnlUsd)} />
+              <Metric label={t("economics.annualized")} value={economics.annualized == null ? "-" : `${(economics.annualized * 100).toFixed(1)}%`} />
+            </div>
+          ) : (
+            <div className="text-xs text-muted-foreground">{t("economics.unbounded")}</div>
+          )}
+        </div>
+      )}
       <div className="mt-3 flex justify-end border-t pt-3">
         <DecisionActions row={card} grade={signal.psaGrade} signal={signal} />
       </div>
@@ -204,7 +240,7 @@ function GradeEvidenceCard({
   );
 }
 
-export default function GradeEvidencePanel({ card, cardId, setCode, listingFreshnessLabel }: GradeEvidencePanelProps) {
+export default function GradeEvidencePanel({ card, cardId, setCode, listingFreshnessLabel, askingPrice = "", askingCurrency = "JPY", onAskingPriceChange = () => {}, onAskingCurrencyChange = () => {} }: GradeEvidencePanelProps) {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const { exitPercentile, setExitPercentile } = useExitBasis();
@@ -212,6 +248,9 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
   const [sales, setSales] = useState<SlabSale[]>([]);
   const [events, setEvents] = useState<SignalEvent[]>([]);
   const [locations, setLocations] = useState<Map<number, string>>(new Map());
+  const [profile, setProfile] = useState<ExitCostProfile | null>(null);
+  const [jpyUsd, setJpyUsd] = useState<number | null>(null);
+  const [fxAsOf, setFxAsOf] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -232,7 +271,9 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
         ["event_id"],
       ),
       fetchLocationMap(supabase),
-    ]).then(([signalRows, saleRows, eventRows, locationMap]) => {
+      supabase.from("exit_cost_profiles").select("platform, fee_pct, fixed_fee, shipping_jpy, grading_cost_jpy, grading_days, margin_pct, floor_usd, updated_at").eq("platform", "ebay").maybeSingle(),
+      supabase.from("exchange_rates").select("rate, last_updated").eq("from_currency", "JPY").eq("to_currency", "USD").maybeSingle(),
+    ]).then(([signalRows, saleRows, eventRows, locationMap, profileResult, fxResult]) => {
       if (cancelled) return;
       setSignals(latestSignals(signalRows));
       setSales(saleRows.map((row) => ({
@@ -253,6 +294,9 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
         confidence: String(row.confidence),
       })).filter((event) => eventAppliesToCard(event, cardId, setCode)));
       setLocations(new Map([...locationMap.entries()].map(([id, location]) => [id, location.name])));
+      setProfile(profileResult.data ? parseExitCostProfile(profileResult.data as Record<string, unknown>) : null);
+      setJpyUsd(fxResult.data?.rate == null ? null : Number(fxResult.data.rate));
+      setFxAsOf(fxResult.data?.last_updated == null ? null : String(fxResult.data.last_updated));
       setLoading(false);
     }).catch((error) => {
       if (cancelled) return;
@@ -264,6 +308,10 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
   }, [cardId, setCode]);
 
   const newestSnapshot = useMemo(() => signals.reduce<string | null>((newest, signal) => !newest || signal.computedAt > newest ? signal.computedAt : newest, null), [signals]);
+  const askingNumber = Number(askingPrice);
+  const askingUsd = askingPrice.trim() === "" || !Number.isFinite(askingNumber) || askingNumber <= 0
+    ? null
+    : askingCurrency === "USD" ? askingNumber : jpyUsd == null ? null : askingNumber * jpyUsd;
 
   return (
     <div className="mt-4 space-y-3 border-t pt-4">
@@ -285,6 +333,20 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
         </label>
       </div>
 
+      <div className="flex flex-wrap items-end gap-2 rounded-lg border bg-card p-3">
+        <label className="min-w-40 flex-1 text-xs text-muted-foreground">
+          {t("economics.askingPrice")}
+          <Input className="mt-1" type="number" min="0" inputMode="decimal" value={askingPrice} onChange={(event) => onAskingPriceChange(event.target.value)} placeholder={t("economics.askingPlaceholder")} />
+        </label>
+        <select className="h-9 rounded-md border bg-background px-3 text-sm" value={askingCurrency} onChange={(event) => onAskingCurrencyChange(event.target.value as "JPY" | "USD")}>
+          <option value="JPY">JPY</option><option value="USD">USD</option>
+        </select>
+        <div className="min-w-52 text-xs text-muted-foreground">
+          <div>{askingUsd == null ? t("economics.enterAsk") : `${t("economics.entryUsd")}: ${moneyUsd(askingUsd)}`}</div>
+          <div>{jpyUsd == null ? t("economics.fxUnavailable") : `1 JPY = ${jpyUsd.toFixed(8)} USD · ${fxAsOf ? new Date(fxAsOf).toLocaleDateString(language) : "-"}`}</div>
+        </div>
+      </div>
+
       {loading ? (
         <div className="grid gap-3 md:grid-cols-2"><Skeleton className="h-80" /><Skeleton className="h-80" /></div>
       ) : signals.length === 0 ? (
@@ -299,6 +361,9 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
               events={events}
               bidLocation={signal.bestJpBidLocation == null ? null : locations.get(signal.bestJpBidLocation) ?? null}
               card={card}
+              askingUsd={askingUsd}
+              profile={profile}
+              jpyUsd={jpyUsd}
             />
           ))}
         </div>

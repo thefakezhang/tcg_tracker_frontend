@@ -47,6 +47,14 @@ function formatRoi(roi: number | null): string {
   return `${Math.round(roi * 100) / 100}%`;
 }
 
+function usd(value: number | null | undefined): string {
+  return value == null ? "-" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value);
+}
+
+function signedPercent(value: number | null | undefined): string {
+  return value == null ? "-" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
+}
+
 export function ConservativeExitCell({ row }: { row: CardRowData }) {
   const { t } = useTranslation();
   const { exitPercentile } = useExitBasis();
@@ -60,7 +68,7 @@ export function ConservativeExitCell({ row }: { row: CardRowData }) {
   ].filter(Boolean);
   return (
     <div className="min-w-28">
-      <div className="font-medium tabular-nums">¥{Math.round(value).toLocaleString()}</div>
+      <div className="font-medium tabular-nums">{usd(value)}</div>
       <div className="text-[10px] text-muted-foreground">
         P{exitPercentile} · {t("evidence.compCountShort", { recent: signal.compCountRecent ?? 0, lifetime: signal.compCountLifetime ?? 0 })}
       </div>
@@ -230,6 +238,54 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
       accessorFn: (row) => row.signal?.bandP25 ?? undefined,
       header: ({ column }) => <SortableHeader column={column} label={t("column.conservativeExit")} />,
       cell: ({ row }) => <ConservativeExitCell row={row.original} />,
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+    {
+      id: "annualized",
+      accessorFn: (row) => row.deal?.annualized ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.annualized")} />,
+      cell: ({ row }) => {
+        const deal = row.original.deal;
+        if (!deal || deal.annualized == null) return <span className="text-muted-foreground">-</span>;
+        return (
+          <div className="min-w-24">
+            <div className={`font-semibold tabular-nums ${deal.annualized < 0 ? "text-destructive" : "text-emerald-600"}`}>{signedPercent(deal.annualized)}</div>
+            <div className="text-[10px] text-muted-foreground">PSA {deal.signal.psaGrade} · {Math.round(deal.signal.daysToExitEst ?? 0)}d</div>
+            {row.original.changepoint && <Badge variant="outline" className="mt-1 h-auto border-amber-500/60 px-1 py-0 text-[9px] text-amber-700">{row.original.changepoint.unexplained ? t("economics.unexplainedBreak") : row.original.changepoint.eventTitle ?? t("economics.regimeBreak")}</Badge>}
+          </div>
+        );
+      },
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+    {
+      id: "dealNet",
+      accessorFn: (row) => row.deal?.netPnlUsd ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.dealNet")} />,
+      cell: ({ row }) => <span className={`font-medium tabular-nums ${(row.original.deal?.netPnlUsd ?? 0) < 0 ? "text-destructive" : ""}`}>{usd(row.original.deal?.netPnlUsd)}</span>,
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+    {
+      id: "rawToGrade",
+      accessorFn: (row) => row.rawToGradeNetUsd ?? row.rawToGradeEvUsd ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.rawToGrade")} />,
+      cell: ({ row }) => {
+        const net = row.original.rawToGradeNetUsd;
+        const value = net ?? row.original.rawToGradeEvUsd;
+        return value == null ? <span className="text-muted-foreground">-</span> : (
+          <div><div className="font-medium tabular-nums">{usd(value)}</div><div className="text-[10px] text-muted-foreground">{net == null ? t("economics.evBeforeEntry") : t("economics.evAfterEntry")}</div></div>
+        );
+      },
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+    },
+    {
+      id: "relativeValue",
+      accessorFn: (row) => row.dealRelativeValuePct ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.relativeValue")} />,
+      cell: ({ row }) => <span className="tabular-nums">{signedPercent(row.original.dealRelativeValuePct)}</span>,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
     },
