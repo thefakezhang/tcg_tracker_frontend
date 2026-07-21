@@ -280,6 +280,9 @@ It never merges the two singles definitions, since they can represent distinct s
 ### Source-health drill-down (D4)
 
 - Every red metric in `SourceHealthView` is a button that opens the Pokémon Match Review queue with that health row's exact source filter.
+- The board is a materialized snapshot, not a live view.
+  It shows the newest `computed_at`, warns after 30 hours, labels the legacy `rows_written` value as the current listing count, and calls the read-only button "Reload view" so a database reread is not mistaken for a recompute.
+- Match rate is durable confirmed-link coverage against durable confirmed links plus the still-pending candidate queue, not matcher accuracy.
 - The same view reads the newest immutable `calibration_runs` row and surfaces its sample count, band coverage, bias, and representative-price recommendation.
   A zero-overlap run is explicitly a watch state and never presents a fabricated percentile.
 - Dashboard navigation is sentinel-based rather than URL-based.

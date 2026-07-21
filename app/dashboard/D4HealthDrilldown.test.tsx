@@ -42,6 +42,7 @@ vi.mock("@/lib/supabase/client", () => ({
       limit: async () => ({
         data: [{
           run_date: "2026-07-20",
+          computed_at: "2026-07-20T04:36:57Z",
           source: "big_tcg",
           rows_written: 100,
           match_rate: 0.95,
@@ -108,6 +109,17 @@ afterEach(() => {
 });
 
 describe("D4 source-health drill-down", () => {
+  it("shows when the materialized snapshot was actually computed", async () => {
+    render(
+      <ReviewQueueNavigationProvider>
+        <Harness />
+      </ReviewQueueNavigationProvider>,
+    );
+
+    expect(await screen.findByText("health.computedAt")).toBeTruthy();
+    expect(screen.getByText("health.snapshotStale")).toBeTruthy();
+  });
+
   it("shows a watch state instead of a recommendation when history has no comp overlap", async () => {
     render(
       <ReviewQueueNavigationProvider>
