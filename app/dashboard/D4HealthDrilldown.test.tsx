@@ -56,7 +56,24 @@ vi.mock("@/lib/supabase/client", () => ({
         error: null,
       }),
     };
-    return { from: () => query };
+    const calibrationQuery = {
+      select: () => calibrationQuery,
+      order: () => calibrationQuery,
+      limit: async () => ({
+        data: [{
+          run_at: "2026-07-20T23:07:00Z",
+          model_version: "s2-v2",
+          sample_count: 0,
+          contained_count: 0,
+          coverage_rate: 0,
+          mean_signed_error_pct: 0,
+          recommended_percentile: null,
+          report: { realized_sales: 406, sales_with_comp_key: 0 },
+        }],
+        error: null,
+      }),
+    };
+    return { from: (table: string) => table === "calibration_runs" ? calibrationQuery : query };
   },
 }));
 
@@ -91,6 +108,17 @@ afterEach(() => {
 });
 
 describe("D4 source-health drill-down", () => {
+  it("shows a watch state instead of a recommendation when history has no comp overlap", async () => {
+    render(
+      <ReviewQueueNavigationProvider>
+        <Harness />
+      </ReviewQueueNavigationProvider>,
+    );
+
+    expect(await screen.findByText("health.calibrationWatch")).toBeTruthy();
+    expect(screen.queryByText("P50")).toBeNull();
+  });
+
   it("takes a deliberately failed source to the matching filtered Pokémon queue", async () => {
     render(
       <ReviewQueueNavigationProvider>

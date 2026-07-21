@@ -1,14 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { normalizePlatformID, platformIDFromURL, platformSearchURL } from "./platform-url";
+import {
+  normalizePlatformID,
+  platformIDFromURL,
+  platformSearchURL,
+  platformUrl,
+  pokemonSinglePlatforms,
+} from "./platform-url";
 
 describe("platformIDFromURL", () => {
   it.each([
     ["https://www.tcgplayer.com/product/517824/pokemon-japan-x", "tcgplayer", "517824"],
     ["https://snkrdunk.com/tcg/pokemon/products/98765", "snkrdunk", "98765"],
     ["https://snkrdunk.com/trading-cards/98765", "snkrdunk", "98765"],
+    ["https://snkrdunk.com/en/trading-cards/91276?slide=right", "snkrdunk", "91276"],
     ["https://app.collectr.com/product/618166", "collectr", "618166"],
     ["https://app.getcollectr.com/explore/product/618166", "collectr", "618166"],
     ["https://www.suruga-ya.jp/product/detail/123456789?foo=bar", "surugaya", "123456789"],
+    ["https://card-kingdom.jp/pokemon/products/detail/506", "cardkingdom", "506"],
   ])("extracts %s", (url, platform, id) => {
     expect(platformIDFromURL(url)).toEqual({ platform, id });
   });
@@ -26,6 +34,42 @@ describe("platformIDFromURL", () => {
   it("rejects an unknown host and a known host with the wrong route", () => {
     expect(platformIDFromURL("https://example.com/product/517824")).toBeNull();
     expect(platformIDFromURL("https://www.tcgplayer.com/search/product/517824")).toBeNull();
+  });
+});
+
+describe("pokemonSinglePlatforms", () => {
+  it("exposes the curated Card Kingdom and Shinsoku identifiers in the Card Index", () => {
+    expect(pokemonSinglePlatforms).toContain("cardkingdom");
+    expect(pokemonSinglePlatforms).toContain("shinsoku");
+  });
+});
+
+describe("platformUrl", () => {
+  it("uses Snkrdunk's current public singles route", () => {
+    expect(platformUrl("snkrdunk", "91276", "single"))
+      .toBe("https://snkrdunk.com/en/trading-cards/91276");
+  });
+
+  it("links numeric Card Kingdom sell ids but not content-keyed buylist ids", () => {
+    expect(platformUrl("cardkingdom", "506"))
+      .toBe("https://card-kingdom.jp/pokemon/products/detail/506");
+    expect(platformUrl("cardkingdom", "psa10:397/SM-P")).toBe("");
+  });
+
+  it("uses a stored Shinsoku sell product URL without treating the IAP handle as a product id", () => {
+    expect(platformUrl("shinsoku", "IAP2300023540")).toBe("");
+    expect(platformUrl(
+      "shinsoku",
+      "IAP2300023540",
+      "single",
+      "https://www.cardshop-shinsoku.jp/product/1484?ignored=1",
+    )).toBe("https://www.cardshop-shinsoku.jp/product/1484");
+    expect(platformUrl(
+      "shinsoku",
+      "IAP2300023540",
+      "single",
+      "https://example.com/product/1484",
+    )).toBe("");
   });
 });
 
