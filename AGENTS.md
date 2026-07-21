@@ -218,6 +218,8 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 - Has its own tier filter dropdown.
 - Uses `useCurrency()` for price conversion in `ListingTable`.
 - "Add to Buy List" button (popover) lets users save cards to any buy list.
+- For Pokémon, the PSA tab also reads the latest `pokemon_grade_signals` row per grade and renders D3 population, band-price-per-pop, and 30-day population velocity.
+  Population velocity stays explicitly unavailable until the delta-only observation history spans at least 14 days.
 
 ### Card Index link attachment (R1)
 
@@ -232,6 +234,8 @@ When a platform has a stable public search route, the modal links directly to a 
 ### Source-health drill-down (D4)
 
 - Every red metric in `SourceHealthView` is a button that opens the Pokémon Match Review queue with that health row's exact source filter.
+- The same view reads the newest immutable `calibration_runs` row and surfaces its sample count, band coverage, bias, and representative-price recommendation.
+  A zero-overlap run is explicitly a watch state and never presents a fabricated percentile.
 - Dashboard navigation is sentinel-based rather than URL-based.
 `ReviewQueueNavigationContext` carries a one-shot `{ game, source }` target to `RoutedMatchReviewView`; the route captures and consumes it so a later ordinary sidebar visit starts unfiltered.
 - `MatchReviewView` accepts `initialGame` and `initialSource` props.
@@ -285,6 +289,8 @@ own data hook and modal, because sealed products differ structurally from cards:
 | `conditions` | condition_id, tier |
 | `locations` | location_id, name |
 | `pokemon_price_summaries` / `mtg_price_summaries` | card_id, tier (-1 for PSA), psa_grade, best_buy_*, best_sell_*, roi, updated_at |
+| `pokemon_grade_signals` | card_id, psa_grade, model_version, computed_at, band percentiles, pop, pop_velocity, demand and exit evidence |
+| `calibration_runs` | immutable model calibration headline fields plus detailed percentile, segment, decision, miss, and full-report JSON |
 | `buylists` | buylist_id (PK), name, description, created_at, updated_at |
 | `pokemon_buylist_entries` / `mtg_buylist_entries` | entry_id (PK), buylist_id (FK→buylists), card_id (FK→*_card_definitions), psa_grade (0-10, default 0), target_price_usd (numeric, nullable), notes, added_at |
 | `pokemon_sealed_products` | product_id (PK), name, english_name, set_code, variant_edition, product_type, language, misc_info, image_url |

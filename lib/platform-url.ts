@@ -7,9 +7,29 @@
 // has no stable per-item page (an identity key, a bare SKU, a cert), so callers
 // fall back to plain text.
 //
-// snkrdunk is the one platform whose URL depends on the catalog: singles live at
-// /tcg/pokemon/products/, sealed at /apparels/. Pass kind accordingly.
+// snkrdunk is the one platform whose URL depends on the catalog: singles use
+// the public /en/trading-cards/ route, while the sealed pricing pipeline still
+// uses /apparels/. Pass kind accordingly.
 const NUMERIC = /^\d+$/;
+
+/** Platforms an operator can attach to a Pokemon single in the Card Index. */
+export const pokemonSinglePlatforms = [
+  "tcgplayer",
+  "snkrdunk",
+  "pricecharting",
+  "collectr",
+  "cardladder",
+  "cardkingdom",
+  "shinsoku",
+  "surugaya",
+  "expedition_gaming",
+  "tcgplayer_SKU",
+] as const;
+
+/** Source chips that can gate the singles catalog by a durable identifier. */
+export const pokemonSingleFilterPlatforms = pokemonSinglePlatforms.filter(
+  (platform) => platform !== "tcgplayer_SKU",
+);
 
 export interface NormalizedPlatformID {
   platform: string;
@@ -46,7 +66,7 @@ export function platformIDFromURL(raw: string): { platform: string; id: string }
     return id ? { platform: "tcgplayer", id } : null;
   }
   if (host === "snkrdunk.com") {
-    const id = pathMatch(url, /^\/(?:tcg\/pokemon\/products|trading-cards|apparels)\/([A-Za-z0-9_-]+)(?:\/|$)/);
+    const id = pathMatch(url, /^\/(?:tcg\/pokemon\/products|(?:en\/)?trading-cards|apparels)\/([A-Za-z0-9_-]+)(?:\/|$)/);
     return id ? { platform: "snkrdunk", id } : null;
   }
   if (host === "pricecharting.com") {
@@ -75,6 +95,10 @@ export function platformIDFromURL(raw: string): { platform: string; id: string }
   if (host === "suruga-ya.jp") {
     const id = pathMatch(url, /^\/product\/detail\/([A-Za-z0-9_-]+)(?:\/|$)/);
     return id ? { platform: "surugaya", id } : null;
+  }
+  if (host === "card-kingdom.jp") {
+    const id = pathMatch(url, /^\/pokemon\/products\/detail\/(\d+)(?:\/|$)/);
+    return id ? { platform: "cardkingdom", id } : null;
   }
   return null;
 }
@@ -122,6 +146,7 @@ export function platformUrl(
   platform: string,
   id: string,
   kind: "single" | "sealed" = "single",
+  listingUrl?: string | null,
 ): string {
   if (!platform || !id) return "";
   switch (platform) {
@@ -132,7 +157,7 @@ export function platformUrl(
     case "snkrdunk":
       return kind === "sealed"
         ? `https://snkrdunk.com/apparels/${id}`
-        : `https://snkrdunk.com/tcg/pokemon/products/${id}`;
+        : `https://snkrdunk.com/en/trading-cards/${id}`;
     case "collectr":
       return `https://app.collectr.com/product/${id}`;
     case "cardrush":
@@ -144,6 +169,22 @@ export function platformUrl(
     case "cardkingdom":
       // Sell ids are numeric EC-CUBE product ids; buylist keys (psa10:…) have no page.
       return NUMERIC.test(id) ? `https://card-kingdom.jp/pokemon/products/detail/${id}` : "";
+    case "shinsoku": {
+      // The IAP external id is an identity handle, not the Ochanoko product id.
+      // A direct page is available only when the sell populator persisted the
+      // scraper's validated per-listing URL.
+      if (!listingUrl) return "";
+      try {
+        const url = new URL(listingUrl);
+        return url.protocol === "https:"
+          && normalizedHost(url) === "cardshop-shinsoku.jp"
+          && /^\/product\/\d+$/.test(url.pathname)
+          ? `https://www.cardshop-shinsoku.jp${url.pathname}`
+          : "";
+      } catch {
+        return "";
+      }
+    }
     case "big_tcg": {
       // Sell ids are "sell:NNN" ocnk product ids; identity keys have no page.
       const n = id.startsWith("sell:") ? id.slice(5) : "";

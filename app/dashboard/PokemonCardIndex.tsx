@@ -6,7 +6,13 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
 import { externalIdMatches, searchOrFilter } from "@/lib/card-search";
 import { uploadCardImage } from "@/lib/upload-card-image";
-import { normalizePlatformID, platformSearchURL, platformUrl } from "@/lib/platform-url";
+import {
+  normalizePlatformID,
+  platformSearchURL,
+  platformUrl,
+  pokemonSingleFilterPlatforms,
+  pokemonSinglePlatforms,
+} from "@/lib/platform-url";
 import { ZoomableImage } from "@/components/ui/zoomable-image";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
@@ -35,6 +41,8 @@ interface AttachReport {
 interface CardLink {
   platform_name: string;
   external_reference_id: string;
+  listing_url?: string | null;
+  listing_only?: boolean;
 }
 interface IndexCard {
   card_id: number;
@@ -50,14 +58,16 @@ interface IndexCard {
 }
 
 const COLS = "card_id, card_uid, regional_name, english_name, set_code, card_number, language, misc_info, image_url";
-const PLATFORMS = ["tcgplayer", "snkrdunk", "pricecharting", "collectr", "cardladder", "surugaya", "expedition_gaming", "tcgplayer_SKU"];
-const PLATFORM_SHORT: Record<string, string> = { tcgplayer: "TCG", snkrdunk: "SNKR", pricecharting: "PC", collectr: "COLL", cardladder: "CL", surugaya: "SRG", expedition_gaming: "EXP", tcgplayer_SKU: "SKU" };
+const PLATFORMS = pokemonSinglePlatforms;
+const PLATFORM_SHORT: Record<string, string> = { tcgplayer: "TCG", snkrdunk: "SNKR", pricecharting: "PC", collectr: "COLL", cardladder: "CL", cardkingdom: "CK", shinsoku: "SHIN", surugaya: "SRG", expedition_gaming: "EXP", tcgplayer_SKU: "SKU" };
 const PLATFORM_HINT_KEYS: Record<string, TranslationKey> = {
   tcgplayer: "cardIndex.linkFormat.tcgplayer",
   snkrdunk: "cardIndex.linkFormat.snkrdunk",
   pricecharting: "cardIndex.linkFormat.pricecharting",
   collectr: "cardIndex.linkFormat.collectr",
   cardladder: "cardIndex.linkFormat.cardladder",
+  cardkingdom: "cardIndex.linkFormat.cardkingdom",
+  shinsoku: "cardIndex.linkFormat.shinsoku",
   surugaya: "cardIndex.linkFormat.surugaya",
   expedition_gaming: "cardIndex.linkFormat.expedition",
   tcgplayer_SKU: "cardIndex.linkFormat.tcgplayerSku",
@@ -66,7 +76,7 @@ const selectClass = "h-9 rounded-md border bg-transparent px-2 text-sm focus:out
 
 // Platform axis for the chip filter above the results table. Kept in sync
 // with PLATFORMS/PLATFORM_SHORT above so the filter list can't drift.
-const FILTERABLE_PLATFORMS = ["tcgplayer", "snkrdunk", "pricecharting", "collectr", "cardladder", "surugaya", "expedition_gaming"] as const;
+const FILTERABLE_PLATFORMS = pokemonSingleFilterPlatforms;
 
 async function fetchIndex(
   search: string,
@@ -129,17 +139,67 @@ async function fetchIndex(
     // One card fans out to ~6 platform links, so a full catalog page (500) asks
     // for ~3000 rows and PostgREST silently truncates at 1000 - cards past the
     // cutoff would render with no anchors at all. selectAll pages instead.
-    const links = await selectAll<{ card_id: number } & CardLink>(
-      () => supabase
-        .from("pokemon_external_identifiers")
-        .select("card_id, platform_name, external_reference_id")
-        .in("card_id", ids),
-      ["card_id", "platform_name"],
-    );
+    const [links, shinsokuLocation] = await Promise.all([
+      selectAll<{ card_id: number } & CardLink>(
+        () => supabase
+          .from("pokemon_external_identifiers")
+          .select("card_id, platform_name, external_reference_id")
+          .in("card_id", ids),
+        ["card_id", "platform_name"],
+      ),
+      supabase.from("locations").select("location_id").eq("name", "shinsoku").maybeSingle(),
+    ]);
+    if (shinsokuLocation.error) throw shinsokuLocation.error;
+    const shinsokuURL = new Map<number, string>();
+    if (shinsokuLocation.data?.location_id != null) {
+      // A card can have several condition-specific Shinsoku product pages.
+      // Select the cheapest current Sell row deterministically for the compact
+      // Card Index chip; the detail modal continues to expose every listing.
+      const rows = await selectAll<{
+        card_id: number;
+        condition: number | null;
+        psa_grade: number | null;
+        price: number;
+        listing_url: string;
+      }>(
+        () => supabase
+          .from("pokemon_market_listings")
+          .select("card_id, condition, psa_grade, price, listing_url")
+          .in("card_id", ids)
+          .eq("location_id", shinsokuLocation.data.location_id)
+          .eq("price_type", "Sell")
+          .not("listing_url", "is", null),
+        ["card_id", "price", "condition", "psa_grade"],
+      );
+      for (const row of rows) {
+        if (!shinsokuURL.has(row.card_id)) shinsokuURL.set(row.card_id, row.listing_url);
+      }
+    }
+    const shinsokuIdentityCards = new Set<number>();
     for (const l of links) {
       const arr = linkMap.get(l.card_id) ?? [];
-      arr.push({ platform_name: l.platform_name, external_reference_id: l.external_reference_id });
+      if (l.platform_name === "shinsoku") shinsokuIdentityCards.add(l.card_id);
+      arr.push({
+        platform_name: l.platform_name,
+        external_reference_id: l.external_reference_id,
+        listing_url: l.platform_name === "shinsoku" ? shinsokuURL.get(l.card_id) ?? null : null,
+      });
       linkMap.set(l.card_id, arr);
+    }
+    // A current sell product is useful even when the card has not acquired a
+    // Shinsoku IAP identity row yet. Keep this presentation-only link out of the
+    // identity editor while still exposing it in the compact index.
+    for (const [cardID, listingURL] of shinsokuURL) {
+      if (shinsokuIdentityCards.has(cardID)) continue;
+      const productID = listingURL.match(/\/product\/(\d+)$/)?.[1] ?? "sell";
+      const arr = linkMap.get(cardID) ?? [];
+      arr.push({
+        platform_name: "shinsoku",
+        external_reference_id: productID,
+        listing_url: listingURL,
+        listing_only: true,
+      });
+      linkMap.set(cardID, arr);
     }
   }
   return {
@@ -282,7 +342,7 @@ function CardsTab() {
                         <span className="text-xs text-muted-foreground">{t("cardIndex.noLinks")}</span>
                       ) : (
                         c.links.map((l) => {
-                          const url = platformUrl(l.platform_name, l.external_reference_id);
+                          const url = platformUrl(l.platform_name, l.external_reference_id, "single", l.listing_url);
                           const label = `${PLATFORM_SHORT[l.platform_name] ?? l.platform_name} ${l.external_reference_id}`;
                           return url ? (
                             <a key={l.platform_name + l.external_reference_id} href={url} target="_blank" rel="noreferrer" className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted">
@@ -354,7 +414,7 @@ function PokemonCardModal({
   // Local mirror of the card's links. The attach flow keeps the modal OPEN (an
   // operator attaching one id usually has several), so the rendered list cannot
   // come from the `card` prop - that snapshot goes stale the moment we attach.
-  const [links, setLinks] = useState<CardLink[]>(card?.links ?? []);
+  const [links, setLinks] = useState<CardLink[]>((card?.links ?? []).filter((l) => !l.listing_only));
   // What the last attach actually did: which queued candidates it answered, and
   // whether it silently overwrote an id that was already in that slot.
   const [attachInfo, setAttachInfo] = useState<AttachReport | null>(null);
@@ -384,7 +444,7 @@ function PokemonCardModal({
     setLinkPlatform("tcgplayer");
     setNewLinks([]);
     setUploadFile(null);
-    setLinks(card?.links ?? []);
+    setLinks((card?.links ?? []).filter((l) => !l.listing_only));
     setAttachInfo(null);
     if (isCreate || !card) setForm({ ...BLANK });
     else setForm({

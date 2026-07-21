@@ -34,6 +34,20 @@ type HealthRow = {
   notes: Record<string, unknown> | null;
 };
 
+type CalibrationRun = {
+  run_at: string;
+  model_version: string;
+  sample_count: number;
+  contained_count: number;
+  coverage_rate: number | null;
+  mean_signed_error_pct: number | null;
+  recommended_percentile: number | null;
+  report: {
+    realized_sales?: number;
+    sales_with_comp_key?: number;
+  } | null;
+};
+
 type Level = "ok" | "warn" | "bad";
 
 /**
@@ -108,6 +122,7 @@ export default function SourceHealthView() {
   const [rows, setRows] = useState<HealthRow[]>([]);
   const [prev, setPrev] = useState<Map<string, HealthRow>>(new Map());
   const [runDate, setRunDate] = useState<string | null>(null);
+  const [calibration, setCalibration] = useState<CalibrationRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -116,12 +131,21 @@ export default function SourceHealthView() {
     setError(null);
     const supabase = createClient();
     // Two most recent days only: the board is "today vs yesterday", not a history.
-    const { data, error: qErr } = await supabase
-      .from("source_health")
-      .select("*")
-      .order("run_date", { ascending: false })
-      .limit(400);
+    const [{ data, error: qErr }, { data: calibrationData }] = await Promise.all([
+      supabase
+        .from("source_health")
+        .select("*")
+        .order("run_date", { ascending: false })
+        .limit(400),
+      supabase
+        .from("calibration_runs")
+        .select("run_at,model_version,sample_count,contained_count,coverage_rate,mean_signed_error_pct,recommended_percentile,report")
+        .order("run_at", { ascending: false })
+        .limit(1),
+    ]);
     setLoading(false);
+    const latestCalibration = (calibrationData?.[0] ?? null) as CalibrationRun | null;
+    setCalibration(latestCalibration?.run_at ? latestCalibration : null);
     if (qErr) {
       setError(qErr.message);
       return;
@@ -239,6 +263,48 @@ export default function SourceHealthView() {
       )}
 
       <p className="text-muted-foreground text-xs">{t("health.legend")}</p>
+
+      {calibration && (
+        <section className="rounded-md border p-4" aria-label={t("health.calibrationTitle")}>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-sm font-medium">{t("health.calibrationTitle")}</h3>
+            <span className="text-muted-foreground text-xs">
+              {calibration.model_version} - {new Date(calibration.run_at).toLocaleDateString()}
+            </span>
+          </div>
+          <p className={`mt-2 text-sm font-medium ${calibration.sample_count > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+            {calibration.sample_count > 0
+              ? t("health.calibrationReady")
+              : t("health.calibrationWatch")}
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+            <div>
+              <div className="text-muted-foreground text-xs">{t("health.calibrationSamples")}</div>
+              <div>{calibration.sample_count}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">{t("health.calibrationCoverage")}</div>
+              <div>{calibration.sample_count > 0 && calibration.coverage_rate != null ? `${Math.round(calibration.coverage_rate * 100)}%` : "-"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">{t("health.calibrationBias")}</div>
+              <div>{calibration.sample_count > 0 && calibration.mean_signed_error_pct != null ? `${calibration.mean_signed_error_pct.toFixed(1)}%` : "-"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">{t("health.calibrationRecommendation")}</div>
+              <div>{calibration.recommended_percentile == null ? "-" : `P${calibration.recommended_percentile}`}</div>
+            </div>
+          </div>
+          {calibration.sample_count === 0 && (
+            <p className="text-muted-foreground mt-3 text-xs">
+              {t("health.calibrationOverlap", {
+                matched: calibration.report?.sales_with_comp_key ?? 0,
+                realized: calibration.report?.realized_sales ?? 0,
+              })}
+            </p>
+          )}
+        </section>
+      )}
 
       <DuplicateConflictsPanel />
 
