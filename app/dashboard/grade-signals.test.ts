@@ -41,9 +41,10 @@ describe("grade signal presentation helpers", () => {
   });
 
   it("surfaces high-value rows whose evidence is below Tier 1 or 2", () => {
-    expect(isHighValueWeakEvidence(parseGradeSignal({ ...base, band_p50: 750, tier: "tier_3_ask" }))).toBe(true);
-    expect(isHighValueWeakEvidence(parseGradeSignal({ ...base, band_p50: 750, tier: "tier_2" }))).toBe(false);
-    expect(isHighValueWeakEvidence(parseGradeSignal({ ...base, band_p50: null, best_jp_bid_jpy: 75_000, tier: "tier_3_ask" }))).toBe(false);
+    expect(isHighValueWeakEvidence(parseGradeSignal({ ...base, band_p50: 50_000, tier: "tier_3_ask" }), 0.0065)).toBe(true);
+    expect(isHighValueWeakEvidence(parseGradeSignal({ ...base, band_p50: 50_000, tier: "tier_2" }), 0.0065)).toBe(false);
+    expect(isHighValueWeakEvidence(parseGradeSignal({ ...base, band_p50: 50_000, tier: "tier_3_ask" }), null)).toBe(false);
+    expect(isHighValueWeakEvidence(parseGradeSignal({ ...base, band_p50: null, best_jp_bid_jpy: 75_000, tier: "tier_3_ask" }), 0.0065)).toBe(false);
   });
 
   it("matches global, set, and explicit card events", () => {

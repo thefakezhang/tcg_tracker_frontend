@@ -36,10 +36,10 @@ const signal = {
   best_jp_bid_jpy: 60_000,
   best_jp_bid_location: 5,
   best_jp_bid_age_days: 12,
-  band_p10: 800,
-  band_p25: 900,
-  band_p50: 1000,
-  band_p75: 1200,
+  band_p10: 80_000,
+  band_p25: 90_000,
+  band_p50: 100_000,
+  band_p75: 120_000,
   trend_direction: "rising",
   comp_count_recent: 2,
   comp_count_lifetime: 8,
@@ -87,7 +87,7 @@ describe("GradeEvidencePanel", () => {
     );
 
     await waitFor(() => expect(screen.getByText("PSA 10")).toBeTruthy());
-    expect(screen.getAllByText("$900.00")).toHaveLength(2);
+    expect(screen.getAllByText("¥90,000")).toHaveLength(2);
     expect(screen.getByText("Thin evidence")).toBeTruthy();
     expect(screen.getByText("Cohort-derived 40% own")).toBeTruthy();
     expect(screen.getByText("50%")).toBeTruthy();

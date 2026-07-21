@@ -174,7 +174,7 @@ function GradeEvidenceCard({
         </div>
         <div className="text-right">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">P{exitPercentile} {t("evidence.conservativeExit")}</div>
-          <div className="font-semibold tabular-nums">{moneyUsd(basis)}</div>
+          <div className="font-semibold tabular-nums">{moneyJpy(basis)}</div>
         </div>
       </div>
 
@@ -185,10 +185,10 @@ function GradeEvidenceCard({
       )}
 
       <div className="mt-3 grid grid-cols-4 gap-2 rounded-md bg-muted/40 p-2">
-        <Metric label="P10" value={moneyUsd(signal.bandP10)} />
-        <Metric label="P25" value={moneyUsd(signal.bandP25)} />
-        <Metric label="P50" value={moneyUsd(signal.bandP50)} />
-        <Metric label="P75" value={moneyUsd(signal.bandP75)} />
+        <Metric label="P10" value={moneyJpy(signal.bandP10)} />
+        <Metric label="P25" value={moneyJpy(signal.bandP25)} />
+        <Metric label="P50" value={moneyJpy(signal.bandP50)} />
+        <Metric label="P75" value={moneyJpy(signal.bandP75)} />
       </div>
 
       <div className="mt-3">
@@ -210,7 +210,7 @@ function GradeEvidenceCard({
         <Metric label={t("evidence.bestJpBid")} value={<span>{moneyJpy(signal.bestJpBidJpy)}{bidLocation ? <span className="block text-xs font-normal text-muted-foreground">{bidLocation}</span> : null}</span>} />
         <Metric label={t("evidence.bidHeld")} value={signal.bestJpBidAgeDays == null ? t("evidence.unknown") : t("evidence.days", { count: signal.bestJpBidAgeDays })} />
         <Metric label={t("evidence.population")} value={signal.pop ?? "-"} />
-        <Metric label={t("evidence.pricePerPop")} value={pricePerPop == null ? "-" : moneyUsd(pricePerPop)} />
+        <Metric label={t("evidence.pricePerPop")} value={pricePerPop == null ? "-" : moneyJpy(pricePerPop)} />
         <Metric label={t("evidence.popVelocity")} value={signal.popVelocity == null ? t("evidence.notEnoughHistory") : `${signal.popVelocity >= 0 ? "+" : ""}${signal.popVelocity.toFixed(1)}`} />
         <Metric label={t("evidence.exitEstimate")} value={signal.daysToExitEst == null ? "-" : t("evidence.days", { count: Math.round(signal.daysToExitEst) })} />
         <Metric label={t("evidence.cohort")} value={signal.cohort ?? "-"} />

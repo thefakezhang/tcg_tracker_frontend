@@ -64,8 +64,9 @@ export function calculateDealEconomics(
   jpyUsd: number,
   includeGrading = false,
 ): CalculatedDealEconomics | null {
-  const exitUsd = exitValue(signal, percentile);
-  if (exitUsd == null || entryUsd <= 0 || signal.daysToExitEst == null) return null;
+  const exitJpy = exitValue(signal, percentile);
+  if (exitJpy == null || entryUsd <= 0 || signal.daysToExitEst == null || jpyUsd <= 0) return null;
+  const exitUsd = exitJpy * jpyUsd;
   const proceeds = netProceedsUsd(exitUsd, profile, jpyUsd, includeGrading);
   const days = signal.daysToExitEst + (includeGrading ? profile.gradingDays ?? 0 : 0);
   return {

@@ -51,6 +51,10 @@ function usd(value: number | null | undefined): string {
   return value == null ? "-" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value);
 }
 
+function jpy(value: number | null | undefined): string {
+  return value == null ? "-" : `¥${Math.round(value).toLocaleString()}`;
+}
+
 function signedPercent(value: number | null | undefined): string {
   return value == null ? "-" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
 }
@@ -68,7 +72,7 @@ export function ConservativeExitCell({ row }: { row: CardRowData }) {
   ].filter(Boolean);
   return (
     <div className="min-w-28">
-      <div className="font-medium tabular-nums">{usd(value)}</div>
+      <div className="font-medium tabular-nums">{jpy(value)}</div>
       <div className="text-[10px] text-muted-foreground">
         P{exitPercentile} · {t("evidence.compCountShort", { recent: signal.compCountRecent ?? 0, lifetime: signal.compCountLifetime ?? 0 })}
       </div>

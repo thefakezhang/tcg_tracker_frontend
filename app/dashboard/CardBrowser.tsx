@@ -121,7 +121,7 @@ export default function CardBrowser() {
     });
 
   const visibleData = useMemo(
-    () => weakEvidenceOnly ? data.filter((row) => isHighValueWeakEvidence(row.signal)) : data,
+    () => weakEvidenceOnly ? data.filter((row) => isHighValueWeakEvidence(row.signal, row.jpyUsd)) : data,
     [data, weakEvidenceOnly],
   );
 
