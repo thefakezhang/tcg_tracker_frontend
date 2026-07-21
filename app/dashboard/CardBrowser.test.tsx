@@ -33,8 +33,8 @@ vi.mock("./columns", () => ({
   createColumns: () => [], createMtgColumns: () => [], selectColumn: {}, PriceCell: () => null,
 }));
 vi.mock("./data-table", () => ({
-  DataTable: ({ viewMode, data, renderGridItem }: { viewMode: "list" | "grid"; data: unknown[]; renderGridItem: (row: unknown) => React.ReactNode }) => (
-    <div data-testid="browse-table" data-view-mode={viewMode}>
+  DataTable: ({ viewMode, data, renderGridItem, sorting }: { viewMode: "list" | "grid"; data: unknown[]; renderGridItem: (row: unknown) => React.ReactNode; sorting: { id: string; desc: boolean }[] }) => (
+    <div data-testid="browse-table" data-view-mode={viewMode} data-sort={`${sorting[0]?.id}:${sorting[0]?.desc ? "desc" : "asc"}`}>
       browse table
       {viewMode === "grid" ? data.map((row, index) => <div key={index}>{renderGridItem(row)}</div>) : null}
     </div>
@@ -57,6 +57,12 @@ beforeEach(() => {
 });
 
 describe("CardBrowser surfaces", () => {
+  it("defaults the opportunity display to highest ROI first", () => {
+    render(<CardBrowser />);
+
+    expect(screen.getByTestId("browse-table").getAttribute("data-sort")).toBe("roi:desc");
+  });
+
   it("switches from Browse to Watchlist without changing the hook count", () => {
     render(<CardBrowser />);
     expect(screen.getByText("browse table")).toBeTruthy();

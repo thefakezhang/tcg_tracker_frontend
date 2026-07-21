@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, Eye, Store } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Eye, EyeOff, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
@@ -49,6 +50,8 @@ export default function DecisionWatchlist() {
   const [rows, setRows] = useState<WatchedDeal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [unwatchingRuleId, setUnwatchingRuleId] = useState<number | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -60,6 +63,18 @@ export default function DecisionWatchlist() {
       setError(true);
     }).finally(() => setLoading(false));
   }, []);
+
+  async function unwatch(ruleId: number) {
+    setActionError(null);
+    setUnwatchingRuleId(ruleId);
+    const { error: unwatchError } = await createClient().rpc("deactivate_deal_watch", { p_rule_id: ruleId });
+    if (unwatchError) {
+      setActionError(unwatchError.message);
+    } else {
+      setRows((current) => current.filter((row) => row.rule_id !== ruleId));
+    }
+    setUnwatchingRuleId(null);
+  }
 
   if (loading) {
     return <div className="h-32 animate-pulse rounded-md bg-muted" />;
@@ -74,8 +89,10 @@ export default function DecisionWatchlist() {
   }
 
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-      {rows.map((row) => {
+    <div className="space-y-3">
+      {actionError ? <div role="alert" className="rounded-md border border-destructive/40 p-3 text-sm text-destructive">{t("decision.unwatchError")}: {actionError}</div> : null}
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {rows.map((row) => {
         const comparable = row.flagged_price != null && row.current_price != null && row.flagged_currency === row.current_currency;
         const movement = comparable ? row.current_price! - row.flagged_price! : null;
         const sightings = row.store_sightings ?? [];
@@ -88,7 +105,19 @@ export default function DecisionWatchlist() {
                   <h3 className="truncate font-medium">{language === "en" && row.english_name ? row.english_name : row.regional_name}</h3>
                   <p className="text-xs text-muted-foreground">{row.set_code} {row.card_number} · {row.psa_grade === 0 ? t("evidence.raw") : `PSA ${row.psa_grade}`}</p>
                 </div>
-                <Badge variant="outline"><Eye className="size-3" />{t("decision.watching")}</Badge>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <Badge variant="outline"><Eye className="size-3" />{t("decision.watching")}</Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                    disabled={unwatchingRuleId === row.rule_id}
+                    onClick={() => unwatch(row.rule_id)}
+                  >
+                    <EyeOff className="size-3.5" />
+                    {unwatchingRuleId === row.rule_id ? t("decision.unwatching") : t("decision.unwatch")}
+                  </Button>
+                </div>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                 <div><div className="text-[10px] uppercase text-muted-foreground">{t("decision.flagged")}</div><div className="font-medium">{price(row.flagged_price, row.flagged_currency)}</div><div className="text-[10px] text-muted-foreground">{new Date(row.decided_at).toLocaleDateString(language)}</div></div>
@@ -126,7 +155,8 @@ export default function DecisionWatchlist() {
             </div>
           </article>
         );
-      })}
+        })}
+      </div>
     </div>
   );
 }

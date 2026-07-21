@@ -91,7 +91,7 @@ app/
     ExitBasisContext.tsx  # Persisted P10/P25/P50 conservative-exit setting
     DecisionActions.tsx   # Shared Watch/Dismiss controls and immutable snapshot builder
     opportunity-exposures.ts # Automatic actual-listing exposure payloads and RPC writer
-    DecisionWatchlist.tsx # Active watch rules with at-watch versus D1-current prices
+    DecisionWatchlist.tsx # Active watch rules with at-watch/current prices and history-preserving Unwatch
     PurchasePlannerView.tsx # Pre-order card plan, customer assignments, backups, coverage, and readiness review
     BuyListContext.tsx     # Buy list state + CRUD operations (fetch, create, delete, add/remove entries)
     BuyListView.tsx       # Buy list card view (merges pokemon + mtg entries, list/grid with compact toggle)
