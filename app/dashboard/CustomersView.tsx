@@ -42,6 +42,11 @@ interface WishlistItem {
   card_id: number | null;
   product_id: number | null;
   max_price_usd: number | null;
+  target_quantity: number;
+  psa_grade_min: number | null;
+  psa_grade_max: number | null;
+  intent: "interest" | "requested" | "committed";
+  intent_expires_at: string | null;
   priority: number;
   status: string;
   notes: string | null;
@@ -78,6 +83,9 @@ interface WishCriteria {
   is_promo: boolean | null;
   price_min_usd: number | null;
   price_max_usd: number | null;
+  target_quantity_total: number;
+  intent: "interest" | "requested" | "committed";
+  intent_expires_at: string | null;
   priority: number;
   status: string;
   notes: string | null;
@@ -784,6 +792,9 @@ function CustomerDetail({
                           ≤${Number(w.max_price_usd).toFixed(0)}
                         </span>
                       )}
+                      <Badge variant={w.intent === "committed" ? "default" : "outline"} className="shrink-0 text-[10px]">
+                        {t(`customers.intent.${w.intent}` as never)} ×{w.target_quantity}
+                      </Badge>
                       <Button variant="ghost" size="icon" className="size-7" onClick={() => removeWish(w.wishlist_id)}>
                         <Trash2 className="size-3.5" />
                       </Button>
@@ -823,6 +834,9 @@ function CustomerDetail({
                     {w.max_price_usd != null && (
                       <div className="text-[10px] text-muted-foreground">≤${Number(w.max_price_usd).toFixed(0)}</div>
                     )}
+                    <div className="text-[10px] text-muted-foreground">
+                      {t(`customers.intent.${w.intent}` as never)} ×{w.target_quantity}
+                    </div>
                     <MarketBreakdown rows={listings.get(wishKey(w))} locations={locations} conditionsMap={conditionsMap} rateMap={rateMap} t={t} />
                   </div>
                 ))}
@@ -867,6 +881,12 @@ function CustomerDetail({
                       ]
                         .filter(Boolean)
                         .join(" · ") || t("customers.criteriaNoFilters")}
+                    </div>
+                    <div className="mt-0.5 flex gap-1">
+                      <Badge variant={c.intent === "committed" ? "default" : "outline"} className="text-[10px]">
+                        {t(`customers.intent.${c.intent}` as never)} ×{c.target_quantity_total}
+                      </Badge>
+                      {c.intent_expires_at && <Badge variant="outline" className="text-[10px]">{t("customers.intentExpires")} {c.intent_expires_at.slice(0, 10)}</Badge>}
                     </div>
                   </div>
                   <Button
@@ -963,6 +983,9 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
   const [priority, setPriority] = useState("3");
+  const [targetQuantity, setTargetQuantity] = useState("1");
+  const [intent, setIntent] = useState<"interest" | "requested" | "committed">("interest");
+  const [intentExpiresAt, setIntentExpiresAt] = useState("");
   const [busy, setBusy] = useState(false);
   const [sets, setSets] = useState<SetOption[]>([]);
 
@@ -990,6 +1013,9 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
       setPromoOnly(false);
       setPriceMin("");
       setPriceMax("");
+      setTargetQuantity("1");
+      setIntent("interest");
+      setIntentExpiresAt("");
     }
   }, [open]);
 
@@ -1010,6 +1036,9 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
       price_min_usd: priceMin ? Number(priceMin) : null,
       price_max_usd: priceMax ? Number(priceMax) : null,
       priority: Number(priority) || 3,
+      target_quantity_total: Math.max(Number(targetQuantity) || 1, 1),
+      intent,
+      intent_expires_at: intentExpiresAt ? new Date(`${intentExpiresAt}T23:59:59`).toISOString() : null,
     });
     setBusy(false);
     onAdded();
@@ -1066,6 +1095,25 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
                     <option key={p} value={p}>P{p}</option>
                   ))}
                 </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div>
+                <Label className="text-xs mb-1 block">{t("customers.intent")}</Label>
+                <select className={selectClass} value={intent} onChange={(e) => setIntent(e.target.value as typeof intent)}>
+                  <option value="interest">{t("customers.intent.interest")}</option>
+                  <option value="requested">{t("customers.intent.requested")}</option>
+                  <option value="committed">{t("customers.intent.committed")}</option>
+                </select>
+              </div>
+              <div>
+                <Label className="text-xs mb-1 block">{t("customers.targetQuantity")}</Label>
+                <Input type="number" min="1" value={targetQuantity} onChange={(e) => setTargetQuantity(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs mb-1 block">{t("customers.intentExpires")}</Label>
+                <Input type="date" value={intentExpiresAt} onChange={(e) => setIntentExpiresAt(e.target.value)} />
               </div>
             </div>
 
@@ -1205,6 +1253,11 @@ function WishlistAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
   const [results, setResults] = useState<{ id: number; label: string }[]>([]);
   const [maxPrice, setMaxPrice] = useState("");
   const [priority, setPriority] = useState("3");
+  const [targetQuantity, setTargetQuantity] = useState("1");
+  const [intent, setIntent] = useState<"interest" | "requested" | "committed">("interest");
+  const [intentExpiresAt, setIntentExpiresAt] = useState("");
+  const [gradeMin, setGradeMin] = useState("0");
+  const [gradeMax, setGradeMax] = useState("10");
 
   useEffect(() => {
     const q = query.trim();
@@ -1222,6 +1275,11 @@ function WishlistAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
       setQuery("");
       setResults([]);
       setMaxPrice("");
+      setTargetQuantity("1");
+      setIntent("interest");
+      setIntentExpiresAt("");
+      setGradeMin("0");
+      setGradeMax("10");
     }
   }, [open]);
 
@@ -1234,6 +1292,11 @@ function WishlistAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
       product_id: game === "pokemon_sealed" ? id : null,
       max_price_usd: maxPrice ? Number(maxPrice) : null,
       priority: Number(priority) || 3,
+      target_quantity: Math.max(Number(targetQuantity) || 1, 1),
+      psa_grade_min: game === "pokemon_sealed" ? null : Number(gradeMin),
+      psa_grade_max: game === "pokemon_sealed" ? null : Number(gradeMax),
+      intent,
+      intent_expires_at: intentExpiresAt ? new Date(`${intentExpiresAt}T23:59:59`).toISOString() : null,
     });
     onAdded();
     setOpen(false);
@@ -1280,6 +1343,41 @@ function WishlistAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
                 ))}
               </select>
             </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div>
+                <Label className="mb-1 block text-xs">{t("customers.intent")}</Label>
+                <select className={selectClass} value={intent} onChange={(e) => setIntent(e.target.value as typeof intent)}>
+                  <option value="interest">{t("customers.intent.interest")}</option>
+                  <option value="requested">{t("customers.intent.requested")}</option>
+                  <option value="committed">{t("customers.intent.committed")}</option>
+                </select>
+              </div>
+              <div>
+                <Label className="mb-1 block text-xs">{t("customers.targetQuantity")}</Label>
+                <Input type="number" min="1" value={targetQuantity} onChange={(e) => setTargetQuantity(e.target.value)} />
+              </div>
+              <div>
+                <Label className="mb-1 block text-xs">{t("customers.intentExpires")}</Label>
+                <Input type="date" value={intentExpiresAt} onChange={(e) => setIntentExpiresAt(e.target.value)} />
+              </div>
+            </div>
+            {game !== "pokemon_sealed" && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="mb-1 block text-xs">{t("customers.gradeMin")}</Label>
+                  <select className={selectClass} value={gradeMin} onChange={(e) => setGradeMin(e.target.value)}>
+                    <option value="0">{t("purchasePlanner.raw")}</option>
+                    {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>PSA {value}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <Label className="mb-1 block text-xs">{t("customers.gradeMax")}</Label>
+                  <select className={selectClass} value={gradeMax} onChange={(e) => setGradeMax(e.target.value)}>
+                    {Array.from({ length: 11 }, (_, value) => value).map((value) => <option key={value} value={value}>{value ? `PSA ${value}` : t("purchasePlanner.raw")}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
             <Input
               autoFocus
               placeholder={t("customers.wishlistSearch")}

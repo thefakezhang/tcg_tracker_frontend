@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import DecisionWatchlist from "./DecisionWatchlist";
 import { selectAll } from "@/lib/supabase/select-all";
+
+const rpc = vi.fn();
 
 vi.mock("@/lib/i18n", () => ({
   useTranslation: () => ({ t: (key: string, params?: { count?: number; value?: string }) => params?.count ?? params?.value ?? key }),
 }));
 vi.mock("./LanguageContext", () => ({ useLanguage: () => ({ language: "en" }) }));
-vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ from: vi.fn() }) }));
+vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ from: vi.fn(), rpc }) }));
 vi.mock("@/lib/supabase/select-all", () => ({ selectAll: vi.fn() }));
 
 afterEach(() => {
@@ -47,5 +49,34 @@ describe("DecisionWatchlist", () => {
     expect(screen.getByText("Store B")).toBeTruthy();
     expect(screen.getByText("decision.cheapest")).toBeTruthy();
     expect(screen.getByText("$6.50")).toBeTruthy();
+  });
+
+  it("unwatches a card and removes it from the active list", async () => {
+    vi.mocked(selectAll).mockResolvedValue([{
+      rule_id: 7,
+      card_id: 42,
+      psa_grade: 10,
+      decided_at: "2026-07-20T10:00:00Z",
+      flagged_price: 1000,
+      flagged_currency: "JPY",
+      current_price: 1100,
+      current_currency: "JPY",
+      current_observed_on: "2026-07-20",
+      reason: null,
+      regional_name: "テスト",
+      english_name: "Test Card",
+      set_code: "M6",
+      card_number: "001",
+      image_url: null,
+      store_sightings: [],
+    }]);
+    rpc.mockResolvedValue({ error: null });
+
+    render(<DecisionWatchlist />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "decision.unwatch" }));
+
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("deactivate_deal_watch", { p_rule_id: 7 }));
+    expect(screen.getByText("decision.emptyWatchlist")).toBeTruthy();
   });
 });
