@@ -48,6 +48,7 @@ import { useExitBasis, type ExitPercentile } from "./ExitBasisContext";
 import { exitValue, isHighValueWeakEvidence } from "./grade-signals";
 import DecisionWatchlist from "./DecisionWatchlist";
 import { DecisionActions } from "./DecisionActions";
+import { browserOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -179,6 +180,14 @@ export default function CardBrowser() {
     setHeaderActions(null);
     return () => setHeaderActions(null);
   }, [setHeaderActions]);
+
+  useEffect(() => {
+    if (activeGame !== "pokemon" || loading || surface !== "browse") return;
+    const exposures = browserOpportunityPayloads(visibleData, viewMode === "grid" ? "browser_grid" : "browser_list");
+    void recordOpportunityExposures(exposures).catch((exposureError) => {
+      console.error("Failed to record displayed opportunities:", exposureError);
+    });
+  }, [activeGame, loading, surface, viewMode, visibleData]);
 
   const handleSortingChange = useCallback(
     (sorting: { id: string; desc: boolean }[]) => {

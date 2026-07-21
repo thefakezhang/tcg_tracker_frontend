@@ -68,6 +68,7 @@ import { FreshnessChip } from "./FreshnessChip";
 import { RefreshPricesAction } from "./RefreshPricesAction";
 import GradeEvidencePanel from "./GradeEvidencePanel";
 import { decisionSnapshot } from "./DecisionActions";
+import { detailOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
 
 const BUYLIST_ENTRY_TABLE: Record<Game, string> = {
   pokemon: "pokemon_buylist_entries",
@@ -272,6 +273,11 @@ export default function CardDetailModal({
       setConditionsMap(conditionsData.map);
       setAvailableTiers(conditionsData.tiers);
       setLoading(false);
+      if (activeGame === "pokemon") {
+        void recordOpportunityExposures(detailOpportunityPayloads(card!, listings, locations)).catch((exposureError) => {
+          console.error("Failed to record opened listing opportunities:", exposureError);
+        });
+      }
     }
 
     fetchListings();
