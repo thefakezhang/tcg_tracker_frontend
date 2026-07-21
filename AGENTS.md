@@ -157,6 +157,8 @@ Each context follows the same pattern:
 
 - `useCardData()` is the main hook. It queries pre-computed `{game}_price_summaries` tables with server-side pagination, sorting, and filtering. Joins card definitions via `!inner` foreign key.
 - Filters: game, PSA mode, name search, card number, set code, single selected tier.
+- Source availability is an exact server-side presence gate backed by `*_price_summaries_by_source_v`; source choices come from `card_browser_source_options_v` and keep buylist evidence separate from for-sale evidence.
+- A selected source changes the query target but not the meaning of the global best-price columns shown in the result rows.
 - AbortController cancels stale requests. No client-side caching needed (queries are fast paginated reads).
 - The `aggregate-prices` edge function pre-computes summaries from raw listings into `pokemon_price_summaries` / `mtg_price_summaries`. Invoke it to refresh data.
 - Three caches still exist for `CardDetailModal` use:

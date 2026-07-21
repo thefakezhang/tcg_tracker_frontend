@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { externalIdMatches, searchOrFilter } from "@/lib/card-search";
 import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
+import { sourceLabel } from "@/lib/source-labels";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -265,32 +266,6 @@ function anchorURL(platform: string, id: string): string | null {
   }
 }
 
-// SOURCE_LABEL renders a human-facing name for the source tag the backend
-// writes onto source_fields.source. Kept explicit rather than heuristic so a
-// curator glancing at the row knows exactly which retailer's queue surfaced
-// this candidate. When the tag isn't in this map (unknown / legacy row), we
-// fall back to the raw string so debug info stays visible.
-const SOURCE_LABEL: Record<string, string> = {
-  cardrush_sealed: "Cardrush",
-  snkrdunk_sealed: "Snkrdunk",
-  cardrush: "Cardrush",
-  snkrdunk: "Snkrdunk",
-  pricecharting: "PriceCharting",
-  tcgplayer: "TCGplayer",
-  collectr: "Collectr",
-  hareruya: "Hareruya",
-  fukufuku: "Fukufuku",
-  shinsoku: "Shinsoku",
-  cardkingdom: "Card Kingdom",
-  torecabirth: "Toreca Birth",
-  torecabank: "Toreca Bank",
-  big_tcg: "BIG TCG",
-  toban: "Kaitori Touban",
-  cardladder: "Card Ladder",
-  surugaya: "Surugaya",
-  expedition_gaming: "Expedition Gaming",
-};
-
 // SOURCE_FILTERS lists the retailer tags a curator can narrow the queue to,
 // per game (the tags each game's pushers actually write). "" = all sources.
 const SOURCE_FILTERS: Record<Game, string[]> = {
@@ -305,7 +280,7 @@ const SOURCE_FILTERS: Record<Game, string[]> = {
 // truly-uninformed rows while giving every properly-tagged row a real name.
 function formatSourceOrigin(source: string | undefined | null, side: string | undefined | null): string | null {
   if (!source) return null;
-  const label = SOURCE_LABEL[source] ?? source;
+  const label = sourceLabel(source);
   if (side) return `${label} (${side})`;
   return label;
 }
@@ -777,7 +752,7 @@ export default function MatchReviewView({
         >
           <option value="">{t("review.sourceAll")}</option>
           {sourceOptions.map((s) => (
-            <option key={s} value={s}>{SOURCE_LABEL[s] ?? s}</option>
+            <option key={s} value={s}>{sourceLabel(s)}</option>
           ))}
         </select>
         {!isLoading && (
@@ -854,7 +829,7 @@ export default function MatchReviewView({
                 const sourceOrigin = fields.source
                   ? formatSourceOrigin(fields.source, fields.side)
                   : sources.length > 0
-                    ? sources.map((s) => SOURCE_LABEL[s] ?? s).join(" · ")
+                    ? sources.map(sourceLabel).join(" · ")
                     : null;
                 // Rich collision breakdown: prefer the structured JSON emitted by
                 // matchreview.Upsert (backend PR #402); parse the legacy `collision`
@@ -932,7 +907,7 @@ export default function MatchReviewView({
                             <div className="text-[11px] italic text-muted-foreground/70 break-words" title="what each source reported (for confirming the match)">
                               {sourceLines.map((l) => (
                                 <div key={l.source}>
-                                  {l.source ? `${SOURCE_LABEL[l.source] ?? l.source}: ${l.text}` : l.text}
+                                  {l.source ? `${sourceLabel(l.source)}: ${l.text}` : l.text}
                                 </div>
                               ))}
                             </div>

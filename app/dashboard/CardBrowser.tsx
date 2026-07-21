@@ -26,7 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
-import { useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
+import { useAvailableCardSources, useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
 import { RefreshPricesAction } from "./RefreshPricesAction";
 import { RefreshInFlightStrip } from "./RefreshInFlightStrip";
 import { useLanguage } from "./LanguageContext";
@@ -49,6 +49,8 @@ import { exitValue, isHighValueWeakEvidence } from "./grade-signals";
 import DecisionWatchlist from "./DecisionWatchlist";
 import { DecisionActions } from "./DecisionActions";
 import { browserOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
+import { sourceLabel } from "@/lib/source-labels";
+import type { SourceSide } from "./source-availability";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -77,6 +79,8 @@ export default function CardBrowser() {
   const [searchSetCode, setSearchSetCode] = useState("");
   const [selectedTier, setSelectedTier] = useState(1);
   const [sellRegion, setSellRegion] = useState<RegionFilter>("all");
+  const [requiredSource, setRequiredSource] = useState("");
+  const [sourceSide, setSourceSide] = useState<SourceSide>("buy");
   const [rarity, setRarity] = useState<string>("");          // "" = all (Pokémon only)
   const [promosOnly, setPromosOnly] = useState(false);       // Pokémon promotional cards
   const [jpExclusiveOnly, setJpExclusiveOnly] = useState(false); // manual JP-exclusive flag
@@ -102,6 +106,7 @@ export default function CardBrowser() {
   // request_card_refresh resolves pokemon cards.
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const selectionEnabled = activeGame === "pokemon";
+  const availableSources = useAvailableCardSources(activeGame, sourceSide);
 
   const { data, loading, error, availableTiers, totalCount, refetch, refresh } =
     useCardData({
@@ -112,6 +117,8 @@ export default function CardBrowser() {
       searchSetCode,
       selectedTier,
       sellRegion,
+      requiredSource,
+      sourceSide,
       rarity: rarity || null,
       promosOnly,
       jpExclusiveOnly,
@@ -149,6 +156,8 @@ export default function CardBrowser() {
     setSearchSetCode("");
     setSelectedTier(1);
     setSellRegion("all");
+    setRequiredSource("");
+    setSourceSide("buy");
     setRarity("");
     setPromosOnly(false);
     setJpExclusiveOnly(false);
@@ -174,7 +183,7 @@ export default function CardBrowser() {
   useEffect(() => {
     setPage(0);
     setRowSelection({});
-  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, rarity, promosOnly, jpExclusiveOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, jpExclusiveOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -265,6 +274,43 @@ export default function CardBrowser() {
               <DropdownMenuRadioItem value="all">{t("cardBrowser.regionAll")}</DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="NA">{t("cardBrowser.regionNA")}</DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="JP">{t("cardBrowser.regionJP")}</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="outline" className="h-11 shrink-0 sm:h-8" />}>
+            {t("cardBrowser.sourceTypePrefix")}
+            {sourceSide === "buy" ? t("cardBrowser.sourceTypeBuylist") : t("cardBrowser.sourceTypeForSale")}
+            <ChevronDown className="ml-1 size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuRadioGroup
+              value={sourceSide}
+              onValueChange={(value) => {
+                setSourceSide(value as SourceSide);
+                setRequiredSource("");
+              }}
+            >
+              <DropdownMenuRadioItem value="buy">{t("cardBrowser.sourceTypeBuylist")}</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="sell">{t("cardBrowser.sourceTypeForSale")}</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="outline" className="h-11 shrink-0 sm:h-8" />}>
+            {requiredSource
+              ? `${t("cardBrowser.sourcePrefix")}${sourceLabel(requiredSource)}`
+              : t("cardBrowser.sourceAll")}
+            <ChevronDown className="ml-1 size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="max-h-72 overflow-auto">
+            <DropdownMenuRadioGroup value={requiredSource} onValueChange={setRequiredSource}>
+              <DropdownMenuRadioItem value="">{t("cardBrowser.sourceAll")}</DropdownMenuRadioItem>
+              {availableSources.map((source) => (
+                <DropdownMenuRadioItem key={source} value={source}>
+                  {sourceLabel(source)}
+                </DropdownMenuRadioItem>
+              ))}
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>

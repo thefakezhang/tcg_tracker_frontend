@@ -16,6 +16,7 @@ vi.mock("./ExitBasisContext", () => ({
 }));
 vi.mock("./HeaderContext", () => ({ useHeader: () => ({ setHeaderActions: vi.fn() }) }));
 vi.mock("./use-card-data", () => ({
+  useAvailableCardSources: () => ["expedition_gaming"],
   useCardData: () => ({
     data: [{
       key: "42:10",

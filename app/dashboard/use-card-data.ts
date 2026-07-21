@@ -12,6 +12,11 @@ import {
   type CalculatedDealEconomics,
   type ExitCostProfile,
 } from "./deal-economics";
+import {
+  SOURCE_OPTIONS_VIEW,
+  summaryTableForSource,
+  type SourceSide,
+} from "./source-availability";
 
 // Sealed entries point at the sealed tables/views for type-exhaustiveness; the
 // sealed tab uses its own hook (use-sealed-data.ts), so the card path here never
@@ -20,12 +25,6 @@ const CARD_TABLE_MAP: Record<Game, string> = {
   pokemon: "pokemon_card_definitions",
   mtg: "mtg_card_definitions_v",
   pokemon_sealed: "pokemon_sealed_products",
-};
-
-const SUMMARIES_TABLE_MAP: Record<Game, string> = {
-  pokemon: "pokemon_price_summaries",
-  mtg: "mtg_price_summaries",
-  pokemon_sealed: "pokemon_sealed_summaries_v",
 };
 
 export const LISTINGS_TABLE_MAP: Record<Game, string> = {
@@ -291,6 +290,45 @@ function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRowData {
 
 export type RegionFilter = "all" | "NA" | "JP";
 
+export function useAvailableCardSources(
+  activeGame: Game,
+  sourceSide: SourceSide,
+): string[] {
+  const [sources, setSources] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (activeGame === "pokemon_sealed") {
+      setSources([]);
+      return;
+    }
+
+    let current = true;
+    const supabase = createClient();
+    void supabase
+      .from(SOURCE_OPTIONS_VIEW)
+      .select("source")
+      .eq("game", activeGame)
+      .eq("source_side", sourceSide)
+      .gt("entry_count", 0)
+      .order("source", { ascending: true })
+      .then(({ data, error }) => {
+        if (!current) return;
+        if (error) {
+          console.error("Failed to load source filter options:", error);
+          setSources([]);
+          return;
+        }
+        setSources((data ?? []).map((row) => String(row.source)));
+      });
+
+    return () => {
+      current = false;
+    };
+  }, [activeGame, sourceSide]);
+
+  return sources;
+}
+
 // Debounce free-text inputs so we fire one query after typing settles, not one
 // per keystroke (each query is an ilike over a joined table — expensive).
 export function useDebouncedValue<T>(value: T, ms: number): T {
@@ -310,6 +348,8 @@ export function useCardData(options: {
   searchSetCode: string;
   selectedTier: number;
   sellRegion: RegionFilter;
+  requiredSource: string;
+  sourceSide: SourceSide;
   rarity: string | null;
   promosOnly: boolean;
   jpExclusiveOnly: boolean;
@@ -339,6 +379,8 @@ export function useCardData(options: {
     searchSetCode,
     selectedTier,
     sellRegion,
+    requiredSource,
+    sourceSide,
     rarity,
     promosOnly,
     jpExclusiveOnly,
@@ -371,7 +413,7 @@ export function useCardData(options: {
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, rarity, promosOnly, jpExclusiveOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, jpExclusiveOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -382,7 +424,7 @@ export function useCardData(options: {
     setError(null);
 
     const supabase = createClient();
-    const summariesTable = SUMMARIES_TABLE_MAP[activeGame];
+    const summariesTable = summaryTableForSource(activeGame, requiredSource);
     const cardDefTable = CARD_TABLE_MAP[activeGame];
 
     // Build query with joined card definitions
@@ -397,6 +439,10 @@ export function useCardData(options: {
       query = query.eq("tier", selectedTier).eq("psa_grade", 0);
     } else {
       query = query.eq("tier", -1).gt("psa_grade", 0);
+    }
+
+    if (requiredSource && activeGame !== "pokemon_sealed") {
+      query = query.eq("source", requiredSource).eq("source_side", sourceSide);
     }
 
     // Search filters on joined card_definitions (debounced values)
