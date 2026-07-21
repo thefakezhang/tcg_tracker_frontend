@@ -261,6 +261,9 @@ A recognized URL changes the platform selector to the detected platform and extr
 When a platform has a stable public search route, the modal links directly to a search built from the card's Japanese name and set.
 - Link attach keeps the edit modal open and mirrors the upsert locally so the operator can see any replaced id and every pending review candidate the RPC resolved.
 - New-card creation stages multiple links, seeds the first through `card_index_create_pokemon_card`, and attaches the remaining links after the new card id exists.
+- Pokémon Match Review collisions offer a narrow "Move ID" action when the candidate resolves to a different existing card.
+The server RPC validates the pending candidate, proposed target, displayed collision owner, platform, and external id before it moves that one link and confirms the candidate.
+It never merges the two singles definitions, since they can represent distinct sets or variants.
 
 ### Source-health drill-down (D4)
 
