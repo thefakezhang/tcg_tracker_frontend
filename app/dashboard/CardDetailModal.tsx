@@ -168,6 +168,12 @@ export default function CardDetailModal({
   const [savingJp, setSavingJp] = useState(false);
   const [askingPrice, setAskingPrice] = useState("");
   const [askingCurrency, setAskingCurrency] = useState<"JPY" | "USD">("JPY");
+  const [sightingGrade, setSightingGrade] = useState(0);
+
+  const defaultSightingGrade = useCallback((tab: "non-psa" | "psa") => {
+    const rowGrade = Number(card?.psaGrade ?? 0);
+    return tab === "psa" ? (rowGrade > 0 ? rowGrade : 10) : 0;
+  }, [card]);
 
   // Sync the manual JP-exclusive flag from the opened card.
   useEffect(() => {
@@ -214,11 +220,12 @@ export default function CardDetailModal({
   useEffect(() => {
     if (open) {
       setActiveTab(initialPsaMode);
+      setSightingGrade(defaultSightingGrade(initialPsaMode));
       setSelectedTiers([initialTier]);
       setAddedTo(null);
       setTargetPrice(targetPriceUsd != null ? String(targetPriceUsd) : "");
     }
-  }, [open, initialPsaMode, initialTier, targetPriceUsd]);
+  }, [open, initialPsaMode, initialTier, targetPriceUsd, defaultSightingGrade]);
 
   useEffect(() => {
     if (!card || !open) return;
@@ -420,7 +427,11 @@ export default function CardDetailModal({
             ))}
           </div>
         ) : (
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(String(v) as "non-psa" | "psa")}>
+          <Tabs value={activeTab} onValueChange={(v) => {
+            const nextTab = String(v) as "non-psa" | "psa";
+            setActiveTab(nextTab);
+            setSightingGrade(defaultSightingGrade(nextTab));
+          }}>
             <div className="flex flex-wrap items-center gap-2">
               <TabsList className="h-11 sm:h-8">
                 <TabsTrigger value="non-psa">
@@ -491,7 +502,8 @@ export default function CardDetailModal({
             listingFreshnessLabel={t("evidence.listingFreshness")}
             askingPrice={askingPrice}
             askingCurrency={askingCurrency}
-            sightingGrade={activeTab === "psa" ? card.psaGrade ?? 0 : 0}
+            sightingGrade={sightingGrade}
+            onSightingGradeChange={setSightingGrade}
             onAskingPriceChange={setAskingPrice}
             onAskingCurrencyChange={setAskingCurrency}
           />

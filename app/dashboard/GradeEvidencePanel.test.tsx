@@ -88,6 +88,8 @@ describe("GradeEvidencePanel", () => {
             cardId={42}
             setCode="M6"
             listingFreshnessLabel="Listing freshness lives below"
+            sightingGrade={10}
+            onSightingGradeChange={vi.fn()}
           />
         </ExitBasisProvider>
       </LanguageProvider>,
@@ -115,6 +117,7 @@ describe("GradeEvidencePanel", () => {
     function Harness() {
       const [price, setPrice] = useState("");
       const [currency, setCurrency] = useState<"JPY" | "USD">("JPY");
+      const [grade, setGrade] = useState(0);
       return (
         <LanguageProvider>
           <ExitBasisProvider>
@@ -131,6 +134,8 @@ describe("GradeEvidencePanel", () => {
               listingFreshnessLabel="Listing freshness"
               askingPrice={price}
               askingCurrency={currency}
+              sightingGrade={grade}
+              onSightingGradeChange={setGrade}
               onAskingPriceChange={setPrice}
               onAskingCurrencyChange={setCurrency}
             />
@@ -143,6 +148,7 @@ describe("GradeEvidencePanel", () => {
 
     await waitFor(() => expect(screen.getByText("No computed grade signals are available for this card yet.")).toBeTruthy());
     expect(screen.getAllByLabelText("Sticker / asking price")).toHaveLength(1);
+    expect((screen.getByLabelText("Record as") as HTMLSelectElement).value).toBe("0");
     expect(screen.getByLabelText("Store").className).toContain("h-11");
     expect(screen.getByRole("button", { name: "Save store sighting" }).className).toContain("min-h-11");
     fireEvent.change(screen.getByLabelText("Store"), { target: { value: "Card shop A" } });
@@ -157,6 +163,62 @@ describe("GradeEvidencePanel", () => {
         p_store_name: "Card shop A",
         p_observed_price: 12000,
         p_currency: "JPY",
+      }),
+    ));
+  });
+
+  it("records a slab sighting with the explicitly selected PSA grade", async () => {
+    vi.mocked(selectAll)
+      .mockReset()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    function Harness() {
+      const [price, setPrice] = useState("");
+      const [currency, setCurrency] = useState<"JPY" | "USD">("JPY");
+      const [grade, setGrade] = useState(0);
+      return (
+        <LanguageProvider>
+          <ExitBasisProvider>
+            <GradeEvidencePanel
+              card={{
+                key: "42:raw",
+                card: { card_id: "42", regional_name: "Test", set_code: "M6", card_number: "1", misc_info: null, image_url: null },
+                psaGrade: undefined,
+                prices: { highestBuy: null, lowestSell: null },
+                roi: null,
+              }}
+              cardId={42}
+              setCode="M6"
+              listingFreshnessLabel="Listing freshness"
+              askingPrice={price}
+              askingCurrency={currency}
+              sightingGrade={grade}
+              onSightingGradeChange={setGrade}
+              onAskingPriceChange={setPrice}
+              onAskingCurrencyChange={setCurrency}
+            />
+          </ExitBasisProvider>
+        </LanguageProvider>
+      );
+    }
+
+    render(<Harness />);
+
+    await waitFor(() => expect(screen.getByText("No computed grade signals are available for this card yet.")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Record as"), { target: { value: "9" } });
+    fireEvent.change(screen.getByLabelText("Store"), { target: { value: "Slab shop" } });
+    fireEvent.change(screen.getByLabelText("Sticker / asking price"), { target: { value: "24000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save store sighting" }));
+
+    await waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith(
+      "record_deal_store_sighting",
+      expect.objectContaining({
+        p_card_id: 42,
+        p_psa_grade: 9,
+        p_store_name: "Slab shop",
+        p_observed_price: 24000,
       }),
     ));
   });
