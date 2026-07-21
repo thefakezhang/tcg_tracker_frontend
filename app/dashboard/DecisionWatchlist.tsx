@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, Eye } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Eye, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
@@ -24,6 +24,18 @@ interface WatchedDeal {
   set_code: string;
   card_number: string | null;
   image_url: string | null;
+  store_sightings: StoreSighting[] | null;
+}
+
+interface StoreSighting {
+  sighting_id: number;
+  store_name: string;
+  observed_price: number;
+  currency: string;
+  fx_rate_to_usd: number;
+  price_usd: number;
+  observed_at: string;
+  note: string | null;
 }
 
 function price(value: number | null, currency: string | null) {
@@ -35,14 +47,27 @@ export default function DecisionWatchlist() {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const [rows, setRows] = useState<WatchedDeal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
     selectAll<WatchedDeal>(
       () => supabase.from("active_deal_watchlist_v").select("*") ,
       ["rule_id"],
-    ).then(setRows).catch((error) => console.error("Failed to load watchlist:", error));
+    ).then(setRows).catch((loadError) => {
+      console.error("Failed to load watchlist:", loadError);
+      setError(true);
+    }).finally(() => setLoading(false));
   }, []);
+
+  if (loading) {
+    return <div className="h-32 animate-pulse rounded-md bg-muted" />;
+  }
+
+  if (error) {
+    return <div role="alert" className="rounded-md border border-destructive/40 p-4 text-sm text-destructive">{t("decision.watchlistLoadError")}</div>;
+  }
 
   if (rows.length === 0) {
     return <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">{t("decision.emptyWatchlist")}</div>;
@@ -53,8 +78,9 @@ export default function DecisionWatchlist() {
       {rows.map((row) => {
         const comparable = row.flagged_price != null && row.current_price != null && row.flagged_currency === row.current_currency;
         const movement = comparable ? row.current_price! - row.flagged_price! : null;
+        const sightings = row.store_sightings ?? [];
         return (
-          <article key={row.rule_id} className="flex gap-3 rounded-lg border bg-card p-3">
+          <article key={row.rule_id} className="flex gap-3 rounded-lg border bg-card p-3 md:col-span-2 xl:col-span-1">
             {row.image_url ? <img src={row.image_url} alt="" className="h-24 w-16 rounded object-cover" /> : null}
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-2">
@@ -69,6 +95,34 @@ export default function DecisionWatchlist() {
                 <div><div className="text-[10px] uppercase text-muted-foreground">{t("decision.now")}</div><div className="flex items-center gap-1 font-medium">{price(row.current_price, row.current_currency)}{movement != null && movement > 0 ? <ArrowUpRight className="size-3 text-emerald-500" /> : movement != null && movement < 0 ? <ArrowDownRight className="size-3 text-rose-500" /> : null}</div><div className="text-[10px] text-muted-foreground">{row.current_observed_on ? new Date(`${row.current_observed_on}T00:00:00`).toLocaleDateString(language) : "-"}</div></div>
               </div>
               {row.reason ? <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{row.reason}</p> : null}
+              {sightings.length > 0 ? (
+                <div className="mt-3 border-t pt-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1 text-xs font-medium"><Store className="size-3.5" />{t("decision.storeRound")}</div>
+                    <span className="text-[10px] text-muted-foreground">{t("decision.sightingCount", { count: sightings.length })}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {sightings.map((sighting, index) => (
+                      <div key={sighting.sighting_id} className="rounded-md bg-muted/45 px-2 py-1.5 text-xs">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate font-medium">{sighting.store_name}</div>
+                            <div className="text-[10px] text-muted-foreground">{new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "short" }).format(new Date(sighting.observed_at))}</div>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <div className="font-semibold tabular-nums">{price(Number(sighting.observed_price), sighting.currency)}</div>
+                            {sighting.currency !== "USD" ? <div className="text-[10px] text-muted-foreground">{t("decision.normalizedUsd", { value: `$${Number(sighting.price_usd).toFixed(2)}` })}</div> : null}
+                          </div>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          {sighting.note ? <span className="min-w-0 truncate text-[10px] text-muted-foreground">{sighting.note}</span> : <span />}
+                          {index === 0 ? <Badge className="h-4 px-1 text-[9px]">{t("decision.cheapest")}</Badge> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </article>
         );

@@ -435,13 +435,9 @@ export default function CardBrowser() {
       )}
 
       <DataTable
-        columns={useMemo(
-          () =>
-            activeGame === "mtg"
-              ? createMtgColumns(t, language)
-              : [selectColumn, ...createColumns(t, language)],
-          [t, language, activeGame],
-        )}
+        columns={activeGame === "mtg"
+          ? createMtgColumns(t, language)
+          : [selectColumn, ...createColumns(t, language)]}
         data={visibleData}
         loading={loading}
         sorting={sorting}
@@ -460,8 +456,7 @@ export default function CardBrowser() {
           onPageChange: setPage,
           onPageSizeChange: setPageSize,
         }}
-        renderGridItem={useCallback(
-          (row: CardRowData) => {
+        renderGridItem={(row: CardRowData) => {
             const misc =
               row.card.misc_info && row.card.misc_info !== "UNKNOWN"
                 ? row.card.misc_info
@@ -539,9 +534,7 @@ export default function CardBrowser() {
                 </CardFooter>
               </Card>
             );
-          },
-          [t, language, activeGame, exitPercentile]
-        )}
+          }}
       />
 
       <CardDetailModal
