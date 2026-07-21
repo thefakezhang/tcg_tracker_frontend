@@ -350,7 +350,7 @@ export default function CardDetailModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-6xl">
+      <DialogContent className="max-h-[92dvh] min-w-0 overflow-x-hidden overflow-y-auto sm:max-w-6xl">
         <DialogHeader>
           <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
             {def.image_url && (
@@ -385,7 +385,7 @@ export default function CardDetailModal({
                   </Badge>
                 )}
                 {activeGame === "pokemon" && (
-                  <label className="ml-1 inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs">
+                  <label className="ml-1 inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs sm:min-h-0">
                     <Switch
                       size="sm"
                       checked={jpExclusive}
@@ -421,8 +421,8 @@ export default function CardDetailModal({
           </div>
         ) : (
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(String(v) as "non-psa" | "psa")}>
-            <div className="flex items-center gap-2">
-              <TabsList>
+            <div className="flex flex-wrap items-center gap-2">
+              <TabsList className="h-11 sm:h-8">
                 <TabsTrigger value="non-psa">
                   {t("modal.tabNonPsa")}
                 </TabsTrigger>
@@ -435,7 +435,7 @@ export default function CardDetailModal({
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
-                      <Button variant="outline" />
+                      <Button variant="outline" className="h-11 sm:h-8" />
                     }
                   >
                     {t("cardBrowser.tierPrefix")}{selectedTiers.sort((a, b) => a - b).join(", ") || t("cardBrowser.tierNone")}
@@ -498,9 +498,9 @@ export default function CardDetailModal({
         )}
 
         {card && (buylists.length > 0 || onRemoveFromBuylist) && (
-          <div className="flex items-center justify-end gap-3 border-t pt-4">
+          <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-4">
             {onRemoveFromBuylist && entryGame && entryId != null && (
-              <div className="mr-auto flex items-center gap-2">
+              <div className="mr-auto flex w-full flex-wrap items-center gap-2 sm:w-auto">
                 <label className="text-sm text-muted-foreground whitespace-nowrap">
                   {t("buyList.targetPrice")}
                 </label>
@@ -510,7 +510,7 @@ export default function CardDetailModal({
                     type="number"
                     step="0.01"
                     min="0"
-                    className="w-28 pl-7"
+                    className="h-11 w-28 pl-7 sm:h-8"
                     value={targetPrice}
                     onChange={(e) => setTargetPrice(e.target.value)}
                     onKeyDown={(e) => {
@@ -523,7 +523,7 @@ export default function CardDetailModal({
                 </div>
                 <Button
                   size="icon"
-                  className="size-8"
+                  className="size-11 sm:size-8"
                   disabled={savingTargetPrice}
                   onClick={saveTargetPrice}
                 >
@@ -545,7 +545,7 @@ export default function CardDetailModal({
               <AlertDialog>
                 <AlertDialogTrigger
                   render={
-                    <Button variant="outline" />
+                    <Button variant="outline" className="h-11 sm:h-8" />
                   }
                 >
                   <Trash2 className="size-4" />
@@ -574,7 +574,7 @@ export default function CardDetailModal({
               <Popover>
                 <PopoverTrigger
                   render={
-                    <Button />
+                    <Button className="h-11 sm:h-8" />
                   }
                 >
                   <Plus className="size-4" />
@@ -631,8 +631,8 @@ function ListingTables({
   t: (key: import("@/lib/i18n").TranslationKey) => string;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 pt-2 sm:grid-cols-2">
-      <div>
+    <div className="min-w-0 grid grid-cols-1 gap-4 pt-2 sm:grid-cols-2">
+      <div className="min-w-0">
         <h3 className="text-sm font-medium mb-2">{t("modal.sell")}</h3>
         <ListingTable
           listings={sell}
@@ -640,7 +640,7 @@ function ListingTables({
           t={t}
         />
       </div>
-      <div>
+      <div className="min-w-0">
         <h3 className="text-sm font-medium mb-2">{t("modal.buy")}</h3>
         <ListingTable
           listings={buy}

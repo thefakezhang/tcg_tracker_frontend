@@ -85,15 +85,15 @@ export function AddToLotPopover(props: AddToLotProps) {
 
   return (
     <Popover>
-      <PopoverTrigger render={<Button variant="outline" size="sm" />}>
+      <PopoverTrigger render={<Button variant="outline" size="sm" className="h-11 px-3 text-sm sm:h-7 sm:px-2.5 sm:text-[0.8rem]" />}>
         {addedTo ? <Check className="size-4" /> : <Plus className="size-4" />}
         {addedTo ? t("trips.addedToLot", { lot: addedTo }) : t("trips.addToLot")}
       </PopoverTrigger>
-      <PopoverContent className="w-72 p-3 space-y-3" align="end">
+      <PopoverContent className="w-[calc(100vw-2rem)] max-w-72 space-y-3 p-3" align="end">
         <div className="flex gap-2">
           <div className="flex-1">
             <Label className="text-xs">{t("trips.qty")}</Label>
-            <Input type="number" min={1} value={qty} onChange={(e) => setQty(e.target.value)} className="h-8" />
+            <Input type="number" min={1} value={qty} onChange={(e) => setQty(e.target.value)} className="h-11 sm:h-8" />
           </div>
           {props.mode === "single" && (
             <>
@@ -102,7 +102,7 @@ export function AddToLotPopover(props: AddToLotProps) {
                 <select
                   value={conditionId ?? ""}
                   onChange={(e) => setConditionId(Number(e.target.value))}
-                  className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+                  className="h-11 w-full rounded-md border bg-background px-2 text-sm sm:h-8"
                 >
                   {conditions.map((c) => (
                     <option key={c.condition_id} value={c.condition_id}>{c.code}</option>
@@ -112,7 +112,7 @@ export function AddToLotPopover(props: AddToLotProps) {
               <div className="w-16">
                 <Label className="text-xs">{t("trips.psaGrade")}</Label>
                 <Input type="number" min={0} max={10} value={grade}
-                  onChange={(e) => setGrade(e.target.value)} className="h-8" />
+                  onChange={(e) => setGrade(e.target.value)} className="h-11 sm:h-8" />
               </div>
             </>
           )}
@@ -121,7 +121,7 @@ export function AddToLotPopover(props: AddToLotProps) {
           <Label className="text-xs">{t("trips.overrideOptional")}</Label>
           <Input
             type="number" placeholder={t("trips.overrideLotCcy")} value={override}
-            onChange={(e) => setOverride(e.target.value)} className="h-8"
+            onChange={(e) => setOverride(e.target.value)} className="h-11 sm:h-8"
           />
         </div>
 
@@ -135,7 +135,7 @@ export function AddToLotPopover(props: AddToLotProps) {
                 return (
                   <button
                     key={l.lot_id}
-                    className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent text-left"
+                    className="flex min-h-11 w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent sm:min-h-0"
                     onClick={() => add(l, label)}
                   >
                     <span className="truncate">{label}</span>

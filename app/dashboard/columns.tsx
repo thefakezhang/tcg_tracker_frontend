@@ -93,7 +93,7 @@ function SortableHeader({
   const sorted = column.getIsSorted();
   return (
     <button
-      className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-accent hover:text-foreground"
+      className="flex min-h-11 items-center gap-1 rounded-md px-2 py-1 hover:bg-accent hover:text-foreground sm:min-h-0"
       onClick={() => column.toggleSorting(sorted === "asc")}
     >
       {label}
@@ -134,7 +134,7 @@ export const selectColumn: ColumnDef<CardRowData> = {
     <input
       type="checkbox"
       aria-label="Select all rows on this page"
-      className="size-3.5 cursor-pointer align-middle"
+      className="size-6 cursor-pointer align-middle sm:size-4"
       checked={table.getIsAllPageRowsSelected()}
       ref={(el) => {
         if (el) {
@@ -150,7 +150,7 @@ export const selectColumn: ColumnDef<CardRowData> = {
     <input
       type="checkbox"
       aria-label="Select row"
-      className="size-3.5 cursor-pointer align-middle"
+      className="size-6 cursor-pointer align-middle sm:size-4"
       checked={row.getIsSelected()}
       onChange={(e) => row.toggleSelected(e.target.checked)}
       onClick={(e) => e.stopPropagation()}
@@ -168,14 +168,14 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
         const card = row.original.card;
         const misc = card.misc_info && card.misc_info !== "UNKNOWN" ? card.misc_info : null;
         return (
-          <div>
+          <div className="min-w-0 whitespace-normal">
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
           </div>
         );
       },
       size: 400,
-      meta: { className: "w-[40%]" },
+      meta: { className: "max-w-64 whitespace-normal" },
     },
     {
       id: "card_number",
@@ -190,6 +190,7 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
         const v = getValue() as string | null;
         return v && v !== "UNKNOWN" ? v : "\u2014";
       },
+      meta: { className: "hidden xl:table-cell" },
     },
     {
       id: "set_code",
@@ -203,6 +204,7 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
       accessorFn: (row) => row.card.rarity ?? null,
       header: () => t("column.rarity"),
       cell: ({ getValue }) => (getValue() as string | null) ?? "—",
+      meta: { className: "hidden 2xl:table-cell" },
     },
     {
       id: "psa_grade",
@@ -236,6 +238,7 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
       cell: ({ getValue }) => formatRoi((getValue() as number | undefined) ?? null),
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
+      meta: { className: "hidden xl:table-cell" },
     },
     {
       id: "conservativeExit",
@@ -262,6 +265,7 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
       },
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
+      meta: { className: "hidden xl:table-cell" },
     },
     {
       id: "dealNet",
@@ -270,6 +274,7 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
       cell: ({ row }) => <span className={`font-medium tabular-nums ${(row.original.deal?.netPnlUsd ?? 0) < 0 ? "text-destructive" : ""}`}>{usd(row.original.deal?.netPnlUsd)}</span>,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
+      meta: { className: "hidden xl:table-cell" },
     },
     {
       id: "rawToGrade",
@@ -284,6 +289,7 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
       },
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
+      meta: { className: "hidden 2xl:table-cell" },
     },
     {
       id: "relativeValue",
@@ -292,12 +298,14 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
       cell: ({ row }) => <span className="tabular-nums">{signedPercent(row.original.dealRelativeValuePct)}</span>,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
+      meta: { className: "hidden 2xl:table-cell" },
     },
     {
       id: "decision",
       enableSorting: false,
       header: () => t("decision.title"),
       cell: ({ row }) => <DecisionActions row={row.original} compact />,
+      meta: { className: "sticky right-0 z-10 bg-background shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]" },
     },
   ];
 }
