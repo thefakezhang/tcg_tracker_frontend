@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDownRight, ArrowRight, ArrowUpRight, CircleAlert, Database, Gauge, LineChart, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
@@ -12,7 +11,8 @@ import { useLanguage } from "./LanguageContext";
 import { useExitBasis } from "./ExitBasisContext";
 import { fetchLocationMap } from "./use-card-data";
 import type { CardRowData } from "./use-card-data";
-import { DecisionActions } from "./DecisionActions";
+import { DecisionActions, decisionSnapshot } from "./DecisionActions";
+import StoreSightingForm from "./StoreSightingForm";
 import {
   eventAppliesToCard,
   exitValue,
@@ -30,6 +30,7 @@ interface GradeEvidencePanelProps {
   listingFreshnessLabel: string;
   askingPrice?: string;
   askingCurrency?: "JPY" | "USD";
+  sightingGrade?: number;
   onAskingPriceChange?: (value: string) => void;
   onAskingCurrencyChange?: (value: "JPY" | "USD") => void;
 }
@@ -142,8 +143,6 @@ function GradeEvidenceCard({
   bidLocation,
   card,
   askingUsd,
-  askingPrice,
-  askingCurrency,
   profile,
   jpyUsd,
 }: {
@@ -153,8 +152,6 @@ function GradeEvidenceCard({
   bidLocation: string | null;
   card: CardRowData;
   askingUsd: number | null;
-  askingPrice: string;
-  askingCurrency: "JPY" | "USD";
   profile: ExitCostProfile | null;
   jpyUsd: number | null;
 }) {
@@ -238,13 +235,13 @@ function GradeEvidenceCard({
         </div>
       )}
       <div className="mt-3 flex justify-end border-t pt-3">
-        <DecisionActions row={card} grade={signal.psaGrade} signal={signal} defaultStorePrice={askingPrice} defaultStoreCurrency={askingCurrency} />
+        <DecisionActions row={card} grade={signal.psaGrade} signal={signal} />
       </div>
     </section>
   );
 }
 
-export default function GradeEvidencePanel({ card, cardId, setCode, listingFreshnessLabel, askingPrice = "", askingCurrency = "JPY", onAskingPriceChange = () => {}, onAskingCurrencyChange = () => {} }: GradeEvidencePanelProps) {
+export default function GradeEvidencePanel({ card, cardId, setCode, listingFreshnessLabel, askingPrice = "", askingCurrency = "JPY", sightingGrade, onAskingPriceChange = () => {}, onAskingCurrencyChange = () => {} }: GradeEvidencePanelProps) {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const { exitPercentile, setExitPercentile } = useExitBasis();
@@ -316,6 +313,10 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
   const askingUsd = askingPrice.trim() === "" || !Number.isFinite(askingNumber) || askingNumber <= 0
     ? null
     : askingCurrency === "USD" ? askingNumber : jpyUsd == null ? null : askingNumber * jpyUsd;
+  const observationGrade = sightingGrade ?? card.psaGrade ?? 0;
+  const observationSignal = signals.find((signal) => signal.psaGrade === observationGrade) ?? null;
+  const entryDescription = askingUsd == null ? t("economics.enterAsk") : `${t("economics.entryUsd")}: ${moneyUsd(askingUsd)}`;
+  const fxDescription = jpyUsd == null ? t("economics.fxUnavailable") : `1 JPY = ${jpyUsd.toFixed(8)} USD · ${fxAsOf ? new Date(fxAsOf).toLocaleDateString(language) : "-"}`;
 
   return (
     <div className="mt-4 space-y-3 border-t pt-4">
@@ -337,19 +338,17 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
         </label>
       </div>
 
-      <div className="flex flex-wrap items-end gap-2 rounded-lg border bg-card p-3">
-        <label className="min-w-40 flex-1 text-xs text-muted-foreground">
-          {t("economics.askingPrice")}
-          <Input className="mt-1" type="number" min="0" inputMode="decimal" value={askingPrice} onChange={(event) => onAskingPriceChange(event.target.value)} placeholder={t("economics.askingPlaceholder")} />
-        </label>
-        <select className="h-9 rounded-md border bg-background px-3 text-sm" value={askingCurrency} onChange={(event) => onAskingCurrencyChange(event.target.value as "JPY" | "USD")}>
-          <option value="JPY">JPY</option><option value="USD">USD</option>
-        </select>
-        <div className="min-w-52 text-xs text-muted-foreground">
-          <div>{askingUsd == null ? t("economics.enterAsk") : `${t("economics.entryUsd")}: ${moneyUsd(askingUsd)}`}</div>
-          <div>{jpyUsd == null ? t("economics.fxUnavailable") : `1 JPY = ${jpyUsd.toFixed(8)} USD · ${fxAsOf ? new Date(fxAsOf).toLocaleDateString(language) : "-"}`}</div>
-        </div>
-      </div>
+      <StoreSightingForm
+        cardId={cardId}
+        psaGrade={observationGrade}
+        signalsSnapshot={decisionSnapshot(card, observationSignal)}
+        price={askingPrice}
+        currency={askingCurrency}
+        onPriceChange={onAskingPriceChange}
+        onCurrencyChange={onAskingCurrencyChange}
+        entryDescription={entryDescription}
+        fxDescription={fxDescription}
+      />
 
       {loading ? (
         <div className="grid gap-3 md:grid-cols-2"><Skeleton className="h-80" /><Skeleton className="h-80" /></div>
@@ -366,8 +365,6 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
               bidLocation={signal.bestJpBidLocation == null ? null : locations.get(signal.bestJpBidLocation) ?? null}
               card={card}
               askingUsd={askingUsd}
-              askingPrice={askingPrice}
-              askingCurrency={askingCurrency}
               profile={profile}
               jpyUsd={jpyUsd}
             />

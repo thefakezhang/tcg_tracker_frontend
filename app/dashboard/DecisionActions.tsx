@@ -9,7 +9,6 @@ import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import type { CardRowData } from "./use-card-data";
 import type { GradeSignal } from "./grade-signals";
-import StoreSightingAction from "./StoreSightingAction";
 
 export function decisionSnapshot(row: CardRowData, signal: GradeSignal | null | undefined) {
   return {
@@ -23,13 +22,11 @@ export function decisionSnapshot(row: CardRowData, signal: GradeSignal | null | 
   };
 }
 
-export function DecisionActions({ row, grade, signal, compact = false, defaultStorePrice = "", defaultStoreCurrency = "JPY" }: {
+export function DecisionActions({ row, grade, signal, compact = false }: {
   row: CardRowData;
   grade?: number;
   signal?: GradeSignal | null;
   compact?: boolean;
-  defaultStorePrice?: string;
-  defaultStoreCurrency?: "JPY" | "USD";
 }) {
   const { t } = useTranslation();
   const [reason, setReason] = useState("");
@@ -65,14 +62,6 @@ export function DecisionActions({ row, grade, signal, compact = false, defaultSt
         {saved === "watched" ? <Check className="size-3.5" /> : <Eye className="size-3.5" />}
         {saved === "watched" ? t("decision.watching") : t("decision.watch")}
       </Button>
-      <StoreSightingAction
-        cardId={Number(row.card.card_id)}
-        psaGrade={grade ?? row.psaGrade ?? 0}
-        signalsSnapshot={snapshot}
-        defaultPrice={defaultStorePrice}
-        defaultCurrency={defaultStoreCurrency}
-        compact={compact}
-      />
       <Popover>
         <PopoverTrigger render={<Button variant="ghost" size="icon" className="size-7" aria-label={t("decision.reason")} />}>
           <MessageSquare className="size-3.5" />
