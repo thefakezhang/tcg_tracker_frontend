@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { Check, Store } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
@@ -14,6 +13,7 @@ interface StoreSightingFormProps {
   signalsSnapshot: object;
   price: string;
   currency: "JPY" | "USD";
+  onPsaGradeChange: (value: number) => void;
   onPriceChange: (value: string) => void;
   onCurrencyChange: (value: "JPY" | "USD") => void;
   entryDescription: string;
@@ -26,6 +26,7 @@ export default function StoreSightingForm({
   signalsSnapshot,
   price,
   currency,
+  onPsaGradeChange,
   onPriceChange,
   onCurrencyChange,
   entryDescription,
@@ -74,7 +75,19 @@ export default function StoreSightingForm({
           <h4 className="flex items-center gap-2 text-sm font-semibold"><Store className="size-4" />{t("decision.storeSighting")}</h4>
           <p className="mt-1 text-xs text-muted-foreground">{t("decision.storeSightingHelp")}</p>
         </div>
-        <Badge variant="outline">{t("decision.recordingAs", { grade: psaGrade === 0 ? t("evidence.raw") : `PSA ${psaGrade}` })}</Badge>
+        <label className="text-xs text-muted-foreground">
+          {t("decision.recordAs")}
+          <select
+            className="mt-1 h-11 w-full min-w-28 rounded-md border bg-background px-3 text-sm text-foreground sm:h-8"
+            value={psaGrade}
+            onChange={(event) => { onPsaGradeChange(Number(event.target.value)); setSaved(false); }}
+          >
+            <option value={0}>{t("evidence.raw")}</option>
+            {Array.from({ length: 10 }, (_, index) => 10 - index).map((grade) => (
+              <option key={grade} value={grade}>PSA {grade}</option>
+            ))}
+          </select>
+        </label>
       </div>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.2fr_1fr_auto_1.2fr_auto] xl:items-end">

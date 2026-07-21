@@ -30,7 +30,8 @@ interface GradeEvidencePanelProps {
   listingFreshnessLabel: string;
   askingPrice?: string;
   askingCurrency?: "JPY" | "USD";
-  sightingGrade?: number;
+  sightingGrade: number;
+  onSightingGradeChange: (value: number) => void;
   onAskingPriceChange?: (value: string) => void;
   onAskingCurrencyChange?: (value: "JPY" | "USD") => void;
 }
@@ -241,7 +242,7 @@ function GradeEvidenceCard({
   );
 }
 
-export default function GradeEvidencePanel({ card, cardId, setCode, listingFreshnessLabel, askingPrice = "", askingCurrency = "JPY", sightingGrade, onAskingPriceChange = () => {}, onAskingCurrencyChange = () => {} }: GradeEvidencePanelProps) {
+export default function GradeEvidencePanel({ card, cardId, setCode, listingFreshnessLabel, askingPrice = "", askingCurrency = "JPY", sightingGrade, onSightingGradeChange, onAskingPriceChange = () => {}, onAskingCurrencyChange = () => {} }: GradeEvidencePanelProps) {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const { exitPercentile, setExitPercentile } = useExitBasis();
@@ -313,7 +314,7 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
   const askingUsd = askingPrice.trim() === "" || !Number.isFinite(askingNumber) || askingNumber <= 0
     ? null
     : askingCurrency === "USD" ? askingNumber : jpyUsd == null ? null : askingNumber * jpyUsd;
-  const observationGrade = sightingGrade ?? card.psaGrade ?? 0;
+  const observationGrade = sightingGrade;
   const observationSignal = signals.find((signal) => signal.psaGrade === observationGrade) ?? null;
   const entryDescription = askingUsd == null ? t("economics.enterAsk") : `${t("economics.entryUsd")}: ${moneyUsd(askingUsd)}`;
   const fxDescription = jpyUsd == null ? t("economics.fxUnavailable") : `1 JPY = ${jpyUsd.toFixed(8)} USD · ${fxAsOf ? new Date(fxAsOf).toLocaleDateString(language) : "-"}`;
@@ -344,6 +345,7 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
         signalsSnapshot={decisionSnapshot(card, observationSignal)}
         price={askingPrice}
         currency={askingCurrency}
+        onPsaGradeChange={onSightingGradeChange}
         onPriceChange={onAskingPriceChange}
         onCurrencyChange={onAskingCurrencyChange}
         entryDescription={entryDescription}
