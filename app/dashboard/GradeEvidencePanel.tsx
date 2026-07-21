@@ -142,6 +142,8 @@ function GradeEvidenceCard({
   bidLocation,
   card,
   askingUsd,
+  askingPrice,
+  askingCurrency,
   profile,
   jpyUsd,
 }: {
@@ -151,6 +153,8 @@ function GradeEvidenceCard({
   bidLocation: string | null;
   card: CardRowData;
   askingUsd: number | null;
+  askingPrice: string;
+  askingCurrency: "JPY" | "USD";
   profile: ExitCostProfile | null;
   jpyUsd: number | null;
 }) {
@@ -234,7 +238,7 @@ function GradeEvidenceCard({
         </div>
       )}
       <div className="mt-3 flex justify-end border-t pt-3">
-        <DecisionActions row={card} grade={signal.psaGrade} signal={signal} />
+        <DecisionActions row={card} grade={signal.psaGrade} signal={signal} defaultStorePrice={askingPrice} defaultStoreCurrency={askingCurrency} />
       </div>
     </section>
   );
@@ -362,6 +366,8 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
               bidLocation={signal.bestJpBidLocation == null ? null : locations.get(signal.bestJpBidLocation) ?? null}
               card={card}
               askingUsd={askingUsd}
+              askingPrice={askingPrice}
+              askingCurrency={askingCurrency}
               profile={profile}
               jpyUsd={jpyUsd}
             />
