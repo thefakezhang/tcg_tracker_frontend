@@ -1,14 +1,18 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageProvider } from "./LanguageContext";
 import { ExitBasisProvider } from "./ExitBasisContext";
 import GradeEvidencePanel from "./GradeEvidencePanel";
 import { selectAll } from "@/lib/supabase/select-all";
 
+const mocks = vi.hoisted(() => ({ rpc: vi.fn() }));
+
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({
+    rpc: mocks.rpc,
     from: (table: string) => {
       const result = table === "exit_cost_profiles"
         ? { data: { platform: "ebay", fee_pct: 0.136, fixed_fee: 0.4, shipping_jpy: 1000, grading_cost_jpy: 3500, grading_days: 45, margin_pct: 0.15, floor_usd: 0, updated_at: "2026-07-20T00:00:00Z" } }
@@ -51,9 +55,12 @@ const signal = {
   flags: { thin_evidence: true, cohort_derived: true, cohort_own_weight: 0.4 },
 };
 
+afterEach(cleanup);
+
 describe("GradeEvidencePanel", () => {
   beforeEach(() => {
     localStorage.clear();
+    mocks.rpc.mockReset().mockResolvedValue({ data: 1, error: null });
     vi.mocked(selectAll)
       .mockReset()
       .mockResolvedValueOnce([signal])
@@ -96,5 +103,59 @@ describe("GradeEvidencePanel", () => {
     expect(screen.getByText(/Signal snapshot/)).toBeTruthy();
     expect(screen.getByText("Listing freshness lives below")).toBeTruthy();
     expect(screen.getByRole("img", { name: /sold comps with market event markers/i })).toBeTruthy();
+  });
+
+  it("records one store sighting from one always-visible price form when evidence is unavailable", async () => {
+    vi.mocked(selectAll)
+      .mockReset()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    function Harness() {
+      const [price, setPrice] = useState("");
+      const [currency, setCurrency] = useState<"JPY" | "USD">("JPY");
+      return (
+        <LanguageProvider>
+          <ExitBasisProvider>
+            <GradeEvidencePanel
+              card={{
+                key: "42:raw",
+                card: { card_id: "42", regional_name: "Test", set_code: "M6", card_number: "1", misc_info: null, image_url: null },
+                psaGrade: undefined,
+                prices: { highestBuy: null, lowestSell: null },
+                roi: null,
+              }}
+              cardId={42}
+              setCode="M6"
+              listingFreshnessLabel="Listing freshness"
+              askingPrice={price}
+              askingCurrency={currency}
+              onAskingPriceChange={setPrice}
+              onAskingCurrencyChange={setCurrency}
+            />
+          </ExitBasisProvider>
+        </LanguageProvider>
+      );
+    }
+
+    render(<Harness />);
+
+    await waitFor(() => expect(screen.getByText("No computed grade signals are available for this card yet.")).toBeTruthy());
+    expect(screen.getAllByLabelText("Sticker / asking price")).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText("Store"), { target: { value: "Card shop A" } });
+    fireEvent.change(screen.getByLabelText("Sticker / asking price"), { target: { value: "12000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save store sighting" }));
+
+    await waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith(
+      "record_deal_store_sighting",
+      expect.objectContaining({
+        p_card_id: 42,
+        p_psa_grade: 0,
+        p_store_name: "Card shop A",
+        p_observed_price: 12000,
+        p_currency: "JPY",
+      }),
+    ));
   });
 });

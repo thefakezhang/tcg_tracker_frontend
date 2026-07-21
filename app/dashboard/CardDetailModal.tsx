@@ -491,6 +491,7 @@ export default function CardDetailModal({
             listingFreshnessLabel={t("evidence.listingFreshness")}
             askingPrice={askingPrice}
             askingCurrency={askingCurrency}
+            sightingGrade={activeTab === "psa" ? card.psaGrade ?? 0 : 0}
             onAskingPriceChange={setAskingPrice}
             onAskingCurrencyChange={setAskingCurrency}
           />
