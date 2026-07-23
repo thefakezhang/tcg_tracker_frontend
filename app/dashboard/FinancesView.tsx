@@ -16,6 +16,7 @@ import AccountRegisterModal from "./AccountRegisterModal";
 import { formatUsd as usd } from "@/lib/money";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ExitCostSettings from "./ExitCostSettings";
+import InventoryEconomics from "./InventoryEconomics";
 
 // Business-level financials, all derived from the general ledger (docs/general_ledger.md).
 
@@ -48,7 +49,8 @@ export default function FinancesView() {
   const [cashFlow, setCashFlow] = useState<CashFlowRow[]>([]);
   const [entryOpen, setEntryOpen] = useState(false);
   const [register, setRegister] = useState<GlAccount | null>(null);
-  const [section, setSection] = useState<"overview" | "exit-costs">("overview");
+  const [section, setSection] =
+    useState<"overview" | "economics" | "exit-costs">("overview");
 
   const fetchAll = useCallback(async () => {
     const supabase = createClient();
@@ -92,11 +94,15 @@ export default function FinancesView() {
   });
 
   return (
-    <div className="space-y-6">
-      <Tabs value={section} onValueChange={(value) => setSection(value as "overview" | "exit-costs")}>
-        <TabsList><TabsTrigger value="overview">{t("finances.overview")}</TabsTrigger><TabsTrigger value="exit-costs">{t("economics.costProfiles")}</TabsTrigger></TabsList>
+    <div className="min-w-0 space-y-6">
+      <Tabs value={section} onValueChange={(value) => setSection(value as "overview" | "economics" | "exit-costs")}>
+        <TabsList className="max-w-full justify-start overflow-x-auto">
+          <TabsTrigger className="shrink-0" value="overview">{t("finances.overview")}</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="economics">{t("inventoryEconomics.title")}</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="exit-costs">{t("economics.costProfiles")}</TabsTrigger>
+        </TabsList>
       </Tabs>
-      {section === "exit-costs" ? <ExitCostSettings /> : <>
+      {section === "exit-costs" ? <ExitCostSettings /> : section === "economics" ? <InventoryEconomics /> : <>
       <div className="flex justify-end">
         <Button size="sm" onClick={() => setEntryOpen(true)}><Plus className="size-4 mr-1" />{t("gl.newEntry")}</Button>
       </div>

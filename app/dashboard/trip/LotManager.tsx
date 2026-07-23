@@ -29,8 +29,17 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { CollectrImportDialog } from "./CollectrImportDialog";
 import LotReceipts from "./LotReceipts";
+import {
+  lotLineGradeLabel,
+  mapSealedLotLine,
+  mapSingleLotLine,
+  sealedLotLineInsert,
+  type SealedLotLineRow,
+  type SingleLotLineRow,
+} from "./lot-line-model";
 
 type CardGame = "pokemon" | "mtg";
+type LotItemCatalog = CardGame | "pokemon_sealed";
 type Leg = "import" | "export";
 
 interface Lot {
@@ -51,15 +60,42 @@ interface Cond {
   display_name: string | null;
 }
 
+type AcquisitionCostCategory =
+  | "shipping"
+  | "handling"
+  | "travel"
+  | "food"
+  | "tax_duty"
+  | "insurance"
+  | "discount_refund"
+  | "custom";
+
+interface AcquisitionCost {
+  cost_id: number;
+  category: AcquisitionCostCategory;
+  custom_type: string | null;
+  amount_orig: number;
+  orig_currency: string;
+  fx_rate_used: number;
+  amount_usd: number;
+  note: string | null;
+}
+
 // One row unifies card singles and sealed products; `table` says where to write.
 interface LotLine {
   line_id: number;
   table: string;
   kind: "single" | "sealed";
+  product_id?: number;
   quantity: number;
   condition_id?: number;
+  psa_grade?: number;
+  sealed_condition?: string;
+  variant_edition?: string;
   sealedLabel?: string;
   price_override_usd: number | null;
+  direct_purchase_cost_usd: number;
+  acquisition_cost_alloc_usd: number;
   allocated_cost_usd: number;
   regionalName: string;
   englishName: string | null;
@@ -81,6 +117,16 @@ const LEG_DEFAULTS: Record<Leg, { currency: string; fx: string }> = {
   import: { currency: "JPY", fx: "0.0067" },
   export: { currency: "USD", fx: "1" },
 };
+const ACQUISITION_COST_CATEGORIES: AcquisitionCostCategory[] = [
+  "shipping",
+  "handling",
+  "travel",
+  "food",
+  "tax_duty",
+  "insurance",
+  "discount_refund",
+  "custom",
+];
 
 export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }) {
   const { t } = useTranslation();
@@ -90,10 +136,16 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const [lots, setLots] = useState<Lot[]>([]);
   const [selectedLot, setSelectedLot] = useState<number | null>(null);
   const [lines, setLines] = useState<LotLine[]>([]);
+  const [costs, setCosts] = useState<AcquisitionCost[]>([]);
   const [conditions, setConditions] = useState<Cond[]>([]);
   const [csvOpen, setCsvOpen] = useState(false);
   const [delLotOpen, setDelLotOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      setViewMode("grid");
+    }
+  }, []);
 
   // lot-header dialog (create + edit share fields; editingLotId === null => create)
   const [lotDialogOpen, setLotDialogOpen] = useState(false);
@@ -115,9 +167,16 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   }, [cCurrency, editingLotId, rateFor]);
 
   // add-card search state
-  const [searchGame, setSearchGame] = useState<CardGame>("pokemon");
+  const [searchGame, setSearchGame] = useState<LotItemCatalog>("pokemon");
   const [search, setSearch] = useState("");
   const [searchGrade, setSearchGrade] = useState("0"); // PSA grade for added lines (0 = raw)
+  const [costCategory, setCostCategory] =
+    useState<AcquisitionCostCategory>("shipping");
+  const [costCustomType, setCostCustomType] = useState("");
+  const [costAmount, setCostAmount] = useState("");
+  const [costCurrency, setCostCurrency] = useState("");
+  const [costFx, setCostFx] = useState("");
+  const [costNote, setCostNote] = useState("");
 
   const fetchLots = useCallback(async () => {
     const supabase = createClient();
@@ -147,8 +206,8 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       // A lot has no fixed line count, so page the lines instead of letting
       // PostgREST cap them at 1000 (a dropped line = a card silently missing
       // from the lot). Key: line_id.
-      const rows = await selectAll<{ line_id: number; card_id: number; condition_id: number; quantity: number; price_override_usd: number | null; allocated_cost_usd: number }>(
-        () => supabase.from(LINE_TABLE[game]).select("line_id, card_id, condition_id, quantity, price_override_usd, allocated_cost_usd").eq("lot_id", lotId),
+      const rows = await selectAll<SingleLotLineRow>(
+        () => supabase.from(LINE_TABLE[game]).select("line_id, card_id, condition_id, psa_grade, quantity, price_override_usd, direct_purchase_cost_usd, acquisition_cost_alloc_usd, allocated_cost_usd").eq("lot_id", lotId),
         ["line_id"],
       );
       if (rows.length === 0) continue;
@@ -169,16 +228,11 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       }
       for (const r of rows) {
         const d = defMap.get(r.card_id);
-        out.push({
-          line_id: r.line_id, table: LINE_TABLE[game], kind: "single", quantity: r.quantity,
-          condition_id: r.condition_id, price_override_usd: r.price_override_usd, allocated_cost_usd: r.allocated_cost_usd,
-          regionalName: d?.regionalName ?? `#${r.card_id}`, englishName: d?.englishName ?? null,
-          setCode: d?.setCode ?? "", cardNumber: d?.cardNumber ?? null, miscInfo: d?.miscInfo ?? null, imageUrl: d?.imageUrl ?? null,
-        });
+        out.push(mapSingleLotLine(r, LINE_TABLE[game], d));
       }
     }
-    const srows = await selectAll<{ line_id: number; product_id: number; sealed_condition: string; variant_edition: string; quantity: number; price_override_usd: number | null; allocated_cost_usd: number }>(
-      () => supabase.from(SEALED_TABLE).select("line_id, product_id, sealed_condition, variant_edition, quantity, price_override_usd, allocated_cost_usd").eq("lot_id", lotId),
+    const srows = await selectAll<SealedLotLineRow>(
+      () => supabase.from(SEALED_TABLE).select("line_id, product_id, sealed_condition, variant_edition, quantity, price_override_usd, direct_purchase_cost_usd, acquisition_cost_alloc_usd, allocated_cost_usd").eq("lot_id", lotId),
       ["line_id"],
     );
     if (srows.length > 0) {
@@ -193,25 +247,41 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       }
       for (const r of srows) {
         const p = pMap.get(r.product_id);
-        out.push({
-          line_id: r.line_id, table: SEALED_TABLE, kind: "sealed", quantity: r.quantity,
-          sealedLabel: `${r.sealed_condition}/${r.variant_edition}`, price_override_usd: r.price_override_usd,
-          allocated_cost_usd: r.allocated_cost_usd, regionalName: p?.name ?? `#${r.product_id}`, englishName: null,
-          setCode: p?.setCode ?? "", cardNumber: null, miscInfo: null, imageUrl: p?.imageUrl ?? null,
-        });
+        out.push(mapSealedLotLine(r, SEALED_TABLE, p));
       }
     }
     setLines(out);
   }, []);
 
+  const fetchCosts = useCallback(async (lotId: number) => {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("acquisition_costs")
+      .select("cost_id, category, custom_type, amount_orig, orig_currency, fx_rate_used, amount_usd, note")
+      .eq("lot_id", lotId)
+      .order("cost_id");
+    if (error) {
+      setCosts([]);
+      return;
+    }
+    setCosts((data as AcquisitionCost[]) ?? []);
+  }, []);
+
   const reloadLot = useCallback(async (lotId: number) => {
-    await fetchLines(lotId);
+    await Promise.all([fetchLines(lotId), fetchCosts(lotId)]);
     await refreshOpenLots();
-  }, [fetchLines, refreshOpenLots]);
+  }, [fetchCosts, fetchLines, refreshOpenLots]);
 
   useEffect(() => { fetchLots(); fetchConditions(); }, [fetchLots, fetchConditions]);
   useEffect(() => { setSelectedLot(null); }, [leg]);
-  useEffect(() => { if (selectedLot) fetchLines(selectedLot); else setLines([]); }, [selectedLot, fetchLines]);
+  useEffect(() => {
+    if (selectedLot) {
+      void Promise.all([fetchLines(selectedLot), fetchCosts(selectedLot)]);
+    } else {
+      setLines([]);
+      setCosts([]);
+    }
+  }, [selectedLot, fetchCosts, fetchLines]);
 
   useEffect(() => {
     if (selectedLot === null && lots.length > 0) {
@@ -222,6 +292,16 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
 
   const lot = lots.find((l) => l.lot_id === selectedLot) ?? null;
   const defaultCondition = conditions.find((c) => c.code === "NM")?.condition_id ?? conditions[0]?.condition_id;
+  useEffect(() => {
+    if (!lot) return;
+    setCostCurrency(lot.orig_currency);
+    setCostFx(String(lot.fx_rate_used));
+  }, [lot?.lot_id, lot?.orig_currency, lot?.fx_rate_used]);
+  const acquisitionCostUsd = costs.reduce(
+    (sum, cost) => sum + Number(cost.amount_usd),
+    0,
+  );
+  const landedLotUsd = Number(lot?.total_cost_usd ?? 0) + acquisitionCostUsd;
 
   // Language-aware display name (English when set + available, else regional).
   const lineLabel = (ln: LotLine) =>
@@ -240,8 +320,19 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const fromNative = (native: number) => Math.round(native * lotFx * 1e6) / 1e6;
 
   // Search the card CATALOG directly (not price summaries), so every card is
-  // findable — cards you buy in Japan often have no price-summary row.
-  interface SearchHit { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string | null; misc_info: string | null; }
+  // findable - cards you buy in Japan often have no price-summary row.
+  interface SearchHit {
+    kind: "single" | "sealed";
+    item_id: number;
+    regional_name: string;
+    english_name: string | null;
+    set_code: string;
+    card_number: string | null;
+    misc_info: string | null;
+    sealed_condition?: string;
+    variant_edition?: string;
+    product_type?: string | null;
+  }
   const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
   const dSearch = useDebouncedValue(search, 300);
   useEffect(() => {
@@ -257,13 +348,42 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           .select("card_id, regional_name, english_name, set_code, card_number, misc_info")
           .or(`regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,card_number.ilike.%${safe}%`)
           .limit(25).abortSignal(ac.signal);
-        hits = (data as SearchHit[]) ?? [];
-      } else {
+        hits = ((data as Array<Omit<SearchHit, "kind" | "item_id"> & { card_id: number }>) ?? [])
+          .map(({ card_id, ...row }) => ({ ...row, kind: "single", item_id: card_id }));
+      } else if (searchGame === "mtg") {
         const { data } = await supabase.from("mtg_card_definitions_v")
           .select("card_id, regional_name, set_code, card_number")
           .or(`regional_name.ilike.%${safe}%,card_number.ilike.%${safe}%`)
           .limit(25).abortSignal(ac.signal);
-        hits = ((data as Omit<SearchHit, "english_name" | "misc_info">[]) ?? []).map((d) => ({ ...d, english_name: null, misc_info: null }));
+        hits = ((data as Array<{ card_id: number; regional_name: string; set_code: string; card_number: string | null }>) ?? [])
+          .map(({ card_id, ...row }) => ({
+            ...row,
+            kind: "single",
+            item_id: card_id,
+            english_name: null,
+            misc_info: null,
+          }));
+      } else {
+        const { data } = await supabase.from("pokemon_sealed_products")
+          .select("product_id, name, english_name, set_code, misc_info, sealed_condition, variant_edition, product_type")
+          .or(`name.ilike.%${safe}%,english_name.ilike.%${safe}%,set_code.ilike.%${safe}%`)
+          .limit(25).abortSignal(ac.signal);
+        hits = ((data as Array<{
+          product_id: number;
+          name: string;
+          english_name: string | null;
+          set_code: string;
+          misc_info: string | null;
+          sealed_condition: string;
+          variant_edition: string;
+          product_type: string | null;
+        }>) ?? []).map(({ product_id, name, ...row }) => ({
+          ...row,
+          kind: "sealed",
+          item_id: product_id,
+          regional_name: name,
+          card_number: null,
+        }));
       }
       setSearchResults(hits);
     })().catch(() => { /* aborted / superseded */ });
@@ -316,17 +436,34 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     }
   }
 
-  async function addLine(cardId: number) {
-    if (!selectedLot || !defaultCondition) return;
+  async function addLine(hit: SearchHit) {
+    if (!selectedLot) return;
     const supabase = createClient();
-    await supabase.from(LINE_TABLE[searchGame]).insert({
-      lot_id: selectedLot, card_id: cardId, condition_id: defaultCondition,
-      psa_grade: Math.max(0, Math.floor(Number(searchGrade) || 0)), quantity: 1,
-    });
+    const { error } = hit.kind === "sealed"
+      ? await supabase.from(SEALED_TABLE).insert(sealedLotLineInsert({
+        lotId: selectedLot,
+        productId: hit.item_id,
+        sealedCondition: hit.sealed_condition ?? "standard",
+        variantEdition: hit.variant_edition ?? "standard",
+        quantity: 1,
+      }))
+      : !defaultCondition || searchGame === "pokemon_sealed"
+        ? { error: new Error("A card condition is required") }
+        : await supabase.from(LINE_TABLE[searchGame]).insert({
+          lot_id: selectedLot,
+          card_id: hit.item_id,
+          condition_id: defaultCondition,
+          psa_grade: Math.max(0, Math.min(10, Math.floor(Number(searchGrade) || 0))),
+          quantity: 1,
+        });
+    if (error) {
+      alert(error.message);
+      return;
+    }
     await reloadLot(selectedLot);
   }
 
-  async function updateLine(line: LotLine, patch: Partial<Pick<LotLine, "quantity" | "condition_id" | "price_override_usd">>) {
+  async function updateLine(line: LotLine, patch: Partial<Pick<LotLine, "quantity" | "condition_id" | "psa_grade" | "sealed_condition" | "variant_edition" | "price_override_usd">>) {
     const supabase = createClient();
     await supabase.from(line.table).update(patch).eq("line_id", line.line_id);
     if (selectedLot) await reloadLot(selectedLot);
@@ -338,13 +475,80 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     if (selectedLot) await reloadLot(selectedLot);
   }
 
+  async function addCost() {
+    if (!selectedLot || !lot) return;
+    const rawAmount = Math.abs(Number(costAmount) || 0);
+    const amountOrig =
+      costCategory === "discount_refund" ? -rawAmount : rawAmount;
+    if (
+      !rawAmount
+      || !costCurrency.trim()
+      || !(Number(costFx) > 0)
+      || (costCategory === "custom" && !costCustomType.trim())
+    ) return;
+    const supabase = createClient();
+    const { error } = await supabase.from("acquisition_costs").insert({
+      lot_id: selectedLot,
+      category: costCategory,
+      custom_type: costCategory === "custom" ? costCustomType.trim() : null,
+      amount_orig: amountOrig,
+      orig_currency: costCurrency.trim().toUpperCase(),
+      fx_rate_used: Number(costFx),
+      note: costNote.trim() || null,
+    });
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setCostAmount("");
+    setCostCustomType("");
+    setCostNote("");
+    await fetchCosts(selectedLot);
+  }
+
+  async function updateCost(
+    cost: AcquisitionCost,
+    patch: Partial<Pick<
+      AcquisitionCost,
+      "category" | "custom_type" | "amount_orig" | "orig_currency"
+      | "fx_rate_used" | "note"
+    >>,
+  ) {
+    if (!selectedLot) return;
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("acquisition_costs")
+      .update(patch)
+      .eq("cost_id", cost.cost_id);
+    if (error) {
+      alert(error.message);
+      await fetchCosts(selectedLot);
+      return;
+    }
+    await fetchCosts(selectedLot);
+  }
+
+  async function removeCost(costId: number) {
+    if (!selectedLot) return;
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("acquisition_costs")
+      .delete()
+      .eq("cost_id", costId);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    await fetchCosts(selectedLot);
+  }
+
   async function finalize() {
     if (!selectedLot) return;
     const supabase = createClient();
     const isNet = (m?: string) => !!m && /networkerror|failed to fetch|load failed/i.test(m);
     let { error } = await supabase.rpc("finalize_acquisition_lot", { p_lot_id: selectedLot });
     if (error && isNet(error.message)) {
-      // Transient network failure — finalize is safe to re-run (it errors
+      // Transient network failure - finalize is safe to re-run (it errors
       // harmlessly if the first attempt actually committed).
       ({ error } = await supabase.rpc("finalize_acquisition_lot", { p_lot_id: selectedLot }));
       if (error && /already finalized/i.test(error.message)) error = null;
@@ -365,7 +569,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
 
   async function deleteLot(lotId: number) {
     // Close the confirm dialog before the async work: deleting clears the
-    // selection, which unmounts this panel (and the dialog) — closing first
+    // selection, which unmounts this panel (and the dialog) - closing first
     // lets base-ui release the pointer-events lock so the page stays clickable.
     setDelLotOpen(false);
     const supabase = createClient();
@@ -379,7 +583,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   }
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">{t((leg === "export" ? "trips.exportLots" : "trips.importLots") as TranslationKey)}</h2>
         <Button size="sm" onClick={openCreate}>
@@ -392,7 +596,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           <button
             key={l.lot_id}
             onClick={() => setSelectedLot(l.lot_id)}
-            className={`rounded-md border px-3 py-2 text-left text-sm ${selectedLot === l.lot_id ? "border-primary bg-accent" : "hover:bg-accent/50"}`}
+            className={`min-h-11 rounded-md border px-3 py-2 text-left text-sm ${selectedLot === l.lot_id ? "border-primary bg-accent" : "hover:bg-accent/50"}`}
           >
             <div className="font-medium">{l.shop_label || l.acquired_at}</div>
             <div className="text-xs text-muted-foreground">
@@ -410,9 +614,18 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
 
       {lot && (
         <div className="space-y-3 rounded-md border p-3">
-          <div className="flex items-center justify-between">
-            <div className="font-medium">{lot.shop_label || lot.acquired_at}</div>
-            <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="font-medium">{lot.shop_label || lot.acquired_at}</div>
+              <div className="text-xs text-muted-foreground">
+                {t("trips.directPurchase")} ${Number(lot.total_cost_usd).toFixed(2)}
+                {" · "}
+                {t("trips.acquisitionCosts")} ${acquisitionCostUsd.toFixed(2)}
+                {" · "}
+                {t("trips.landedCost")} ${landedLotUsd.toFixed(2)}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
               {lot.lines_imported ? (
                 <Button variant="outline" size="sm" onClick={unfinalize}>
                   <RotateCcw className="size-4 mr-1" />{t("trips.undoFinalize")}
@@ -447,32 +660,224 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
 
           <LotReceipts lotId={lot.lot_id} />
 
+          <div className="space-y-2 rounded-md border p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <Label className="text-sm font-semibold">
+                  {t("trips.acquisitionCosts")}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t("trips.acquisitionCostsHelp")}
+                </p>
+              </div>
+              <span className="text-sm tabular-nums">
+                ${acquisitionCostUsd.toFixed(2)}
+              </span>
+            </div>
+
+            <div className="space-y-1">
+              {costs.map((cost) => (
+                <div
+                  key={cost.cost_id}
+                  className="grid grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_5.5rem_2.5rem] items-center gap-1 rounded-md bg-muted/40 p-1.5 text-xs"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">
+                      {cost.category === "custom"
+                        ? cost.custom_type
+                        : t(`trips.costCategory.${cost.category}` as TranslationKey)}
+                    </div>
+                    {lot.lines_imported ? (
+                      cost.note && (
+                        <div className="truncate text-muted-foreground">
+                          {cost.note}
+                        </div>
+                      )
+                    ) : (
+                      <Input
+                        defaultValue={cost.note ?? ""}
+                        aria-label={t("trips.costNote")}
+                        placeholder={t("trips.costNote")}
+                        className="mt-1 min-h-11 text-xs sm:min-h-8"
+                        onBlur={(event) => updateCost(cost, {
+                          note: event.target.value.trim() || null,
+                        })}
+                      />
+                    )}
+                  </div>
+                  {lot.lines_imported ? (
+                    <span className="text-right tabular-nums">
+                      {Number(cost.amount_orig).toFixed(2)}
+                    </span>
+                  ) : (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      defaultValue={Math.abs(Number(cost.amount_orig))}
+                      aria-label={t("trips.costAmount")}
+                      className="min-h-11 text-right text-xs sm:min-h-8"
+                      onBlur={(event) => {
+                        const amount = Math.abs(Number(event.target.value) || 0);
+                        void updateCost(cost, {
+                          amount_orig:
+                            cost.category === "discount_refund"
+                              ? -amount
+                              : amount,
+                        });
+                      }}
+                    />
+                  )}
+                  {lot.lines_imported ? (
+                    <span>{cost.orig_currency}</span>
+                  ) : (
+                    <Input
+                      defaultValue={cost.orig_currency}
+                      aria-label={t("trips.lotCurrency")}
+                      className="min-h-11 px-1 text-xs uppercase sm:min-h-8"
+                      onBlur={(event) => updateCost(cost, {
+                        orig_currency: event.target.value.trim().toUpperCase(),
+                      })}
+                    />
+                  )}
+                  <span className="text-right tabular-nums">
+                    ${Number(cost.amount_usd).toFixed(2)}
+                  </span>
+                  {!lot.lines_imported && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-10 sm:size-7"
+                      onClick={() => removeCost(cost.cost_id)}
+                      aria-label={t("trips.delete")}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+              {costs.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {t("trips.noAcquisitionCosts")}
+                </p>
+              )}
+            </div>
+
+            {!lot.lines_imported && (
+              <div className="grid gap-2 border-t pt-2 sm:grid-cols-6">
+                <select
+                  value={costCategory}
+                  onChange={(event) =>
+                    setCostCategory(
+                      event.target.value as AcquisitionCostCategory,
+                    )
+                  }
+                  aria-label={t("trips.costCategory")}
+                  className="min-h-11 rounded-md border bg-background px-2 text-sm sm:col-span-2 sm:min-h-9"
+                >
+                  {ACQUISITION_COST_CATEGORIES.map((category) => (
+                    <option key={category} value={category}>
+                      {t(`trips.costCategory.${category}` as TranslationKey)}
+                    </option>
+                  ))}
+                </select>
+                {costCategory === "custom" && (
+                  <Input
+                    value={costCustomType}
+                    onChange={(event) => setCostCustomType(event.target.value)}
+                    placeholder={t("trips.costCustomType")}
+                    className="min-h-11 sm:min-h-9"
+                  />
+                )}
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={costAmount}
+                  onChange={(event) => setCostAmount(event.target.value)}
+                  placeholder={t("trips.costAmount")}
+                  className="min-h-11 sm:min-h-9"
+                />
+                <Input
+                  value={costCurrency}
+                  onChange={(event) => setCostCurrency(event.target.value)}
+                  placeholder={t("trips.lotCurrency")}
+                  className="min-h-11 uppercase sm:min-h-9"
+                />
+                <Input
+                  type="number"
+                  step="0.000001"
+                  min="0"
+                  value={costFx}
+                  onChange={(event) => setCostFx(event.target.value)}
+                  placeholder={t("trips.fxRate")}
+                  className="min-h-11 sm:min-h-9"
+                />
+                <Input
+                  value={costNote}
+                  onChange={(event) => setCostNote(event.target.value)}
+                  placeholder={t("trips.costNote")}
+                  className="min-h-11 sm:min-h-9"
+                />
+                <Button
+                  variant="outline"
+                  className="min-h-11 sm:min-h-9"
+                  onClick={addCost}
+                  disabled={
+                    !costAmount
+                    || !costCurrency
+                    || !(Number(costFx) > 0)
+                    || (
+                      costCategory === "custom"
+                      && !costCustomType.trim()
+                    )
+                  }
+                >
+                  <Plus className="mr-1 size-4" />
+                  {t("trips.addCost")}
+                </Button>
+                <p className="text-xs text-muted-foreground sm:col-span-6">
+                  {t("trips.costUsdPreview", {
+                    usd: (
+                      (
+                        costCategory === "discount_refund" ? -1 : 1
+                      )
+                      * (Number(costAmount) || 0)
+                      * (Number(costFx) || 0)
+                    ).toFixed(2),
+                  })}
+                </p>
+              </div>
+            )}
+          </div>
+
           {!lot.lines_imported ? (
             <div className="space-y-2 rounded-md bg-muted/40 p-3">
               <Label className="text-sm font-semibold">{t("trips.addCardsHeading")}</Label>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <select
                   value={searchGame}
-                  onChange={(e) => setSearchGame(e.target.value as CardGame)}
-                  className="rounded-md border bg-background px-2 text-sm"
+                  onChange={(e) => setSearchGame(e.target.value as LotItemCatalog)}
+                  aria-label={t("trips.itemType")}
+                  className="min-h-11 rounded-md border bg-background px-2 text-sm sm:min-h-9"
                 >
                   <option value="pokemon">Pokémon</option>
                   <option value="mtg">MTG</option>
+                  <option value="pokemon_sealed">{t("game.pokemon_sealed")}</option>
                 </select>
                 <Input
                   placeholder={t("trips.searchCards")}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="flex-1"
+                  className="min-h-11 flex-1 sm:min-h-8"
                 />
-                <div className="flex items-center gap-1">
+                {searchGame !== "pokemon_sealed" && <div className="flex min-h-11 items-center gap-2 sm:min-h-9">
                   <Label className="text-xs text-muted-foreground">{t("trips.psaGrade")}</Label>
                   <Input type="number" min={0} max={10} value={searchGrade}
-                    onChange={(e) => setSearchGrade(e.target.value)} className="h-9 w-14"
+                    onChange={(e) => setSearchGrade(e.target.value)} className="min-h-11 w-20 sm:min-h-9 sm:w-14"
                     title={t("trips.psaGradeHint")} />
-                </div>
+                </div>}
               </div>
-              {Number(searchGrade) > 0 && (
+              {searchGame !== "pokemon_sealed" && Number(searchGrade) > 0 && (
                 <p className="text-xs text-muted-foreground">{t("trips.addingAsGrade", { grade: searchGrade })}</p>
               )}
               {!search && <p className="text-xs text-muted-foreground">{t("trips.searchHint")}</p>}
@@ -483,12 +888,16 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                 <div className="max-h-56 overflow-auto rounded-md border bg-background">
                   {searchResults.map((r) => (
                     <button
-                      key={r.card_id}
-                      onClick={() => addLine(r.card_id)}
-                      className="flex w-full items-center justify-between px-2 py-1.5 text-left text-sm hover:bg-accent"
+                      key={`${r.kind}-${r.item_id}`}
+                      onClick={() => addLine(r)}
+                      className="flex min-h-11 w-full items-center justify-between px-2 py-1.5 text-left text-sm hover:bg-accent"
                     >
                       <span className="truncate">
-                        {getCardDisplayName({ regional_name: r.regional_name, english_name: r.english_name }, language)} · {cardMeta(r.set_code, r.card_number, r.misc_info)}
+                        {getCardDisplayName({ regional_name: r.regional_name, english_name: r.english_name }, language)}
+                        {" · "}
+                        {r.kind === "sealed"
+                          ? [r.set_code, r.product_type, `${r.sealed_condition}/${r.variant_edition}`].filter(Boolean).join(" · ")
+                          : cardMeta(r.set_code, r.card_number, r.misc_info)}
                       </span>
                       <Plus className="size-4 shrink-0" />
                     </button>
@@ -525,14 +934,27 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                   <CardContent className="space-y-1 p-2">
                     <div className="truncate text-xs font-medium">{lineLabel(ln)}</div>
                     <div className="truncate text-xs text-muted-foreground">
-                      {ln.kind === "sealed" ? `${ln.setCode} · ${ln.sealedLabel}` : cardMeta(ln.setCode, ln.cardNumber, ln.miscInfo)}
+                      {ln.kind === "sealed" ? `${ln.setCode} · ${ln.sealedLabel}` : `${cardMeta(ln.setCode, ln.cardNumber, ln.miscInfo)} · ${lotLineGradeLabel(ln.psa_grade ?? 0)}`}
                     </div>
-                    <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center justify-between gap-1 text-xs">
                       <span>×{ln.quantity}</span>
-                      <span>{lot.lines_imported ? `$${ln.allocated_cost_usd}` : (ln.price_override_usd != null ? `${toNative(ln.price_override_usd)} ${lotCcy}` : "—")}</span>
+                      <span className="text-right font-medium">
+                        {lot.lines_imported
+                          ? `${t("trips.landedCost")} $${Number(ln.allocated_cost_usd).toFixed(2)}`
+                          : (ln.price_override_usd != null
+                              ? `${toNative(ln.price_override_usd)} ${lotCcy}`
+                              : "-")}
+                      </span>
                     </div>
+                    {lot.lines_imported && (
+                      <div className="text-right text-[11px] tabular-nums text-muted-foreground">
+                        ${Number(ln.direct_purchase_cost_usd).toFixed(2)}
+                        {" + "}
+                        ${Number(ln.acquisition_cost_alloc_usd).toFixed(2)}
+                      </div>
+                    )}
                     {!lot.lines_imported && (
-                      <Button variant="ghost" size="sm" className="h-6 w-full" onClick={() => removeLine(ln)}>
+                      <Button variant="ghost" size="sm" className="min-h-11 w-full sm:min-h-7" onClick={() => removeLine(ln)}>
                         <Trash2 className="size-3" />
                       </Button>
                     )}
@@ -548,8 +970,15 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                 <TableHead>{t("trips.lotLines")}</TableHead>
                 <TableHead className="w-20">{t("trips.qty")}</TableHead>
                 <TableHead className="w-32">{t("trips.condition")}</TableHead>
+                <TableHead className="w-24">{t("trips.psaGrade")}</TableHead>
                 <TableHead className="w-32">{t("trips.overrideCcy", { ccy: lotCcy })}</TableHead>
-                {lot.lines_imported && <TableHead className="w-28">{t("trips.allocatedCost")}</TableHead>}
+                {lot.lines_imported && (
+                  <>
+                    <TableHead className="w-28">{t("trips.directPurchase")}</TableHead>
+                    <TableHead className="w-28">{t("trips.acquisitionCosts")}</TableHead>
+                    <TableHead className="w-28">{t("trips.landedCost")}</TableHead>
+                  </>
+                )}
                 <TableHead className="w-10" />
               </TableRow>
             </TableHeader>
@@ -559,32 +988,90 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                   <TableCell className="truncate max-w-[280px]">{lineLabel(ln)} <span className="text-muted-foreground">· {ln.kind === "sealed" ? `${ln.setCode} · ${ln.sealedLabel}` : cardMeta(ln.setCode, ln.cardNumber, ln.miscInfo)}</span></TableCell>
                   <TableCell>
                     {lot.lines_imported ? ln.quantity : (
-                      <Input type="number" defaultValue={ln.quantity} className="h-8 w-16"
+                      <Input type="number" defaultValue={ln.quantity} className="min-h-11 w-16 sm:min-h-8"
                         onBlur={(e) => updateLine(ln, { quantity: Number(e.target.value) })} />
                     )}
                   </TableCell>
                   <TableCell>
                     {ln.kind === "sealed"
-                      ? <span className="text-xs text-muted-foreground">{ln.sealedLabel}</span>
+                      ? lot.lines_imported
+                        ? <span className="text-xs text-muted-foreground">{ln.sealedLabel}</span>
+                        : (
+                          <div className="flex flex-col gap-1">
+                            <select
+                              value={ln.sealed_condition}
+                              aria-label={t("sealedBrowser.conditionPrefix")}
+                              className="min-h-11 rounded-md border bg-background px-1 text-sm sm:min-h-8"
+                              onChange={(e) => updateLine(ln, { sealed_condition: e.target.value })}
+                            >
+                              <option value="standard">{t("sealedBrowser.conditionStandard")}</option>
+                              <option value="shrink">{t("sealedBrowser.conditionShrink")}</option>
+                              <option value="no_shrink">{t("sealedBrowser.conditionNoShrink")}</option>
+                            </select>
+                            <select
+                              value={ln.variant_edition}
+                              aria-label={t("sealedBrowser.editionPrefix")}
+                              className="min-h-11 rounded-md border bg-background px-1 text-sm sm:min-h-8"
+                              onChange={(e) => updateLine(ln, { variant_edition: e.target.value })}
+                            >
+                              <option value="standard">{t("sealedBrowser.editionStandard")}</option>
+                              <option value="1ed">{t("sealedBrowser.edition1ed")}</option>
+                              <option value="unlimited">{t("sealedBrowser.editionUnlimited")}</option>
+                            </select>
+                          </div>
+                        )
                       : lot.lines_imported
                         ? (conditions.find((c) => c.condition_id === ln.condition_id)?.code ?? ln.condition_id)
                         : (
-                          <select defaultValue={ln.condition_id} className="h-8 rounded-md border bg-background px-1 text-sm"
+                          <select value={ln.condition_id} className="min-h-11 rounded-md border bg-background px-1 text-sm sm:min-h-8"
                             onChange={(e) => updateLine(ln, { condition_id: Number(e.target.value) })}>
                             {conditions.map((c) => <option key={c.condition_id} value={c.condition_id}>{c.code}</option>)}
                           </select>
                         )}
                   </TableCell>
                   <TableCell>
-                    {lot.lines_imported ? (ln.price_override_usd != null ? toNative(ln.price_override_usd) : "—") : (
-                      <Input type="number" defaultValue={ln.price_override_usd != null ? toNative(ln.price_override_usd) : ""} placeholder="—" className="h-8 w-20"
+                    {ln.kind === "sealed"
+                      ? "-"
+                      : lot.lines_imported
+                        ? lotLineGradeLabel(ln.psa_grade ?? 0)
+                        : (
+                          <Input
+                            type="number"
+                            min={0}
+                            max={10}
+                            value={ln.psa_grade ?? 0}
+                            className="min-h-11 w-16 sm:min-h-8"
+                            aria-label={t("trips.psaGrade")}
+                            onChange={(e) => {
+                              const grade = Math.max(0, Math.min(10, Math.floor(Number(e.target.value) || 0)));
+                              setLines((current) => current.map((item) =>
+                                item.table === ln.table && item.line_id === ln.line_id
+                                  ? { ...item, psa_grade: grade }
+                                  : item
+                              ));
+                            }}
+                            onBlur={(e) => updateLine(ln, {
+                              psa_grade: Math.max(0, Math.min(10, Math.floor(Number(e.target.value) || 0))),
+                            })}
+                          />
+                        )}
+                  </TableCell>
+                  <TableCell>
+                    {lot.lines_imported ? (ln.price_override_usd != null ? toNative(ln.price_override_usd) : "-") : (
+                      <Input type="number" defaultValue={ln.price_override_usd != null ? toNative(ln.price_override_usd) : ""} placeholder="-" className="min-h-11 w-20 sm:min-h-8"
                         onBlur={(e) => updateLine(ln, { price_override_usd: e.target.value === "" ? null : fromNative(Number(e.target.value)) })} />
                     )}
                   </TableCell>
-                  {lot.lines_imported && <TableCell>${ln.allocated_cost_usd}</TableCell>}
+                  {lot.lines_imported && (
+                    <>
+                      <TableCell>${Number(ln.direct_purchase_cost_usd).toFixed(2)}</TableCell>
+                      <TableCell>${Number(ln.acquisition_cost_alloc_usd).toFixed(2)}</TableCell>
+                      <TableCell>${Number(ln.allocated_cost_usd).toFixed(2)}</TableCell>
+                    </>
+                  )}
                   <TableCell>
                     {!lot.lines_imported && (
-                      <Button variant="ghost" size="icon" className="size-7" onClick={() => removeLine(ln)}>
+                      <Button variant="ghost" size="icon" className="size-11 sm:size-7" onClick={() => removeLine(ln)}>
                         <Trash2 className="size-4" />
                       </Button>
                     )}
@@ -592,7 +1079,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                 </TableRow>
               ))}
               {lines.length === 0 && (
-                <TableRow><TableCell colSpan={lot.lines_imported ? 6 : 5} className="text-muted-foreground">{t("trips.empty")}</TableCell></TableRow>
+                <TableRow><TableCell colSpan={lot.lines_imported ? 9 : 6} className="text-muted-foreground">{t("trips.empty")}</TableCell></TableRow>
               )}
             </TableBody>
           </Table>

@@ -87,6 +87,8 @@ app/
     CardBrowser.tsx       # Search filters + data table + modal trigger
     CardDetailModal.tsx   # Card detail dialog with buy/sell listing tables + add to buy list
     GradeEvidencePanel.tsx # Per-grade bands, comps, demand, flags, and event annotations
+    InventoryEconomics.tsx # Line-level direct, landed, sale, and profit drill-down under Finances
+    owned-inventory.ts     # Batched catalog-level Owned N read model
     grade-signals.ts      # Typed S2 signal parser and conservative-exit helpers
     ExitBasisContext.tsx  # Persisted P10/P25/P50 conservative-exit setting
     DecisionActions.tsx   # Shared Watch/Dismiss controls and immutable snapshot builder
@@ -286,6 +288,18 @@ It preserves the full signal row, source flags, displayed market inputs, and an 
 - Phone controls keep 44px targets and wrap within the row or panel instead of widening the page.
 - Backend architecture, retention, and verification are documented in `docs/decision_journal.md` in the backend repository.
 
+### Lot inventory and lifecycle economics
+
+- `LotManager.tsx` records raw or PSA single cards, Pokémon sealed products, and typed acquisition expenses in one draft lot.
+- Finalization preserves direct purchase, acquisition expense, and landed basis separately.
+- `SalesTab.tsx` records one bulk total, one shared expense, optional item expenses, and one allocation method across mixed card and sealed holdings.
+- Source-fact sale groups use a global history key, while legacy groups remain game-scoped.
+- `owned-inventory.ts` batches quiet `Owned N` counts for the buying surfaces without exposing finance detail there.
+- `InventoryEconomics.tsx` owns the lifecycle and cost bridge under Finances.
+- Phone lot and sale surfaces default to card grids, right-side sheets use the full phone width, and global buttons, tabs, and sidebar controls keep 44px phone targets.
+- Architecture, goals, non-goals, local authentication guards, and browser acceptance are documented in `docs/lot_inventory_economics.md`.
+- Backend allocation and immutability rules are documented in `docs/inventory_subledger_contract.md` in the backend repository.
+
 ### Card Index link attachment (R1)
 
 - `lib/platform-url.ts` is the single frontend source for platform item links, copied-product-URL parsing, platform inference, and direct search links.
@@ -412,7 +426,9 @@ The listings tables have a foreign key to `currencies` — queries join via `cur
 - **"UNKNOWN" as null**: Card fields (`card_number`, `misc_info`) may contain the string `"UNKNOWN"`. Treat these as null/empty throughout the UI. Never display "UNKNOWN" to users.
 - **"use client"**: All dashboard components are client components. Server components are only used for layouts and the auth callback route.
 - **localStorage keys**: `language`, `displayCurrency` — used for persisting user preferences.
-- **Tests**: vitest, run with `npm test` (`*.test.ts` next to the code under test). There is no component/DOM harness - the suite covers pure logic and data-access helpers where a silent wrong answer is possible (see `lib/supabase/select-all.test.ts`). Add to it rather than reaching for a browser test.
+- **Tests**: vitest runs with `npm test` (`*.test.ts` next to the code under test).
+  Pure logic, component behavior, and data-access helpers stay in this suite.
+  Cross-boundary CUJ acceptance lives under `scripts/e2e` and must use the shared Docker and browser lock plus literal-loopback authentication guards.
 - **shadcn/ui components** live in `components/ui/`. These are generated files — customize only when needed, prefer wrapping over modifying.
 - **Icons**: Import from `lucide-react`. Don't add other icon libraries.
 - **Type safety**: Translation keys are type-checked. Supabase queries return `unknown` records that are explicitly cast in mapping functions.
@@ -432,3 +448,6 @@ The listings tables have a foreign key to `currencies` — queries join via `cur
 |----------|---------|
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonymous/publishable key |
+| `E2E_AUTH_ENABLED` | Enables the local-only guarded browser-auth seam when set to `1` outside production |
+| `E2E_AUTH_SECRET` | Strong shared secret presented only by a local browser runner |
+| `E2E_AUTH_EMAIL` / `E2E_AUTH_PASSWORD` | Disposable local GoTrue account used by browser acceptance |

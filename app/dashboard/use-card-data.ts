@@ -117,6 +117,7 @@ export interface PriceSummary {
 export interface CardRowData {
   key: string;
   card: CardDefinition;
+  ownedQty?: number;
   psaGrade?: number;
   prices: PriceSummary;
   roi: number | null;

@@ -171,6 +171,11 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
           <div className="min-w-0 whitespace-normal">
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
+            {!!row.original.ownedQty && row.original.ownedQty > 0 && (
+              <div className="text-[11px] text-muted-foreground">
+                {t("inventory.owned")} {row.original.ownedQty}
+              </div>
+            )}
           </div>
         );
       },
@@ -337,6 +342,11 @@ export function createMtgColumns(
           <div>
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
+            {!!row.original.ownedQty && row.original.ownedQty > 0 && (
+              <div className="text-[11px] text-muted-foreground">
+                {t("inventory.owned")} {row.original.ownedQty}
+              </div>
+            )}
           </div>
         );
       },
