@@ -52,8 +52,8 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
+    <div className="min-w-0 space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-semibold">{trip?.name}</h2>
         {trip && <Badge variant="secondary">{t(`trips.status${trip.status[0].toUpperCase()}${trip.status.slice(1)}` as TranslationKey)}</Badge>}
         <div className="ml-auto flex items-center gap-2">
@@ -92,14 +92,14 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
       {/* Controlled + lazy: only the active tab mounts, so opening a trip
           fires one tab's queries instead of all five at once (which overloaded
           the connection and left sections intermittently blank). */}
-      <Tabs value={tab} onValueChange={(v) => setTab(String(v))} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="export">{t("trips.tabExport")}</TabsTrigger>
-          <TabsTrigger value="import">{t("trips.tabImport")}</TabsTrigger>
-          <TabsTrigger value="sales">{t("trips.tabSales")}</TabsTrigger>
-          <TabsTrigger value="expenses">{t("trips.tabExpenses")}</TabsTrigger>
-          <TabsTrigger value="pnl">{t("trips.tabPnl")}</TabsTrigger>
-          <TabsTrigger value="reachout">{t("trips.tabReachout")}</TabsTrigger>
+      <Tabs value={tab} onValueChange={(v) => setTab(String(v))} className="min-w-0 space-y-4">
+        <TabsList className="max-w-full justify-start overflow-x-auto">
+          <TabsTrigger className="shrink-0" value="export">{t("trips.tabExport")}</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="import">{t("trips.tabImport")}</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="sales">{t("trips.tabSales")}</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="expenses">{t("trips.tabExpenses")}</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="pnl">{t("trips.tabPnl")}</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="reachout">{t("trips.tabReachout")}</TabsTrigger>
         </TabsList>
         <TabsContent value="export">{tab === "export" && <ExportTab tripId={tripId} />}</TabsContent>
         <TabsContent value="import">{tab === "import" && <ImportTab tripId={tripId} />}</TabsContent>

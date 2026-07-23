@@ -8,6 +8,13 @@ import { useSaving } from "@/lib/use-saving";
 import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
 import { useLanguage } from "../LanguageContext";
 import { getCardDisplayName, cardMeta, cardVariant } from "../use-card-data";
+import {
+  buildSaleLotRequestShape,
+  explicitGrossMatches,
+  saleEventGroupKey,
+  type SaleAllocationMethod,
+  type SaleExpenseCategory,
+} from "./sale-lot-model";
 import ReceiptsDialog from "../Receipts";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -77,6 +84,7 @@ interface SaleRow {
   proceeds_orig: number;
   fx_rate_used: number;
   customer_id: number | null; // buyer (CRM), null = unattributed
+  sourceFactLot: boolean;
 }
 
 // A row of sales_ledger_v (migration 085).
@@ -90,6 +98,15 @@ type LedgerSaleRow = {
 };
 
 type CustomerLite = { customer_id: number; name: string };
+const SALE_EXPENSE_CATEGORIES: SaleExpenseCategory[] = [
+  "platform_fee",
+  "shipping",
+  "handling",
+  "insurance",
+  "tax_duty",
+  "travel",
+  "discount_refund",
+];
 
 
 export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
@@ -130,8 +147,23 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const [lotFx, setLotFx] = useState("0.0067");
   const [lotDate, setLotDate] = useState(new Date().toISOString().slice(0, 10));
   const [lotQty, setLotQty] = useState<Record<string, string>>({});
+  const [lotAllocationMethod, setLotAllocationMethod] =
+    useState<SaleAllocationMethod>("market_value");
+  const [lotExpenseCategory, setLotExpenseCategory] =
+    useState<SaleExpenseCategory>("platform_fee");
+  const [lotItemExpenses, setLotItemExpenses] =
+    useState<Record<string, string>>({});
+  const [lotItemExpenseCategories, setLotItemExpenseCategories] =
+    useState<Record<string, SaleExpenseCategory>>({});
+  const [lotExplicitGross, setLotExplicitGross] =
+    useState<Record<string, string>>({});
   const { rateFor } = useFxRate();
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      setViewMode("grid");
+    }
+  }, []);
   const [sortCol, setSortCol] = useState<"name" | "leg" | "qty" | "avg" | null>(null);
   const [hSearch, setHSearch] = useState("");
   const [hSortCol, setHSortCol] = useState<"name" | "date" | "qty" | "gross" | "cogs" | "margin" | "marginPct" | null>("date");
@@ -191,6 +223,21 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       .order("sold_at", { ascending: false }).limit(300);
     if (error) { setSales([]); return; }
     const rows = (data as LedgerSaleRow[]) ?? [];
+    const grouped = [...new Set(
+      rows
+        .map((row) => row.sale_group)
+        .filter((group): group is number => group != null),
+    )];
+    const sourceFactGroups = new Set<number>();
+    if (grouped.length > 0) {
+      const { data: headers } = await supabase
+        .from("sale_lots")
+        .select("sale_group")
+        .in("sale_group", grouped);
+      for (const header of (headers as { sale_group: number }[] | null) ?? []) {
+        sourceFactGroups.add(Number(header.sale_group));
+      }
+    }
     const live: SaleRow[] = rows
       .filter((r) => !r.is_reverted)
       .map((r) => ({
@@ -204,6 +251,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         imageUrl: r.image_url, sale_group: r.sale_group, reverted: false,
         fees_usd: r.fees_usd, orig_currency: r.orig_currency, proceeds_orig: r.proceeds_orig, fx_rate_used: r.fx_rate_used,
         customer_id: r.customer_id,
+        sourceFactLot: r.sale_group != null && sourceFactGroups.has(Number(r.sale_group)),
       }));
     live.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1));
     setSales(live);
@@ -313,7 +361,14 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
 
   async function voidSale(s: SaleRow) {
     if (s.reverted || saving) return;
-    const ok = await save(() => reverseOne(s));
+    const ok = await save(() =>
+      s.sourceFactLot && s.sale_group != null
+        ? createClient().rpc("reverse_lot_sale", {
+            p_sale_group: s.sale_group,
+            p_reversed_at: new Date().toISOString().slice(0, 10),
+          })
+        : reverseOne(s)
+    );
     if (!ok) return;
     await fetchHoldings(); await fetchSales();
   }
@@ -324,7 +379,16 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     if (saving) return;
     const todo = items.filter((i) => !i.reverted);
     if (todo.length === 0) return;
+    const sourceFact = todo.find(
+      (item) => item.sourceFactLot && item.sale_group != null,
+    );
     const ok = await save(async () => {
+      if (sourceFact?.sale_group != null) {
+        return createClient().rpc("reverse_lot_sale", {
+          p_sale_group: sourceFact.sale_group,
+          p_reversed_at: new Date().toISOString().slice(0, 10),
+        });
+      }
       for (const it of todo) {
         const { error } = await reverseOne(it);
         if (error) return { error };
@@ -485,12 +549,17 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     gid: string; items: SaleRow[]; game: string; sale_group: number | null; sold_at: string;
     qty: number; gross: number; cogs: number; margin: number; marginPct: number;
     reverted: boolean; isLot: boolean; customer_id: number | null;
+    sourceFactLot: boolean;
   };
   const saleEvents = useMemo<SaleEvent[]>(() => {
     const map = new Map<string, SaleRow[]>();
     for (const s of sortedSales) {
-      // sale_group is per-game, so key lots by game+group (else cross-game lots merge).
-      const gid = s.sale_group != null ? `g${s.game}-${s.sale_group}` : `s${s.key}`;
+      const gid = saleEventGroupKey({
+        key: s.key,
+        game: s.game,
+        saleGroup: s.sale_group,
+        sourceFactLot: s.sourceFactLot,
+      });
       const arr = map.get(gid);
       if (arr) arr.push(s); else map.set(gid, [s]);
     }
@@ -505,6 +574,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         reverted: items.every((i) => i.reverted),
         isLot: items.length > 1,
         customer_id: items[0].customer_id,
+        sourceFactLot: items.some((item) => item.sourceFactLot),
       };
     });
   }, [sortedSales]);
@@ -514,9 +584,11 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     if (s.quantity <= 0) return null;
     return (
       <span className="flex items-center gap-0.5">
-      <Button variant="ghost" size="icon" className="size-7" disabled={saving} onClick={() => openEdit(s)} title={t("trips.editSale")}>
-        <Pencil className="size-4" />
-      </Button>
+      {!s.sourceFactLot && (
+        <Button variant="ghost" size="icon" className="size-7" disabled={saving} onClick={() => openEdit(s)} title={t("trips.editSale")}>
+          <Pencil className="size-4" />
+        </Button>
+      )}
       <AlertDialog>
         <AlertDialogTrigger render={<Button variant="ghost" size="icon" className="size-7" disabled={saving} />}><Undo2 className="size-4" /></AlertDialogTrigger>
         <AlertDialogContent>
@@ -540,9 +612,23 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   }
   function openLot() {
     const q: Record<string, string> = {};
-    for (const h of selectedHoldings) q[holdingKey(h)] = String(h.qty_on_hand);
+    const itemExpense: Record<string, string> = {};
+    const itemCategory: Record<string, SaleExpenseCategory> = {};
+    const explicitGross: Record<string, string> = {};
+    for (const h of selectedHoldings) {
+      const key = holdingKey(h);
+      q[key] = String(h.qty_on_hand);
+      itemExpense[key] = "";
+      itemCategory[key] = "shipping";
+      explicitGross[key] = "";
+    }
     setLotQty(q);
     setLotGross(""); setLotFees("0"); setLotDate(new Date().toISOString().slice(0, 10)); setLotCustomerId(null);
+    setLotAllocationMethod("market_value");
+    setLotExpenseCategory("platform_fee");
+    setLotItemExpenses(itemExpense);
+    setLotItemExpenseCategories(itemCategory);
+    setLotExplicitGross(explicitGross);
     setLotCurrency(selectedLeg === "export" ? "JPY" : "USD"); // setLotFx driven by live-rate effect
     setLotOpen(true);
   }
@@ -564,20 +650,47 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     const items = selectedHoldings;
     if (items.length === 0) return;
     const supabase = createClient();
-    const weights = items.map((h) => Number(h.avg_cost_usd) * qtyOf(h));
-    const grossAlloc = allocate(Number(lotGross), weights);
-    const feesAlloc = allocate(Number(lotFees) || 0, weights);
     const isNative = selectedLeg === "export" && lotCurrency.toUpperCase() !== "USD";
-    const payload = items.map((h, idx) => ({
-      kind: h.item_type, game: h.game, card_id: h.card_id, condition_id: h.condition_id, psa_grade: h.psa_grade ?? 0,
-      product_id: h.product_id, sealed_condition: h.sealed_condition, variant_edition: h.variant_edition,
-      quantity: qtyOf(h), gross: grossAlloc[idx], fees: feesAlloc[idx],
-    }));
+    const request = buildSaleLotRequestShape({
+      items: items.map((holding) => ({
+        key: holdingKey(holding),
+        kind: holding.item_type,
+        game: holding.game,
+        cardId: holding.card_id,
+        productId: holding.product_id,
+        conditionId: holding.condition_id,
+        psaGrade: holding.psa_grade,
+        sealedCondition: holding.sealed_condition,
+        variantEdition: holding.variant_edition,
+        quantity: qtyOf(holding),
+      })),
+      allocationMethod: lotAllocationMethod,
+      explicitGrossByKey: lotExplicitGross,
+      sharedExpense: {
+        category: lotExpenseCategory,
+        amount: lotFees,
+      },
+      itemExpensesByKey: Object.fromEntries(
+        items.map((holding) => {
+          const key = holdingKey(holding);
+          return [
+            key,
+            {
+              category: lotItemExpenseCategories[key] ?? "shipping",
+              amount: lotItemExpenses[key] ?? "",
+            },
+          ];
+        }),
+      ),
+    });
     const ok = await save(async () => {
       const res = await supabase.rpc("record_lot_sale", {
-        p_items: payload, p_sold_at: lotDate, p_leg: selectedLeg,
+        p_items: request.items, p_sold_at: lotDate, p_leg: selectedLeg,
         p_orig_currency: isNative ? lotCurrency.toUpperCase() : null,
         p_fx_rate: isNative ? Number(lotFx) : 1,
+        p_gross_total: Number(lotGross),
+        p_sale_expenses: request.expenses,
+        p_allocation_method: lotAllocationMethod,
       });
       if (res.error) return res;
       const grp = (res.data as { sale_group: number }[] | null)?.[0]?.sale_group;
@@ -594,25 +707,37 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     await fetchHoldings(); await fetchSales();
   }
   const lotNative = selectedLeg === "export" && lotCurrency.toUpperCase() !== "USD";
+  const lotExplicitMatches =
+    lotAllocationMethod !== "explicit_prices" ||
+    explicitGrossMatches(
+      lotGross,
+      selectedHoldings.map((holding) =>
+        lotExplicitGross[holdingKey(holding)]),
+    );
+  const lotExplicitTotal = selectedHoldings.reduce(
+    (sum, holding) =>
+      sum + Math.round((Number(lotExplicitGross[holdingKey(holding)]) || 0) * 100),
+    0,
+  ) / 100;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2">
+    <div className="min-w-0 space-y-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-base font-semibold">{t("trips.recordSale")}</h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {selected.size > 0 && (
             <Button size="sm" onClick={openLot}>{t("trips.sellLot", { n: selected.size })}</Button>
           )}
           <div className="flex items-center gap-1">
             <select value={sortCol ?? ""} onChange={(e) => setSortCol((e.target.value || null) as typeof sortCol)}
-              className="h-8 rounded-md border bg-background px-2 text-xs" aria-label={t("trips.sortBy")}>
+              className="min-h-11 rounded-md border bg-background px-2 text-xs sm:min-h-8" aria-label={t("trips.sortBy")}>
               <option value="">{t("trips.sortBy")}…</option>
               <option value="name">{t("trips.item")}</option>
               <option value="leg">{t("trips.leg")}</option>
               <option value="qty">{t("trips.qty")}</option>
               <option value="avg">{t("trips.avgCost")}</option>
             </select>
-            <Button variant="outline" size="icon" className="size-8" onClick={() => setSortAsc((a) => !a)} aria-label={t("trips.sortBy")}>
+            <Button variant="outline" size="icon" className="size-11 sm:size-8" onClick={() => setSortAsc((a) => !a)} aria-label={t("trips.sortBy")}>
               {sortAsc ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
             </Button>
           </div>
@@ -638,8 +763,14 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                   ) : (
                     <div className="flex aspect-[5/7] w-full items-center justify-center bg-muted"><ImageOff className="size-8 text-muted-foreground" /></div>
                   )}
-                  <input type="checkbox" checked={selected.has(holdingKey(h))} disabled={disabled}
-                    onChange={() => toggle(h)} title={t("trips.sellLotHint")} className="absolute left-1 top-1 size-4" />
+                  <label
+                    className="absolute left-0 top-0 flex size-11 cursor-pointer items-start justify-start p-2"
+                    title={t("trips.sellLotHint")}
+                  >
+                    <input type="checkbox" checked={selected.has(holdingKey(h))} disabled={disabled}
+                      onChange={() => toggle(h)} className="size-4" />
+                    <span className="sr-only">{t("trips.sellLotHint")}</span>
+                  </label>
                 </div>
                 <CardContent className="space-y-1 p-2">
                   <div className="truncate text-xs font-medium">{label(h)}</div>
@@ -649,7 +780,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                     <span className="truncate">{h.item_type === "sealed" ? `${h.sealed_condition}/${h.variant_edition}` : h.psa_grade ? `PSA ${h.psa_grade}` : ""}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs"><span>×{h.qty_on_hand}</span><span>${h.avg_cost_usd}</span></div>
-                  <Button size="sm" variant="outline" className="h-6 w-full" onClick={() => openSale(h)}>{t("trips.recordSale")}</Button>
+                  <Button size="sm" variant="outline" className="min-h-11 w-full sm:min-h-7" onClick={() => openSale(h)}>{t("trips.recordSale")}</Button>
                 </CardContent>
               </Card>
             );
@@ -671,10 +802,13 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         <TableBody>
           {sorted.map((h) => (
             <TableRow key={holdingKey(h)}>
-              <TableCell>
-                <input type="checkbox" checked={selected.has(holdingKey(h))}
-                  disabled={selectedLeg !== null && h.leg !== selectedLeg}
-                  onChange={() => toggle(h)} title={t("trips.sellLotHint")} />
+              <TableCell className="p-0">
+                <label className="flex size-11 cursor-pointer items-center justify-center sm:size-8" title={t("trips.sellLotHint")}>
+                  <input type="checkbox" checked={selected.has(holdingKey(h))}
+                    disabled={selectedLeg !== null && h.leg !== selectedLeg}
+                    onChange={() => toggle(h)} />
+                  <span className="sr-only">{t("trips.sellLotHint")}</span>
+                </label>
               </TableCell>
               <TableCell className="truncate max-w-[280px]">
                 {label(h)} <span className="text-muted-foreground">· {cardMeta(h.set_code, h.card_number, h.misc_info)}</span>
@@ -698,9 +832,9 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">{t("trips.salesHistory")}</h3>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Input value={hSearch} onChange={(e) => setHSearch(e.target.value)}
-            placeholder={t("sales.searchPlaceholder")} className="h-8 w-44" />
+            placeholder={t("sales.searchPlaceholder")} className="min-h-11 w-full sm:min-h-8 sm:w-44" />
           <Tabs value={groupBy} onValueChange={(v) => setGroupBy(String(v) as "sale" | "card")}>
             <TabsList>
               <TabsTrigger value="sale">{t("trips.bySale")}</TabsTrigger>
@@ -709,7 +843,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           </Tabs>
           <div className="flex items-center gap-1">
             <select value={hSortCol ?? "date"} onChange={(e) => setHSortCol(e.target.value as HCol)}
-              className="h-8 rounded-md border bg-background px-2 text-xs" aria-label={t("trips.sortBy")}>
+              className="min-h-11 rounded-md border bg-background px-2 text-xs sm:min-h-8" aria-label={t("trips.sortBy")}>
               <option value="date">{t("trips.month")}</option>
               <option value="name">{t("trips.item")}</option>
               <option value="qty">{t("trips.qty")}</option>
@@ -718,7 +852,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
               <option value="margin">{t("trips.saleMargin")}</option>
               <option value="marginPct">{t("trips.saleMarginPct")}</option>
             </select>
-            <Button variant="outline" size="icon" className="size-8" onClick={() => setHSortAsc((a) => !a)} aria-label={t("trips.sortBy")}>
+            <Button variant="outline" size="icon" className="size-11 sm:size-8" onClick={() => setHSortAsc((a) => !a)} aria-label={t("trips.sortBy")}>
               {hSortAsc ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
             </Button>
           </div>
@@ -752,8 +886,8 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                     <span className={ev.margin < 0 ? "text-destructive" : ""} title={t("trips.saleMargin")}>${ev.margin.toFixed(0)} · {ev.marginPct}%</span>
                   </div>
                   <div className="mt-1 flex items-center gap-1">
-                    {!ev.reverted && (
-                      <Button variant="ghost" size="sm" className="h-6 px-1 text-xs" disabled={saving}
+                    {!ev.reverted && !ev.sourceFactLot && (
+                      <Button variant="ghost" size="sm" className="min-h-11 px-1 text-xs sm:min-h-7" disabled={saving}
                         onClick={() => ev.isLot ? openEditLot(ev.items) : openEdit(ev.items[0])}>
                         <Pencil className="size-3 mr-1" />{ev.isLot ? t("trips.editLot") : t("trips.editSale")}
                       </Button>
@@ -801,11 +935,13 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                       <span className="text-xs text-muted-foreground">{t("trips.reverted")}</span>
                     ) : (
                       <>
-                      <Button variant="ghost" size="icon" className="size-7" disabled={saving}
-                        onClick={() => ev.isLot ? openEditLot(ev.items) : openEdit(ev.items[0])}
-                        title={ev.isLot ? t("trips.editLot") : t("trips.editSale")}>
-                        <Pencil className="size-4" />
-                      </Button>
+                      {!ev.sourceFactLot && (
+                        <Button variant="ghost" size="icon" className="size-7" disabled={saving}
+                          onClick={() => ev.isLot ? openEditLot(ev.items) : openEdit(ev.items[0])}
+                          title={ev.isLot ? t("trips.editLot") : t("trips.editSale")}>
+                          <Pencil className="size-4" />
+                        </Button>
+                      )}
                       <AlertDialog>
                         <AlertDialogTrigger render={<Button variant="ghost" size="sm" disabled={saving} />}>
                           <Undo2 className="size-4 mr-1" />{t("trips.revertLot")}
@@ -1019,21 +1155,65 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       </Dialog>
 
       <Dialog open={lotOpen} onOpenChange={(o) => !o && setLotOpen(false)}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-xl">
           <DialogHeader><DialogTitle>{t("trips.lotSaleTitle", { n: selectedHoldings.length })}</DialogTitle></DialogHeader>
-          <div className="max-h-44 space-y-1 overflow-auto rounded-md border p-1 text-sm">
+          <div className="max-h-72 space-y-2 overflow-auto rounded-md border p-2 text-sm">
             {selectedHoldings.map((h) => (
-              <div key={holdingKey(h)} className="flex items-center gap-2 px-1 py-0.5">
-                <span className="flex-1 truncate">{label(h)}{cardVariant(h.misc_info) ? ` · ${cardVariant(h.misc_info)}` : ""}{h.psa_grade ? ` · PSA ${h.psa_grade}` : ""}{h.item_type === "sealed" ? ` · ${h.sealed_condition}/${h.variant_edition}` : ""}</span>
-                <Input type="number" min={1} max={h.qty_on_hand}
-                  value={lotQty[holdingKey(h)] ?? String(h.qty_on_hand)}
-                  onChange={(e) => setLotQty((p) => ({ ...p, [holdingKey(h)]: e.target.value }))}
-                  className="h-7 w-16" />
-                <span className="shrink-0 text-xs text-muted-foreground">/ {h.qty_on_hand}</span>
+              <div key={holdingKey(h)} className="space-y-2 rounded-md bg-muted/30 p-2">
+                <div className="truncate font-medium">{label(h)}{cardVariant(h.misc_info) ? ` · ${cardVariant(h.misc_info)}` : ""}{h.psa_grade ? ` · PSA ${h.psa_grade}` : ""}{h.item_type === "sealed" ? ` · ${h.sealed_condition}/${h.variant_edition}` : ""}</div>
+                <div className={`grid gap-2 ${lotAllocationMethod === "explicit_prices" ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-1 sm:grid-cols-3"}`}>
+                  <label className="space-y-1 text-xs">
+                    <span className="text-muted-foreground">{t("trips.saleQty")} / {h.qty_on_hand}</span>
+                    <Input type="number" min={1} max={h.qty_on_hand}
+                      value={lotQty[holdingKey(h)] ?? String(h.qty_on_hand)}
+                      onChange={(e) => setLotQty((p) => ({ ...p, [holdingKey(h)]: e.target.value }))}
+                      className="min-h-11" />
+                  </label>
+                  {lotAllocationMethod === "explicit_prices" && (
+                    <label className="space-y-1 text-xs">
+                      <span className="text-muted-foreground">{t("trips.explicitGross")}</span>
+                      <Input type="number" min={0} step="0.01"
+                        value={lotExplicitGross[holdingKey(h)] ?? ""}
+                        onChange={(e) => setLotExplicitGross((p) => ({ ...p, [holdingKey(h)]: e.target.value }))}
+                        className="min-h-11" />
+                    </label>
+                  )}
+                  <label className="space-y-1 text-xs">
+                    <span className="text-muted-foreground">{t("trips.itemExpenseCategory")}</span>
+                    <select
+                      value={lotItemExpenseCategories[holdingKey(h)] ?? "shipping"}
+                      onChange={(e) => setLotItemExpenseCategories((p) => ({ ...p, [holdingKey(h)]: e.target.value as SaleExpenseCategory }))}
+                      className="min-h-11 w-full rounded-md border bg-background px-3"
+                    >
+                      {SALE_EXPENSE_CATEGORIES.map((category) => (
+                        <option key={category} value={category}>{t(`trips.saleExpenseCategory.${category}`)}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-xs">
+                    <span className="text-muted-foreground">{t("trips.itemExpense")}</span>
+                    <Input type="number" min={0} step="0.01"
+                      value={lotItemExpenses[holdingKey(h)] ?? ""}
+                      onChange={(e) => setLotItemExpenses((p) => ({ ...p, [holdingKey(h)]: e.target.value }))}
+                      className="min-h-11" />
+                  </label>
+                </div>
               </div>
             ))}
           </div>
           <FieldGroup>
+            <Field><Label>{t("trips.saleAllocation")}</Label>
+              <select
+                value={lotAllocationMethod}
+                onChange={(e) => setLotAllocationMethod(e.target.value as SaleAllocationMethod)}
+                className="min-h-11 w-full rounded-md border bg-background px-3"
+              >
+                {(["market_value", "landed_cost", "equal_per_unit", "explicit_prices"] as SaleAllocationMethod[]).map((method) => (
+                  <option key={method} value={method}>{t(`trips.saleAllocation.${method}`)}</option>
+                ))}
+              </select>
+            </Field>
+            <p className="text-xs text-muted-foreground">{t("trips.saleAllocationHelp")}</p>
             {selectedLeg === "export" && (
               <Field><Label>{t("trips.saleCurrency")}</Label>
                 <Input value={lotCurrency} onChange={(e) => setLotCurrency(e.target.value)} /></Field>
@@ -1049,8 +1229,28 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                 </p>
               </>
             )}
-            <Field><Label>{t("trips.saleFees")}</Label>
-              <Input type="number" value={lotFees} onChange={(e) => setLotFees(e.target.value)} /></Field>
+            {lotAllocationMethod === "explicit_prices" && (
+              <p className={`text-xs ${lotExplicitMatches ? "text-muted-foreground" : "text-destructive"}`}>
+                {lotExplicitMatches
+                  ? t("trips.explicitTotal", { total: lotExplicitTotal.toFixed(2) })
+                  : t("trips.explicitMismatch", { total: lotExplicitTotal.toFixed(2), gross: (Number(lotGross) || 0).toFixed(2) })}
+              </p>
+            )}
+            <Field><Label>{t("trips.sharedExpense")}</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={lotExpenseCategory}
+                  onChange={(e) => setLotExpenseCategory(e.target.value as SaleExpenseCategory)}
+                  className="min-h-11 w-full rounded-md border bg-background px-3"
+                  aria-label={t("trips.sharedExpenseCategory")}
+                >
+                  {SALE_EXPENSE_CATEGORIES.map((category) => (
+                    <option key={category} value={category}>{t(`trips.saleExpenseCategory.${category}`)}</option>
+                  ))}
+                </select>
+                <Input type="number" min={0} step="0.01" value={lotFees} onChange={(e) => setLotFees(e.target.value)} className="min-h-11" />
+              </div>
+            </Field>
             <Field><Label>{t("trips.month")}</Label>
               <Input type="date" value={lotDate} onChange={(e) => setLotDate(e.target.value)} /></Field>
             <Field><Label>{t("trips.soldTo")}</Label>
@@ -1058,7 +1258,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           </FieldGroup>
           <DialogFooter>
             <Button variant="outline" onClick={() => setLotOpen(false)}>{t("trips.cancel")}</Button>
-            <Button disabled={!lotGross || saving} onClick={recordLotSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.recordSale")}</Button>
+            <Button disabled={!lotGross || !lotExplicitMatches || saving} onClick={recordLotSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.recordSale")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

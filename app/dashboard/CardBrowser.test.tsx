@@ -47,6 +47,11 @@ vi.mock("./DecisionWatchlist", () => ({ default: () => <div>watchlist surface</d
 vi.mock("./RefreshPricesAction", () => ({ RefreshPricesAction: () => null }));
 vi.mock("./RefreshInFlightStrip", () => ({ RefreshInFlightStrip: () => null }));
 vi.mock("./CardDetailModal", () => ({ default: () => null }));
+vi.mock("./owned-inventory", () => ({
+  ownedInventoryKey: ({ game, cardId }: { game: string; cardId?: string | number | null }) =>
+    `${game}:${cardId ?? ""}`,
+  useOwnedInventoryCounts: () => new Map(),
+}));
 
 afterEach(cleanup);
 

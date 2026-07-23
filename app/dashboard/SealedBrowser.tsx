@@ -50,6 +50,11 @@ import {
 import { createSealedColumns, PriceCell } from "./columns";
 import { DataTable } from "./data-table";
 import SealedDetailModal from "./SealedDetailModal";
+import {
+  ownedInventoryKey,
+  useOwnedInventoryCounts,
+  type OwnedInventoryIdentity,
+} from "./owned-inventory";
 
 export default function SealedBrowser() {
   const { t } = useTranslation();
@@ -87,6 +92,31 @@ export default function SealedBrowser() {
     page,
     pageSize,
   });
+  const ownedIdentities = useMemo<OwnedInventoryIdentity[]>(
+    () => data.map((row) => ({
+      game: "pokemon_sealed",
+      productId: row.card.card_id,
+      sealedCondition: row.sealedCondition,
+      variantEdition: row.variantEdition,
+    })),
+    [data],
+  );
+  const ownedCounts = useOwnedInventoryCounts(
+    "pokemon_sealed",
+    ownedIdentities,
+  );
+  const dataWithOwned = useMemo(
+    () => data.map((row) => ({
+      ...row,
+      ownedQty: ownedCounts.get(ownedInventoryKey({
+        game: "pokemon_sealed",
+        productId: row.card.card_id,
+        sealedCondition: row.sealedCondition,
+        variantEdition: row.variantEdition,
+      })) ?? 0,
+    })),
+    [data, ownedCounts],
+  );
 
   // Reset page when filters change
   useEffect(() => {
@@ -259,7 +289,7 @@ export default function SealedBrowser() {
 
       <DataTable
         columns={useMemo(() => createSealedColumns(t, language), [t, language])}
-        data={data as CardRowData[]}
+        data={dataWithOwned as CardRowData[]}
         loading={loading}
         sorting={sorting}
         onSortingChange={handleSortingChange}
@@ -325,6 +355,11 @@ export default function SealedBrowser() {
                     {editionLabel(t, row.variantEdition)} · {conditionLabel(t, row.sealedCondition)}
                     {misc ? ` · ${misc}` : ""}
                   </CardDescription>
+                  {!!row.ownedQty && row.ownedQty > 0 && (
+                    <div className="text-[11px] text-muted-foreground">
+                      {t("inventory.owned")} {row.ownedQty}
+                    </div>
+                  )}
                 </CardHeader>
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
                   <div className="grid w-full grid-cols-[1fr_auto_1fr] gap-2">

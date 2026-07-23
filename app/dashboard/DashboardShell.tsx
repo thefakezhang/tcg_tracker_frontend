@@ -76,7 +76,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
             <AppSidebar user={user} />
             <SidebarInset>
               <DashboardHeader />
-              <main className="p-6">{children}</main>
+              <main className="min-w-0 p-3 sm:p-6">{children}</main>
             </SidebarInset>
           </SidebarProvider>
         </HeaderProvider>

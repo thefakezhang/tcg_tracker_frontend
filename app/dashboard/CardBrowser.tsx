@@ -51,6 +51,11 @@ import { DecisionActions } from "./DecisionActions";
 import { browserOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
 import { sourceLabel } from "@/lib/source-labels";
 import type { SourceSide } from "./source-availability";
+import {
+  ownedInventoryKey,
+  useOwnedInventoryCounts,
+  type OwnedInventoryIdentity,
+} from "./owned-inventory";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -133,9 +138,31 @@ export default function CardBrowser() {
       pageSize,
     });
 
+  const ownedIdentities = useMemo<OwnedInventoryIdentity[]>(
+    () => data.map((row) => ({
+      game: activeGame,
+      cardId: row.card.card_id,
+    })),
+    [activeGame, data],
+  );
+  const ownedCounts = useOwnedInventoryCounts(activeGame, ownedIdentities);
+  const dataWithOwned = useMemo(
+    () => data.map((row) => ({
+      ...row,
+      ownedQty: ownedCounts.get(ownedInventoryKey({
+        game: activeGame,
+        cardId: row.card.card_id,
+      })) ?? 0,
+    })),
+    [activeGame, data, ownedCounts],
+  );
   const visibleData = useMemo(
-    () => weakEvidenceOnly ? data.filter((row) => isHighValueWeakEvidence(row.signal, row.jpyUsd)) : data,
-    [data, weakEvidenceOnly],
+    () => weakEvidenceOnly
+      ? dataWithOwned.filter((row) =>
+          isHighValueWeakEvidence(row.signal, row.jpyUsd)
+        )
+      : dataWithOwned,
+    [dataWithOwned, weakEvidenceOnly],
   );
 
   // A card can occupy two rows (PSA and non-PSA share a card_id), so dedupe -
@@ -567,6 +594,11 @@ export default function CardBrowser() {
                     <CardDescription className="truncate text-xs">
                       {misc}
                     </CardDescription>
+                  )}
+                  {!!row.ownedQty && row.ownedQty > 0 && (
+                    <div className="text-[11px] text-muted-foreground">
+                      {t("inventory.owned")} {row.ownedQty}
+                    </div>
                   )}
                 </CardHeader>
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
