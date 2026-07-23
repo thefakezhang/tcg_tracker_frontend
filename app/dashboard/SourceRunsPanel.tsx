@@ -39,6 +39,7 @@ import {
   type SourceRunHost,
   type SourceRunMode,
   type SourceRunSnapshot,
+  type SourceRunTask,
   type Verdict,
 } from "./source-run-control";
 
@@ -48,6 +49,7 @@ const EMPTY_SNAPSHOT: SourceRunSnapshot = {
   jobs: [],
   runs: [],
   hosts: [],
+  inventory: [],
 };
 
 type PendingRun = {
@@ -56,6 +58,7 @@ type PendingRun = {
   spec: ModeSpec;
   readiness: ModeReadiness;
   expected: number | null;
+  dangerous: boolean;
 };
 
 function stateTone(state: string): string {
@@ -319,6 +322,10 @@ export function SourceRunsPanel() {
     for (const run of snapshot.runs) if (!result.has(run.job)) result.set(run.job, run);
     return result;
   }, [snapshot.runs]);
+  const jobsByName = useMemo(
+    () => new Map(snapshot.jobs.map((job) => [job.job, job])),
+    [snapshot.jobs],
+  );
 
   const submit = async () => {
     if (!pending) return;
@@ -328,6 +335,7 @@ export function SourceRunsPanel() {
       const { data, error } = await supabase.rpc("request_source_run", {
         p_job: pending.job,
         p_mode: pending.mode,
+        p_confirm_dangerous: pending.dangerous,
       });
       const response = data as Verdict | null;
       setVerdict(error || !response || typeof response.verdict !== "string"
@@ -407,6 +415,71 @@ export function SourceRunsPanel() {
       )}
 
       <div className="space-y-2">
+        <h4 className="text-xs font-medium uppercase tracking-wide">{t("runs.schedulerTitle")}</h4>
+        <p className="text-muted-foreground text-xs">{t("runs.schedulerSubtitle")}</p>
+        <div className="grid min-w-0 gap-2 xl:grid-cols-2">
+          {snapshot.inventory.map((task: SourceRunTask) => {
+            const sourceJob = jobsByName.get(task.job);
+            const mode = task.manual_mode;
+            const spec = mode ? sourceJob?.modes[mode] : undefined;
+            const manualReadiness = mode ? sourceJob?.readiness[mode] : undefined;
+            const canRequest = (task.control_state === "manual_available" || task.control_state === "confirmation_required")
+              && !!mode && !!spec && !!manualReadiness
+              && manualReadiness.state !== "deferred_unsupported";
+            const scheduleState = task.schedule_readiness.state;
+            return (
+              <article key={task.task_name} className="min-w-0 rounded-lg border p-3" data-testid={`scheduler-task-${task.task_name}`}>
+                <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <h5 className="truncate text-sm font-medium">{task.task_name}</h5>
+                    <p className="text-muted-foreground mt-0.5 break-words text-[11px]">
+                      {task.cadence} · {task.job} · {task.lane}
+                    </p>
+                  </div>
+                  <StatusPill state={scheduleState} label={t(`runs.scheduleState.${scheduleState}` as never)} />
+                </div>
+                <p className="text-muted-foreground mt-2 text-xs">{task.policy_reason}</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <StatusPill state={task.control_state} label={t(`runs.controlState.${task.control_state}` as never)} />
+                  <StatusPill state={task.evidence_state} label={t(`runs.evidenceState.${task.evidence_state}` as never)} />
+                </div>
+                {task.active_run ? (
+                  <p className="mt-2 text-xs">{t("runs.taskActive", { mode: task.active_run.mode, state: task.active_run.state })}</p>
+                ) : null}
+                {task.latest_run ? (
+                  <p className="text-muted-foreground mt-1 text-[11px]">
+                    {t("runs.taskLatest", {
+                      state: task.latest_run.state,
+                      time: task.latest_run.finished_at ? new Date(task.latest_run.finished_at).toLocaleString() : "",
+                    })}
+                  </p>
+                ) : null}
+                {canRequest ? (
+                  <Button
+                    type="button"
+                    variant={task.control_state === "confirmation_required" ? "destructive" : "outline"}
+                    size="sm"
+                    className="mt-3 min-h-11 w-full sm:w-auto"
+                    onClick={() => setPending({
+                      job: task.job,
+                      mode: mode!,
+                      spec: spec!,
+                      readiness: manualReadiness!,
+                      expected: mode === "full" ? sourceJob?.expected_minutes_full ?? null : null,
+                      dangerous: task.control_state === "confirmation_required",
+                    })}
+                  >
+                    <Play className="size-3.5" aria-hidden="true" />
+                    {task.control_state === "confirmation_required" ? t("runs.reviewDangerous") : t("runs.runNow")}
+                  </Button>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="space-y-2">
         <h4 className="text-xs font-medium uppercase tracking-wide">{t("runs.jobsTitle")}</h4>
         <div className="grid min-w-0 gap-2 xl:grid-cols-2">
           {snapshot.jobs.map((job) => {
@@ -439,6 +512,7 @@ export function SourceRunsPanel() {
                         spec: job.modes[mode]!,
                         readiness: job.readiness[mode]!,
                         expected: mode === "full" ? job.expected_minutes_full : null,
+                        dangerous: job.modes[mode]?.manual_policy === "dangerous_confirmation",
                       })}
                     >
                       <Play className="size-3.5" aria-hidden="true" />
@@ -498,6 +572,7 @@ export function SourceRunsPanel() {
                   </div>
                 ) : null}
                 {pending?.expected ? <p>{t("runs.expected", { minutes: pending.expected })}</p> : null}
+                {pending?.dangerous ? <p className="text-destructive font-medium">{t("runs.dangerousWarning")}</p> : null}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>

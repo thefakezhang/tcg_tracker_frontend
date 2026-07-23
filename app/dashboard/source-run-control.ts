@@ -31,7 +31,11 @@ export type ModeReadiness = {
   artifact_home: ArtifactHome | null;
 };
 
-export type ModeSpec = { lane: "http" | "browser" | "session"; meaning: string };
+export type ModeSpec = {
+  lane: "http" | "browser" | "session";
+  meaning: string;
+  manual_policy?: "safe" | "session" | "scheduled_only" | "dangerous_confirmation" | "unsupported";
+};
 
 export type SourceRunJob = {
   job: string;
@@ -88,6 +92,9 @@ export type SourceRunHost = {
   status: "revoked" | "offline" | "failure" | "awaiting_session" | "ready";
   lanes: Array<"http" | "browser" | "session">;
   supported_jobs: string[];
+  capability_job_modes: string[];
+  scheduled_job_modes: string[];
+  manual_job_modes: string[];
   artifact_homes: ArtifactHome[];
   session_ready: boolean;
   failure_code: "release_mismatch" | "host_reported_unhealthy" | null;
@@ -102,11 +109,57 @@ export type SourceRunHost = {
   active_state: "claimed" | "running" | null;
 };
 
+export type InventoryReadiness = {
+  state: string;
+  reason_code: string;
+  host_name?: string | null;
+  lane?: "http" | "browser" | "session" | null;
+  artifact_home?: ArtifactHome | null;
+};
+
+export type InventoryRunSummary = {
+  run_id: number;
+  mode: SourceRunMode;
+  state: string;
+  requested_at: string;
+  claimed_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  exit_code?: number | null;
+  claimed_by_host_name?: string | null;
+  evidence_ref?: string | null;
+  evidence_sha256?: string | null;
+  result_summary?: string | null;
+  failure_code?: string | null;
+};
+
+export type SourceRunTask = {
+  task_name: string;
+  job: string;
+  cadence: string;
+  lane: "http" | "browser" | "session" | "maintenance";
+  session_required: boolean;
+  artifact_home: ArtifactHome;
+  schedule_policy: "scheduled" | "maintenance" | "retired" | "staged_activation";
+  manual_policy: "safe" | "session" | "scheduled_only" | "dangerous_confirmation" | "unsupported";
+  manual_mode: SourceRunMode | null;
+  policy_reason: string;
+  execution_path: "shared_shim" | "legacy_direct";
+  target_state: "documented_target" | "retired";
+  schedule_readiness: InventoryReadiness;
+  manual_readiness: InventoryReadiness;
+  control_state: "manual_available" | "confirmation_required" | "scheduled_only" | "unsupported" | "retired";
+  active_run: InventoryRunSummary | null;
+  latest_run: InventoryRunSummary | null;
+  evidence_state: "managed" | "no_managed_run" | "unobserved_legacy";
+};
+
 export type SourceRunSnapshot = {
   server_time: string;
   jobs: SourceRunJob[];
   runs: SourceRun[];
   hosts: SourceRunHost[];
+  inventory: SourceRunTask[];
 };
 
 export type Verdict = {
@@ -126,11 +179,13 @@ export function isSnapshot(value: unknown): value is SourceRunSnapshot {
   if (!Array.isArray(value.jobs) || !value.jobs.every(isJob)) return false;
   if (!Array.isArray(value.runs) || !value.runs.every(isRun)) return false;
   if (!Array.isArray(value.hosts) || !value.hosts.every(isHost)) return false;
+  if (!Array.isArray(value.inventory) || !value.inventory.every(isTask)) return false;
   const visibleJobs = new Set(value.jobs.map((job) => (job as SourceRunJob).job));
+  const inventoryJobs = new Set(value.inventory.map((task) => (task as SourceRunTask).job));
   return value.runs.every((run) => visibleJobs.has((run as SourceRun).job))
     && value.hosts.every((host) => {
       const activeJob = (host as SourceRunHost).active_job;
-      return activeJob === null || visibleJobs.has(activeJob);
+      return activeJob === null || visibleJobs.has(activeJob) || inventoryJobs.has(activeJob);
     });
 }
 
@@ -261,6 +316,9 @@ function isHost(value: unknown): value is SourceRunHost {
   return typeof value.enabled === "boolean" && statuses.includes(value.status as string)
     && isStringArray(value.lanes) && value.lanes.every(isLane)
     && isStringArray(value.supported_jobs) && isStringArray(value.artifact_homes)
+    && isStringArray(value.capability_job_modes)
+    && isStringArray(value.scheduled_job_modes)
+    && isStringArray(value.manual_job_modes)
     && value.artifact_homes.every(isArtifactHome) && typeof value.session_ready === "boolean"
     && (value.failure_code === null || value.failure_code === "release_mismatch" || value.failure_code === "host_reported_unhealthy")
     && typeof value.executor_sha === "string" && typeof value.release_sha === "string"
@@ -268,4 +326,51 @@ function isHost(value: unknown): value is SourceRunHost {
     && isDateString(value.heartbeat_expires_at)
     && isNullableString(value.active_job) && (value.active_mode === null || isMode(value.active_mode))
     && activeStates.includes(value.active_state as null | string) && activeShape;
+}
+
+function isInventoryReadiness(value: unknown): value is InventoryReadiness {
+  return isRecord(value)
+    && typeof value.state === "string"
+    && typeof value.reason_code === "string"
+    && (value.host_name === undefined || isNullableString(value.host_name))
+    && (value.lane === undefined || value.lane === null || isLane(value.lane))
+    && (value.artifact_home === undefined || value.artifact_home === null || isArtifactHome(value.artifact_home));
+}
+
+function isInventoryRun(value: unknown): value is InventoryRunSummary {
+  if (!isRecord(value) || typeof value.run_id !== "number" || !isMode(value.mode)
+      || typeof value.state !== "string" || !isDateString(value.requested_at)) return false;
+  return (value.claimed_at === undefined || isNullableDate(value.claimed_at))
+    && (value.started_at === undefined || isNullableDate(value.started_at))
+    && (value.finished_at === undefined || isNullableDate(value.finished_at))
+    && (value.exit_code === undefined || value.exit_code === null || typeof value.exit_code === "number")
+    && (value.claimed_by_host_name === undefined || isNullableString(value.claimed_by_host_name))
+    && (value.evidence_ref === undefined || isNullableString(value.evidence_ref))
+    && (value.evidence_sha256 === undefined || isNullableString(value.evidence_sha256))
+    && (value.result_summary === undefined || isNullableString(value.result_summary))
+    && (value.failure_code === undefined || isNullableString(value.failure_code));
+}
+
+function isTask(value: unknown): value is SourceRunTask {
+  if (!isRecord(value)) return false;
+  const lanes = ["http", "browser", "session", "maintenance"];
+  const schedulePolicies = ["scheduled", "maintenance", "retired", "staged_activation"];
+  const manualPolicies = ["safe", "session", "scheduled_only", "dangerous_confirmation", "unsupported"];
+  const controlStates = ["manual_available", "confirmation_required", "scheduled_only", "unsupported", "retired"];
+  const evidenceStates = ["managed", "no_managed_run", "unobserved_legacy"];
+  return typeof value.task_name === "string" && typeof value.job === "string"
+    && typeof value.cadence === "string" && lanes.includes(value.lane as string)
+    && typeof value.session_required === "boolean" && isArtifactHome(value.artifact_home)
+    && schedulePolicies.includes(value.schedule_policy as string)
+    && manualPolicies.includes(value.manual_policy as string)
+    && (value.manual_mode === null || isMode(value.manual_mode))
+    && typeof value.policy_reason === "string"
+    && (value.execution_path === "shared_shim" || value.execution_path === "legacy_direct")
+    && (value.target_state === "documented_target" || value.target_state === "retired")
+    && isInventoryReadiness(value.schedule_readiness)
+    && isInventoryReadiness(value.manual_readiness)
+    && controlStates.includes(value.control_state as string)
+    && (value.active_run === null || isInventoryRun(value.active_run))
+    && (value.latest_run === null || isInventoryRun(value.latest_run))
+    && evidenceStates.includes(value.evidence_state as string);
 }

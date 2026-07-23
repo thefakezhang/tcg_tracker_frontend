@@ -53,6 +53,9 @@ const snapshot: SourceRunSnapshot = {
     status: "awaiting_session",
     lanes: ["http", "browser", "session"],
     supported_jobs: ["cardladder"],
+    capability_job_modes: ["cardladder:full", "cardladder:report"],
+    scheduled_job_modes: ["cardladder:full"],
+    manual_job_modes: ["cardladder:full", "cardladder:report"],
     artifact_homes: ["data-repo", "state-dir"],
     session_ready: false,
     failure_code: null,
@@ -136,6 +139,29 @@ const snapshot: SourceRunSnapshot = {
     failure_code: null,
     readiness: null,
   }],
+  inventory: [{
+    task_name: "TCG Card Ladder Refresh",
+    job: "cardladder",
+    cadence: "daily 03:30",
+    lane: "session",
+    session_required: true,
+    artifact_home: "data-repo",
+    schedule_policy: "scheduled",
+    manual_policy: "session",
+    manual_mode: "full",
+    policy_reason: "Requires the authenticated interactive session.",
+    execution_path: "shared_shim",
+    target_state: "documented_target",
+    schedule_readiness: { state: "awaiting_session", reason_code: "awaiting_session", host_name: "Main PC" },
+    manual_readiness: {
+      state: "awaiting_session", reason_code: "awaiting_session", host_name: "Main PC",
+      lane: "session", artifact_home: "data-repo",
+    },
+    control_state: "manual_available",
+    active_run: null,
+    latest_run: null,
+    evidence_state: "no_managed_run",
+  }],
 };
 
 afterEach(() => {
@@ -177,6 +203,71 @@ describe("SourceRunsPanel", () => {
     expect(screen.getByText("runs.confirmLane runs.lane.session")).toBeTruthy();
     expect(screen.getByText("runs.confirmMayRunLater")).toBeTruthy();
     expect(screen.getByText("runs.expected 18")).toBeTruthy();
+    expect(screen.getByText("runs.schedulerTitle")).toBeTruthy();
+    expect(screen.getByTestId("scheduler-task-TCG Card Ladder Refresh")).toBeTruthy();
+  });
+
+  it("requires explicit confirmation for dangerous maintenance", async () => {
+    const dangerous = structuredClone(snapshot);
+    dangerous.jobs.push({
+      job: "downsample-price-history",
+      family: "maintenance",
+      fetch_lane: null,
+      artifact_home: "none",
+      modes: {
+        full: {
+          lane: "http",
+          meaning: "Compact verified historical partitions.",
+          manual_policy: "dangerous_confirmation",
+        },
+      },
+      readiness: {
+        full: {
+          state: "eligible", reason_code: "ready", host_name: "Main PC",
+          lane: "http", artifact_home: "none",
+        },
+      },
+      expected_minutes_full: 60,
+      min_interval_hours: 0,
+    });
+    dangerous.inventory.push({
+      task_name: "TCG Price History Downsample",
+      job: "downsample-price-history",
+      cadence: "monthly 1st 06:00",
+      lane: "maintenance",
+      session_required: false,
+      artifact_home: "none",
+      schedule_policy: "maintenance",
+      manual_policy: "dangerous_confirmation",
+      manual_mode: "full",
+      policy_reason: "Retention maintenance requires confirmation.",
+      execution_path: "shared_shim",
+      target_state: "documented_target",
+      schedule_readiness: { state: "eligible", reason_code: "ready", host_name: "Main PC" },
+      manual_readiness: {
+        state: "eligible", reason_code: "ready", host_name: "Main PC",
+        lane: "http", artifact_home: "none",
+      },
+      control_state: "confirmation_required",
+      active_run: null,
+      latest_run: null,
+      evidence_state: "no_managed_run",
+    });
+    mocks.rpc.mockImplementation(async (name: string) => name === "request_source_run"
+      ? { data: { verdict: "queued", job: "downsample-price-history", mode: "full" }, error: null }
+      : { data: dangerous, error: null });
+    render(<SourceRunsPanel />);
+
+    const task = await screen.findByTestId("scheduler-task-TCG Price History Downsample");
+    fireEvent.click(within(task).getByRole("button", { name: "runs.reviewDangerous" }));
+    expect(await screen.findByText("runs.dangerousWarning")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "runs.start" }));
+
+    await waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith("request_source_run", {
+      p_job: "downsample-price-history",
+      p_mode: "full",
+      p_confirm_dangerous: true,
+    }));
   });
 
   it("labels a running host separately from a claimed lease", async () => {
@@ -268,6 +359,7 @@ describe("SourceRunsPanel", () => {
       expect(mocks.rpc).toHaveBeenCalledWith("request_source_run", {
         p_job: "cardladder",
         p_mode: "full",
+        p_confirm_dangerous: false,
       });
       expect(mocks.rpc).toHaveBeenCalledWith("source_run_control_snapshot", { p_run_limit: 30 });
     });

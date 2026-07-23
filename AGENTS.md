@@ -228,8 +228,12 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 It polls only the redacted `source_run_control_snapshot` RPC and never reads the registry, request, host, operator, or lease tables directly.
 - `source-run-control.ts` owns the snapshot types and pure readiness, duration, revision, and envelope helpers.
 Do not duplicate host eligibility in the client; the database snapshot is authoritative.
+- The snapshot keeps `capability_job_modes`, `scheduled_job_modes`, and `manual_job_modes` as separate exact tuples.
+The scheduler estate renders all 30 inventory entries, including managed, staged, legacy-direct, and retired processes, without inventing a manual control for scheduled-only work.
 - Render only modes present in each registry job's `modes` object.
 An absent mode is no button, not a disabled approximation, and the registry's `meaning` string must appear verbatim before confirmation.
+- Manual controls follow the inventory's authoritative policy.
+Dangerous maintenance sends `p_confirm_dangerous=true` only after a second explicit confirmation, while session work queues normally and waits for live session readiness.
 - Keep host truth distinct: offline or incapable, awaiting an interactive session, host failure or release mismatch, eligible, claimed, running, and terminal states are different operator actions.
 - Confirmation must show the current mode readiness and state plainly that a pending request can execute later when readiness returns.
 Only a still-pending row may offer cancellation.

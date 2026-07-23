@@ -17,6 +17,9 @@ const host: SourceRunHost = {
   status: "ready",
   lanes: ["http", "browser", "session"],
   supported_jobs: ["cardladder"],
+  capability_job_modes: ["cardladder:full"],
+  scheduled_job_modes: ["cardladder:full"],
+  manual_job_modes: ["cardladder:full"],
   artifact_homes: ["data-repo", "state-dir"],
   session_ready: true,
   failure_code: null,
@@ -73,7 +76,7 @@ describe("source-run control helpers", () => {
   });
 
   it("rejects malformed snapshot envelopes", () => {
-    expect(isSnapshot({ server_time: "2026-07-22T12:00:00Z", jobs: [], runs: [], hosts: [] })).toBe(true);
+    expect(isSnapshot({ server_time: "2026-07-22T12:00:00Z", jobs: [], runs: [], hosts: [], inventory: [] })).toBe(true);
     expect(isSnapshot({ server_time: "2026-07-22T12:00:00Z", jobs: [], runs: [] })).toBe(false);
     expect(isSnapshot({
       server_time: "2026-07-22T12:00:00Z",
@@ -82,7 +85,7 @@ describe("source-run control helpers", () => {
         artifact_home: "data-repo", expected_minutes_full: 45, min_interval_hours: 0,
         modes: { full: { lane: "session", meaning: "fetch" } }, readiness: {},
       }],
-      runs: [], hosts: [],
+      runs: [], hosts: [], inventory: [],
     })).toBe(false);
     expect(isSnapshot({
       server_time: "2026-07-22T12:00:00Z",
@@ -93,6 +96,7 @@ describe("source-run control helpers", () => {
         supported_jobs: [],
         artifact_homes: ["object-store"],
       }],
+      inventory: [],
     })).toBe(false);
     expect(isSnapshot(null)).toBe(false);
   });
@@ -109,7 +113,7 @@ describe("source-run control helpers", () => {
           lane: "http", artifact_home: "data-repo",
         } },
       }],
-      runs: [], hosts: [],
+      runs: [], hosts: [], inventory: [],
     };
     expect(isSnapshot(busy)).toBe(true);
     expect(isSnapshot({
@@ -136,14 +140,14 @@ describe("source-run control helpers", () => {
           lane: "http", artifact_home: "data-repo",
         } },
       }],
-      runs: [], hosts: [],
+      runs: [], hosts: [], inventory: [],
     })).toBe(true);
   });
 
   it("rejects scheduler-only run and host activity outside the visible job registry", () => {
     const base = {
       server_time: "2026-07-22T12:00:00Z",
-      jobs: [], runs: [], hosts: [],
+      jobs: [], runs: [], hosts: [], inventory: [],
     };
     expect(isSnapshot({
       ...base,
@@ -159,6 +163,41 @@ describe("source-run control helpers", () => {
         active_state: "running",
       }],
     })).toBe(false);
+  });
+
+  it("accepts scheduler-only host activity when the task inventory declares it", () => {
+    expect(isSnapshot({
+      server_time: "2026-07-22T12:00:00Z",
+      jobs: [],
+      runs: [],
+      hosts: [{
+        ...host,
+        active_run_id: 99,
+        active_job: "refresh-worker",
+        active_mode: "full",
+        active_state: "running",
+      }],
+      inventory: [{
+        task_name: "TCG Refresh Worker",
+        job: "refresh-worker",
+        cadence: "every 10 minutes",
+        lane: "http",
+        session_required: false,
+        artifact_home: "none",
+        schedule_policy: "scheduled",
+        manual_policy: "scheduled_only",
+        manual_mode: null,
+        policy_reason: "Scheduler-owned queue drain.",
+        execution_path: "shared_shim",
+        target_state: "documented_target",
+        schedule_readiness: { state: "eligible", reason_code: "ready", host_name: "Main PC" },
+        manual_readiness: { state: "scheduled_only", reason_code: "manual_not_registered" },
+        control_state: "scheduled_only",
+        active_run: null,
+        latest_run: null,
+        evidence_state: "no_managed_run",
+      }],
+    })).toBe(true);
   });
 
   it("classifies authorization, network, and server failures without echoing details", () => {
