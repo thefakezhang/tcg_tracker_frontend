@@ -222,6 +222,24 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 - Freshness itself stays on `FreshnessChip` (`last_updated`) - a completed refresh turns the dots green with no extra plumbing.
 - Backend contract: `docs/targeted_refresh.md` in the backend repo.
 
+### Travel source-run control (redesign G3)
+
+- `SourceRunsPanel.tsx` is the operator-only whole-source control surface embedded in source health.
+It polls only the redacted `source_run_control_snapshot` RPC and never reads the registry, request, host, operator, or lease tables directly.
+- `source-run-control.ts` owns the snapshot types and pure readiness, duration, revision, and envelope helpers.
+Do not duplicate host eligibility in the client; the database snapshot is authoritative.
+- Render only modes present in each registry job's `modes` object.
+An absent mode is no button, not a disabled approximation, and the registry's `meaning` string must appear verbatim before confirmation.
+- Keep host truth distinct: offline or incapable, awaiting an interactive session, host failure or release mismatch, eligible, claimed, running, and terminal states are different operator actions.
+- Confirmation must show the current mode readiness and state plainly that a pending request can execute later when readiness returns.
+Only a still-pending row may offer cancellation.
+- Keep the last valid snapshot visible when a later poll fails, and classify authorization, network, malformed-response, and server failures without echoing infrastructure details.
+- Safe browser evidence is limited to host identity, timestamps, attempt count, executor/release/data SHAs, opaque evidence reference, digest, bounded summary, and generic failure code.
+Never render a lease token, raw log, credential, arbitrary heartbeat failure summary, command, or local filesystem path.
+- Mode buttons and dialog actions have a minimum 44-pixel touch target, job/host/evidence containers use `min-w-0`, and evidence references wrap rather than causing phone-width overflow.
+- Generic authorization failures use the translated restricted-state copy and do not echo backend error details.
+- Backend architecture and operations live in `docs/travel_run_control.md` and `docs/targeted_refresh.md` in the backend repository.
+
 ### Card Detail Modal
 
 - `CardDetailModal.tsx` fetches its own listings independently (not from the table data).
