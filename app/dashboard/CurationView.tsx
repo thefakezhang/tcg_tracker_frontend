@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
+import { CurationBatchResult, parseCurationBatchResult } from "@/lib/image-curation-batch";
 import { useLanguage } from "./LanguageContext";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { getCardDisplayName, cardMeta, cardVariant, useDebouncedValue } from "./use-card-data";
@@ -110,6 +111,7 @@ export default function CurationView() {
   const [status, setStatus] = useState<Status>("needs_review");
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [batchProgress, setBatchProgress] = useState<number | null>(null);
+  const [batchResult, setBatchResult] = useState<CurationBatchResult | null>(null);
   const [selectedBuyer, setSelectedBuyer] = useState<string | null>(null); // null = all buyers
 
   const fetchCandidates = useCallback(async (st: Status): Promise<Candidate[]> => {
@@ -215,18 +217,23 @@ export default function CurationView() {
   async function approveBand(band: Band) {
     const list = grouped[band].filter((c) => c.candidate_card_id);
     if (!list.length) return;
+    setBatchResult(null);
     setBatchProgress(0);
     try {
       const ok = await save(async () => {
-        for (let i = 0; i < list.length; i++) {
-          const c = list[i];
-          const { error } = await supabase.rpc("promote_image_buylist_candidate", {
-            p_candidate_id: c.candidate_id,
-            p_card_id: null, p_card_grading: null, p_price_jpy: null,
-          });
-          if (error) throw error;
-          setBatchProgress(i + 1);
-        }
+        const { data, error } = await supabase.rpc("batch_promote_image_buylist_candidates", {
+          p_decisions: list.map((c) => ({
+            candidate_id: c.candidate_id,
+            card_id: c.candidate_card_id,
+            card_grading: c.card_grading ?? "raw",
+            price_jpy: c.ocr_price_jpy,
+            curator_notes: c.curator_notes,
+          })),
+        });
+        if (error) throw error;
+        const result = parseCurationBatchResult(data);
+        setBatchProgress(result.summary.succeeded + result.summary.failed);
+        setBatchResult(result);
       });
       if (ok) retry();
     } finally {
@@ -344,6 +351,31 @@ export default function CurationView() {
       )}
 
       {error && <QueryError onRetry={retry} />}
+      {batchResult && (
+        <div
+          role={batchResult.summary.failed ? "alert" : "status"}
+          className={`rounded-md border p-3 text-sm ${
+            batchResult.summary.failed ? "border-destructive/50 bg-destructive/10" : "border-green-500/50 bg-green-500/10"
+          }`}
+        >
+          <div className="font-medium">
+            {t("curation.batchSummary", {
+              succeeded: batchResult.summary.succeeded,
+              requested: batchResult.summary.requested,
+              failed: batchResult.summary.failed,
+            })}
+          </div>
+          {batchResult.results.filter((row) => !row.success).map((row, i) => (
+            <div key={`${row.candidate_id ?? "invalid"}-${i}`} className="mt-1 break-words text-xs">
+              {t("curation.batchFailure", {
+                id: row.candidate_id ?? "?",
+                code: row.error_code ?? "error",
+                message: row.error_message ?? row.error_detail ?? t("curation.batchUnknownError"),
+              })}
+            </div>
+          ))}
+        </div>
+      )}
 
       {BANDS.map((band) => {
         const list = grouped[band];
