@@ -50,9 +50,9 @@ interface Lot {
   acquired_at: string;
   shop_label: string | null;
   orig_currency: string;
-  total_cost_orig: number;
+  total_cost_orig: number | null;
   fx_rate_used: number;
-  total_cost_usd: number;
+  total_cost_usd: number | null;
   lines_imported: boolean;
 }
 
@@ -304,6 +304,11 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     0,
   );
   const landedLotUsd = Number(lot?.total_cost_usd ?? 0) + acquisitionCostUsd;
+  // A line with no price override needs a lot total to derive its basis. When
+  // the lot has neither, finalize will block; warn before the operator tries.
+  const blankLineCount = lines.filter((l) => l.price_override_usd == null).length;
+  const needsTotalForBlanks =
+    lot != null && lot.total_cost_usd == null && blankLineCount > 0;
 
   // Language-aware display name (English when set + available, else regional).
   const lineLabel = (ln: LotLine) =>
@@ -423,7 +428,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     setCDate(l.acquired_at);
     setCShop(l.shop_label ?? "");
     setCCurrency(l.orig_currency);
-    setCTotal(String(l.total_cost_orig));
+    setCTotal(l.total_cost_orig == null ? "" : String(l.total_cost_orig));
     setCFx(String(l.fx_rate_used));
     setLotDialogOpen(true);
   }
@@ -431,11 +436,16 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   async function saveLot() {
     const supabase = createClient();
     const fx = Number(cFx) || 1;
-    const totalOrig = Number(cTotal) || 0;
+    // The lot total is optional: a blank stays null (finalize derives it from
+    // the priced lines, or blocks if any line is blank). Only a typed value is
+    // stored as the direct-purchase source fact.
+    const hasTotal = cTotal.trim() !== "";
+    const totalOrig = hasTotal ? Number(cTotal) : null;
     const payload = {
       leg, acquired_at: cDate, shop_label: cShop || null,
       orig_currency: cCurrency.toUpperCase(), total_cost_orig: totalOrig,
-      fx_rate_used: fx, total_cost_usd: Math.round(totalOrig * fx * 100) / 100,
+      fx_rate_used: fx,
+      total_cost_usd: totalOrig == null ? null : Math.round(totalOrig * fx * 100) / 100,
     };
     if (editingLotId) {
       const ok = await save(() => supabase.from("acquisition_lots").update(payload).eq("lot_id", editingLotId));
@@ -578,7 +588,14 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       ({ error } = await supabase.rpc("finalize_acquisition_lot", { p_lot_id: selectedLot }));
       if (error && /already finalized/i.test(error.message)) error = null;
     }
-    if (error) { alert(error.message); return; }
+    if (error) {
+      // The server blocks a blank-line lot with no total; show the friendly,
+      // translated guidance instead of the raw SQL exception.
+      alert(/have no price and the lot has no total/.test(error.message)
+        ? t("trips.finalizeNeedsPrices", { count: blankLineCount })
+        : error.message);
+      return;
+    }
     await fetchLots();
     await reloadLot(selectedLot);
     bumpOwnedInventory();
@@ -628,7 +645,9 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           >
             <div className="font-medium">{l.shop_label || l.acquired_at}</div>
             <div className="text-xs text-muted-foreground">
-              {l.orig_currency} {l.total_cost_orig} → ${l.total_cost_usd}
+              {l.total_cost_usd == null
+                ? t("trips.lotTotalFromItems")
+                : `${l.orig_currency} ${l.total_cost_orig} → $${l.total_cost_usd}`}
               {l.lines_imported ? ` · ${t("trips.finalized")}` : ""}
             </div>
           </button>
@@ -646,7 +665,10 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
             <div className="min-w-0">
               <div className="font-medium">{lot.shop_label || lot.acquired_at}</div>
               <div className="text-xs text-muted-foreground">
-                {t("trips.directPurchase")} ${Number(lot.total_cost_usd).toFixed(2)}
+                {t("trips.directPurchase")}{" "}
+                {lot.total_cost_usd == null
+                  ? t("trips.lotTotalFromItems")
+                  : `$${Number(lot.total_cost_usd).toFixed(2)}`}
                 {" · "}
                 {t("trips.acquisitionCosts")} ${acquisitionCostUsd.toFixed(2)}
                 {" · "}
@@ -1098,7 +1120,8 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                   </TableCell>
                   <TableCell>
                     {lot.lines_imported ? (ln.price_override_usd != null ? toNative(ln.price_override_usd) : "-") : (
-                      <Input type="number" defaultValue={ln.price_override_usd != null ? toNative(ln.price_override_usd) : ""} placeholder="-" className="min-h-11 w-20 sm:min-h-8"
+                      <Input type="number" defaultValue={ln.price_override_usd != null ? toNative(ln.price_override_usd) : ""} placeholder="-"
+                        className={`min-h-11 w-20 sm:min-h-8 ${needsTotalForBlanks && ln.price_override_usd == null ? "ring-1 ring-amber-500" : ""}`}
                         onBlur={(e) => updateLine(ln, { price_override_usd: e.target.value === "" ? null : fromNative(Number(e.target.value)) })} />
                     )}
                   </TableCell>
@@ -1126,9 +1149,16 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           )}
 
           {!lot.lines_imported && lines.length > 0 && (
-            <Button onClick={finalize}>
-              <Check className="size-4 mr-1" />{t("trips.finalize")}
-            </Button>
+            <div className="space-y-1">
+              {needsTotalForBlanks && (
+                <p className="text-xs text-amber-500">
+                  {t("trips.finalizeNeedsPrices", { count: blankLineCount })}
+                </p>
+              )}
+              <Button onClick={finalize} disabled={needsTotalForBlanks}>
+                <Check className="size-4 mr-1" />{t("trips.finalize")}
+              </Button>
+            </div>
           )}
         </div>
       )}
@@ -1143,17 +1173,19 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
               <Input value={cShop} onChange={(e) => setCShop(e.target.value)} /></Field>
             <Field><Label>{t("trips.lotCurrency")}</Label>
               <Input value={cCurrency} onChange={(e) => setCCurrency(e.target.value)} /></Field>
-            <Field><Label>{t("trips.lotTotal")}</Label>
+            <Field><Label>{t("trips.lotTotalOptional")}</Label>
               <Input type="number" value={cTotal} onChange={(e) => setCTotal(e.target.value)} /></Field>
             <Field><Label>{t("trips.fxRate")}</Label>
               <Input type="number" value={cFx} onChange={(e) => setCFx(e.target.value)} /></Field>
             <p className="text-xs text-muted-foreground">
-              {t("trips.usdComputed", { usd: (Number(cTotal) * Number(cFx) || 0).toFixed(2) })}
+              {cTotal.trim() === ""
+                ? t("trips.lotTotalOptionalHint")
+                : t("trips.usdComputed", { usd: (Number(cTotal) * Number(cFx) || 0).toFixed(2) })}
             </p>
           </FieldGroup>
           <DialogFooter>
             <Button variant="outline" onClick={() => setLotDialogOpen(false)}>{t("trips.cancel")}</Button>
-            <Button disabled={!cTotal || saving} onClick={saveLot}>
+            <Button disabled={saving} onClick={saveLot}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : (editingLotId ? t("trips.saveChanges") : t("trips.save"))}
             </Button>
           </DialogFooter>
