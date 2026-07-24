@@ -9,6 +9,13 @@ Real buying trips and bulk sales often have one trustworthy total rather than a 
 The UI must preserve that source fact, make allocation choices explicit, and avoid presenting derived item values as observed prices.
 Detailed accounting also belongs in the finance workflow rather than the opportunity browser.
 
+## Lot total is optional
+
+The lot total is not required when creating a lot.
+It is left blank when every item will be priced individually, and finalize totals the item prices for the lot.
+It is only needed to split a single lump sum across items that are not individually priced.
+The create dialog no longer forces a total, a lot with no total displays "Total from items", and finalize is blocked with a per-count warning (with the unpriced price fields highlighted) until either every item is priced or a lot total is set.
+
 ## Goals
 
 - Record raw cards, PSA slabs, and sealed products in the same acquisition workflow.
