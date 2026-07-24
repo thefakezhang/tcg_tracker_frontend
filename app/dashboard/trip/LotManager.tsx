@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll, selectAllByIds } from "@/lib/supabase/select-all";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { getCardDisplayName, cardMeta, useDebouncedValue } from "../use-card-data";
+import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
+import { bumpOwnedInventory } from "../owned-inventory";
 import { useLanguage } from "../LanguageContext";
 import { useLotPicker } from "../LotPickerContext";
 import { useSaving } from "@/lib/use-saving";
@@ -329,6 +331,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     set_code: string;
     card_number: string | null;
     misc_info: string | null;
+    image_url: string | null;
     sealed_condition?: string;
     variant_edition?: string;
     product_type?: string | null;
@@ -339,23 +342,36 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     const s = dSearch.trim();
     if (!s) { setSearchResults([]); return; }
     const supabase = createClient();
-    const safe = s.replace(/[,()*]/g, " ");
     const ac = new AbortController();
     (async () => {
+      // Shared smart semantics (lib/card-search): a pasted uid (full or 8-hex
+      // prefix) or exact platform external id lands the item; otherwise
+      // whitespace tokens AND together, each against any identity column -
+      // "blastoise 009" finds the one printing instead of nothing.
       let hits: SearchHit[] = [];
       if (searchGame === "pokemon") {
-        const { data } = await supabase.from("pokemon_card_definitions")
-          .select("card_id, regional_name, english_name, set_code, card_number, misc_info")
-          .or(`regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,card_number.ilike.%${safe}%`)
-          .limit(25).abortSignal(ac.signal);
+        const extIds = await externalIdMatches(supabase, "pokemon_external_identifiers", "card_id", s);
+        let q = supabase.from("pokemon_card_definitions")
+          .select("card_id, regional_name, english_name, set_code, card_number, misc_info, image_url");
+        for (const f of smartSearchFilters(
+          s,
+          ["regional_name", "english_name", "set_code", "card_number", "misc_info"],
+          "card_uid", "card_id", extIds,
+        )) q = q.or(f);
+        const { data } = await q.limit(25).abortSignal(ac.signal);
         hits = ((data as Array<Omit<SearchHit, "kind" | "item_id"> & { card_id: number }>) ?? [])
           .map(({ card_id, ...row }) => ({ ...row, kind: "single", item_id: card_id }));
       } else if (searchGame === "mtg") {
-        const { data } = await supabase.from("mtg_card_definitions_v")
-          .select("card_id, regional_name, set_code, card_number")
-          .or(`regional_name.ilike.%${safe}%,card_number.ilike.%${safe}%`)
-          .limit(25).abortSignal(ac.signal);
-        hits = ((data as Array<{ card_id: number; regional_name: string; set_code: string; card_number: string | null }>) ?? [])
+        const extIds = await externalIdMatches(supabase, "mtg_external_identifiers", "card_id", s);
+        let q = supabase.from("mtg_card_definitions_v")
+          .select("card_id, regional_name, set_code, card_number, image_url");
+        for (const f of smartSearchFilters(
+          s,
+          ["regional_name", "local_name", "set_code", "card_number", "misc_info"],
+          "card_uid", "card_id", extIds,
+        )) q = q.or(f);
+        const { data } = await q.limit(25).abortSignal(ac.signal);
+        hits = ((data as Array<{ card_id: number; regional_name: string; set_code: string; card_number: string | null; image_url: string | null }>) ?? [])
           .map(({ card_id, ...row }) => ({
             ...row,
             kind: "single",
@@ -364,10 +380,15 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
             misc_info: null,
           }));
       } else {
-        const { data } = await supabase.from("pokemon_sealed_products")
-          .select("product_id, name, english_name, set_code, misc_info, sealed_condition, variant_edition, product_type")
-          .or(`name.ilike.%${safe}%,english_name.ilike.%${safe}%,set_code.ilike.%${safe}%`)
-          .limit(25).abortSignal(ac.signal);
+        const extIds = await externalIdMatches(supabase, "pokemon_sealed_external_identifiers", "product_id", s);
+        let q = supabase.from("pokemon_sealed_products")
+          .select("product_id, name, english_name, set_code, misc_info, sealed_condition, variant_edition, product_type, image_url");
+        for (const f of smartSearchFilters(
+          s,
+          ["name", "english_name", "set_code", "misc_info"],
+          "product_uid", "product_id", extIds,
+        )) q = q.or(f);
+        const { data } = await q.limit(25).abortSignal(ac.signal);
         hits = ((data as Array<{
           product_id: number;
           name: string;
@@ -377,6 +398,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           sealed_condition: string;
           variant_edition: string;
           product_type: string | null;
+          image_url: string | null;
         }>) ?? []).map(({ product_id, name, ...row }) => ({
           ...row,
           kind: "sealed",
@@ -461,18 +483,21 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       return;
     }
     await reloadLot(selectedLot);
+    bumpOwnedInventory();
   }
 
   async function updateLine(line: LotLine, patch: Partial<Pick<LotLine, "quantity" | "condition_id" | "psa_grade" | "sealed_condition" | "variant_edition" | "price_override_usd">>) {
     const supabase = createClient();
     await supabase.from(line.table).update(patch).eq("line_id", line.line_id);
     if (selectedLot) await reloadLot(selectedLot);
+    bumpOwnedInventory();
   }
 
   async function removeLine(line: LotLine) {
     const supabase = createClient();
     await supabase.from(line.table).delete().eq("line_id", line.line_id);
     if (selectedLot) await reloadLot(selectedLot);
+    bumpOwnedInventory();
   }
 
   async function addCost() {
@@ -556,6 +581,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     if (error) { alert(error.message); return; }
     await fetchLots();
     await reloadLot(selectedLot);
+    bumpOwnedInventory();
   }
 
   async function unfinalize() {
@@ -565,6 +591,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     if (error) { alert(error.message); return; } // e.g. "void those sales first"
     await fetchLots();
     await reloadLot(selectedLot);
+    bumpOwnedInventory();
   }
 
   async function deleteLot(lotId: number) {
@@ -580,6 +607,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     setSelectedLot(null);
     await fetchLots();
     await refreshOpenLots();
+    bumpOwnedInventory();
   }
 
   return (
@@ -890,9 +918,21 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                     <button
                       key={`${r.kind}-${r.item_id}`}
                       onClick={() => addLine(r)}
-                      className="flex min-h-11 w-full items-center justify-between px-2 py-1.5 text-left text-sm hover:bg-accent"
+                      className="flex min-h-11 w-full items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-accent"
                     >
-                      <span className="truncate">
+                      {r.image_url ? (
+                        <img
+                          src={r.image_url}
+                          alt=""
+                          loading="lazy"
+                          className="h-10 w-8 shrink-0 rounded-sm object-contain"
+                        />
+                      ) : (
+                        <span className="flex h-10 w-8 shrink-0 items-center justify-center rounded-sm bg-muted">
+                          <ImageOff className="size-3.5 text-muted-foreground" />
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1 truncate">
                         {getCardDisplayName({ regional_name: r.regional_name, english_name: r.english_name }, language)}
                         {" · "}
                         {r.kind === "sealed"

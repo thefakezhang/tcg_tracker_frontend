@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { sealedLotLineInsert } from "./trip/lot-line-model";
+import { bumpOwnedInventory } from "./owned-inventory";
 
 // Open (not-yet-finalized) acquisition lots, so the browse UI can drop cards
 // straight into a lot the same way it drops them into a buylist.
@@ -84,6 +85,7 @@ export function LotPickerProvider({ children }: { children: React.ReactNode }) {
         p_browser_snapshot: a.browserSnapshot ?? {},
       });
       if (error) throw error;
+      bumpOwnedInventory();
       return;
     }
     const { error } = await supabase.from(LINE_TABLE[a.game]).insert({
@@ -96,6 +98,7 @@ export function LotPickerProvider({ children }: { children: React.ReactNode }) {
       market_value_usd: a.marketValueUsd ?? null,
     });
     if (error) throw error;
+    bumpOwnedInventory();
   }, []);
 
   const addSealedLine = useCallback(async (a: AddSealedLineArgs) => {
@@ -104,6 +107,7 @@ export function LotPickerProvider({ children }: { children: React.ReactNode }) {
       .from("pokemon_sealed_lot_lines")
       .insert(sealedLotLineInsert(a));
     if (error) throw error;
+    bumpOwnedInventory();
   }, []);
 
   return (

@@ -6,6 +6,7 @@ import { type Game, type PsaMode } from "./GameContext";
 import { exitValue, latestSignals, signalForRow, type GradeSignal } from "./grade-signals";
 import type { ExitPercentile } from "./ExitBasisContext";
 import { selectAllByIds } from "@/lib/supabase/select-all";
+import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import {
   bestOpportunity,
   parseExitCostProfile,
@@ -35,6 +36,7 @@ export const LISTINGS_TABLE_MAP: Record<Game, string> = {
 
 export interface CardDefinition {
   card_id: string;
+  card_uid?: string | null; // durable identity (H3); sealed aliases product_uid here
   regional_name: string;
   english_name?: string | null;
   set_code: string;
@@ -71,9 +73,9 @@ export function cardMeta(setCode?: string | null, cardNumber?: string | null, mi
 }
 
 export const POKEMON_CARD_DEF_COLS =
-  "card_id, regional_name, english_name, set_code, card_number, misc_info, image_url, rarity, is_japan_exclusive";
+  "card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, image_url, rarity, is_japan_exclusive";
 export const MTG_CARD_DEF_COLS =
-  "card_id, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language";
+  "card_id, card_uid, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language";
 
 export function cardDefCols(game: Game): string {
   return game === "pokemon" ? POKEMON_CARD_DEF_COLS : MTG_CARD_DEF_COLS;
@@ -118,6 +120,7 @@ export interface CardRowData {
   key: string;
   card: CardDefinition;
   ownedQty?: number;
+  incomingQty?: number;
   psaGrade?: number;
   prices: PriceSummary;
   roi: number | null;
@@ -451,13 +454,22 @@ export function useCardData(options: {
     const cn = dCardNumber.trim();
     const sc = dSetCode.trim();
     if (s) {
-      // Escape characters that have meaning in PostgREST or-filters
-      const safe = s.replace(/[,()*]/g, " ");
-      const orFilter =
-        activeGame === "pokemon"
-          ? `regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,misc_info.ilike.%${safe}%`
-          : `regional_name.ilike.%${safe}%,misc_info.ilike.%${safe}%,foil_type.ilike.%${safe}%,language.ilike.%${safe}%`;
-      query = query.or(orFilter, { referencedTable: cardDefTable });
+      // Shared smart semantics (lib/card-search): a pasted uid (full or the
+      // displayed 8-hex prefix) or exact platform external id lands the card;
+      // otherwise whitespace tokens AND together via one chained or() per
+      // token, each token free to hit any identity column. The uid and the
+      // external-id gate both compose into referenced or()s because card_uid
+      // AND card_id live on the embedded definition table.
+      const extTable = activeGame === "pokemon"
+        ? "pokemon_external_identifiers"
+        : "mtg_external_identifiers";
+      const extIds = await externalIdMatches(supabase, extTable, "card_id", s);
+      const textCols = activeGame === "pokemon"
+        ? ["regional_name", "english_name", "misc_info", "card_number", "set_code"]
+        : ["regional_name", "misc_info", "foil_type", "language", "card_number", "set_code"];
+      for (const f of smartSearchFilters(s, textCols, "card_uid", "card_id", extIds)) {
+        query = query.or(f, { referencedTable: cardDefTable });
+      }
     }
     if (cn) query = query.ilike(`${cardDefTable}.card_number`, `%${cn}%`);
     if (sc) query = query.ilike(`${cardDefTable}.set_code`, `%${sc}%`);

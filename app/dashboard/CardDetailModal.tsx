@@ -66,6 +66,8 @@ import { useLanguage } from "./LanguageContext";
 import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
 import { RefreshPricesAction } from "./RefreshPricesAction";
+import { UidChip } from "./UidChip";
+import { useOwnedInventoryVersion } from "./owned-inventory";
 import GradeEvidencePanel from "./GradeEvidencePanel";
 import { decisionSnapshot } from "./DecisionActions";
 import { detailOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
@@ -121,6 +123,14 @@ function enhanceTCGplayerURL(
   return url + (url.includes("?") ? "&" : "?") + q;
 }
 
+// One on-hand SKU row for the opened card (H1): condition/grade split of the
+// operator's finalized holdings, legs collapsed client-side.
+interface HeldRow {
+  condition_id: number | null;
+  psa_grade: number | null;
+  qty_on_hand: number;
+}
+
 interface CardDetailModalProps {
   card: CardRowData | null;
   open: boolean;
@@ -152,6 +162,8 @@ export default function CardDetailModal({
   const { buylists, addToBuylist } = useBuyList();
   const [addedTo, setAddedTo] = useState<string | null>(null);
   const [rawListings, setRawListings] = useState<MarketListing[]>([]);
+  const [heldRows, setHeldRows] = useState<HeldRow[]>([]);
+  const [incomingQty, setIncomingQty] = useState(0);
   const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
   const [locationMap, setLocationMap] = useState<Map<number, LocationInfo>>(
     new Map()
@@ -170,6 +182,9 @@ export default function CardDetailModal({
   const [askingPrice, setAskingPrice] = useState("");
   const [askingCurrency, setAskingCurrency] = useState<"JPY" | "USD">("JPY");
   const [sightingGrade, setSightingGrade] = useState(0);
+  // Re-fetch holdings when any lot write bumps the owned-inventory store
+  // (e.g. the Bought flow adds a draft-lot line while this modal is open).
+  const ownedVersion = useOwnedInventoryVersion();
 
   const defaultSightingGrade = useCallback((tab: "non-psa" | "psa") => {
     const rowGrade = Number(card?.psaGrade ?? 0);
@@ -236,7 +251,7 @@ export default function CardDetailModal({
 
     async function fetchListings() {
       const supabase = createClient();
-      const [{ data: raw }, rates, locations, conditionsData] =
+      const [{ data: raw }, rates, locations, conditionsData, held, ownedCounts] =
         await Promise.all([
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
@@ -247,6 +262,18 @@ export default function CardDetailModal({
           fetchRateMap(supabase),
           fetchLocationMap(supabase),
           fetchConditionsCache(supabase),
+          // H1: the operator's own copies, split by condition/grade (legs
+          // collapse client-side) + the draft-lot incoming count.
+          supabase
+            .from("inventory_holdings_v")
+            .select("condition_id, psa_grade, qty_on_hand")
+            .eq("game", activeGame)
+            .eq("card_id", card!.card.card_id),
+          supabase
+            .from("owned_inventory_counts_v")
+            .select("qty_incoming")
+            .eq("game", activeGame)
+            .eq("card_id", card!.card.card_id),
         ]);
 
       if (cancelled) return;
@@ -268,6 +295,11 @@ export default function CardDetailModal({
       );
 
       setRawListings(listings);
+      setHeldRows((held.data as HeldRow[] | null) ?? []);
+      setIncomingQty(
+        ((ownedCounts.data as { qty_incoming: number }[] | null) ?? [])
+          .reduce((sum, row) => sum + Number(row.qty_incoming ?? 0), 0),
+      );
       setRateMap(rates);
       setLocationMap(locations);
       setConditionsMap(conditionsData.map);
@@ -284,7 +316,8 @@ export default function CardDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [card, open, activeGame]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card, open, activeGame, ownedVersion]);
 
   const { buyNonPsa, sellNonPsa, buyPsa, sellPsa } = useMemo(() => {
     const normalize = (l: MarketListing) =>
@@ -349,6 +382,32 @@ export default function CardDetailModal({
     };
   }, [rawListings, rateMap, locationMap, conditionsMap, selectedTiers]);
 
+  // H1: "how many do I already have" - the on-hand total plus a
+  // per-condition/grade breakdown. Rendered always: in-shop, an explicit
+  // "none owned" beats silence.
+  const ownedSummary = useMemo(() => {
+    const byLabel = new Map<string, number>();
+    let total = 0;
+    for (const row of heldRows) {
+      const qty = Number(row.qty_on_hand);
+      if (qty <= 0) continue;
+      total += qty;
+      let label: string;
+      if ((row.psa_grade ?? 0) > 0) {
+        label = `PSA ${row.psa_grade}`;
+      } else {
+        const tier =
+          row.condition_id != null ? conditionsMap.get(row.condition_id) : undefined;
+        label = tier != null ? `Tier ${tier}` : t("inventory.raw");
+      }
+      byLabel.set(label, (byLabel.get(label) ?? 0) + qty);
+    }
+    const breakdown = [...byLabel.entries()]
+      .map(([label, qty]) => `${qty}× ${label}`)
+      .join(" · ");
+    return { total, breakdown };
+  }, [heldRows, conditionsMap, t]);
+
   if (!card) return null;
 
   const { card: def } = card;
@@ -407,6 +466,22 @@ export default function CardDetailModal({
                     />
                     <span className="select-none">🇯🇵 {t("modal.jpExclusive")}</span>
                   </label>
+                )}
+                <UidChip uid={def.card_uid} />
+              </div>
+              <div className="mt-1 text-xs">
+                {ownedSummary.total + incomingQty > 0 ? (
+                  <span className="text-muted-foreground">
+                    {t("inventory.owned")} {ownedSummary.total}
+                    {ownedSummary.breakdown ? ` (${ownedSummary.breakdown})` : ""}
+                    {incomingQty > 0 && (
+                      <span className="text-amber-500/90">
+                        {" "}{t("inventory.incoming", { n: incomingQty })}
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">{t("inventory.ownedNone")}</span>
                 )}
               </div>
               {/* On-demand price refresh for this card (redesign R6). The RPC's

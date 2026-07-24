@@ -63,8 +63,19 @@ import {
 } from "./use-sealed-data";
 import { useLanguage } from "./LanguageContext";
 import { FreshnessChip } from "./FreshnessChip";
+import { UidChip } from "./UidChip";
+import { useOwnedInventoryVersion } from "./owned-inventory";
 
 const SEALED_ENTRY_TABLE = "pokemon_sealed_buylist_entries";
+
+// The operator's holdings of this product, every variant row (H1) - so a
+// "0 owned" on the clicked variant can't hide copies held in another edition.
+interface OwnedVariantRow {
+  sealed_condition: string | null;
+  variant_edition: string | null;
+  qty_owned: number;
+  qty_incoming: number;
+}
 
 interface SealedListing {
   price: number;
@@ -116,6 +127,8 @@ export default function SealedDetailModal({
   const { buylists, addToBuylist } = useBuyList();
   const [addedTo, setAddedTo] = useState<string | null>(null);
   const [rawListings, setRawListings] = useState<SealedListing[]>([]);
+  const [ownedRows, setOwnedRows] = useState<OwnedVariantRow[]>([]);
+  const ownedVersion = useOwnedInventoryVersion();
   const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
   const [locationMap, setLocationMap] = useState<Map<number, LocationInfo>>(
     new Map()
@@ -163,7 +176,7 @@ export default function SealedDetailModal({
 
     async function fetchListings() {
       const supabase = createClient();
-      const [{ data: raw }, rates, locations] = await Promise.all([
+      const [{ data: raw }, rates, locations, owned] = await Promise.all([
         supabase
           .from("pokemon_sealed_market_listings")
           .select(
@@ -172,6 +185,11 @@ export default function SealedDetailModal({
           .eq("product_id", card!.card.card_id),
         fetchRateMap(supabase),
         fetchLocationMap(supabase),
+        supabase
+          .from("owned_inventory_counts_v")
+          .select("sealed_condition, variant_edition, qty_owned, qty_incoming")
+          .eq("game", "pokemon_sealed")
+          .eq("product_id", card!.card.card_id),
       ]);
 
       if (cancelled) return;
@@ -192,6 +210,7 @@ export default function SealedDetailModal({
       );
 
       setRawListings(listings);
+      setOwnedRows((owned.data as OwnedVariantRow[] | null) ?? []);
       setRateMap(rates);
       setLocationMap(locations);
       setLoading(false);
@@ -201,7 +220,7 @@ export default function SealedDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [card, open]);
+  }, [card, open, ownedVersion]);
 
   const { buy, sell } = useMemo(() => {
     const normalize = (l: SealedListing) =>
@@ -289,6 +308,26 @@ export default function SealedDetailModal({
                     <Layers className="size-3" />
                     {setCode}
                   </Badge>
+                )}
+                <UidChip uid={def.card_uid} />
+              </div>
+              <div className="mt-1 text-xs">
+                {ownedRows.some((r) => Number(r.qty_owned) + Number(r.qty_incoming) > 0) ? (
+                  <span className="text-muted-foreground">
+                    {t("inventory.owned")}{" "}
+                    {ownedRows
+                      .filter((r) => Number(r.qty_owned) + Number(r.qty_incoming) > 0)
+                      .map((r) => {
+                        const variant = `${editionLabel(t, r.variant_edition ?? "")} · ${conditionLabel(t, r.sealed_condition ?? "")}`;
+                        const incoming = Number(r.qty_incoming) > 0
+                          ? ` ${t("inventory.incoming", { n: Number(r.qty_incoming) })}`
+                          : "";
+                        return `${Number(r.qty_owned)}× ${variant}${incoming}`;
+                      })
+                      .join(", ")}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">{t("inventory.ownedNone")}</span>
                 )}
               </div>
             </div>

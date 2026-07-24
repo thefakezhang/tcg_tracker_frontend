@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ImageOff, ArrowRight, Check, X, Pencil, Clock, Search, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { externalIdMatches, searchOrFilter } from "@/lib/card-search";
+import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
 import { useLanguage } from "./LanguageContext";
@@ -446,20 +446,20 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
     const s = dSearch.trim();
     if (!s) { setHits([]); return; }
     const supabase = createClient();
-    const safe = s.replace(/[,()*]/g, " ");
     // Text term + card_uid (full or displayed 8-hex prefix) + exact platform
     // external id - shared semantics with the Card Index (lib/card-search).
+    // Multi-word terms AND together via one chained or() per token.
     const extIds = await externalIdMatches(supabase, "pokemon_external_identifiers", "card_id", s);
-    const { data } = await supabase.from("pokemon_card_definitions")
-      .select("card_id, regional_name, english_name, set_code, card_number, misc_info, image_url")
-      .or(searchOrFilter(
-        [`regional_name.ilike.%${safe}%`, `english_name.ilike.%${safe}%`, `card_number.ilike.%${safe}%`],
-        s,
-        "card_uid",
-        "card_id",
-        extIds,
-      ))
-      .limit(20);
+    let sq = supabase.from("pokemon_card_definitions")
+      .select("card_id, regional_name, english_name, set_code, card_number, misc_info, image_url");
+    for (const f of smartSearchFilters(
+      s,
+      ["regional_name", "english_name", "card_number"],
+      "card_uid",
+      "card_id",
+      extIds,
+    )) sq = sq.or(f);
+    const { data } = await sq.limit(20);
     setHits((data as SearchHit[]) ?? []);
   }, [dSearch]);
   useMemo(() => { void runSearch(); }, [runSearch]);

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Library, Search, ImageOff, Pencil, Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { externalIdMatches, searchOrFilter } from "@/lib/card-search";
+import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { selectAll } from "@/lib/supabase/select-all";
 import { platformUrl } from "@/lib/platform-url";
 import { ZoomableImage } from "@/components/ui/zoomable-image";
@@ -63,13 +63,13 @@ async function fetchIndex(
 ): Promise<{ products: IndexProduct[]; total: number }> {
   const supabase = createClient();
   const s = search.trim();
-  const safe = s.replace(/[%,]/g, " ");
   // Text term + product_uid (full or displayed 8-hex prefix) + exact platform
   // external id - shared semantics with the curation pickers (lib/card-search).
+  // Multi-word terms AND together via one chained or() per token.
   const extIds = await externalIdMatches(supabase, "pokemon_sealed_external_identifiers", "product_id", s);
-  const orFilter = searchOrFilter(
-    [`name.ilike.%${safe}%`, `english_name.ilike.%${safe}%`, `set_code.ilike.%${safe}%`],
+  const orFilters = smartSearchFilters(
     s,
+    ["name", "english_name", "set_code"],
     "product_uid",
     "product_id",
     extIds,
@@ -93,7 +93,7 @@ async function fetchIndex(
     gated ? q.in("pokemon_sealed_external_identifiers.platform_name", platforms) : q;
 
   let cq = supabase.from("pokemon_sealed_products").select(`product_id${gateSelect}`, { count: "exact", head: true });
-  if (s) cq = cq.or(orFilter);
+  if (s) for (const f of orFilters) cq = cq.or(f);
   cq = applyGate(cq);
   const { count: total } = await cq;
   let q = supabase
@@ -102,7 +102,7 @@ async function fetchIndex(
     .order("name", { ascending: true })
     .limit(limit);
   if (s) {
-    q = q.or(orFilter);
+    for (const f of orFilters) q = q.or(f);
   }
   q = applyGate(q);
   const { data, error } = await q;

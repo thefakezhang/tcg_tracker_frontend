@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ClipboardCheck, Check, X, Plus, Search, Link2, AlertTriangle, GitMerge, Move } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { externalIdMatches, searchOrFilter } from "@/lib/card-search";
+import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { sourceLabel } from "@/lib/source-labels";
@@ -1188,11 +1188,13 @@ function MatchToExisting({
         // Free search across name + set code + card number, plus the card's
         // uid (full or displayed 8-hex prefix) and an exact platform external
         // id - shared semantics with the Card Index (lib/card-search).
-        const safe = q.replace(/[%,]/g, " ");
+        // Multi-word terms AND together via one chained or() per token.
         const extIds = await externalIdMatches(client, cfg.extIdsTable, cfg.idCol, q);
-        const parts = [`${cfg.nameCol}.ilike.%${safe}%`, `set_code.ilike.%${safe}%`];
-        if (cfg.numberCol) parts.push(`${cfg.numberCol}.ilike.%${safe}%`);
-        query = query.or(searchOrFilter(parts, q, cfg.uidCol, cfg.idCol, extIds));
+        const cols = [cfg.nameCol, "set_code"];
+        if (cfg.numberCol) cols.push(cfg.numberCol);
+        for (const f of smartSearchFilters(q, cols, cfg.uidCol, cfg.idCol, extIds)) {
+          query = query.or(f);
+        }
       } else if (setc) {
         // Default: your existing cards for this exact set (+ number), i.e. "what you already have".
         query = query.eq("set_code", setc);

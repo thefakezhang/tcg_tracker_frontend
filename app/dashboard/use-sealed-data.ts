@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { type TranslationKey } from "@/lib/i18n";
 import {
   type CardRowData,
@@ -65,6 +66,7 @@ export interface SealedSummaryRow {
   best_sell_region: string | null;
   best_sell_normalized: number | null;
   roi: number | null;
+  product_uid?: string | null; // appended by 000216 (H3)
 }
 
 function toPrice(row: SealedSummaryRow, side: "buy" | "sell"): PriceEntry | null {
@@ -89,6 +91,7 @@ export function sealedRowToCardRow(row: SealedSummaryRow): SealedRowData {
     key: `${row.card_id}:${row.sealed_condition}:${row.variant_edition}`,
     card: {
       card_id: String(row.card_id),
+      card_uid: row.product_uid ?? null,
       regional_name: row.regional_name,
       english_name: row.english_name,
       set_code: row.set_code,
@@ -240,10 +243,22 @@ export function useSealedData(options: {
     const s = dSearch.trim();
     const sc = dSetCode.trim();
     if (s) {
-      const safe = s.replace(/[,()*]/g, " ");
-      query = query.or(
-        `regional_name.ilike.%${safe}%,english_name.ilike.%${safe}%,misc_info.ilike.%${safe}%`
+      // Shared smart semantics (lib/card-search): pasted product_uid (full or
+      // 8-hex prefix) or exact platform id lands the product; otherwise
+      // whitespace tokens AND together across the identity columns. The view
+      // aliases product_id to card_id, so the external-id gate targets card_id.
+      const extIds = await externalIdMatches(
+        supabase, "pokemon_sealed_external_identifiers", "product_id", s,
       );
+      for (const f of smartSearchFilters(
+        s,
+        ["regional_name", "english_name", "misc_info", "set_code"],
+        "product_uid",
+        "card_id",
+        extIds,
+      )) {
+        query = query.or(f);
+      }
     }
     if (sc) query = query.ilike("set_code", `%${sc}%`);
     if (condition !== "best") query = query.eq("sealed_condition", condition);

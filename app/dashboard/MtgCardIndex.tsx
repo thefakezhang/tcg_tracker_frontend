@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Search, ImageOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
-import { externalIdMatches, searchOrFilter } from "@/lib/card-search";
+import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { uploadCardImage } from "@/lib/upload-card-image";
 import { platformUrl } from "@/lib/platform-url";
 import { ZoomableImage } from "@/components/ui/zoomable-image";
@@ -68,18 +68,13 @@ async function fetchIndex(
 ): Promise<{ cards: IndexCard[]; total: number }> {
   const supabase = createClient();
   const s = search.trim();
-  const safe = s.replace(/[%,]/g, " ");
   // Text term + card_uid (full or displayed 8-hex prefix) + exact platform
   // external id - shared semantics with the curation pickers (lib/card-search).
+  // Multi-word terms AND together via one chained or() per token.
   const extIds = await externalIdMatches(supabase, "mtg_external_identifiers", "card_id", s);
-  const orFilter = searchOrFilter(
-    [
-      `regional_name.ilike.%${safe}%`,
-      `local_name.ilike.%${safe}%`,
-      `set_code.ilike.%${safe}%`,
-      `card_number.ilike.%${safe}%`,
-    ],
+  const orFilters = smartSearchFilters(
     s,
+    ["regional_name", "local_name", "set_code", "card_number"],
     "card_uid",
     "card_id",
     extIds,
@@ -99,11 +94,11 @@ async function fetchIndex(
   const applyGate = (q: any) => (gated ? q.in("mtg_external_identifiers.platform_name", platforms) : q);
 
   let cq = supabase.from("mtg_card_definitions_v").select(`card_id${gateSelect}`, { count: "exact", head: true });
-  if (s) cq = cq.or(orFilter);
+  if (s) for (const f of orFilters) cq = cq.or(f);
   cq = applyGate(cq);
   const { count: total } = await cq;
   let q = supabase.from("mtg_card_definitions_v").select(`${COLS}${gateSelect}`).order("regional_name").limit(limit);
-  if (s) q = q.or(orFilter);
+  if (s) for (const f of orFilters) q = q.or(f);
   q = applyGate(q);
   const { data, error } = await q;
   if (error) throw error;

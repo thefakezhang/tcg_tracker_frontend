@@ -1,8 +1,8 @@
 // Shared "smart" card-search term handling.
 //
-// Every curator-facing card search (the Card Index catalogs, the curation
-// override picker, the match-review search dialog) accepts more than the
-// name/set/number text term:
+// Every card search surface (the Card Index catalogs, the curation override
+// picker, the match-review search dialog, the lot add-line search, and the
+// card/sealed browsers) accepts more than the name/set/number text term:
 //   - a card UUID - full, or the 8-hex prefix the UI displays (uid.slice(0, 8))
 //   - an exact platform external id (tcgplayer / pricecharting / snkrdunk / ...)
 // so a curator can paste whatever identifier they are holding and land on the
@@ -61,17 +61,35 @@ export async function externalIdMatches(
   return [...ids];
 }
 
-// searchOrFilter composes the final or() disjunct string: the caller's text
-// ilike parts, the uuid parts, and - when the term matched external ids - an
-// id-list gate. Callers pass the parts to .or() unchanged.
-export function searchOrFilter(
-  textParts: string[],
+// tokenizeSearchTerm splits a text term into whitespace tokens after scrubbing
+// the characters PostgREST or() treats as syntax. A single-word term comes back
+// as a one-element array, so single-term behavior is unchanged for callers.
+export function tokenizeSearchTerm(term: string): string[] {
+  return term.replace(/[%,()*]/g, " ").split(/\s+/).filter(Boolean);
+}
+
+// smartSearchFilters composes the shared term semantics as a LIST of or()
+// arguments; the caller applies each in sequence, and because chained .or()
+// calls AND together, tokens must all match (each against any column):
+//   1. identifier paste wins: when the whole term is a uid (full UUID or the
+//      displayed 8-hex prefix) or resolved to exact external ids, those
+//      disjuncts alone apply as ONE or() - the established paste semantics;
+//   2. otherwise every whitespace token yields one or() spanning the caller's
+//      text columns, so "blastoise 009" means blastoise AND 009, each side
+//      free to hit the name, the number, the set, or the variant.
+export function smartSearchFilters(
   term: string,
+  textCols: string[],
   uidCol: string,
   idCol: string,
   extIds: number[],
-): string {
-  const parts = [...textParts, ...uidOrParts(term, uidCol)];
-  if (extIds.length) parts.push(`${idCol}.in.(${extIds.join(",")})`);
-  return parts.join(",");
+): string[] {
+  const t = term.trim();
+  if (!t) return [];
+  const idParts = [...uidOrParts(t, uidCol)];
+  if (extIds.length) idParts.push(`${idCol}.in.(${extIds.join(",")})`);
+  if (idParts.length) return [idParts.join(",")];
+  return tokenizeSearchTerm(t).map(
+    (token) => textCols.map((col) => `${col}.ilike.%${token}%`).join(","),
+  );
 }
