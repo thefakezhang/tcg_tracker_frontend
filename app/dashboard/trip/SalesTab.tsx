@@ -529,12 +529,9 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   );
   const sortedSales = useMemo(() => {
     const qy = hSearch.trim().toLowerCase();
-    const base = qy
-      ? sales.filter((s) =>
-          s.name.toLowerCase().includes(qy)
-          || (s.card_number ?? "").toLowerCase().includes(qy)
-          || (s.set_code ?? "").toLowerCase().includes(qy))
-      : sales;
+    // s.name already embeds set code + card number via cardMeta, so one
+    // substring match covers name/set/number lookups.
+    const base = qy ? sales.filter((s) => s.name.toLowerCase().includes(qy)) : sales;
     if (!hSortCol) return base;
     const dir = hSortAsc ? 1 : -1;
     const val = (s: SaleRow): string | number =>
