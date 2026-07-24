@@ -40,6 +40,7 @@ interface Holding {
   total_cost_usd: number;
   imageUrl: string | null;
   englishName: string | null;
+  uid: string | null;
   reprintEvents: InventoryExposure[];
 }
 
@@ -52,12 +53,12 @@ export default function InventoryView() {
 
   const fetchHoldings = useCallback(async (): Promise<Holding[]> => {
     const supabase = createClient();
-    const holdingsData = await selectAll<Omit<Holding, "imageUrl" | "englishName" | "reprintEvents">>(
+    const holdingsData = await selectAll<Omit<Holding, "imageUrl" | "englishName" | "uid" | "reprintEvents">>(
       () => supabase.from("inventory_holdings_v").select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd"),
       ["game", "item_type", "leg", "card_id", "product_id", "condition_id", "psa_grade", "sealed_condition", "variant_edition"],
     );
     const rows = holdingsData.map(
-      (h) => ({ ...h, imageUrl: null as string | null, englishName: null as string | null, reprintEvents: [] as InventoryExposure[] })
+      (h) => ({ ...h, imageUrl: null as string | null, englishName: null as string | null, uid: null as string | null, reprintEvents: [] as InventoryExposure[] })
     ).sort((a, b) => Number(b.total_cost_usd) - Number(a.total_cost_usd));
 
     const exposures = await selectAll<InventoryExposure>(
@@ -73,25 +74,25 @@ export default function InventoryView() {
 
     // batch-fetch image_url (+ english_name for pokemon) by id, per source table
     const byGame = (g: string) => rows.filter((r) => r.game === g);
-    const fetchDefs = async (table: string, idCol: string, ids: number[], cols: string) => {
-      if (ids.length === 0) return new Map<number, { image_url: string | null; english_name?: string | null }>();
+    const fetchDefs = async (table: string, idCol: string, uidCol: string, ids: number[], cols: string) => {
+      if (ids.length === 0) return new Map<number, { image_url: string | null; english_name?: string | null; uid: string | null }>();
       const defs = await selectAllByIds<Record<string, unknown>>(
         ids,
         [idCol],
         (chunk) => supabase.from(table).select(cols).in(idCol, chunk),
       );
-      const m = new Map<number, { image_url: string | null; english_name?: string | null }>();
-      for (const d of defs) m.set(d[idCol] as number, { image_url: (d.image_url as string) ?? null, english_name: (d.english_name as string) ?? null });
+      const m = new Map<number, { image_url: string | null; english_name?: string | null; uid: string | null }>();
+      for (const d of defs) m.set(d[idCol] as number, { image_url: (d.image_url as string) ?? null, english_name: (d.english_name as string) ?? null, uid: (d[uidCol] as string) ?? null });
       return m;
     };
     const [pkm, mtg, sealed] = await Promise.all([
-      fetchDefs("pokemon_card_definitions", "card_id", byGame("pokemon").map((r) => r.card_id!).filter(Boolean), "card_id, image_url, english_name"),
-      fetchDefs("mtg_card_definitions_v", "card_id", byGame("mtg").map((r) => r.card_id!).filter(Boolean), "card_id, image_url"),
-      fetchDefs("pokemon_sealed_products", "product_id", byGame("pokemon_sealed").map((r) => r.product_id!).filter(Boolean), "product_id, image_url"),
+      fetchDefs("pokemon_card_definitions", "card_id", "card_uid", byGame("pokemon").map((r) => r.card_id!).filter(Boolean), "card_id, card_uid, image_url, english_name"),
+      fetchDefs("mtg_card_definitions_v", "card_id", "card_uid", byGame("mtg").map((r) => r.card_id!).filter(Boolean), "card_id, card_uid, image_url"),
+      fetchDefs("pokemon_sealed_products", "product_id", "product_uid", byGame("pokemon_sealed").map((r) => r.product_id!).filter(Boolean), "product_id, product_uid, image_url"),
     ]);
     for (const r of rows) {
       const hit = r.game === "pokemon" ? pkm.get(r.card_id!) : r.game === "mtg" ? mtg.get(r.card_id!) : sealed.get(r.product_id!);
-      if (hit) { r.imageUrl = hit.image_url; r.englishName = hit.english_name ?? null; }
+      if (hit) { r.imageUrl = hit.image_url; r.englishName = hit.english_name ?? null; r.uid = hit.uid; }
     }
     return rows;
   }, []);
@@ -106,9 +107,17 @@ export default function InventoryView() {
 
   const rows = useMemo(() => {
     const s = search.trim().toLowerCase();
+    // The term also matches the durable uid (full or any prefix, H3) and the
+    // card number, so "looking up the card" works with whatever identifier
+    // the operator is holding.
     return holdings.filter((h) =>
       (leg === "all" || h.leg === leg) &&
-      (!s || h.name.toLowerCase().includes(s) || (h.englishName ?? "").toLowerCase().includes(s) || h.set_code.toLowerCase().includes(s))
+      (!s
+        || h.name.toLowerCase().includes(s)
+        || (h.englishName ?? "").toLowerCase().includes(s)
+        || h.set_code.toLowerCase().includes(s)
+        || (h.card_number ?? "").toLowerCase().includes(s)
+        || (h.uid ?? "").toLowerCase().startsWith(s))
     );
   }, [holdings, search, leg]);
 

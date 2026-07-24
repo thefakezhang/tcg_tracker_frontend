@@ -56,6 +56,7 @@ import {
   useOwnedInventoryCounts,
   type OwnedInventoryIdentity,
 } from "./owned-inventory";
+import { OwnedCountLine } from "./OwnedCountLine";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -147,13 +148,13 @@ export default function CardBrowser() {
   );
   const ownedCounts = useOwnedInventoryCounts(activeGame, ownedIdentities);
   const dataWithOwned = useMemo(
-    () => data.map((row) => ({
-      ...row,
-      ownedQty: ownedCounts.get(ownedInventoryKey({
+    () => data.map((row) => {
+      const counts = ownedCounts.get(ownedInventoryKey({
         game: activeGame,
         cardId: row.card.card_id,
-      })) ?? 0,
-    })),
+      }));
+      return { ...row, ownedQty: counts?.owned ?? 0, incomingQty: counts?.incoming ?? 0 };
+    }),
     [activeGame, data, ownedCounts],
   );
   const visibleData = useMemo(
@@ -595,11 +596,7 @@ export default function CardBrowser() {
                       {misc}
                     </CardDescription>
                   )}
-                  {!!row.ownedQty && row.ownedQty > 0 && (
-                    <div className="text-[11px] text-muted-foreground">
-                      {t("inventory.owned")} {row.ownedQty}
-                    </div>
-                  )}
+                  <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} />
                 </CardHeader>
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
                   <div className="grid w-full grid-cols-[1fr_auto_1fr] gap-2">

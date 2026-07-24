@@ -11,6 +11,8 @@ import { useExitBasis } from "./ExitBasisContext";
 import { exitValue } from "./grade-signals";
 import { useTranslation } from "@/lib/i18n";
 import { DecisionActions } from "./DecisionActions";
+import { OwnedCountLine } from "./OwnedCountLine";
+import { UidChip } from "./UidChip";
 
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
   const { displayCurrency, convertPrice } = useCurrency();
@@ -121,6 +123,20 @@ function nullsLastNumber(
 
 type TranslateFn = (key: import("@/lib/i18n").TranslationKey) => string;
 
+// Durable-identity column (H3): the Card Index uid convention in the browser.
+// One definition shared by all three column sets; sealed rows alias their
+// product_uid into card.card_uid the same way product_id rides card_id.
+function uidColumn(t: TranslateFn): ColumnDef<CardRowData> {
+  return {
+    id: "uid",
+    enableSorting: false,
+    accessorFn: (row) => row.card.card_uid ?? null,
+    header: () => t("column.uid"),
+    cell: ({ row }) => <UidChip uid={row.original.card.card_uid} />,
+    meta: { className: "hidden xl:table-cell" },
+  };
+}
+
 /**
  * Checkbox column for multi-select (redesign R6). Views opt in by prepending it
  * to their column list; views that don't are unaffected.
@@ -171,11 +187,7 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
           <div className="min-w-0 whitespace-normal">
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
-            {!!row.original.ownedQty && row.original.ownedQty > 0 && (
-              <div className="text-[11px] text-muted-foreground">
-                {t("inventory.owned")} {row.original.ownedQty}
-              </div>
-            )}
+            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} />
           </div>
         );
       },
@@ -211,6 +223,7 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
       cell: ({ getValue }) => (getValue() as string | null) ?? "—",
       meta: { className: "hidden 2xl:table-cell" },
     },
+    uidColumn(t),
     {
       id: "psa_grade",
       accessorFn: (row) => row.psaGrade ?? null,
@@ -342,11 +355,7 @@ export function createMtgColumns(
           <div>
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
-            {!!row.original.ownedQty && row.original.ownedQty > 0 && (
-              <div className="text-[11px] text-muted-foreground">
-                {t("inventory.owned")} {row.original.ownedQty}
-              </div>
-            )}
+            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} />
           </div>
         );
       },
@@ -384,6 +393,7 @@ export function createMtgColumns(
       header: ({ column }) => <SortableHeader column={column} label={t("column.language")} />,
       cell: ({ getValue }) => (getValue() as string | null) ?? "—",
     },
+    uidColumn(t),
     {
       id: "lowestSell",
       accessorFn: (row) => row.prices.lowestSell?.normalizedPrice ?? undefined,
@@ -447,6 +457,7 @@ export function createSealedColumns(
           <div>
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
+            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} />
           </div>
         );
       },
@@ -489,6 +500,7 @@ export function createSealedColumns(
       header: ({ column }) => <SortableHeader column={column} label={t("column.setCode")} />,
       cell: ({ getValue }) => (getValue() as string | null) ?? "—",
     },
+    uidColumn(t),
     {
       id: "lowestSell",
       accessorFn: (row) => row.prices.lowestSell?.normalizedPrice ?? undefined,
