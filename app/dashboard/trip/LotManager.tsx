@@ -304,6 +304,8 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     0,
   );
   const landedLotUsd = Number(lot?.total_cost_usd ?? 0) + acquisitionCostUsd;
+  const totalUnits = lines.reduce((sum, l) => sum + Number(l.quantity), 0);
+  const landedPerUnitUsd = totalUnits > 0 ? landedLotUsd / totalUnits : null;
   // A line with no price override needs a lot total to derive its basis. When
   // the lot has neither, finalize will block; warn before the operator tries.
   const blankLineCount = lines.filter((l) => l.price_override_usd == null).length;
@@ -673,6 +675,12 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                 {t("trips.acquisitionCosts")} ${acquisitionCostUsd.toFixed(2)}
                 {" · "}
                 {t("trips.landedCost")} ${landedLotUsd.toFixed(2)}
+                {landedPerUnitUsd != null && (
+                  <>
+                    {" · "}
+                    ${landedPerUnitUsd.toFixed(2)} {t("trips.landedCostPerUnit")}
+                  </>
+                )}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1129,7 +1137,14 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                     <>
                       <TableCell>${Number(ln.direct_purchase_cost_usd).toFixed(2)}</TableCell>
                       <TableCell>${Number(ln.acquisition_cost_alloc_usd).toFixed(2)}</TableCell>
-                      <TableCell>${Number(ln.allocated_cost_usd).toFixed(2)}</TableCell>
+                      <TableCell>
+                        ${Number(ln.allocated_cost_usd).toFixed(2)}
+                        {ln.quantity > 1 && (
+                          <div className="text-xs text-muted-foreground">
+                            ${(Number(ln.allocated_cost_usd) / ln.quantity).toFixed(2)} {t("trips.landedCostPerUnit")}
+                          </div>
+                        )}
+                      </TableCell>
                     </>
                   )}
                   <TableCell>

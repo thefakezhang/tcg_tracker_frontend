@@ -450,6 +450,7 @@ const en = {
   "trips.directPurchase": "Direct purchase",
   "trips.acquisitionCosts": "Acquisition costs",
   "trips.landedCost": "Landed cost",
+  "trips.landedCostPerUnit": "per unit",
   "trips.acquisitionCostsHelp": "Shipping and other typed costs stay separate from the purchase price, then allocate into landed basis at finalization.",
   "trips.noAcquisitionCosts": "No additional acquisition costs.",
   "trips.costCategory": "Cost type",
