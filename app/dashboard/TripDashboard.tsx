@@ -25,13 +25,14 @@ import ExportTab from "./trip/ExportTab";
 import ExpensesTab from "./trip/ExpensesTab";
 import PnlTab from "./trip/PnlTab";
 import TripReachoutTab from "./trip/TripReachoutTab";
+import TripWatchlistTab from "./trip/TripWatchlistTab";
 
 const STATUSES = ["planning", "active", "closed"] as const;
 
 export default function TripDashboard({ tripId }: { tripId: number }) {
   const { t } = useTranslation();
   const { saving, save } = useSaving();
-  const { trips, updateTrip, deleteTrip, setActiveTripId } = useTrips();
+  const { trips, updateTrip, closeTrip, deleteTrip, setActiveTripId } = useTrips();
   const trip = trips.find((tr) => tr.trip_id === tripId);
 
   const [editOpen, setEditOpen] = useState(false);
@@ -96,6 +97,7 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
         <TabsList className="max-w-full justify-start overflow-x-auto">
           <TabsTrigger className="shrink-0" value="export">{t("trips.tabExport")}</TabsTrigger>
           <TabsTrigger className="shrink-0" value="import">{t("trips.tabImport")}</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="watchlist">{t("trips.tabWatchlist")}</TabsTrigger>
           <TabsTrigger className="shrink-0" value="sales">{t("trips.tabSales")}</TabsTrigger>
           <TabsTrigger className="shrink-0" value="expenses">{t("trips.tabExpenses")}</TabsTrigger>
           <TabsTrigger className="shrink-0" value="pnl">{t("trips.tabPnl")}</TabsTrigger>
@@ -103,6 +105,7 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
         </TabsList>
         <TabsContent value="export">{tab === "export" && <ExportTab tripId={tripId} />}</TabsContent>
         <TabsContent value="import">{tab === "import" && <ImportTab tripId={tripId} />}</TabsContent>
+        <TabsContent value="watchlist">{tab === "watchlist" && <TripWatchlistTab tripId={tripId} />}</TabsContent>
         <TabsContent value="sales">{tab === "sales" && <SalesTab tripId={tripId} />}</TabsContent>
         <TabsContent value="expenses">{tab === "expenses" && <ExpensesTab tripId={tripId} />}</TabsContent>
         <TabsContent value="pnl">{tab === "pnl" && <PnlTab tripId={tripId} />}</TabsContent>
@@ -131,12 +134,19 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
           <DialogFooter>
             <Button variant="outline" disabled={saving} onClick={() => setEditOpen(false)}>{t("trips.cancel")}</Button>
             <Button disabled={!name.trim() || saving} onClick={async () => {
-              const ok = await save(() => updateTrip(tripId, {
-                name: name.trim(),
-                started_at: startedAt || null,
-                ended_at: endedAt || null,
-                status,
-              }));
+              const ok = await save(async () => {
+                await updateTrip(tripId, {
+                  name: name.trim(),
+                  started_at: startedAt || null,
+                  ended_at: endedAt || null,
+                  status,
+                });
+                // Closing here retires the trip's watchlist too, so the status
+                // dropdown and the Watchlist tab's Finish button behave the same.
+                if (status === "closed" && trip?.status !== "closed") {
+                  await closeTrip(tripId);
+                }
+              });
               if (ok) setEditOpen(false);
             }}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.saveChanges")}</Button>
           </DialogFooter>

@@ -28,6 +28,9 @@ interface TripContextValue {
     tripId: number,
     fields: Partial<Pick<Trip, "name" | "started_at" | "ended_at" | "status" | "notes">>
   ) => Promise<void>;
+  // Finish a trip: mark it closed and retire its watchlist (deactivate the
+  // trip's active watches) in one RPC. Returns how many watches were retired.
+  closeTrip: (tripId: number) => Promise<number>;
   deleteTrip: (tripId: number) => Promise<void>;
 }
 
@@ -84,6 +87,18 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     [fetchTrips]
   );
 
+  const closeTrip = useCallback(
+    async (tripId: number): Promise<number> => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("close_trip", { p_trip_id: tripId });
+      if (error) throw error;
+      await fetchTrips();
+      const row = Array.isArray(data) ? data[0] : data;
+      return Number(row?.watches_deactivated ?? 0);
+    },
+    [fetchTrips]
+  );
+
   const deleteTrip = useCallback(
     async (tripId: number) => {
       const supabase = createClient();
@@ -108,6 +123,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         fetchTrips,
         createTrip,
         updateTrip,
+        closeTrip,
         deleteTrip,
       }}
     >
