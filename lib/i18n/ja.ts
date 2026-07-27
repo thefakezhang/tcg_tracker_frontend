@@ -13,6 +13,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardBrowser.psa": "PSA",
   "cardBrowser.namePlaceholder": "名前...",
   "cardBrowser.cardNumberPlaceholder": "カード番号...",
+  "cardBrowser.cardNumberNumerator": "番号",
+  "cardBrowser.cardNumberDenominator": "総数",
   "cardBrowser.setCodePlaceholder": "セットコード...",
   "cardBrowser.list": "リスト",
   "cardBrowser.grid": "グリッド",
