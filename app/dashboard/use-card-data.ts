@@ -292,6 +292,49 @@ function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRowData {
   };
 }
 
+// Fetch one card's row for opening CardDetailModal from a lighter surface (e.g.
+// the trip watchlist), where only (card_id, psa_grade) is known. Mirrors the
+// list pipeline: the joined price-summary row when present, else a card-def-only
+// fallback so the modal (which re-fetches listings/evidence by card_id) still
+// opens. Returns null only if the card definition itself can't be found.
+export async function fetchCardRowById(
+  supabase: ReturnType<typeof createClient>,
+  game: Game,
+  cardId: number | string,
+  psaGrade: number,
+): Promise<CardRowData | null> {
+  const summaryTable = summaryTableForSource(game, "");
+  const cardTable = game === "pokemon" ? "pokemon_card_definitions" : "mtg_card_definitions_v";
+
+  const { data: sumRows } = await supabase
+    .from(summaryTable)
+    .select(`*, ${cardTable}!inner(${cardDefCols(game)})`)
+    .eq("card_id", cardId);
+  const rows = (sumRows as SummaryRow[] | null) ?? [];
+
+  // Graded -> the exact psa row; raw -> tier 1, else any raw tier.
+  const summary =
+    psaGrade > 0
+      ? rows.find((r) => r.psa_grade === psaGrade)
+      : rows.find((r) => r.psa_grade === 0 && r.tier === 1) ?? rows.find((r) => r.psa_grade === 0);
+
+  if (summary) return summaryRowToCardRow(summary, cardTable);
+
+  const { data: directCard } = await supabase
+    .from(cardTable)
+    .select(cardDefCols(game))
+    .eq("card_id", cardId)
+    .single();
+  if (!directCard) return null;
+  return {
+    key: psaGrade > 0 ? `${cardId}:${psaGrade}` : String(cardId),
+    card: directCard as unknown as CardDefinition,
+    psaGrade: psaGrade > 0 ? psaGrade : undefined,
+    prices: { highestBuy: null, lowestSell: null },
+    roi: null,
+  };
+}
+
 export type RegionFilter = "all" | "NA" | "JP";
 
 export function useAvailableCardSources(
