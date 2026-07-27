@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Pencil, Trash2, Loader2 } from "lucide-react";
+import { Pencil, Trash2, Loader2, Flag } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
@@ -58,6 +58,25 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
         <h2 className="text-lg font-semibold">{trip?.name}</h2>
         {trip && <Badge variant="secondary">{t(`trips.status${trip.status[0].toUpperCase()}${trip.status.slice(1)}` as TranslationKey)}</Badge>}
         <div className="ml-auto flex items-center gap-2">
+          {trip && trip.status !== "closed" && (
+            <AlertDialog>
+              <AlertDialogTrigger render={<Button variant="outline" size="sm" />}>
+                <Flag className="size-4 mr-1" />{t("trips.finishTrip")}
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{t("trips.finishTrip")}</AlertDialogTitle>
+                  <AlertDialogDescription>{t("trips.finishTripConfirm")}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t("trips.cancel")}</AlertDialogCancel>
+                  <AlertDialogAction disabled={saving} onClick={() => save(() => closeTrip(tripId))}>
+                    {t("trips.finishTrip")}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
           <Button variant="outline" size="sm" onClick={openEdit}>
             <Pencil className="size-4 mr-1" />{t("trips.edit")}
           </Button>

@@ -5,7 +5,8 @@ import { Loader2, Flag } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useLanguage } from "../LanguageContext";
-import { getCardDisplayName } from "../use-card-data";
+import { getCardDisplayName, fetchCardRowById, type CardRowData } from "../use-card-data";
+import CardDetailModal from "../CardDetailModal";
 import { useTrips } from "../TripContext";
 import { useSaving } from "@/lib/use-saving";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,7 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
   const { trips, closeTrip } = useTrips();
   const { saving, save } = useSaving();
   const [rows, setRows] = useState<WatchRow[] | null>(null);
+  const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
 
   const trip = trips.find((tr) => tr.trip_id === tripId);
   const closed = trip?.status === "closed";
@@ -69,6 +71,14 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
       await fetchRows();
       return retired;
     });
+  };
+
+  // Tap a card -> open its detail modal (the store-sighting form lives there),
+  // so a card already on the watchlist is one tap from adding a new listing.
+  const openCard = async (r: WatchRow) => {
+    const supabase = createClient();
+    const card = await fetchCardRowById(supabase, "pokemon", r.card_id, r.psa_grade);
+    if (card) setSelectedCard(card);
   };
 
   const roiClass = (roi: number | null) =>
@@ -120,7 +130,14 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
             </TableHeader>
             <TableBody>
               {rows.map((r) => (
-                <TableRow key={r.rule_id}>
+                <TableRow
+                  key={r.rule_id}
+                  className="cursor-pointer hover:bg-accent/50"
+                  onClick={() => void openCard(r)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void openCard(r); } }}
+                >
                   <TableCell className="max-w-[260px] truncate">
                     {getCardDisplayName({ regional_name: r.regional_name, english_name: r.english_name }, language)}
                     <span className="text-muted-foreground"> · {r.set_code}{r.card_number ? ` ${r.card_number}` : ""}{r.psa_grade > 0 ? ` · PSA ${r.psa_grade}` : ""}</span>
@@ -147,6 +164,13 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
           </Table>
         </div>
       )}
+
+      <CardDetailModal
+        card={selectedCard}
+        open={!!selectedCard}
+        onClose={() => { setSelectedCard(null); void fetchRows(); }}
+        initialPsaMode={selectedCard?.psaGrade ? "psa" : "non-psa"}
+      />
     </div>
   );
 }
