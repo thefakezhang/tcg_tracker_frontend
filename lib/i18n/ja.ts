@@ -453,6 +453,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.acquisitionCosts": "仕入付随費用",
   "trips.landedCost": "着地原価",
   "trips.landedCostPerUnit": "単価",
+  "trips.loadedCost": "旅費込み",
   "trips.acquisitionCostsHelp": "送料などを商品購入額と分けて保存し、確定時に着地原価へ配賦します。",
   "trips.noAcquisitionCosts": "追加の仕入付随費用はありません。",
   "trips.costCategory": "費用区分",

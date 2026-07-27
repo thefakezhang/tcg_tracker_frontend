@@ -99,6 +99,11 @@ interface LotLine {
   direct_purchase_cost_usd: number;
   acquisition_cost_alloc_usd: number;
   allocated_cost_usd: number;
+  // Fully-loaded landed cost: this line's landed cost plus its share of the
+  // trip's overhead (flights/lodging/food), spread by value across the trip's
+  // JP items. Present only for finalized JP lines; see trip_overhead_alloc_v.
+  overheadAllocUsd?: number;
+  loadedCostUsd?: number;
   regionalName: string;
   englishName: string | null;
   setCode: string;
@@ -252,6 +257,30 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
         out.push(mapSealedLotLine(r, SEALED_TABLE, p));
       }
     }
+    // Fully-loaded landed cost: attach each line's share of the trip's overhead
+    // (flights/lodging/food, spread by value across the trip's JP items). The
+    // view only returns finalized JP lines, so non-JP or draft lots get nothing
+    // and the loaded figure simply doesn't render. Keyed by (game, line_id)
+    // because line_id is only unique within its own table.
+    const { data: ovh } = await supabase
+      .from("trip_overhead_alloc_v")
+      .select("game, line_id, overhead_alloc_usd, loaded_cost_usd")
+      .eq("lot_id", lotId);
+    if (ovh && ovh.length) {
+      const tableToGame: Record<string, string> = {
+        pokemon_lot_lines: "pokemon",
+        mtg_lot_lines: "mtg",
+        pokemon_sealed_lot_lines: "pokemon_sealed",
+      };
+      const ovhMap = new Map<string, { overhead: number; loaded: number }>();
+      for (const o of ovh as { game: string; line_id: number; overhead_alloc_usd: number; loaded_cost_usd: number }[]) {
+        ovhMap.set(`${o.game}:${o.line_id}`, { overhead: Number(o.overhead_alloc_usd), loaded: Number(o.loaded_cost_usd) });
+      }
+      for (const ln of out) {
+        const hit = ovhMap.get(`${tableToGame[ln.table] ?? ln.table}:${ln.line_id}`);
+        if (hit) { ln.overheadAllocUsd = hit.overhead; ln.loadedCostUsd = hit.loaded; }
+      }
+    }
     setLines(out);
   }, []);
 
@@ -306,6 +335,11 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const landedLotUsd = Number(lot?.total_cost_usd ?? 0) + acquisitionCostUsd;
   const totalUnits = lines.reduce((sum, l) => sum + Number(l.quantity), 0);
   const landedPerUnitUsd = totalUnits > 0 ? landedLotUsd / totalUnits : null;
+  // Trip overhead loaded onto this lot's lines (0 until finalize, and always 0
+  // for a US lot). When present, the lot's fully-loaded cost = landed + that.
+  const lotOverheadUsd = lines.reduce((sum, l) => sum + Number(l.overheadAllocUsd ?? 0), 0);
+  const lotLoadedUsd = landedLotUsd + lotOverheadUsd;
+  const loadedPerUnitUsd = totalUnits > 0 && lotOverheadUsd > 0 ? lotLoadedUsd / totalUnits : null;
   // A line with no price override needs a lot total to derive its basis. When
   // the lot has neither, finalize will block; warn before the operator tries.
   const blankLineCount = lines.filter((l) => l.price_override_usd == null).length;
@@ -679,6 +713,14 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                   <>
                     {" · "}
                     ${landedPerUnitUsd.toFixed(2)} {t("trips.landedCostPerUnit")}
+                  </>
+                )}
+                {loadedPerUnitUsd != null && (
+                  <>
+                    {" · "}
+                    {t("trips.loadedCost")} ${lotLoadedUsd.toFixed(2)}
+                    {" · "}
+                    ${loadedPerUnitUsd.toFixed(2)} {t("trips.landedCostPerUnit")}
                   </>
                 )}
               </div>
@@ -1142,6 +1184,14 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                         {ln.quantity > 1 && (
                           <div className="text-xs text-muted-foreground">
                             ${(Number(ln.allocated_cost_usd) / ln.quantity).toFixed(2)} {t("trips.landedCostPerUnit")}
+                          </div>
+                        )}
+                        {ln.loadedCostUsd != null && Number(ln.overheadAllocUsd ?? 0) > 0 && (
+                          <div className="text-xs text-muted-foreground">
+                            {t("trips.loadedCost")} ${Number(ln.loadedCostUsd).toFixed(2)}
+                            {ln.quantity > 1 && (
+                              <> · ${(Number(ln.loadedCostUsd) / ln.quantity).toFixed(2)} {t("trips.landedCostPerUnit")}</>
+                            )}
                           </div>
                         )}
                       </TableCell>
