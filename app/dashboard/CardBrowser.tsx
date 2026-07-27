@@ -298,7 +298,7 @@ export default function CardBrowser() {
             aria-label={t("cardBrowser.cardNumberDenominator")}
             value={cardDenom}
             onChange={(e) => setCardDenom(e.target.value)}
-            className="w-14 min-w-0 shrink-0"
+            className="min-w-0 flex-1"
           />
         </div>
         <Input
