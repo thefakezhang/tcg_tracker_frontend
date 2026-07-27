@@ -81,7 +81,13 @@ export default function CardBrowser() {
   const { exitPercentile, setExitPercentile } = useExitBasis();
   const { setHeaderActions } = useHeader();
   const [search, setSearch] = useState("");
-  const [searchCardNumber, setSearchCardNumber] = useState("");
+  // Card number is split into numerator ("123") and the slash-suffix ("078")
+  // so a shop lookup can change just one part - no caret-positioning inside a
+  // "123/078" string and no keyboard switch to type the slash on mobile. The
+  // suffix is sticky, so stepping through one set only touches the numerator.
+  const [cardNum, setCardNum] = useState("");
+  const [cardDenom, setCardDenom] = useState("");
+  const searchCardNumber = [cardNum.trim(), cardDenom.trim()].filter(Boolean).join("/");
   const [searchSetCode, setSearchSetCode] = useState("");
   const [selectedTier, setSelectedTier] = useState(1);
   const [sellRegion, setSellRegion] = useState<RegionFilter>("all");
@@ -180,7 +186,8 @@ export default function CardBrowser() {
   // Reset filters on game change
   useEffect(() => {
     setSearch("");
-    setSearchCardNumber("");
+    setCardNum("");
+    setCardDenom("");
     setSearchSetCode("");
     setSelectedTier(1);
     setSellRegion("all");
@@ -271,12 +278,29 @@ export default function CardBrowser() {
           onChange={(e) => setSearch(e.target.value)}
           className="col-span-2"
         />
-        <Input
-          type="text"
-          placeholder={t("cardBrowser.cardNumberPlaceholder")}
-          value={searchCardNumber}
-          onChange={(e) => setSearchCardNumber(e.target.value)}
-        />
+        {/* Split card number: numeric numerator + a sticky suffix, joined by a
+            static "/" you never type. Editing one part is one tap, not a caret
+            hunt inside "123/078", and the numerator gets a numeric keypad. */}
+        <div className="flex items-center gap-1">
+          <Input
+            type="text"
+            inputMode="numeric"
+            placeholder={t("cardBrowser.cardNumberNumerator")}
+            aria-label={t("cardBrowser.cardNumberNumerator")}
+            value={cardNum}
+            onChange={(e) => setCardNum(e.target.value)}
+            className="min-w-0 flex-1"
+          />
+          <span className="shrink-0 text-muted-foreground" aria-hidden="true">/</span>
+          <Input
+            type="text"
+            placeholder={t("cardBrowser.cardNumberDenominator")}
+            aria-label={t("cardBrowser.cardNumberDenominator")}
+            value={cardDenom}
+            onChange={(e) => setCardDenom(e.target.value)}
+            className="w-14 min-w-0 shrink-0"
+          />
+        </div>
         <Input
           type="text"
           placeholder={t("cardBrowser.setCodePlaceholder")}

@@ -11,6 +11,8 @@ const en = {
   "cardBrowser.psa": "PSA",
   "cardBrowser.namePlaceholder": "Name...",
   "cardBrowser.cardNumberPlaceholder": "Card Number...",
+  "cardBrowser.cardNumberNumerator": "No.",
+  "cardBrowser.cardNumberDenominator": "Total",
   "cardBrowser.setCodePlaceholder": "Set code...",
   "cardBrowser.list": "List",
   "cardBrowser.grid": "Grid",
