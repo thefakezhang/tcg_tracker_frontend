@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Check, Pencil, Upload, ImageOff, RotateCcw, Loader2 } from "lucide-react";
+import { Plus, Trash2, Check, Pencil, Upload, ImageOff, RotateCcw, Loader2, DollarSign } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll, selectAllByIds } from "@/lib/supabase/select-all";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
@@ -99,6 +99,8 @@ interface LotLine {
   direct_purchase_cost_usd: number;
   acquisition_cost_alloc_usd: number;
   allocated_cost_usd: number;
+  // FIFO copies still on hand for this line; null on a draft (un-finalized) lot.
+  qty_remaining?: number | null;
   // Fully-loaded landed cost: this line's landed cost plus its share of the
   // trip's overhead (flights/lodging/food), spread by value across the trip's
   // JP items. Present only for finalized JP lines; see trip_overhead_alloc_v.
@@ -164,6 +166,71 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const [cFx, setCFx] = useState(LEG_DEFAULTS[leg].fx);
   const { rateFor } = useFxRate();
 
+  // Per-line sale: sell one specific finalized line at a price, pinned to that
+  // line via record_line_sale (not FIFO). Export sells in JP (JPY), import in
+  // the US (USD) by default.
+  const [sellLine, setSellLine] = useState<LotLine | null>(null);
+  const [sellQty, setSellQty] = useState("1");
+  const [sellCcy, setSellCcy] = useState("USD");
+  const [sellPrice, setSellPrice] = useState("");
+  const [sellFx, setSellFx] = useState("1");
+  const [sellFees, setSellFees] = useState("");
+  const [sellDate, setSellDate] = useState(new Date().toISOString().slice(0, 10));
+  const [sellPlatform, setSellPlatform] = useState("");
+  const [sellError, setSellError] = useState<string | null>(null);
+
+  const gameForLine = (ln: LotLine): string =>
+    ln.kind === "sealed" ? "pokemon_sealed" : ln.table === "mtg_lot_lines" ? "mtg" : "pokemon";
+
+  function openSell(ln: LotLine) {
+    setSellLine(ln);
+    setSellError(null);
+    setSellQty("1");
+    setSellPrice("");
+    setSellFees("");
+    setSellPlatform("");
+    setSellDate(new Date().toISOString().slice(0, 10));
+    const ccy = leg === "export" ? "JPY" : "USD";
+    setSellCcy(ccy);
+    const r = rateFor(ccy);
+    setSellFx(ccy === "USD" ? "1" : r != null ? fmtRate(r) : "0.0067");
+  }
+
+  async function submitSell() {
+    if (!sellLine) return;
+    setSellError(null);
+    const qty = Number(sellQty);
+    const price = Number(sellPrice);
+    const fees = Number(sellFees) || 0;
+    const ccy = sellCcy.trim().toUpperCase();
+    const fx = Number(sellFx) || 1;
+    if (!(qty > 0) || !(price >= 0)) { setSellError(t("trips.sellInvalid")); return; }
+    const args: Record<string, unknown> = {
+      p_game: gameForLine(sellLine),
+      p_lot_line_id: sellLine.line_id,
+      p_quantity: qty,
+      p_fees_usd: fees,
+      p_sold_at: sellDate,
+      p_platform_label: sellPlatform.trim() || null,
+    };
+    if (ccy === "USD") {
+      args.p_gross_usd = price;
+    } else {
+      args.p_gross_usd = Math.round(price * fx * 100) / 100;
+      args.p_orig_currency = ccy;
+      args.p_proceeds_orig = price;
+      args.p_fx_rate = fx;
+    }
+    const ok = await save(async () => {
+      const { error } = await createClient().rpc("record_line_sale", args);
+      if (error) { setSellError(error.message); throw error; }
+      setSellLine(null);
+      if (selectedLot) await reloadLot(selectedLot);
+      bumpOwnedInventory();
+    });
+    return ok;
+  }
+
   // For a NEW lot, default the FX field to the live market rate for the chosen
   // currency. Skip when editing (editingLotId set) so an existing lot keeps the
   // rate it was recorded at.
@@ -214,7 +281,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       // PostgREST cap them at 1000 (a dropped line = a card silently missing
       // from the lot). Key: line_id.
       const rows = await selectAll<SingleLotLineRow>(
-        () => supabase.from(LINE_TABLE[game]).select("line_id, card_id, condition_id, psa_grade, quantity, price_override_usd, direct_purchase_cost_usd, acquisition_cost_alloc_usd, allocated_cost_usd").eq("lot_id", lotId),
+        () => supabase.from(LINE_TABLE[game]).select("line_id, card_id, condition_id, psa_grade, quantity, price_override_usd, direct_purchase_cost_usd, acquisition_cost_alloc_usd, allocated_cost_usd, qty_remaining").eq("lot_id", lotId),
         ["line_id"],
       );
       if (rows.length === 0) continue;
@@ -239,7 +306,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       }
     }
     const srows = await selectAll<SealedLotLineRow>(
-      () => supabase.from(SEALED_TABLE).select("line_id, product_id, sealed_condition, variant_edition, quantity, price_override_usd, direct_purchase_cost_usd, acquisition_cost_alloc_usd, allocated_cost_usd").eq("lot_id", lotId),
+      () => supabase.from(SEALED_TABLE).select("line_id, product_id, sealed_condition, variant_edition, quantity, price_override_usd, direct_purchase_cost_usd, acquisition_cost_alloc_usd, allocated_cost_usd, qty_remaining").eq("lot_id", lotId),
       ["line_id"],
     );
     if (srows.length > 0) {
@@ -349,6 +416,16 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   // Language-aware display name (English when set + available, else regional).
   const lineLabel = (ln: LotLine) =>
     getCardDisplayName({ regional_name: ln.regionalName, english_name: ln.englishName }, language);
+
+  // Sold/unsold status of a finalized line from its remaining FIFO copies.
+  const lineSold = (ln: LotLine): { text: string; cls: string } | null => {
+    if (ln.qty_remaining == null) return null;
+    const sold = ln.quantity - ln.qty_remaining;
+    if (ln.qty_remaining <= 0) return { text: t("trips.soldOut"), cls: "text-emerald-600 dark:text-emerald-400" };
+    if (sold <= 0) return { text: t("trips.unsold"), cls: "text-muted-foreground" };
+    return { text: t("trips.soldN", { n: sold }), cls: "text-amber-600 dark:text-amber-400" };
+  };
+  const canSell = (ln: LotLine) => !!lot?.lines_imported && ln.qty_remaining != null && ln.qty_remaining > 0;
 
   // Per-line cost override is stored in USD, but entered in the lot's buying
   // currency (e.g. JPY for a JP import lot), converted via the lot's FX rate.
@@ -1065,11 +1142,18 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                         ${Number(ln.acquisition_cost_alloc_usd).toFixed(2)}
                       </div>
                     )}
-                    {!lot.lines_imported && (
+                    {lot.lines_imported && lineSold(ln) && (
+                      <div className={`text-[11px] ${lineSold(ln)!.cls}`}>{lineSold(ln)!.text}</div>
+                    )}
+                    {!lot.lines_imported ? (
                       <Button variant="ghost" size="sm" className="min-h-11 w-full sm:min-h-7" onClick={() => removeLine(ln)}>
                         <Trash2 className="size-3" />
                       </Button>
-                    )}
+                    ) : canSell(ln) ? (
+                      <Button variant="outline" size="sm" className="min-h-11 w-full sm:min-h-7" onClick={() => openSell(ln)}>
+                        <DollarSign className="size-3 mr-1" />{t("trips.sell")}
+                      </Button>
+                    ) : null}
                   </CardContent>
                 </Card>
               ))}
@@ -1099,7 +1183,12 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                 <TableRow key={`${ln.table}-${ln.line_id}`}>
                   <TableCell className="truncate max-w-[280px]">{lineLabel(ln)} <span className="text-muted-foreground">· {ln.kind === "sealed" ? `${ln.setCode} · ${ln.sealedLabel}` : cardMeta(ln.setCode, ln.cardNumber, ln.miscInfo)}</span></TableCell>
                   <TableCell>
-                    {lot.lines_imported ? ln.quantity : (
+                    {lot.lines_imported ? (
+                      <div>
+                        <div>{ln.quantity}</div>
+                        {lineSold(ln) && <div className={`text-[11px] ${lineSold(ln)!.cls}`}>{lineSold(ln)!.text}</div>}
+                      </div>
+                    ) : (
                       <Input type="number" defaultValue={ln.quantity} className="min-h-11 w-16 sm:min-h-8"
                         onBlur={(e) => updateLine(ln, { quantity: Number(e.target.value) })} />
                     )}
@@ -1198,11 +1287,15 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                     </>
                   )}
                   <TableCell>
-                    {!lot.lines_imported && (
+                    {!lot.lines_imported ? (
                       <Button variant="ghost" size="icon" className="size-11 sm:size-7" onClick={() => removeLine(ln)}>
                         <Trash2 className="size-4" />
                       </Button>
-                    )}
+                    ) : canSell(ln) ? (
+                      <Button variant="outline" size="sm" className="min-h-11 sm:min-h-7" onClick={() => openSell(ln)}>
+                        <DollarSign className="size-4 mr-1" />{t("trips.sell")}
+                      </Button>
+                    ) : null}
                   </TableCell>
                 </TableRow>
               ))}
@@ -1252,6 +1345,51 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
             <Button variant="outline" onClick={() => setLotDialogOpen(false)}>{t("trips.cancel")}</Button>
             <Button disabled={saving} onClick={saveLot}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : (editingLotId ? t("trips.saveChanges") : t("trips.save"))}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!sellLine} onOpenChange={(o) => { if (!o) setSellLine(null); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{sellLine ? t("trips.sellCard", { name: lineLabel(sellLine) }) : t("trips.sell")}</DialogTitle>
+          </DialogHeader>
+          {sellLine && (
+            <FieldGroup>
+              <p className="text-xs text-muted-foreground">
+                {t("trips.sellRemaining", { n: sellLine.qty_remaining ?? 0 })}
+                {" · "}{t("trips.landedCost")} ${(Number(sellLine.allocated_cost_usd) / Math.max(1, sellLine.quantity)).toFixed(2)}{t("trips.landedCostPerUnit") ? `/${t("trips.landedCostPerUnit")}` : ""}
+              </p>
+              <Field><Label>{t("trips.qty")}</Label>
+                <Input type="number" min={1} max={sellLine.qty_remaining ?? 1} value={sellQty}
+                  onChange={(e) => setSellQty(e.target.value)} /></Field>
+              <Field><Label>{t("trips.lotCurrency")}</Label>
+                <Input value={sellCcy} onChange={(e) => { setSellCcy(e.target.value); const r = rateFor(e.target.value.trim().toUpperCase()); if (e.target.value.trim().toUpperCase() === "USD") setSellFx("1"); else if (r != null) setSellFx(fmtRate(r)); }} /></Field>
+              <Field><Label>{t("trips.sellPrice", { ccy: sellCcy })}</Label>
+                <Input type="number" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} autoFocus /></Field>
+              {sellCcy.trim().toUpperCase() !== "USD" && (
+                <Field><Label>{t("trips.fxRate")}</Label>
+                  <Input type="number" value={sellFx} onChange={(e) => setSellFx(e.target.value)} /></Field>
+              )}
+              <Field><Label>{t("trips.sellFeesUsd")}</Label>
+                <Input type="number" value={sellFees} onChange={(e) => setSellFees(e.target.value)} placeholder="0" /></Field>
+              <Field><Label>{t("trips.lotDate")}</Label>
+                <Input type="date" value={sellDate} onChange={(e) => setSellDate(e.target.value)} /></Field>
+              <Field><Label>{t("trips.sellPlatform")}</Label>
+                <Input value={sellPlatform} onChange={(e) => setSellPlatform(e.target.value)} placeholder="eBay, mercari…" /></Field>
+              {sellCcy.trim().toUpperCase() !== "USD" && Number(sellPrice) > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {t("trips.usdComputed", { usd: (Number(sellPrice) * (Number(sellFx) || 1)).toFixed(2) })}
+                </p>
+              )}
+              {sellError && <p className="text-xs text-destructive">{sellError}</p>}
+            </FieldGroup>
+          )}
+          <DialogFooter>
+            <Button variant="outline" disabled={saving} onClick={() => setSellLine(null)}>{t("trips.cancel")}</Button>
+            <Button disabled={saving || !(Number(sellPrice) >= 0) || !(Number(sellQty) > 0)} onClick={submitSell}>
+              {saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.sell")}
             </Button>
           </DialogFooter>
         </DialogContent>
