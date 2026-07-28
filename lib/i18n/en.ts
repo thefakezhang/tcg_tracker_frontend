@@ -454,7 +454,7 @@ const en = {
   "trips.addingAsGrade": "Added cards will be PSA {grade}",
   "trips.condition": "Condition",
   "trips.override": "Cost override (USD)",
-  "trips.overrideCcy": "Cost override ({ccy})",
+  "trips.overrideCcy": "Cost/unit ({ccy})",
   "trips.finalize": "Finalize lot",
   "trips.undoFinalize": "Undo finalize",
   "trips.finalized": "Finalized",
