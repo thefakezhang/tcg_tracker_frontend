@@ -75,6 +75,7 @@ export function mapSingleLotLine(
     line_id: row.line_id,
     table,
     kind: "single" as const,
+    card_id: row.card_id,
     quantity: row.quantity,
     condition_id: row.condition_id,
     psa_grade: row.psa_grade,
