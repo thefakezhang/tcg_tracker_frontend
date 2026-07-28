@@ -9,9 +9,13 @@ import { useTranslation } from "@/lib/i18n";
 export function OwnedCountLine({
   owned,
   incoming,
+  avgCost,
+  totalCost,
 }: {
   owned?: number;
   incoming?: number;
+  avgCost?: number | null;
+  totalCost?: number | null;
 }) {
   const { t } = useTranslation();
   const ownedQty = owned ?? 0;
@@ -21,6 +25,13 @@ export function OwnedCountLine({
     <div className="text-[11px] text-muted-foreground">
       {ownedQty > 0 && (
         <span>{t("inventory.owned")} {ownedQty}</span>
+      )}
+      {/* Landed cost of the owned copies: per-copy average + total. */}
+      {ownedQty > 0 && avgCost != null && (
+        <span> · {t("inventory.landedEach", { usd: avgCost.toFixed(2) })}</span>
+      )}
+      {ownedQty > 0 && totalCost != null && (
+        <span> · {t("inventory.landedTotal", { usd: totalCost.toFixed(2) })}</span>
       )}
       {incomingQty > 0 && (
         <span className="text-amber-500/90">

@@ -187,7 +187,7 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
           <div className="min-w-0 whitespace-normal">
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
-            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} />
+            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} />
           </div>
         );
       },
@@ -355,7 +355,7 @@ export function createMtgColumns(
           <div>
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
-            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} />
+            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} />
           </div>
         );
       },
@@ -457,7 +457,7 @@ export function createSealedColumns(
           <div>
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
-            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} />
+            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} />
           </div>
         );
       },

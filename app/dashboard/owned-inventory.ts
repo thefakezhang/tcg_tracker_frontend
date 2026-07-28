@@ -21,14 +21,20 @@ export interface OwnedInventoryCountRow {
   variant_edition: string | null;
   qty_owned: number;
   qty_incoming: number;
+  cost_basis_usd: number | null;
+  avg_cost_usd: number | null;
 }
 
 // qty_owned counts finalized on-hand copies (FIFO qty_remaining); qty_incoming
 // counts copies sitting on DRAFT acquisition lots - recorded mid-trip but not
 // finalized, which is exactly the state the in-shop dupe check must see.
+// costBasis/avgCost are the landed cost of the owned copies (draft copies have
+// no allocation yet, so they don't contribute); null when nothing is owned.
 export interface OwnedInventoryCounts {
   owned: number;
   incoming: number;
+  costBasis: number | null;
+  avgCost: number | null;
 }
 
 export function ownedInventoryKey(identity: OwnedInventoryIdentity): string {
@@ -58,6 +64,8 @@ export function ownedInventoryCountMap(
     counts.set(key, {
       owned: Number(row.qty_owned),
       incoming: Number(row.qty_incoming),
+      costBasis: row.cost_basis_usd == null ? null : Number(row.cost_basis_usd),
+      avgCost: row.avg_cost_usd == null ? null : Number(row.avg_cost_usd),
     });
   }
   return counts;
@@ -118,7 +126,7 @@ export function useOwnedInventoryCounts(
     void supabase
       .from("owned_inventory_counts_v")
       .select(
-        "game, card_id, product_id, sealed_condition, variant_edition, qty_owned, qty_incoming",
+        "game, card_id, product_id, sealed_condition, variant_edition, qty_owned, qty_incoming, cost_basis_usd, avg_cost_usd",
       )
       .eq("game", game)
       .in(idColumn, ids)

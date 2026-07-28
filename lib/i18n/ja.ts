@@ -1072,6 +1072,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "inventory.noEventRisk": "なし",
   "inventory.owned": "保有",
   "inventory.incoming": "+{n} 下書きロット",
+  "inventory.landedEach": "着地 ${usd}/枚",
+  "inventory.landedTotal": "計 ${usd}",
   "inventory.ownedNone": "保有なし",
   "column.productType": "種類",
   "column.condition": "コンディション",

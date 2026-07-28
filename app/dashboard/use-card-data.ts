@@ -121,6 +121,8 @@ export interface CardRowData {
   card: CardDefinition;
   ownedQty?: number;
   incomingQty?: number;
+  ownedAvgCostUsd?: number | null;
+  ownedCostBasisUsd?: number | null;
   psaGrade?: number;
   prices: PriceSummary;
   roi: number | null;

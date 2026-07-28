@@ -5,7 +5,7 @@ import {
 } from "./owned-inventory";
 
 describe("owned inventory identity", () => {
-  it("uses one quiet singles count across grade, condition, leg, and lots", () => {
+  it("uses one quiet singles count across grade, condition, leg, and lots, with landed cost", () => {
     const counts = ownedInventoryCountMap([
       {
         game: "pokemon",
@@ -15,12 +15,14 @@ describe("owned inventory identity", () => {
         variant_edition: null,
         qty_owned: 7,
         qty_incoming: 0,
+        cost_basis_usd: 70,
+        avg_cost_usd: 10,
       },
     ]);
 
     expect(
       counts.get(ownedInventoryKey({ game: "pokemon", cardId: 42 })),
-    ).toEqual({ owned: 7, incoming: 0 });
+    ).toEqual({ owned: 7, incoming: 0, costBasis: 70, avgCost: 10 });
   });
 
   it("keeps draft-lot copies separate as incoming, never folded into owned", () => {
@@ -33,6 +35,8 @@ describe("owned inventory identity", () => {
         variant_edition: null,
         qty_owned: 1,
         qty_incoming: 2,
+        cost_basis_usd: 15,
+        avg_cost_usd: 15,
       },
       {
         game: "pokemon",
@@ -42,15 +46,18 @@ describe("owned inventory identity", () => {
         variant_edition: null,
         qty_owned: 0,
         qty_incoming: 3,
+        // Nothing owned yet (draft only): no cost basis, no average.
+        cost_basis_usd: 0,
+        avg_cost_usd: null,
       },
     ]);
 
     expect(
       counts.get(ownedInventoryKey({ game: "pokemon", cardId: 7 })),
-    ).toEqual({ owned: 1, incoming: 2 });
+    ).toEqual({ owned: 1, incoming: 2, costBasis: 15, avgCost: 15 });
     expect(
       counts.get(ownedInventoryKey({ game: "pokemon", cardId: 8 })),
-    ).toEqual({ owned: 0, incoming: 3 });
+    ).toEqual({ owned: 0, incoming: 3, costBasis: 0, avgCost: null });
   });
 
   it("keeps sealed condition and edition in the visible inventory identity", () => {
@@ -63,6 +70,8 @@ describe("owned inventory identity", () => {
         variant_edition: "1ed",
         qty_owned: 2,
         qty_incoming: 0,
+        cost_basis_usd: 50,
+        avg_cost_usd: 25,
       },
       {
         game: "pokemon_sealed",
@@ -72,6 +81,8 @@ describe("owned inventory identity", () => {
         variant_edition: "unlimited",
         qty_owned: 1,
         qty_incoming: 1,
+        cost_basis_usd: 30,
+        avg_cost_usd: 30,
       },
     ]);
 
@@ -80,12 +91,12 @@ describe("owned inventory identity", () => {
       productId: 99,
       sealedCondition: "shrink",
       variantEdition: "1ed",
-    }))).toEqual({ owned: 2, incoming: 0 });
+    }))).toEqual({ owned: 2, incoming: 0, costBasis: 50, avgCost: 25 });
     expect(counts.get(ownedInventoryKey({
       game: "pokemon_sealed",
       productId: 99,
       sealedCondition: "no_shrink",
       variantEdition: "unlimited",
-    }))).toEqual({ owned: 1, incoming: 1 });
+    }))).toEqual({ owned: 1, incoming: 1, costBasis: 30, avgCost: 30 });
   });
 });
