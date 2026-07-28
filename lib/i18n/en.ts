@@ -1091,6 +1091,8 @@ const en = {
   "inventory.ownedFrom": "Owned from",
   "inventory.avgLanded": "Avg landed",
   "inventory.lot": "lot",
+  "inventory.myObservations": "Your observations ({n})",
+  "inventory.observed": "Observed",
   "inventory.ownedNone": "None owned",
   "column.productType": "Type",
   "column.condition": "Condition",

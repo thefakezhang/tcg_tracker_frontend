@@ -143,6 +143,18 @@ interface SourceRow {
   unitCostUsd: number;
 }
 
+// One on-the-ground observation the operator logged for this card.
+interface ObservationRow {
+  sighting_id: number;
+  psa_grade: number;
+  store_name: string;
+  observed_price: number;
+  currency: string;
+  price_usd: number;
+  observed_at: string;
+  trip_name: string | null;
+}
+
 interface CardDetailModalProps {
   card: CardRowData | null;
   open: boolean;
@@ -176,6 +188,7 @@ export default function CardDetailModal({
   const [rawListings, setRawListings] = useState<MarketListing[]>([]);
   const [heldRows, setHeldRows] = useState<HeldRow[]>([]);
   const [sourceRows, setSourceRows] = useState<SourceRow[]>([]);
+  const [observationRows, setObservationRows] = useState<ObservationRow[]>([]);
   const [incomingQty, setIncomingQty] = useState(0);
   const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
   const [locationMap, setLocationMap] = useState<Map<number, LocationInfo>>(
@@ -264,7 +277,7 @@ export default function CardDetailModal({
 
     async function fetchListings() {
       const supabase = createClient();
-      const [{ data: raw }, rates, locations, conditionsData, held, ownedCounts, srcLots] =
+      const [{ data: raw }, rates, locations, conditionsData, held, ownedCounts, srcLots, obs] =
         await Promise.all([
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
@@ -295,6 +308,15 @@ export default function CardDetailModal({
             .select("line_id, quantity, qty_remaining, allocated_cost_usd, acquisition_lots(shop_label, acquired_at, leg, trips(name))")
             .eq("card_id", card!.card.card_id)
             .gt("qty_remaining", 0),
+          // Observations the operator logged for this card (Pokemon-only deal
+          // subsystem), so the write-only sighting form now has a history above it.
+          activeGame === "pokemon"
+            ? supabase
+                .from("trip_observations_v")
+                .select("sighting_id, psa_grade, store_name, observed_price, currency, price_usd, observed_at, trip_name")
+                .eq("card_id", card!.card.card_id)
+                .order("observed_at", { ascending: false })
+            : Promise.resolve({ data: [] as ObservationRow[] }),
         ]);
 
       if (cancelled) return;
@@ -332,6 +354,7 @@ export default function CardDetailModal({
           } satisfies SourceRow;
         })).sort((a, b) => (a.acquiredAt ?? "").localeCompare(b.acquiredAt ?? "")),
       );
+      setObservationRows((obs.data as ObservationRow[] | null) ?? []);
       setIncomingQty(
         ((ownedCounts.data as { qty_incoming: number }[] | null) ?? [])
           .reduce((sum, row) => sum + Number(row.qty_incoming ?? 0), 0),
@@ -545,6 +568,26 @@ export default function CardDetailModal({
                   </div>
                 );
               })()}
+              {/* Observations logged for this card, so the sighting form has a
+                  history: what you saw, where, when. Newest first. */}
+              {observationRows.length > 0 && (
+                <div className="mt-1 space-y-0.5 rounded-md border bg-muted/30 p-2 text-[11px]">
+                  <div className="font-medium text-muted-foreground">{t("inventory.myObservations", { n: observationRows.length })}</div>
+                  {observationRows.map((o) => (
+                    <div key={o.sighting_id} className="flex items-baseline justify-between gap-2">
+                      <span className="min-w-0 truncate text-muted-foreground">
+                        {o.store_name}
+                        {o.psa_grade > 0 ? ` · PSA ${o.psa_grade}` : ""}
+                        {" · "}{new Date(o.observed_at).toLocaleDateString(language)}
+                      </span>
+                      <span className="shrink-0 tabular-nums">
+                        {o.currency === "JPY" ? "¥" : o.currency === "USD" ? "$" : ""}{Number(o.observed_price).toLocaleString()}
+                        {o.currency !== "USD" ? ` · $${Number(o.price_usd).toFixed(2)}` : ""}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* On-demand price refresh for this card (redesign R6). The RPC's
                   verdict renders inline; freshness itself stays on FreshnessChip,
                   which turns green once a queued refresh lands. */}

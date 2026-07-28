@@ -56,7 +56,8 @@ import {
   useOwnedInventoryCounts,
   type OwnedInventoryIdentity,
 } from "./owned-inventory";
-import { OwnedCountLine } from "./OwnedCountLine";
+import { OwnedCountLine, ObservedLine } from "./OwnedCountLine";
+import { useCardObservations } from "./card-observations";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -164,6 +165,10 @@ export default function CardBrowser() {
     [activeGame, data],
   );
   const ownedCounts = useOwnedInventoryCounts(activeGame, ownedIdentities);
+  const observations = useCardObservations(
+    activeGame,
+    useMemo(() => data.map((row) => row.card.card_id), [data]),
+  );
   const dataWithOwned = useMemo(
     () => data.map((row) => {
       const counts = ownedCounts.get(ownedInventoryKey({
@@ -176,9 +181,10 @@ export default function CardBrowser() {
         incomingQty: counts?.incoming ?? 0,
         ownedAvgCostUsd: counts?.avgCost ?? null,
         ownedCostBasisUsd: counts?.costBasis ?? null,
+        observed: observations.get(String(row.card.card_id)),
       };
     }),
-    [activeGame, data, ownedCounts],
+    [activeGame, data, ownedCounts, observations],
   );
   const visibleData = useMemo(
     () => weakEvidenceOnly
@@ -638,6 +644,7 @@ export default function CardBrowser() {
                     </CardDescription>
                   )}
                   <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} avgCost={row.ownedAvgCostUsd} totalCost={row.ownedCostBasisUsd} />
+                  <ObservedLine observed={row.observed} />
                 </CardHeader>
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
                   <div className="grid w-full grid-cols-[1fr_auto_1fr] gap-2">
