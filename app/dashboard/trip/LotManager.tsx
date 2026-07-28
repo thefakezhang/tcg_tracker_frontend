@@ -548,6 +548,12 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           card_number: null,
         }));
       }
+      // A superseded run (the term changed under us) must not clobber the newer
+      // results: its main query returns null once aborted, which would set an
+      // empty list over the current match - the "type the full number, match
+      // flashes then vanishes" bug. externalIdMatches also isn't abortable, so
+      // guard on the signal here rather than trusting the query to have thrown.
+      if (ac.signal.aborted) return;
       setSearchResults(hits);
     })().catch(() => { /* aborted / superseded */ });
     return () => ac.abort();

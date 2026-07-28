@@ -456,7 +456,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.addingAsGrade": "追加するカードは PSA {grade} になります",
   "trips.condition": "状態",
   "trips.override": "原価上書き (USD)",
-  "trips.overrideCcy": "原価上書き ({ccy})",
+  "trips.overrideCcy": "単価 ({ccy})",
   "trips.finalize": "ロットを確定",
   "trips.undoFinalize": "確定を取り消す",
   "trips.finalized": "確定済み",
