@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Flag } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useLanguage } from "../LanguageContext";
-import { getCardDisplayName, fetchCardRowById, type CardRowData } from "../use-card-data";
+import { getCardDisplayName, fetchCardRowById, fetchCardRowsByIds, type CardRowData } from "../use-card-data";
+import { useOwnedInventoryCounts, ownedInventoryKey } from "../owned-inventory";
+import { OwnedCountLine } from "../OwnedCountLine";
 import CardDetailModal from "../CardDetailModal";
 import { useTrips } from "../TripContext";
 import { useSaving } from "@/lib/use-saving";
@@ -44,9 +46,18 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
   const { saving, save } = useSaving();
   const [rows, setRows] = useState<WatchRow[] | null>(null);
   const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
+  // Market data (ROI + the row for the detail modal) per watched card, and the
+  // owned-inventory counts, so the watchlist carries the same info as the browser.
+  const [cardData, setCardData] = useState<Map<string, CardRowData>>(new Map());
 
   const trip = trips.find((tr) => tr.trip_id === tripId);
   const closed = trip?.status === "closed";
+
+  const ownedIdentities = useMemo(
+    () => (rows ?? []).map((r) => ({ game: "pokemon" as const, cardId: r.card_id })),
+    [rows],
+  );
+  const ownedCounts = useOwnedInventoryCounts("pokemon", ownedIdentities);
 
   const fetchRows = useCallback(async () => {
     const supabase = createClient();
@@ -65,6 +76,17 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
     void fetchRows();
   }, [fetchRows]);
 
+  // Load the market summary (ROI + prices) for the watched cards.
+  useEffect(() => {
+    if (!rows || rows.length === 0) { setCardData(new Map()); return; }
+    const supabase = createClient();
+    let cancelled = false;
+    void fetchCardRowsByIds(supabase, "pokemon", rows.map((r) => r.card_id)).then((m) => {
+      if (!cancelled) setCardData(m);
+    });
+    return () => { cancelled = true; };
+  }, [rows]);
+
   const finishTrip = async () => {
     await save(async () => {
       const retired = await closeTrip(tripId);
@@ -76,6 +98,8 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
   // Tap a card -> open its detail modal (the store-sighting form lives there),
   // so a card already on the watchlist is one tap from adding a new listing.
   const openCard = async (r: WatchRow) => {
+    const cached = cardData.get(String(r.card_id));
+    if (cached) { setSelectedCard(cached); return; }
     const supabase = createClient();
     const card = await fetchCardRowById(supabase, "pokemon", r.card_id, r.psa_grade);
     if (card) setSelectedCard(card);
@@ -83,6 +107,8 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
 
   const roiClass = (roi: number | null) =>
     roi == null ? "" : roi >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive";
+  const fmtRoi = (roi: number | null | undefined) =>
+    roi == null ? "-" : `${Math.round(roi * 100) / 100}%`;
 
   return (
     <div className="min-w-0 space-y-3">
@@ -126,6 +152,7 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
                 <TableHead className="w-40">{t("trips.watchlistObserved")}</TableHead>
                 <TableHead className="w-28">{t("trips.watchlistUsBid")}</TableHead>
                 <TableHead className="w-24 text-right">{t("trips.watchlistRoi")}</TableHead>
+                <TableHead className="w-20 text-right">{t("column.roi")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -138,9 +165,15 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
                   tabIndex={0}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void openCard(r); } }}
                 >
-                  <TableCell className="max-w-[260px] truncate">
-                    {getCardDisplayName({ regional_name: r.regional_name, english_name: r.english_name }, language)}
-                    <span className="text-muted-foreground"> · {r.set_code}{r.card_number ? ` ${r.card_number}` : ""}{r.psa_grade > 0 ? ` · PSA ${r.psa_grade}` : ""}</span>
+                  <TableCell className="max-w-[260px]">
+                    <div className="truncate">
+                      {getCardDisplayName({ regional_name: r.regional_name, english_name: r.english_name }, language)}
+                      <span className="text-muted-foreground"> · {r.set_code}{r.card_number ? ` ${r.card_number}` : ""}{r.psa_grade > 0 ? ` · PSA ${r.psa_grade}` : ""}</span>
+                    </div>
+                    {(() => {
+                      const c = ownedCounts.get(ownedInventoryKey({ game: "pokemon", cardId: r.card_id }));
+                      return <OwnedCountLine owned={c?.owned} incoming={c?.incoming} avgCost={c?.avgCost} totalCost={c?.costBasis} />;
+                    })()}
                   </TableCell>
                   <TableCell>
                     {r.observed_price_usd != null ? (
@@ -157,6 +190,9 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
                   </TableCell>
                   <TableCell className={`text-right font-medium ${roiClass(r.gross_roi_pct)}`}>
                     {r.gross_roi_pct != null ? `${r.gross_roi_pct > 0 ? "+" : ""}${Number(r.gross_roi_pct).toFixed(1)}%` : "-"}
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground">
+                    {fmtRoi(cardData.get(String(r.card_id))?.roi)}
                   </TableCell>
                 </TableRow>
               ))}

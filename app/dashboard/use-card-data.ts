@@ -337,6 +337,59 @@ export async function fetchCardRowById(
   };
 }
 
+// Batch sibling of fetchCardRowById for list surfaces (watchlists) that need the
+// market ROI + a row to open CardDetailModal from a set of card_ids. Keyed by
+// String(card_id); the representative summary is the raw (psa 0, tier 1) row,
+// matching the browser's default market roi. Cards without a summary get a
+// card-def-only fallback so they still render + open.
+export async function fetchCardRowsByIds(
+  supabase: ReturnType<typeof createClient>,
+  game: Game,
+  ids: Array<number | string>,
+): Promise<Map<string, CardRowData>> {
+  const out = new Map<string, CardRowData>();
+  const uniq = [...new Set(ids.map(String))];
+  if (uniq.length === 0) return out;
+  const summaryTable = summaryTableForSource(game, "");
+  const cardTable = game === "pokemon" ? "pokemon_card_definitions" : "mtg_card_definitions_v";
+
+  const sumRows = await selectAllByIds<SummaryRow>(
+    uniq,
+    ["card_id", "tier", "psa_grade"],
+    (chunk) => supabase.from(summaryTable).select(`*, ${cardTable}!inner(${cardDefCols(game)})`).in("card_id", chunk),
+  );
+  const byCard = new Map<string, SummaryRow[]>();
+  for (const r of sumRows) {
+    const k = String(r.card_id);
+    const list = byCard.get(k);
+    if (list) list.push(r); else byCard.set(k, [r]);
+  }
+  for (const [cardId, rows] of byCard) {
+    const pick = rows.find((r) => r.psa_grade === 0 && r.tier === 1)
+      ?? rows.find((r) => r.psa_grade === 0)
+      ?? rows[0];
+    out.set(cardId, summaryRowToCardRow(pick, cardTable));
+  }
+
+  const missing = uniq.filter((id) => !out.has(id));
+  if (missing.length > 0) {
+    const defs = await selectAllByIds<Record<string, unknown>>(
+      missing,
+      ["card_id"],
+      (chunk) => supabase.from(cardTable).select(cardDefCols(game)).in("card_id", chunk),
+    );
+    for (const d of defs) {
+      out.set(String(d.card_id), {
+        key: String(d.card_id),
+        card: d as unknown as CardDefinition,
+        prices: { highestBuy: null, lowestSell: null },
+        roi: null,
+      });
+    }
+  }
+  return out;
+}
+
 export type RegionFilter = "all" | "NA" | "JP";
 
 export function useAvailableCardSources(
