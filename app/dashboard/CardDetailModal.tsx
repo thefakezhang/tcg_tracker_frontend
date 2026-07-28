@@ -155,6 +155,16 @@ interface ObservationRow {
   trip_name: string | null;
 }
 
+// One finalized purchase of this card - a real transaction price.
+interface PurchaseRow {
+  lineId: number;
+  unitUsd: number;
+  shopLabel: string | null;
+  acquiredAt: string | null;
+  leg: string;
+  tripName: string | null;
+}
+
 interface CardDetailModalProps {
   card: CardRowData | null;
   open: boolean;
@@ -189,6 +199,7 @@ export default function CardDetailModal({
   const [heldRows, setHeldRows] = useState<HeldRow[]>([]);
   const [sourceRows, setSourceRows] = useState<SourceRow[]>([]);
   const [observationRows, setObservationRows] = useState<ObservationRow[]>([]);
+  const [purchaseRows, setPurchaseRows] = useState<PurchaseRow[]>([]);
   const [incomingQty, setIncomingQty] = useState(0);
   const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
   const [locationMap, setLocationMap] = useState<Map<number, LocationInfo>>(
@@ -277,7 +288,7 @@ export default function CardDetailModal({
 
     async function fetchListings() {
       const supabase = createClient();
-      const [{ data: raw }, rates, locations, conditionsData, held, ownedCounts, srcLots, obs] =
+      const [{ data: raw }, rates, locations, conditionsData, held, ownedCounts, srcLots, obs, purch] =
         await Promise.all([
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
@@ -317,6 +328,14 @@ export default function CardDetailModal({
                 .eq("card_id", card!.card.card_id)
                 .order("observed_at", { ascending: false })
             : Promise.resolve({ data: [] as ObservationRow[] }),
+          // Every finalized purchase of this card (incl. already-sold) is a real
+          // price point: the direct price paid, when, and where. direct_purchase
+          // is only set at finalize, so > 0 selects finalized lines.
+          supabase
+            .from(activeGame === "mtg" ? "mtg_lot_lines" : "pokemon_lot_lines")
+            .select("line_id, quantity, direct_purchase_cost_usd, acquisition_lots(shop_label, acquired_at, leg, trips(name))")
+            .eq("card_id", card!.card.card_id)
+            .gt("direct_purchase_cost_usd", 0),
         ]);
 
       if (cancelled) return;
@@ -355,6 +374,20 @@ export default function CardDetailModal({
         })).sort((a, b) => (a.acquiredAt ?? "").localeCompare(b.acquiredAt ?? "")),
       );
       setObservationRows((obs.data as ObservationRow[] | null) ?? []);
+      setPurchaseRows(
+        (((purch.data as Record<string, unknown>[] | null) ?? []).map((r) => {
+          const lot = r.acquisition_lots as { shop_label: string | null; acquired_at: string | null; leg: string; trips: { name: string | null } | null } | null;
+          const qty = Number(r.quantity) || 1;
+          return {
+            lineId: Number(r.line_id),
+            unitUsd: Number(r.direct_purchase_cost_usd) / qty,
+            shopLabel: lot?.shop_label ?? null,
+            acquiredAt: lot?.acquired_at ?? null,
+            leg: lot?.leg ?? "",
+            tripName: lot?.trips?.name ?? null,
+          } satisfies PurchaseRow;
+        })).sort((a, b) => (b.acquiredAt ?? "").localeCompare(a.acquiredAt ?? "")),
+      );
       setIncomingQty(
         ((ownedCounts.data as { qty_incoming: number }[] | null) ?? [])
           .reduce((sum, row) => sum + Number(row.qty_incoming ?? 0), 0),
@@ -568,6 +601,23 @@ export default function CardDetailModal({
                   </div>
                 );
               })()}
+              {/* Real prices paid for this card - every finalized purchase, incl.
+                  already-sold - as price history alongside observations. */}
+              {purchaseRows.length > 0 && (
+                <div className="mt-1 space-y-0.5 rounded-md border bg-muted/30 p-2 text-[11px]">
+                  <div className="font-medium text-muted-foreground">{t("inventory.purchases", { n: purchaseRows.length })}</div>
+                  {purchaseRows.map((p) => (
+                    <div key={p.lineId} className="flex items-baseline justify-between gap-2">
+                      <span className="min-w-0 truncate text-muted-foreground">
+                        {p.shopLabel || p.acquiredAt || t("inventory.lot")}
+                        {p.leg ? ` · ${p.leg}` : ""}
+                        {p.acquiredAt ? ` · ${new Date(`${p.acquiredAt}T00:00:00`).toLocaleDateString(language)}` : ""}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">${p.unitUsd.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* Observations logged for this card, so the sighting form has a
                   history: what you saw, where, when. Newest first. */}
               {observationRows.length > 0 && (
