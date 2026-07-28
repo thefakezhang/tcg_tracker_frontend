@@ -8,6 +8,8 @@ export interface SingleLotLineRow {
   allocated_cost_usd: number;
   direct_purchase_cost_usd?: number;
   acquisition_cost_alloc_usd?: number;
+  // FIFO copies still on hand; null on a draft (un-finalized) lot.
+  qty_remaining?: number | null;
 }
 
 export interface SingleLotLineDefinition {
@@ -29,6 +31,7 @@ export interface SealedLotLineRow {
   allocated_cost_usd: number;
   direct_purchase_cost_usd?: number;
   acquisition_cost_alloc_usd?: number;
+  qty_remaining?: number | null;
 }
 
 export interface SealedLotLineDefinition {
@@ -79,6 +82,7 @@ export function mapSingleLotLine(
     allocated_cost_usd: row.allocated_cost_usd,
     direct_purchase_cost_usd: row.direct_purchase_cost_usd ?? 0,
     acquisition_cost_alloc_usd: row.acquisition_cost_alloc_usd ?? 0,
+    qty_remaining: row.qty_remaining ?? null,
     regionalName: definition?.regionalName ?? `#${row.card_id}`,
     englishName: definition?.englishName ?? null,
     setCode: definition?.setCode ?? "",
@@ -106,6 +110,7 @@ export function mapSealedLotLine(
     allocated_cost_usd: row.allocated_cost_usd,
     direct_purchase_cost_usd: row.direct_purchase_cost_usd ?? 0,
     acquisition_cost_alloc_usd: row.acquisition_cost_alloc_usd ?? 0,
+    qty_remaining: row.qty_remaining ?? null,
     regionalName: definition?.name ?? `#${row.product_id}`,
     englishName: null,
     setCode: definition?.setCode ?? "",
