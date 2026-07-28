@@ -170,7 +170,13 @@ export default function CardBrowser() {
         game: activeGame,
         cardId: row.card.card_id,
       }));
-      return { ...row, ownedQty: counts?.owned ?? 0, incomingQty: counts?.incoming ?? 0 };
+      return {
+        ...row,
+        ownedQty: counts?.owned ?? 0,
+        incomingQty: counts?.incoming ?? 0,
+        ownedAvgCostUsd: counts?.avgCost ?? null,
+        ownedCostBasisUsd: counts?.costBasis ?? null,
+      };
     }),
     [activeGame, data, ownedCounts],
   );
@@ -631,7 +637,7 @@ export default function CardBrowser() {
                       {misc}
                     </CardDescription>
                   )}
-                  <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} />
+                  <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} avgCost={row.ownedAvgCostUsd} totalCost={row.ownedCostBasisUsd} />
                 </CardHeader>
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
                   <div className="grid w-full grid-cols-[1fr_auto_1fr] gap-2">

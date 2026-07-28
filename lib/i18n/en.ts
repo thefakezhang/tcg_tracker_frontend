@@ -1070,6 +1070,8 @@ const en = {
   "inventory.noEventRisk": "None",
   "inventory.owned": "Owned",
   "inventory.incoming": "+{n} in draft lot",
+  "inventory.landedEach": "landed ${usd}/ea",
+  "inventory.landedTotal": "${usd} total",
   "inventory.ownedNone": "None owned",
   "column.productType": "Type",
   "column.condition": "Condition",
