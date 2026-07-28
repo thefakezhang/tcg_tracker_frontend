@@ -131,6 +131,18 @@ interface HeldRow {
   qty_on_hand: number;
 }
 
+// One source lot the held copies came from (a single card instance, broken out
+// by where it was bought and that lot's unit cost) + the blended average.
+interface SourceRow {
+  lineId: number;
+  shopLabel: string | null;
+  acquiredAt: string | null;
+  leg: string;
+  tripName: string | null;
+  qtyOnHand: number;
+  unitCostUsd: number;
+}
+
 interface CardDetailModalProps {
   card: CardRowData | null;
   open: boolean;
@@ -163,6 +175,7 @@ export default function CardDetailModal({
   const [addedTo, setAddedTo] = useState<string | null>(null);
   const [rawListings, setRawListings] = useState<MarketListing[]>([]);
   const [heldRows, setHeldRows] = useState<HeldRow[]>([]);
+  const [sourceRows, setSourceRows] = useState<SourceRow[]>([]);
   const [incomingQty, setIncomingQty] = useState(0);
   const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
   const [locationMap, setLocationMap] = useState<Map<number, LocationInfo>>(
@@ -251,7 +264,7 @@ export default function CardDetailModal({
 
     async function fetchListings() {
       const supabase = createClient();
-      const [{ data: raw }, rates, locations, conditionsData, held, ownedCounts] =
+      const [{ data: raw }, rates, locations, conditionsData, held, ownedCounts, srcLots] =
         await Promise.all([
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
@@ -274,6 +287,14 @@ export default function CardDetailModal({
             .select("qty_incoming")
             .eq("game", activeGame)
             .eq("card_id", card!.card.card_id),
+          // F2: the source lots the held copies came from - one card instance,
+          // broken out by where it was bought + that lot's unit cost. Finalized
+          // on-hand only (qty_remaining > 0 is set at finalize).
+          supabase
+            .from(activeGame === "mtg" ? "mtg_lot_lines" : "pokemon_lot_lines")
+            .select("line_id, quantity, qty_remaining, allocated_cost_usd, acquisition_lots(shop_label, acquired_at, leg, trips(name))")
+            .eq("card_id", card!.card.card_id)
+            .gt("qty_remaining", 0),
         ]);
 
       if (cancelled) return;
@@ -296,6 +317,21 @@ export default function CardDetailModal({
 
       setRawListings(listings);
       setHeldRows((held.data as HeldRow[] | null) ?? []);
+      setSourceRows(
+        (((srcLots.data as Record<string, unknown>[] | null) ?? []).map((r) => {
+          const lot = r.acquisition_lots as { shop_label: string | null; acquired_at: string | null; leg: string; trips: { name: string | null } | null } | null;
+          const qty = Number(r.quantity) || 1;
+          return {
+            lineId: Number(r.line_id),
+            shopLabel: lot?.shop_label ?? null,
+            acquiredAt: lot?.acquired_at ?? null,
+            leg: lot?.leg ?? "",
+            tripName: lot?.trips?.name ?? null,
+            qtyOnHand: Number(r.qty_remaining) || 0,
+            unitCostUsd: Number(r.allocated_cost_usd) / qty,
+          } satisfies SourceRow;
+        })).sort((a, b) => (a.acquiredAt ?? "").localeCompare(b.acquiredAt ?? "")),
+      );
       setIncomingQty(
         ((ownedCounts.data as { qty_incoming: number }[] | null) ?? [])
           .reduce((sum, row) => sum + Number(row.qty_incoming ?? 0), 0),
@@ -484,6 +520,31 @@ export default function CardDetailModal({
                   <span className="text-muted-foreground">{t("inventory.ownedNone")}</span>
                 )}
               </div>
+              {/* F2: one card instance, broken out by the source lot it came
+                  from + that lot's unit cost, with the blended average. */}
+              {sourceRows.length > 0 && (() => {
+                const onHand = sourceRows.reduce((s, r) => s + r.qtyOnHand, 0);
+                const basis = sourceRows.reduce((s, r) => s + r.qtyOnHand * r.unitCostUsd, 0);
+                const avg = onHand > 0 ? basis / onHand : 0;
+                return (
+                  <div className="mt-1 space-y-0.5 rounded-md border bg-muted/30 p-2 text-[11px]">
+                    <div className="font-medium text-muted-foreground">{t("inventory.ownedFrom")}</div>
+                    {sourceRows.map((s) => (
+                      <div key={s.lineId} className="flex items-baseline justify-between gap-2">
+                        <span className="min-w-0 truncate text-muted-foreground">
+                          {s.shopLabel || s.acquiredAt || t("inventory.lot")}
+                          {s.leg ? ` · ${s.leg}` : ""}{s.tripName ? ` · ${s.tripName}` : ""}
+                        </span>
+                        <span className="shrink-0 tabular-nums">{s.qtyOnHand}× · ${s.unitCostUsd.toFixed(2)}/ea</span>
+                      </div>
+                    ))}
+                    <div className="flex items-baseline justify-between gap-2 border-t pt-0.5 font-medium">
+                      <span>{t("inventory.avgLanded")}</span>
+                      <span className="tabular-nums">${avg.toFixed(2)}/ea</span>
+                    </div>
+                  </div>
+                );
+              })()}
               {/* On-demand price refresh for this card (redesign R6). The RPC's
                   verdict renders inline; freshness itself stays on FreshnessChip,
                   which turns green once a queued refresh lands. */}
