@@ -88,6 +88,17 @@ export default function CardBrowser() {
   const [cardNum, setCardNum] = useState("");
   const [cardDenom, setCardDenom] = useState("");
   const searchCardNumber = [cardNum.trim(), cardDenom.trim()].filter(Boolean).join("/");
+  // Pasting/typing a full "217/172" into either box still works: a slash splits
+  // it across both fields instead of stuffing the whole string into one.
+  const setCardNumberPart = (part: "num" | "denom", raw: string) => {
+    if (raw.includes("/")) {
+      const i = raw.indexOf("/");
+      setCardNum(raw.slice(0, i));
+      setCardDenom(raw.slice(i + 1));
+      return;
+    }
+    (part === "num" ? setCardNum : setCardDenom)(raw);
+  };
   const [searchSetCode, setSearchSetCode] = useState("");
   const [selectedTier, setSelectedTier] = useState(1);
   const [sellRegion, setSellRegion] = useState<RegionFilter>("all");
@@ -288,7 +299,7 @@ export default function CardBrowser() {
             placeholder={t("cardBrowser.cardNumberNumerator")}
             aria-label={t("cardBrowser.cardNumberNumerator")}
             value={cardNum}
-            onChange={(e) => setCardNum(e.target.value)}
+            onChange={(e) => setCardNumberPart("num", e.target.value)}
             className="min-w-0 flex-1"
           />
           <span className="shrink-0 text-muted-foreground" aria-hidden="true">/</span>
@@ -297,7 +308,7 @@ export default function CardBrowser() {
             placeholder={t("cardBrowser.cardNumberDenominator")}
             aria-label={t("cardBrowser.cardNumberDenominator")}
             value={cardDenom}
-            onChange={(e) => setCardDenom(e.target.value)}
+            onChange={(e) => setCardNumberPart("denom", e.target.value)}
             className="min-w-0 flex-1"
           />
         </div>
