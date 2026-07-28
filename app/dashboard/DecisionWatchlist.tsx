@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Eye, EyeOff, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,10 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { useLanguage } from "./LanguageContext";
+import { fetchCardRowsByIds, fetchCardRowById, type CardRowData } from "./use-card-data";
+import { useOwnedInventoryCounts, ownedInventoryKey } from "./owned-inventory";
+import { OwnedCountLine } from "./OwnedCountLine";
+import CardDetailModal from "./CardDetailModal";
 
 interface WatchedDeal {
   rule_id: number;
@@ -52,6 +56,10 @@ export default function DecisionWatchlist() {
   const [error, setError] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [unwatchingRuleId, setUnwatchingRuleId] = useState<number | null>(null);
+  // Market data (ROI + the row for the detail modal) + owned inventory per card,
+  // so the watchlist carries the same info as the main browse rows.
+  const [cardData, setCardData] = useState<Map<string, CardRowData>>(new Map());
+  const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -63,6 +71,31 @@ export default function DecisionWatchlist() {
       setError(true);
     }).finally(() => setLoading(false));
   }, []);
+
+  const ownedIdentities = useMemo(
+    () => rows.map((r) => ({ game: "pokemon" as const, cardId: r.card_id })),
+    [rows],
+  );
+  const ownedCounts = useOwnedInventoryCounts("pokemon", ownedIdentities);
+
+  useEffect(() => {
+    if (rows.length === 0) { setCardData(new Map()); return; }
+    const supabase = createClient();
+    let cancelled = false;
+    void fetchCardRowsByIds(supabase, "pokemon", rows.map((r) => r.card_id)).then((m) => {
+      if (!cancelled) setCardData(m);
+    });
+    return () => { cancelled = true; };
+  }, [rows]);
+
+  const openCard = async (cardId: number, psaGrade: number) => {
+    const cached = cardData.get(String(cardId));
+    if (cached) { setSelectedCard(cached); return; }
+    const card = await fetchCardRowById(createClient(), "pokemon", cardId, psaGrade);
+    if (card) setSelectedCard(card);
+  };
+  const fmtRoi = (roi: number | null | undefined) =>
+    roi == null ? "-" : `${Math.round(roi * 100) / 100}%`;
 
   async function unwatch(ruleId: number) {
     setActionError(null);
@@ -96,14 +129,24 @@ export default function DecisionWatchlist() {
         const comparable = row.flagged_price != null && row.current_price != null && row.flagged_currency === row.current_currency;
         const movement = comparable ? row.current_price! - row.flagged_price! : null;
         const sightings = row.store_sightings ?? [];
+        const owned = ownedCounts.get(ownedInventoryKey({ game: "pokemon", cardId: row.card_id }));
+        const marketRoi = cardData.get(String(row.card_id))?.roi ?? null;
         return (
-          <article key={row.rule_id} className="flex gap-3 rounded-lg border bg-card p-3 md:col-span-2 xl:col-span-1">
+          <article
+            key={row.rule_id}
+            className="flex cursor-pointer gap-3 rounded-lg border bg-card p-3 transition-colors hover:border-primary/40 md:col-span-2 xl:col-span-1"
+            role="button"
+            tabIndex={0}
+            onClick={() => void openCard(row.card_id, row.psa_grade)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void openCard(row.card_id, row.psa_grade); } }}
+          >
             {row.image_url ? <img src={row.image_url} alt="" className="h-24 w-16 rounded object-cover" /> : null}
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <h3 className="truncate font-medium">{language === "en" && row.english_name ? row.english_name : row.regional_name}</h3>
-                  <p className="text-xs text-muted-foreground">{row.set_code} {row.card_number} · {row.psa_grade === 0 ? t("evidence.raw") : `PSA ${row.psa_grade}`}</p>
+                  <p className="text-xs text-muted-foreground">{row.set_code} {row.card_number} · {row.psa_grade === 0 ? t("evidence.raw") : `PSA ${row.psa_grade}`} · {t("column.roi")} {fmtRoi(marketRoi)}</p>
+                  <OwnedCountLine owned={owned?.owned} incoming={owned?.incoming} avgCost={owned?.avgCost} totalCost={owned?.costBasis} />
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   <Badge variant="outline"><Eye className="size-3" />{t("decision.watching")}</Badge>
@@ -112,7 +155,7 @@ export default function DecisionWatchlist() {
                     size="sm"
                     className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
                     disabled={unwatchingRuleId === row.rule_id}
-                    onClick={() => unwatch(row.rule_id)}
+                    onClick={(e) => { e.stopPropagation(); void unwatch(row.rule_id); }}
                   >
                     <EyeOff className="size-3.5" />
                     {unwatchingRuleId === row.rule_id ? t("decision.unwatching") : t("decision.unwatch")}
@@ -157,6 +200,13 @@ export default function DecisionWatchlist() {
         );
         })}
       </div>
+
+      <CardDetailModal
+        card={selectedCard}
+        open={!!selectedCard}
+        onClose={() => setSelectedCard(null)}
+        initialPsaMode={selectedCard?.psaGrade ? "psa" : "non-psa"}
+      />
     </div>
   );
 }
