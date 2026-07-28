@@ -28,12 +28,9 @@ export function OwnedCountLine({
       {ownedQty > 0 && (
         <span>{t("inventory.owned")} {ownedQty}</span>
       )}
-      {/* Landed cost of the owned copies: per-copy average + total. */}
+      {/* Landed cost of the owned copies: labelled once, per-copy avg + total. */}
       {ownedQty > 0 && avgCost != null && (
-        <span> · {t("inventory.landedEach", { usd: avgCost.toFixed(2) })}</span>
-      )}
-      {ownedQty > 0 && totalCost != null && (
-        <span> · {t("inventory.landedTotal", { usd: totalCost.toFixed(2) })}</span>
+        <span> · {t("inventory.landedCostLabel")} ${avgCost.toFixed(2)}{t("inventory.perUnitAbbr")}{totalCost != null ? ` · $${totalCost.toFixed(2)} ${t("inventory.total")}` : ""}</span>
       )}
       {incomingQty > 0 && (
         <span className="text-amber-500/90">
