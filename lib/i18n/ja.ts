@@ -1095,6 +1095,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "inventory.lot": "ロット",
   "inventory.myObservations": "観測履歴 ({n})",
   "inventory.observed": "観測",
+  "inventory.purchases": "購入履歴 ({n})",
   "inventory.ownedNone": "保有なし",
   "column.productType": "種類",
   "column.condition": "コンディション",

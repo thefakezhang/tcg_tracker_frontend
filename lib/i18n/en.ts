@@ -1093,6 +1093,7 @@ const en = {
   "inventory.lot": "lot",
   "inventory.myObservations": "Your observations ({n})",
   "inventory.observed": "Observed",
+  "inventory.purchases": "Purchased ({n})",
   "inventory.ownedNone": "None owned",
   "column.productType": "Type",
   "column.condition": "Condition",
