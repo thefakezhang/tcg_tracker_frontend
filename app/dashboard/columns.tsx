@@ -11,7 +11,7 @@ import { useExitBasis } from "./ExitBasisContext";
 import { exitValue } from "./grade-signals";
 import { useTranslation } from "@/lib/i18n";
 import { DecisionActions } from "./DecisionActions";
-import { OwnedCountLine } from "./OwnedCountLine";
+import { OwnedCountLine, ObservedLine } from "./OwnedCountLine";
 import { UidChip } from "./UidChip";
 
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
@@ -188,6 +188,7 @@ export function createColumns(t: TranslateFn, language: Language = "en"): Column
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
             <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} />
+            <ObservedLine observed={row.original.observed} />
           </div>
         );
       },
@@ -356,6 +357,7 @@ export function createMtgColumns(
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
             <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} />
+            <ObservedLine observed={row.original.observed} />
           </div>
         );
       },
@@ -458,6 +460,7 @@ export function createSealedColumns(
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
             <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} />
+            <ObservedLine observed={row.original.observed} />
           </div>
         );
       },

@@ -1,6 +1,8 @@
 "use client";
 
+import { Eye } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
+import type { CardObservation } from "./card-observations";
 
 // The one-line owned signal rendered on browse tiles and list rows.
 // Owned = finalized on-hand copies; incoming = copies on a draft acquisition
@@ -38,6 +40,22 @@ export function OwnedCountLine({
           {ownedQty > 0 ? " " : ""}{t("inventory.incoming", { n: incomingQty })}
         </span>
       )}
+    </div>
+  );
+}
+
+// The operator's own observations for a card, shown while browsing so logged
+// listings surface on the normal page: count + cheapest observed price.
+export function ObservedLine({ observed }: { observed?: CardObservation }) {
+  const { t } = useTranslation();
+  if (!observed || observed.count <= 0) return null;
+  const sym = observed.cheapestCurrency === "JPY" ? "¥" : observed.cheapestCurrency === "USD" ? "$" : "";
+  const orig = observed.cheapestOrig != null ? `${sym}${observed.cheapestOrig.toLocaleString()}` : "";
+  const usd = observed.cheapestCurrency !== "USD" && observed.cheapestUsd != null ? ` ($${observed.cheapestUsd.toFixed(2)})` : "";
+  return (
+    <div className="text-[11px] text-sky-600 dark:text-sky-400">
+      <Eye className="mr-0.5 inline size-3 align-[-1px]" />
+      {t("inventory.observed")} {observed.count}{orig ? ` · ${orig}${usd}` : ""}
     </div>
   );
 }

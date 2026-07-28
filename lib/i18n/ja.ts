@@ -1093,6 +1093,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "inventory.ownedFrom": "仕入元",
   "inventory.avgLanded": "平均着地原価",
   "inventory.lot": "ロット",
+  "inventory.myObservations": "観測履歴 ({n})",
+  "inventory.observed": "観測",
   "inventory.ownedNone": "保有なし",
   "column.productType": "種類",
   "column.condition": "コンディション",
