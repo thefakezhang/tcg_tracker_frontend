@@ -39,6 +39,7 @@ import {
   type SealedLotLineRow,
   type SingleLotLineRow,
 } from "./lot-line-model";
+import { buildSaleLotRequestShape, type SaleLotItemInput } from "./sale-lot-model";
 
 type CardGame = "pokemon" | "mtg";
 type LotItemCatalog = CardGame | "pokemon_sealed";
@@ -88,6 +89,7 @@ interface LotLine {
   line_id: number;
   table: string;
   kind: "single" | "sealed";
+  card_id?: number;
   product_id?: number;
   quantity: number;
   condition_id?: number;
@@ -166,65 +168,86 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const [cFx, setCFx] = useState(LEG_DEFAULTS[leg].fx);
   const { rateFor } = useFxRate();
 
-  // Per-line sale: sell one specific finalized line at a price, pinned to that
-  // line via record_line_sale (not FIFO). Export sells in JP (JPY), import in
-  // the US (USD) by default.
-  const [sellLine, setSellLine] = useState<LotLine | null>(null);
-  const [sellQty, setSellQty] = useState("1");
-  const [sellCcy, setSellCcy] = useState("USD");
-  const [sellPrice, setSellPrice] = useState("");
-  const [sellFx, setSellFx] = useState("1");
-  const [sellFees, setSellFees] = useState("");
-  const [sellDate, setSellDate] = useState(new Date().toISOString().slice(0, 10));
-  const [sellPlatform, setSellPlatform] = useState("");
-  const [sellError, setSellError] = useState<string | null>(null);
+  // Sale cart: build a sale lot by adding specific finalized lines (from any lot
+  // in this leg), each PINNED to its exact line, then finalize with per-card
+  // prices. Export sells in JP (JPY), import in the US (USD) by default.
+  const [cart, setCart] = useState<{ line: LotLine; qty: number; price: string }[]>([]);
+  const [saleOpen, setSaleOpen] = useState(false);
+  const [saleCcy, setSaleCcy] = useState("USD");
+  const [saleFx, setSaleFx] = useState("1");
+  const [saleDate, setSaleDate] = useState(new Date().toISOString().slice(0, 10));
+  const [salePlatform, setSalePlatform] = useState("");
+  const [saleFees, setSaleFees] = useState("");
+  const [saleError, setSaleError] = useState<string | null>(null);
 
   const gameForLine = (ln: LotLine): string =>
     ln.kind === "sealed" ? "pokemon_sealed" : ln.table === "mtg_lot_lines" ? "mtg" : "pokemon";
+  const cartKey = (ln: LotLine) => `${ln.table}-${ln.line_id}`;
+  const inCart = (ln: LotLine) => cart.some((c) => cartKey(c.line) === cartKey(ln));
+  const addToCart = (ln: LotLine) => { if (!inCart(ln)) setCart((c) => [...c, { line: ln, qty: 1, price: "" }]); };
+  const removeFromCart = (ln: LotLine) => setCart((c) => c.filter((x) => cartKey(x.line) !== cartKey(ln)));
+  const patchCart = (ln: LotLine, patch: Partial<{ qty: number; price: string }>) =>
+    setCart((c) => c.map((x) => (cartKey(x.line) === cartKey(ln) ? { ...x, ...patch } : x)));
 
-  function openSell(ln: LotLine) {
-    setSellLine(ln);
-    setSellError(null);
-    setSellQty("1");
-    setSellPrice("");
-    setSellFees("");
-    setSellPlatform("");
-    setSellDate(new Date().toISOString().slice(0, 10));
+  function openSaleLot() {
+    setSaleError(null);
     const ccy = leg === "export" ? "JPY" : "USD";
-    setSellCcy(ccy);
+    setSaleCcy(ccy);
     const r = rateFor(ccy);
-    setSellFx(ccy === "USD" ? "1" : r != null ? fmtRate(r) : "0.0067");
+    setSaleFx(ccy === "USD" ? "1" : r != null ? fmtRate(r) : "0.0067");
+    setSaleDate(new Date().toISOString().slice(0, 10));
+    setSalePlatform("");
+    setSaleFees("");
+    setSaleOpen(true);
   }
 
-  async function submitSell() {
-    if (!sellLine) return;
-    setSellError(null);
-    const qty = Number(sellQty);
-    const price = Number(sellPrice);
-    const fees = Number(sellFees) || 0;
-    const ccy = sellCcy.trim().toUpperCase();
-    const fx = Number(sellFx) || 1;
-    if (!(qty > 0) || !(price >= 0)) { setSellError(t("trips.sellInvalid")); return; }
-    const args: Record<string, unknown> = {
-      p_game: gameForLine(sellLine),
-      p_lot_line_id: sellLine.line_id,
-      p_quantity: qty,
-      p_fees_usd: fees,
-      p_sold_at: sellDate,
-      p_platform_label: sellPlatform.trim() || null,
-    };
-    if (ccy === "USD") {
-      args.p_gross_usd = price;
-    } else {
-      args.p_gross_usd = Math.round(price * fx * 100) / 100;
-      args.p_orig_currency = ccy;
-      args.p_proceeds_orig = price;
-      args.p_fx_rate = fx;
+  async function submitSaleLot() {
+    setSaleError(null);
+    if (cart.length === 0) return;
+    if (cart.some((c) => !(Number(c.qty) > 0) || !(Number(c.price) >= 0))) {
+      setSaleError(t("trips.sellInvalid"));
+      return;
     }
+    const ccy = saleCcy.trim().toUpperCase();
+    const itemInputs: SaleLotItemInput[] = cart.map((c) => ({
+      key: cartKey(c.line),
+      kind: c.line.kind,
+      game: gameForLine(c.line),
+      cardId: c.line.card_id ?? null,
+      productId: c.line.product_id ?? null,
+      conditionId: c.line.condition_id ?? null,
+      psaGrade: c.line.psa_grade ?? 0,
+      sealedCondition: c.line.sealed_condition ?? null,
+      variantEdition: c.line.variant_edition ?? null,
+      quantity: Number(c.qty),
+    }));
+    const explicitGrossByKey = Object.fromEntries(cart.map((c) => [cartKey(c.line), c.price || "0"]));
+    const shape = buildSaleLotRequestShape({
+      items: itemInputs,
+      allocationMethod: "explicit_prices",
+      explicitGrossByKey,
+      sharedExpense: { category: "platform_fee", amount: saleFees || 0 },
+      itemExpensesByKey: {},
+    });
+    // Pin each item to its exact line so COGS/sold status land on the chosen lots.
+    const pinnedItems = shape.items.map((it, i) => ({ ...it, lot_line_id: cart[i].line.line_id }));
+    const total = cart.reduce((s, c) => s + (Number(c.price) || 0), 0);
     const ok = await save(async () => {
-      const { error } = await createClient().rpc("record_line_sale", args);
-      if (error) { setSellError(error.message); throw error; }
-      setSellLine(null);
+      const { error } = await createClient().rpc("record_lot_sale", {
+        p_items: pinnedItems,
+        p_sold_at: saleDate,
+        p_leg: leg,
+        p_orig_currency: ccy === "USD" ? null : ccy,
+        p_fx_rate: Number(saleFx) || 1,
+        p_platform_label: salePlatform.trim() || null,
+        p_notes: null,
+        p_gross_total: total,
+        p_sale_expenses: shape.expenses,
+        p_allocation_method: "explicit_prices",
+      });
+      if (error) { setSaleError(error.message); throw error; }
+      setSaleOpen(false);
+      setCart([]);
       if (selectedLot) await reloadLot(selectedLot);
       bumpOwnedInventory();
     });
@@ -749,6 +772,18 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
         </Button>
       </div>
 
+      {/* Sale cart: cards added from any lot in this leg, pinned to their lines. */}
+      {cart.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-accent/40 px-3 py-2 text-sm">
+          <DollarSign className="size-4 shrink-0" />
+          <span className="font-medium">{t("trips.saleCartCount", { n: cart.length })}</span>
+          <div className="ml-auto flex gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setCart([])}>{t("trips.clear")}</Button>
+            <Button size="sm" onClick={openSaleLot}>{t("trips.recordSale")}</Button>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2">
         {lots.map((l) => (
           <button
@@ -1150,8 +1185,8 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                         <Trash2 className="size-3" />
                       </Button>
                     ) : canSell(ln) ? (
-                      <Button variant="outline" size="sm" className="min-h-11 w-full sm:min-h-7" onClick={() => openSell(ln)}>
-                        <DollarSign className="size-3 mr-1" />{t("trips.sell")}
+                      <Button variant={inCart(ln) ? "secondary" : "outline"} size="sm" className="min-h-11 w-full sm:min-h-7" onClick={() => (inCart(ln) ? removeFromCart(ln) : addToCart(ln))}>
+                        <DollarSign className="size-3 mr-1" />{inCart(ln) ? t("trips.inCart") : t("trips.addToSale")}
                       </Button>
                     ) : null}
                   </CardContent>
@@ -1292,8 +1327,8 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                         <Trash2 className="size-4" />
                       </Button>
                     ) : canSell(ln) ? (
-                      <Button variant="outline" size="sm" className="min-h-11 sm:min-h-7" onClick={() => openSell(ln)}>
-                        <DollarSign className="size-4 mr-1" />{t("trips.sell")}
+                      <Button variant={inCart(ln) ? "secondary" : "outline"} size="sm" className="min-h-11 sm:min-h-7" onClick={() => (inCart(ln) ? removeFromCart(ln) : addToCart(ln))}>
+                        <DollarSign className="size-4 mr-1" />{inCart(ln) ? t("trips.inCart") : t("trips.addToSale")}
                       </Button>
                     ) : null}
                   </TableCell>
@@ -1350,46 +1385,58 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!sellLine} onOpenChange={(o) => { if (!o) setSellLine(null); }}>
-        <DialogContent className="sm:max-w-sm">
+      <Dialog open={saleOpen} onOpenChange={setSaleOpen}>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{sellLine ? t("trips.sellCard", { name: lineLabel(sellLine) }) : t("trips.sell")}</DialogTitle>
+            <DialogTitle>{t("trips.recordSaleN", { n: cart.length })}</DialogTitle>
           </DialogHeader>
-          {sellLine && (
-            <FieldGroup>
-              <p className="text-xs text-muted-foreground">
-                {t("trips.sellRemaining", { n: sellLine.qty_remaining ?? 0 })}
-                {" · "}{t("trips.landedCost")} ${(Number(sellLine.allocated_cost_usd) / Math.max(1, sellLine.quantity)).toFixed(2)}{t("trips.landedCostPerUnit") ? `/${t("trips.landedCostPerUnit")}` : ""}
-              </p>
-              <Field><Label>{t("trips.qty")}</Label>
-                <Input type="number" min={1} max={sellLine.qty_remaining ?? 1} value={sellQty}
-                  onChange={(e) => setSellQty(e.target.value)} /></Field>
+          <FieldGroup>
+            <div className="max-h-64 space-y-2 overflow-y-auto">
+              {cart.map((c) => (
+                <div key={cartKey(c.line)} className="flex items-center gap-2 rounded-md border p-2 text-sm">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate">{lineLabel(c.line)}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {c.line.kind === "sealed" ? `${c.line.setCode} · ${c.line.sealedLabel}` : cardMeta(c.line.setCode, c.line.cardNumber, c.line.miscInfo)}
+                      {" · "}{t("trips.sellRemaining", { n: c.line.qty_remaining ?? 0 })}
+                    </div>
+                  </div>
+                  <Input type="number" min={1} max={c.line.qty_remaining ?? 1} value={c.qty}
+                    className="w-14" aria-label={t("trips.qty")}
+                    onChange={(e) => patchCart(c.line, { qty: Number(e.target.value) })} />
+                  <Input type="number" value={c.price} placeholder={saleCcy}
+                    className="w-24" aria-label={t("trips.sellPrice", { ccy: saleCcy })}
+                    onChange={(e) => patchCart(c.line, { price: e.target.value })} />
+                  <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={() => removeFromCart(c.line)}>
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
               <Field><Label>{t("trips.lotCurrency")}</Label>
-                <Input value={sellCcy} onChange={(e) => { setSellCcy(e.target.value); const r = rateFor(e.target.value.trim().toUpperCase()); if (e.target.value.trim().toUpperCase() === "USD") setSellFx("1"); else if (r != null) setSellFx(fmtRate(r)); }} /></Field>
-              <Field><Label>{t("trips.sellPrice", { ccy: sellCcy })}</Label>
-                <Input type="number" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} autoFocus /></Field>
-              {sellCcy.trim().toUpperCase() !== "USD" && (
+                <Input value={saleCcy} onChange={(e) => { setSaleCcy(e.target.value); const r = rateFor(e.target.value.trim().toUpperCase()); if (e.target.value.trim().toUpperCase() === "USD") setSaleFx("1"); else if (r != null) setSaleFx(fmtRate(r)); }} /></Field>
+              {saleCcy.trim().toUpperCase() !== "USD" ? (
                 <Field><Label>{t("trips.fxRate")}</Label>
-                  <Input type="number" value={sellFx} onChange={(e) => setSellFx(e.target.value)} /></Field>
-              )}
-              <Field><Label>{t("trips.sellFeesUsd")}</Label>
-                <Input type="number" value={sellFees} onChange={(e) => setSellFees(e.target.value)} placeholder="0" /></Field>
+                  <Input type="number" value={saleFx} onChange={(e) => setSaleFx(e.target.value)} /></Field>
+              ) : <div />}
               <Field><Label>{t("trips.lotDate")}</Label>
-                <Input type="date" value={sellDate} onChange={(e) => setSellDate(e.target.value)} /></Field>
-              <Field><Label>{t("trips.sellPlatform")}</Label>
-                <Input value={sellPlatform} onChange={(e) => setSellPlatform(e.target.value)} placeholder="eBay, mercari…" /></Field>
-              {sellCcy.trim().toUpperCase() !== "USD" && Number(sellPrice) > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  {t("trips.usdComputed", { usd: (Number(sellPrice) * (Number(sellFx) || 1)).toFixed(2) })}
-                </p>
-              )}
-              {sellError && <p className="text-xs text-destructive">{sellError}</p>}
-            </FieldGroup>
-          )}
+                <Input type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} /></Field>
+              <Field><Label>{t("trips.sellFeesUsd")}</Label>
+                <Input type="number" value={saleFees} onChange={(e) => setSaleFees(e.target.value)} placeholder="0" /></Field>
+            </div>
+            <Field><Label>{t("trips.sellPlatform")}</Label>
+              <Input value={salePlatform} onChange={(e) => setSalePlatform(e.target.value)} placeholder="eBay, mercari…" /></Field>
+            <p className="text-xs text-muted-foreground">
+              {t("trips.saleTotal", { total: cart.reduce((s, c) => s + (Number(c.price) || 0), 0).toFixed(2), ccy: saleCcy })}
+              {saleCcy.trim().toUpperCase() !== "USD" && ` · ${t("trips.usdComputed", { usd: (cart.reduce((s, c) => s + (Number(c.price) || 0), 0) * (Number(saleFx) || 1)).toFixed(2) })}`}
+            </p>
+            {saleError && <p className="text-xs text-destructive">{saleError}</p>}
+          </FieldGroup>
           <DialogFooter>
-            <Button variant="outline" disabled={saving} onClick={() => setSellLine(null)}>{t("trips.cancel")}</Button>
-            <Button disabled={saving || !(Number(sellPrice) >= 0) || !(Number(sellQty) > 0)} onClick={submitSell}>
-              {saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.sell")}
+            <Button variant="outline" disabled={saving} onClick={() => setSaleOpen(false)}>{t("trips.cancel")}</Button>
+            <Button disabled={saving || cart.length === 0} onClick={submitSaleLot}>
+              {saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.recordSale")}
             </Button>
           </DialogFooter>
         </DialogContent>
