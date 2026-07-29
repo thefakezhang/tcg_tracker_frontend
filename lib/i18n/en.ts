@@ -1096,7 +1096,7 @@ const en = {
   "inventory.consigned": "Consigned",
   "inventory.excludeConsigned": "Available only",
   "inventory.consignQty": "On consignment",
-  "inventory.ownedFrom": "In stock from",
+  "inventory.ownedFrom": "Current stock by lot",
   "inventory.avgLanded": "Avg landed cost",
   "inventory.lot": "lot",
   "inventory.myObservations": "Your observations ({n})",
