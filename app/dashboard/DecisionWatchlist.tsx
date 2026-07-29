@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Eye, EyeOff, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
@@ -94,6 +95,28 @@ export default function DecisionWatchlist() {
     const card = await fetchCardRowById(createClient(), "pokemon", cardId, psaGrade);
     if (card) setSelectedCard(card);
   };
+
+  // Sort/filter by how much of each card is already held: low stock (0/1) to
+  // the top so the cards that still need buying lead, plus a max-owned cap.
+  const [lowStockFirst, setLowStockFirst] = useState(true);
+  const [maxOwned, setMaxOwned] = useState("");
+  const ownedQtyFor = (cardId: number) =>
+    ownedCounts.get(ownedInventoryKey({ game: "pokemon", cardId }))?.owned ?? 0;
+  const displayRows = useMemo(() => {
+    const cap = maxOwned.trim() === "" ? null : Number(maxOwned);
+    let out = cap == null || Number.isNaN(cap) ? rows : rows.filter((r) => ownedQtyFor(r.card_id) <= cap);
+    if (lowStockFirst) {
+      out = [...out].sort((a, b) => {
+        const qa = ownedQtyFor(a.card_id), qb = ownedQtyFor(b.card_id);
+        if (qa !== qb) return qa - qb;
+        const ra = cardData.get(String(a.card_id))?.roi ?? -Infinity;
+        const rb = cardData.get(String(b.card_id))?.roi ?? -Infinity;
+        return rb - ra;
+      });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, maxOwned, lowStockFirst, ownedCounts, cardData]);
   const fmtRoi = (roi: number | null | undefined) =>
     roi == null ? "-" : `${Math.round(roi * 100) / 100}%`;
 
@@ -124,8 +147,17 @@ export default function DecisionWatchlist() {
   return (
     <div className="space-y-3">
       {actionError ? <div role="alert" className="rounded-md border border-destructive/40 p-3 text-sm text-destructive">{t("decision.unwatchError")}: {actionError}</div> : null}
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Button variant={lowStockFirst ? "default" : "outline"} size="sm" className="h-11 sm:h-8" onClick={() => setLowStockFirst((v) => !v)}>
+          {t("trips.lowStockFirst")}
+        </Button>
+        <label className="flex items-center gap-1 text-muted-foreground">
+          {t("trips.maxOwned")}
+          <Input type="number" min={0} value={maxOwned} onChange={(e) => setMaxOwned(e.target.value)} placeholder="—" className="h-11 w-16 sm:h-8" />
+        </label>
+      </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {rows.map((row) => {
+        {displayRows.map((row) => {
         const comparable = row.flagged_price != null && row.current_price != null && row.flagged_currency === row.current_currency;
         const movement = comparable ? row.current_price! - row.flagged_price! : null;
         const sightings = row.store_sightings ?? [];

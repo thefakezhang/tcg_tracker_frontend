@@ -13,6 +13,18 @@ vi.mock("@/lib/i18n", () => ({
 vi.mock("./LanguageContext", () => ({ useLanguage: () => ({ language: "en" }) }));
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ from: vi.fn(), rpc }) }));
 vi.mock("@/lib/supabase/select-all", () => ({ selectAll: vi.fn() }));
+// The watchlist enrichment (owned counts, market ROI rows, tap-to-detail modal)
+// is out of scope for this unit test - stub the data hooks and the modal so the
+// component renders without a Supabase client chain or GameProvider.
+vi.mock("./owned-inventory", () => ({
+  useOwnedInventoryCounts: () => new Map(),
+  ownedInventoryKey: (i: { game: string; cardId?: number | string | null }) => `${i.game}:${i.cardId ?? ""}`,
+}));
+vi.mock("./use-card-data", () => ({
+  fetchCardRowsByIds: vi.fn(async () => new Map()),
+  fetchCardRowById: vi.fn(async () => null),
+}));
+vi.mock("./CardDetailModal", () => ({ default: () => null }));
 
 afterEach(() => {
   cleanup();
