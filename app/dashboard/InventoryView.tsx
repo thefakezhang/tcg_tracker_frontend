@@ -17,6 +17,11 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { holdingExposureKey, type InventoryExposure } from "./market-events";
+import {
+  fetchRoiLines, rollupRoi, rollupRoiBy, roiHoldingKey, formatRoiPct, roiToneClass,
+  type RoiLine, type RoiSummary,
+} from "./theoretical-roi";
+import TheoreticalRoiSummary from "./TheoreticalRoiSummary";
 
 // Master inventory = everything currently on hand, across all trips and both
 // legs. inventory_holdings_v aggregates qty_remaining by SKU+leg; image_url and
@@ -51,7 +56,11 @@ export default function InventoryView() {
   const [leg, setLeg] = useState<"all" | "import" | "export">("all");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
 
-  const fetchHoldings = useCallback(async (): Promise<Holding[]> => {
+  // Holdings and their theoretical ROI load together and are returned together:
+  // the leg rollup is computed from the RAW roi lines, never by summing the
+  // per-row figures, so a line whose identity has no holdings row still counts
+  // toward the leg total instead of vanishing from it.
+  const fetchHoldings = useCallback(async (): Promise<{ holdings: Holding[]; roiLines: RoiLine[] }> => {
     const supabase = createClient();
     const holdingsData = await selectAll<Omit<Holding, "imageUrl" | "englishName" | "uid" | "reprintEvents">>(
       () => supabase.from("inventory_holdings_v").select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd"),
@@ -94,11 +103,22 @@ export default function InventoryView() {
       const hit = r.game === "pokemon" ? pkm.get(r.card_id!) : r.game === "mtg" ? mtg.get(r.card_id!) : sealed.get(r.product_id!);
       if (hit) { r.imageUrl = hit.image_url; r.englishName = hit.english_name ?? null; r.uid = hit.uid; }
     }
-    return rows;
+    return { holdings: rows, roiLines: await fetchRoiLines() };
   }, []);
 
   const { data, error, isLoading, retry } = useSupabaseQuery("inventory-holdings", fetchHoldings);
-  const holdings = useMemo(() => data ?? [], [data]);
+  const holdings = useMemo(() => data?.holdings ?? [], [data]);
+  const roiLines = useMemo(() => data?.roiLines ?? [], [data]);
+  // Card level: one summary per holdings identity, so a row shows the return on
+  // exactly the copies it is reporting.
+  const roiByHolding = useMemo(
+    () => rollupRoiBy(roiLines, (l) => roiHoldingKey(l)),
+    [roiLines],
+  );
+  const holdingRoi = useCallback(
+    (h: Holding): RoiSummary | null => roiByHolding.get(roiHoldingKey(h)) ?? null,
+    [roiByHolding],
+  );
 
   const label = useCallback(
     (h: Holding) => getCardDisplayName({ regional_name: h.name, english_name: h.englishName }, language),
@@ -121,10 +141,37 @@ export default function InventoryView() {
     );
   }, [holdings, search, leg]);
 
+  // Leg level. Follows the leg selector ONLY - not the search box - because a
+  // leg total that moves while you type is not a leg total. The label always
+  // names the grain it is reporting, so the two can't be confused.
+  const legRoi = useMemo(
+    () => rollupRoi(leg === "all" ? roiLines : roiLines.filter((l) => l.leg === leg)),
+    [roiLines, leg],
+  );
+
   const totals = useMemo(() => ({
     qty: rows.reduce((a, h) => a + h.qty_on_hand, 0),
     cost: rows.reduce((a, h) => a + Number(h.total_cost_usd), 0),
   }), [rows]);
+
+  // A holdings row whose lines are all unpriced says so rather than showing a
+  // zero, which would read as "worthless" instead of "unknown".
+  const renderRoiCell = (r: RoiSummary | null) => {
+    if (!r || r.lines === 0) return <span className="text-xs text-muted-foreground">-</span>;
+    if (r.priced === 0) return <span className="text-xs text-muted-foreground">{t("roi.unpriced")}</span>;
+    return (
+      <div className="text-xs">
+        <div className="tabular-nums">${r.netUsd.toFixed(2)}</div>
+        <div className={`tabular-nums ${roiToneClass(r.roiPct)}`}>{formatRoiPct(r.roiPct)}</div>
+        {r.unpriced > 0 && (
+          <div className="text-muted-foreground">{t("roi.coverage", { priced: r.priced, total: r.lines })}</div>
+        )}
+        {r.belowCost > 0 && (
+          <div className="text-amber-600 dark:text-amber-400">{t("roi.belowCost")}</div>
+        )}
+      </div>
+    );
+  };
 
   const detail = (h: Holding) =>
     h.item_type === "sealed" ? `${h.sealed_condition}/${h.variant_edition}` : h.psa_grade ? `PSA ${h.psa_grade}` : t("inventory.raw");
@@ -163,6 +210,11 @@ export default function InventoryView() {
         <span>{t("inventory.totalCost", { usd: totals.cost.toFixed(2) })}</span>
       </div>
 
+      <TheoreticalRoiSummary
+        summary={legRoi}
+        label={t(leg === "import" ? "roi.legImport" : leg === "export" ? "roi.legExport" : "roi.allInventory")}
+      />
+
       {viewMode === "grid" ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
           {rows.map((h) => (
@@ -185,6 +237,17 @@ export default function InventoryView() {
                   <span>×{h.qty_on_hand}</span>
                   <span>${Number(h.total_cost_usd).toFixed(2)}</span>
                 </div>
+                {holdingRoi(h)?.priced ? (
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-muted-foreground">{t("roi.theoretical")}</span>
+                    <span className="tabular-nums">
+                      ${holdingRoi(h)!.netUsd.toFixed(2)}{" "}
+                      <span className={roiToneClass(holdingRoi(h)!.roiPct)}>
+                        {formatRoiPct(holdingRoi(h)!.roiPct)}
+                      </span>
+                    </span>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           ))}
@@ -201,6 +264,7 @@ export default function InventoryView() {
               <TableHead className="w-16">{t("trips.qty")}</TableHead>
               <TableHead className="w-24">{t("trips.avgCost")}</TableHead>
               <TableHead className="w-28">{t("inventory.totalCostCol")}</TableHead>
+              <TableHead className="w-32">{t("roi.col")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -211,12 +275,13 @@ export default function InventoryView() {
                 <TableCell className="text-xs text-muted-foreground">{detail(h)}</TableCell>
                 <TableCell>{h.reprintEvents.length > 0 ? <Badge variant="outline" className="border-amber-500/50 text-amber-300" title={h.reprintEvents.map((event) => `${event.starts_on}: ${event.event_title}`).join("; ")}><AlertTriangle className="size-3" />{t("inventory.reprintRisk", { n: h.reprintEvents.length })}</Badge> : <span className="text-xs text-muted-foreground">{t("inventory.noEventRisk")}</span>}</TableCell>
                 <TableCell>{h.qty_on_hand}</TableCell>
-                <TableCell>${h.avg_cost_usd}</TableCell>
+                <TableCell>${Number(h.avg_cost_usd).toFixed(2)}</TableCell>
                 <TableCell>${Number(h.total_cost_usd).toFixed(2)}</TableCell>
+                <TableCell>{renderRoiCell(holdingRoi(h))}</TableCell>
               </TableRow>
             ))}
             {!isLoading && rows.length === 0 && (
-              <TableRow><TableCell colSpan={7} className="text-muted-foreground">{t("inventory.empty")}</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} className="text-muted-foreground">{t("inventory.empty")}</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

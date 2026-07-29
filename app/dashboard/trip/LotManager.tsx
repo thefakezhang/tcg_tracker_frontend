@@ -40,6 +40,11 @@ import {
   type SingleLotLineRow,
 } from "./lot-line-model";
 import { buildSaleLotRequestShape, type SaleLotItemInput } from "./sale-lot-model";
+import {
+  fetchRoiLines, rollupRoi, roiLineKeyFromTable, formatRoiPct, roiToneClass,
+  type RoiLine, type RoiSummary,
+} from "../theoretical-roi";
+import TheoreticalRoiSummary from "../TheoreticalRoiSummary";
 
 type CardGame = "pokemon" | "mtg";
 type LotItemCatalog = CardGame | "pokemon_sealed";
@@ -151,6 +156,11 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const [conditions, setConditions] = useState<Cond[]>([]);
   const [csvOpen, setCsvOpen] = useState(false);
   const [delLotOpen, setDelLotOpen] = useState(false);
+  // Theoretical (mark-to-market) ROI on stock still on hand: per line for the
+  // open lot, and rolled up for the whole leg of this trip. Both come from the
+  // same view, so the per-card, per-lot and per-leg figures can never disagree.
+  const [lotRoiLines, setLotRoiLines] = useState<RoiLine[]>([]);
+  const [legRoi, setLegRoi] = useState<RoiSummary | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   useEffect(() => {
     if (window.matchMedia("(max-width: 767px)").matches) {
@@ -286,6 +296,10 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       .eq("leg", leg)
       .order("acquired_at", { ascending: true });
     setLots((data as Lot[]) ?? []);
+    // Leg-level rollup covers every lot on this leg of the trip, including lots
+    // the operator has not opened, so the strip does not change as they click
+    // around.
+    setLegRoi(rollupRoi(await fetchRoiLines({ tripId, leg })));
   }, [tripId, leg]);
 
   const fetchConditions = useCallback(async () => {
@@ -374,6 +388,10 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       }
     }
     setLines(out);
+    // Fetched alongside the lines (not in its own effect) so a sale that moves
+    // qty_remaining can never leave the ROI figures one render behind the
+    // quantities they are computed from.
+    setLotRoiLines(await fetchRoiLines({ lotId }));
   }, []);
 
   const fetchCosts = useCallback(async (lotId: number) => {
@@ -432,6 +450,39 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const lotOverheadUsd = lines.reduce((sum, l) => sum + Number(l.overheadAllocUsd ?? 0), 0);
   const lotLoadedUsd = landedLotUsd + lotOverheadUsd;
   const loadedPerUnitUsd = totalUnits > 0 && lotOverheadUsd > 0 ? lotLoadedUsd / totalUnits : null;
+  // Theoretical ROI, same numbers at three grains. The per-line map is keyed by
+  // (game, line_id) because line_id is only unique within its own table.
+  const roiByLine = new Map(lotRoiLines.map((r) => [r.line_key, r]));
+  const lineRoi = (ln: LotLine) => roiByLine.get(roiLineKeyFromTable(ln.table, ln.line_id)) ?? null;
+  const lotRoi = lotRoiLines.length > 0 ? rollupRoi(lotRoiLines) : null;
+
+  // A sold-out line has no row in the view at all (it holds nothing to value),
+  // which is different from a line the view returned WITHOUT a price. Only the
+  // latter is a coverage gap, so only the latter says so.
+  const renderLineRoi = (ln: LotLine) => {
+    const r = lineRoi(ln);
+    if (!r) return <span className="text-muted-foreground">-</span>;
+    if (!r.priced) {
+      return <span className="text-xs text-muted-foreground">{t("roi.unpriced")}</span>;
+    }
+    return (
+      <div className="text-xs">
+        <div className="tabular-nums">${Number(r.exit_net_usd).toFixed(2)}</div>
+        <div className={`tabular-nums ${roiToneClass(r.theoretical_roi_pct)}`}>
+          {formatRoiPct(r.theoretical_roi_pct)}
+        </div>
+        {r.qty_on_hand > 1 && (
+          <div className="text-muted-foreground">
+            ${(Number(r.exit_net_usd) / r.qty_on_hand).toFixed(2)} {t("trips.landedCostPerUnit")}
+          </div>
+        )}
+        {r.below_cost && (
+          <div className="text-amber-600 dark:text-amber-400">{t("roi.belowCost")}</div>
+        )}
+      </div>
+    );
+  };
+
   // A line with no price override needs a lot total to derive its basis. When
   // the lot has neither, finalize will block; warn before the operator tries.
   const blankLineCount = lines.filter((l) => l.price_override_usd == null).length;
@@ -809,6 +860,9 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
         </div>
       )}
 
+      {/* Leg level: every lot on this leg of the trip, opened or not. */}
+      <TheoreticalRoiSummary summary={legRoi} label={t(leg === "import" ? "roi.legImport" : "roi.legExport")} />
+
       <div className="flex flex-wrap gap-2">
         {lots.map((l) => (
           <button
@@ -861,6 +915,8 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                   </>
                 )}
               </div>
+              {/* Lot level: what this lot's UNSOLD stock could return today. */}
+              {lotRoi && <div className="mt-1"><TheoreticalRoiSummary summary={lotRoi} compact /></div>}
             </div>
             <div className="flex flex-wrap gap-2">
               {lot.lines_imported ? (
@@ -1222,6 +1278,18 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                     {lot.lines_imported && lineSold(ln) && (
                       <div className={`text-[11px] ${lineSold(ln)!.cls}`}>{lineSold(ln)!.text}</div>
                     )}
+                    {/* Card level, mobile: one line, value then return. */}
+                    {lot.lines_imported && lineRoi(ln)?.priced && (
+                      <div className="flex items-center justify-between gap-1 text-[11px]">
+                        <span className="text-muted-foreground">{t("roi.theoretical")}</span>
+                        <span className="tabular-nums">
+                          ${Number(lineRoi(ln)!.exit_net_usd).toFixed(2)}{" "}
+                          <span className={roiToneClass(lineRoi(ln)!.theoretical_roi_pct)}>
+                            {formatRoiPct(lineRoi(ln)!.theoretical_roi_pct)}
+                          </span>
+                        </span>
+                      </div>
+                    )}
                     {!lot.lines_imported ? (
                       <Button variant="ghost" size="sm" className="min-h-11 w-full sm:min-h-7" onClick={() => removeLine(ln)}>
                         <Trash2 className="size-3" />
@@ -1250,6 +1318,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                     <TableHead className="w-28">{t("trips.directPurchase")}</TableHead>
                     <TableHead className="w-28">{t("trips.acquisitionCosts")}</TableHead>
                     <TableHead className="w-28">{t("trips.landedCost")}</TableHead>
+                    <TableHead className="w-32">{t("roi.theoretical")}</TableHead>
                   </>
                 )}
                 <TableHead className="w-10" />
@@ -1361,6 +1430,9 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                           </div>
                         )}
                       </TableCell>
+                      {/* Card level: this line's unsold copies, marked to the
+                          best bid in the leg's exit market. */}
+                      <TableCell>{renderLineRoi(ln)}</TableCell>
                     </>
                   )}
                   <TableCell>
@@ -1377,7 +1449,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                 </TableRow>
               ))}
               {lines.length === 0 && (
-                <TableRow><TableCell colSpan={lot.lines_imported ? 9 : 6} className="text-muted-foreground">{t("trips.empty")}</TableCell></TableRow>
+                <TableRow><TableCell colSpan={lot.lines_imported ? 10 : 6} className="text-muted-foreground">{t("trips.empty")}</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
