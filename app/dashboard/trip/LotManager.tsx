@@ -165,6 +165,8 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const [cShop, setCShop] = useState("");
   const [cCurrency, setCCurrency] = useState(LEG_DEFAULTS[leg].currency);
   const [cTotal, setCTotal] = useState("");
+  // Lot-dialog counterpart of the per-line tax-free entry toggle.
+  const [cTaxFree, setCTaxFree] = useState(false);
   const [cFx, setCFx] = useState(LEG_DEFAULTS[leg].fx);
   const { rateFor } = useFxRate();
 
@@ -462,6 +464,17 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   // column is NUMERIC(18,6)); finalize still rounds allocation to cents.
   const fromNative = (native: number) => Math.round(native * lotFx * 1e6) / 1e6;
 
+  // Japanese shops price 税込 (tax included). On a tax-free purchase you pay the
+  // 税抜 price, but the sticker is all you can read - so when this is on, a price
+  // typed here is divided by 1.10 before it is stored, making the cost basis what
+  // you actually paid. Applied per entry (never to an already-stored value), so
+  // it cannot double-discount. Session-scoped and off by default.
+  const JP_TAX_RATE = 0.10;
+  const [taxFree, setTaxFree] = useState(false);
+  const taxFreeAvailable = lotCcy === "JPY";
+  const stripTax = (native: number) =>
+    taxFree && taxFreeAvailable ? native / (1 + JP_TAX_RATE) : native;
+
   // Search the card CATALOG directly (not price summaries), so every card is
   // findable - cards you buy in Japan often have no price-summary row.
   interface SearchHit {
@@ -582,7 +595,13 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     // the priced lines, or blocks if any line is blank). Only a typed value is
     // stored as the direct-purchase source fact.
     const hasTotal = cTotal.trim() !== "";
-    const totalOrig = hasTotal ? Number(cTotal) : null;
+    // Same 税込 -> 税抜 treatment as the per-line prices when the lot dialog's
+    // tax-free box is ticked (JPY lots only).
+    const totalOrig = hasTotal
+      ? (cTaxFree && cCurrency.trim().toUpperCase() === "JPY"
+          ? Math.round((Number(cTotal) / 1.10) * 100) / 100
+          : Number(cTotal))
+      : null;
     const payload = {
       leg, acquired_at: cDate, shop_label: cShop || null,
       orig_currency: cCurrency.toUpperCase(), total_cost_orig: totalOrig,
@@ -1149,6 +1168,23 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
             </Tabs>
           </div>
 
+          {/* Tax-free entry: type the 税込 sticker price, store the 税抜 cost. */}
+          {taxFreeAvailable && !lot.lines_imported && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant={taxFree ? "default" : "outline"}
+                size="sm"
+                className="min-h-11 sm:min-h-8"
+                onClick={() => setTaxFree((v) => !v)}
+              >
+                {t("trips.taxFree")}
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {taxFree ? t("trips.taxFreeOn") : t("trips.taxFreeHint")}
+              </span>
+            </div>
+          )}
+
           {viewMode === "grid" ? (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {lines.map((ln) => (
@@ -1302,7 +1338,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                     {lot.lines_imported ? (ln.price_override_usd != null ? toNative(ln.price_override_usd) : "-") : (
                       <Input type="number" defaultValue={ln.price_override_usd != null ? toNative(ln.price_override_usd) : ""} placeholder="-"
                         className={`min-h-11 w-20 sm:min-h-8 ${needsTotalForBlanks && ln.price_override_usd == null ? "ring-1 ring-amber-500" : ""}`}
-                        onBlur={(e) => updateLine(ln, { price_override_usd: e.target.value === "" ? null : fromNative(Number(e.target.value)) })} />
+                        onBlur={(e) => updateLine(ln, { price_override_usd: e.target.value === "" ? null : fromNative(stripTax(Number(e.target.value))) })} />
                     )}
                   </TableCell>
                   {lot.lines_imported && (
@@ -1374,6 +1410,12 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
               <Input value={cCurrency} onChange={(e) => setCCurrency(e.target.value)} /></Field>
             <Field><Label>{t("trips.lotTotalOptional")}</Label>
               <Input type="number" value={cTotal} onChange={(e) => setCTotal(e.target.value)} /></Field>
+            {cCurrency.trim().toUpperCase() === "JPY" && (
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input type="checkbox" checked={cTaxFree} onChange={(e) => setCTaxFree(e.target.checked)} />
+                {t("trips.taxFreeTotal")}
+              </label>
+            )}
             <Field><Label>{t("trips.fxRate")}</Label>
               <Input type="number" value={cFx} onChange={(e) => setCFx(e.target.value)} /></Field>
             <p className="text-xs text-muted-foreground">
