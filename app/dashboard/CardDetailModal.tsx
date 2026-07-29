@@ -589,83 +589,6 @@ export default function CardDetailModal({
                   <span className="text-muted-foreground">{t("inventory.ownedNone")}</span>
                 )}
               </div>
-              {/* F2: one card instance, broken out by the source lot it came
-                  from + that lot's unit cost, with the blended average. */}
-              {sourceRows.length > 0 && (() => {
-                const onHand = sourceRows.reduce((s, r) => s + r.qtyOnHand, 0);
-                const basis = sourceRows.reduce((s, r) => s + r.qtyOnHand * r.unitCostUsd, 0);
-                const avg = onHand > 0 ? basis / onHand : 0;
-                return (
-                  <div className="mt-1 space-y-0.5 rounded-md border bg-muted/30 p-2 text-[11px]">
-                    <div className="font-medium text-muted-foreground">{t("inventory.ownedFrom")}</div>
-                    {sourceRows.map((s) => (
-                      <div key={s.lineId} className="flex items-center justify-between gap-2">
-                        <span className="min-w-0 truncate text-muted-foreground">
-                          {s.shopLabel || s.acquiredAt || t("inventory.lot")}
-                          {s.leg ? ` · ${s.leg}` : ""}{s.tripName ? ` · ${s.tripName}` : ""}
-                        </span>
-                        <span className="flex shrink-0 items-center gap-1.5 tabular-nums">
-                          <span>{s.qtyOnHand}× · ${s.unitCostUsd.toFixed(2)}/ea</span>
-                          <label className="flex items-center gap-1 text-violet-500/90" title={t("inventory.consignQty")}>
-                            {t("inventory.consigned")}
-                            <input
-                              type="number"
-                              min={0}
-                              max={s.qtyOnHand}
-                              defaultValue={s.consigned}
-                              key={`${s.lineId}-${s.consigned}`}
-                              aria-label={t("inventory.consignQty")}
-                              className="w-10 rounded border bg-background px-1 py-0.5 text-[11px]"
-                              onBlur={(e) => { const v = Number(e.target.value); if (v !== s.consigned) void setConsignment(s.lineId, v); }}
-                            />
-                          </label>
-                        </span>
-                      </div>
-                    ))}
-                    <div className="flex items-baseline justify-between gap-2 border-t pt-0.5 font-medium">
-                      <span>{t("inventory.avgLanded")}</span>
-                      <span className="tabular-nums">${avg.toFixed(2)}/ea</span>
-                    </div>
-                  </div>
-                );
-              })()}
-              {/* Real prices paid for this card - every finalized purchase, incl.
-                  already-sold - as price history alongside observations. */}
-              {purchaseRows.length > 0 && (
-                <div className="mt-1 space-y-0.5 rounded-md border bg-muted/30 p-2 text-[11px]">
-                  <div className="font-medium text-muted-foreground">{t("inventory.purchases", { n: purchaseRows.length })}</div>
-                  {purchaseRows.map((p) => (
-                    <div key={p.lineId} className="flex items-baseline justify-between gap-2">
-                      <span className="min-w-0 truncate text-muted-foreground">
-                        {p.shopLabel || p.acquiredAt || t("inventory.lot")}
-                        {p.leg ? ` · ${p.leg}` : ""}
-                        {p.acquiredAt ? ` · ${new Date(`${p.acquiredAt}T00:00:00`).toLocaleDateString(language)}` : ""}
-                      </span>
-                      <span className="shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">${p.unitUsd.toFixed(2)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* Observations logged for this card, so the sighting form has a
-                  history: what you saw, where, when. Newest first. */}
-              {observationRows.length > 0 && (
-                <div className="mt-1 space-y-0.5 rounded-md border bg-muted/30 p-2 text-[11px]">
-                  <div className="font-medium text-muted-foreground">{t("inventory.myObservations", { n: observationRows.length })}</div>
-                  {observationRows.map((o) => (
-                    <div key={o.sighting_id} className="flex items-baseline justify-between gap-2">
-                      <span className="min-w-0 truncate text-muted-foreground">
-                        {o.store_name}
-                        {o.psa_grade > 0 ? ` · PSA ${o.psa_grade}` : ""}
-                        {" · "}{new Date(o.observed_at).toLocaleDateString(language)}
-                      </span>
-                      <span className="shrink-0 tabular-nums">
-                        {o.currency === "JPY" ? "¥" : o.currency === "USD" ? "$" : ""}{Number(o.observed_price).toLocaleString()}
-                        {o.currency !== "USD" ? ` · $${Number(o.price_usd).toFixed(2)}` : ""}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
               {/* On-demand price refresh for this card (redesign R6). The RPC's
                   verdict renders inline; freshness itself stays on FreshnessChip,
                   which turns green once a queued refresh lands. */}
@@ -755,6 +678,82 @@ export default function CardDetailModal({
               </TabsContent>
             )}
           </Tabs>
+        )}
+
+        {/* Your own history with this card - what you hold and where it came
+            from, what you paid, what you've seen in shops. Kept BELOW the market
+            prices: in a shop the prices are what you opened the card for, and
+            this is reference you scroll to. */}
+        {sourceRows.length > 0 && (() => {
+          const onHand = sourceRows.reduce((s, r) => s + r.qtyOnHand, 0);
+          const basis = sourceRows.reduce((s, r) => s + r.qtyOnHand * r.unitCostUsd, 0);
+          const avg = onHand > 0 ? basis / onHand : 0;
+          return (
+            <div className="mt-1 space-y-0.5 rounded-md border bg-muted/30 p-2 text-[11px]">
+              <div className="font-medium text-muted-foreground">{t("inventory.ownedFrom")}</div>
+              {sourceRows.map((s) => (
+                <div key={s.lineId} className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-muted-foreground">
+                    {s.shopLabel || s.acquiredAt || t("inventory.lot")}
+                    {s.leg ? ` · ${s.leg}` : ""}{s.tripName ? ` · ${s.tripName}` : ""}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1.5 tabular-nums">
+                    <span>{s.qtyOnHand}× · ${s.unitCostUsd.toFixed(2)}/ea</span>
+                    <label className="flex items-center gap-1 text-violet-500/90" title={t("inventory.consignQty")}>
+                      {t("inventory.consigned")}
+                      <input
+                        type="number"
+                        min={0}
+                        max={s.qtyOnHand}
+                        defaultValue={s.consigned}
+                        key={`${s.lineId}-${s.consigned}`}
+                        aria-label={t("inventory.consignQty")}
+                        className="w-10 rounded border bg-background px-1 py-0.5 text-[11px]"
+                        onBlur={(e) => { const v = Number(e.target.value); if (v !== s.consigned) void setConsignment(s.lineId, v); }}
+                      />
+                    </label>
+                  </span>
+                </div>
+              ))}
+              <div className="flex items-baseline justify-between gap-2 border-t pt-0.5 font-medium">
+                <span>{t("inventory.avgLanded")}</span>
+                <span className="tabular-nums">${avg.toFixed(2)}/ea</span>
+              </div>
+            </div>
+          );
+        })()}
+        {purchaseRows.length > 0 && (
+          <div className="mt-1 space-y-0.5 rounded-md border bg-muted/30 p-2 text-[11px]">
+            <div className="font-medium text-muted-foreground">{t("inventory.purchases", { n: purchaseRows.length })}</div>
+            {purchaseRows.map((p) => (
+              <div key={p.lineId} className="flex items-baseline justify-between gap-2">
+                <span className="min-w-0 truncate text-muted-foreground">
+                  {p.shopLabel || p.acquiredAt || t("inventory.lot")}
+                  {p.leg ? ` · ${p.leg}` : ""}
+                  {p.acquiredAt ? ` · ${new Date(`${p.acquiredAt}T00:00:00`).toLocaleDateString(language)}` : ""}
+                </span>
+                <span className="shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">${p.unitUsd.toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {observationRows.length > 0 && (
+          <div className="mt-1 space-y-0.5 rounded-md border bg-muted/30 p-2 text-[11px]">
+            <div className="font-medium text-muted-foreground">{t("inventory.myObservations", { n: observationRows.length })}</div>
+            {observationRows.map((o) => (
+              <div key={o.sighting_id} className="flex items-baseline justify-between gap-2">
+                <span className="min-w-0 truncate text-muted-foreground">
+                  {o.store_name}
+                  {o.psa_grade > 0 ? ` · PSA ${o.psa_grade}` : ""}
+                  {" · "}{new Date(o.observed_at).toLocaleDateString(language)}
+                </span>
+                <span className="shrink-0 tabular-nums">
+                  {o.currency === "JPY" ? "¥" : o.currency === "USD" ? "$" : ""}{Number(o.observed_price).toLocaleString()}
+                  {o.currency !== "USD" ? ` · $${Number(o.price_usd).toFixed(2)}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
         )}
 
         {activeGame === "pokemon" && (

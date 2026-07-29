@@ -1098,7 +1098,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "inventory.consigned": "委託",
   "inventory.excludeConsigned": "販売可能のみ",
   "inventory.consignQty": "委託中",
-  "inventory.ownedFrom": "仕入元",
+  "inventory.ownedFrom": "現在庫（ロット別）",
   "inventory.avgLanded": "平均着地原価",
   "inventory.lot": "ロット",
   "inventory.myObservations": "観測履歴 ({n})",

@@ -30,15 +30,25 @@ interface Receipt {
 export default function ReceiptsDialog({
   ownerType,
   ownerId,
+  initialCount,
 }: {
   ownerType: string;
   ownerId: number;
+  // Attachment count from the caller's batch lookup, so the paperclip shows how
+  // many files are attached WITHOUT opening the dialog (it only self-counts once
+  // opened). Lists pass this; a lone dialog can omit it.
+  initialCount?: number;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
-  const [count, setCount] = useState<number | null>(null);
+  const [count, setCount] = useState<number | null>(initialCount ?? null);
   const [busy, setBusy] = useState(false);
+
+  // Adopt a refreshed batch count while closed; once open, our own fetch wins.
+  useEffect(() => {
+    if (!open && initialCount != null) setCount(initialCount);
+  }, [initialCount, open]);
 
   const fetchReceipts = useCallback(async () => {
     const supabase = createClient();
