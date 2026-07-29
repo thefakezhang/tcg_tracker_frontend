@@ -421,6 +421,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.watchlistObserved": "観測（日本）",
   "trips.watchlistUsBid": "米国ビッド",
   "trips.watchlistRoi": "利回り",
+  "trips.lowStockFirst": "在庫少ない順",
+  "trips.maxOwned": "保有上限",
   "trips.finishTrip": "旅行を終了",
   "trips.finishTripConfirm": "この旅行を終了し、ウォッチリストを空にします。観測データは価格分析用に保持されます。",
   "trips.tabSales": "販売",

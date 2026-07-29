@@ -12,6 +12,7 @@ import CardDetailModal from "../CardDetailModal";
 import { useTrips } from "../TripContext";
 import { useSaving } from "@/lib/use-saving";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table, TableHeader, TableRow, TableHead, TableBody, TableCell,
 } from "@/components/ui/table";
@@ -58,6 +59,23 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
     [rows],
   );
   const ownedCounts = useOwnedInventoryCounts("pokemon", ownedIdentities);
+  // Sort/filter by how much of each card you already hold: low stock (0/1) to
+  // the top so you know what still needs buying, and an optional max-owned cap.
+  const [lowStockFirst, setLowStockFirst] = useState(false);
+  const [maxOwned, setMaxOwned] = useState("");
+  const ownedQtyFor = useCallback(
+    (r: WatchRow) => ownedCounts.get(ownedInventoryKey({ game: "pokemon", cardId: r.card_id }))?.owned ?? 0,
+    [ownedCounts],
+  );
+  const displayRows = useMemo(() => {
+    if (!rows) return rows;
+    const cap = maxOwned.trim() === "" ? null : Number(maxOwned);
+    let out = cap == null || Number.isNaN(cap) ? rows : rows.filter((r) => ownedQtyFor(r) <= cap);
+    if (lowStockFirst) {
+      out = [...out].sort((a, b) => ownedQtyFor(a) - ownedQtyFor(b) || (b.gross_roi_pct ?? -Infinity) - (a.gross_roi_pct ?? -Infinity));
+    }
+    return out;
+  }, [rows, maxOwned, lowStockFirst, ownedQtyFor]);
 
   const fetchRows = useCallback(async () => {
     const supabase = createClient();
@@ -135,6 +153,18 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
         )}
       </div>
 
+      {(rows?.length ?? 0) > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Button variant={lowStockFirst ? "default" : "outline"} size="sm" onClick={() => setLowStockFirst((v) => !v)}>
+            {t("trips.lowStockFirst")}
+          </Button>
+          <label className="flex items-center gap-1 text-muted-foreground">
+            {t("trips.maxOwned")}
+            <Input type="number" min={0} value={maxOwned} onChange={(e) => setMaxOwned(e.target.value)} placeholder="—" className="h-8 w-16" />
+          </label>
+        </div>
+      )}
+
       {rows === null ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />{t("common.loading")}
@@ -156,7 +186,7 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((r) => (
+              {(displayRows ?? []).map((r) => (
                 <TableRow
                   key={r.rule_id}
                   className="cursor-pointer hover:bg-accent/50"

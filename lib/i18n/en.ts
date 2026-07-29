@@ -419,6 +419,8 @@ const en = {
   "trips.watchlistObserved": "Observed (JP)",
   "trips.watchlistUsBid": "US bid",
   "trips.watchlistRoi": "Return",
+  "trips.lowStockFirst": "Low stock first",
+  "trips.maxOwned": "Max owned",
   "trips.finishTrip": "Finish trip",
   "trips.finishTripConfirm": "Close this trip and clear its watchlist. The observations stay as price-analysis data.",
   "trips.tabSales": "Sales",
