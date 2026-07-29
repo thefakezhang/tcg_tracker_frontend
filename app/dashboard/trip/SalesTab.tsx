@@ -581,6 +581,32 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     });
   }, [sortedSales]);
 
+  // One batch lookup of attachment counts for the visible sales, so each
+  // paperclip shows how many receipts are on that sale without opening it
+  // (the dialog only counts once opened). Keyed "<owner_type>:<owner_id>".
+  const [receiptCounts, setReceiptCounts] = useState<ReadonlyMap<string, number>>(new Map());
+  useEffect(() => {
+    const groups = saleEvents.filter((e) => e.sale_group != null);
+    if (groups.length === 0) { setReceiptCounts(new Map()); return; }
+    let cancelled = false;
+    const supabase = createClient();
+    void supabase
+      .from("receipts")
+      .select("owner_type, owner_id")
+      .in("owner_type", [...new Set(groups.map((e) => `sale:${e.game}`))])
+      .in("owner_id", [...new Set(groups.map((e) => Number(e.sale_group)))])
+      .then(({ data }) => {
+        if (cancelled) return;
+        const m = new Map<string, number>();
+        for (const r of (data as { owner_type: string; owner_id: number }[] | null) ?? []) {
+          const k = `${r.owner_type}:${r.owner_id}`;
+          m.set(k, (m.get(k) ?? 0) + 1);
+        }
+        setReceiptCounts(m);
+      });
+    return () => { cancelled = true; };
+  }, [saleEvents]);
+
   const voidButton = (s: SaleRow) => {
     if (s.reverted) return <span className="text-xs text-muted-foreground">{t("trips.reverted")}</span>;
     if (s.quantity <= 0) return null;
@@ -895,7 +921,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                       </Button>
                     )}
                     {ev.sale_group != null && (
-                      <ReceiptsDialog ownerType={`sale:${ev.game}`} ownerId={ev.sale_group} />
+                      <ReceiptsDialog ownerType={`sale:${ev.game}`} ownerId={ev.sale_group} initialCount={receiptCounts.get(`sale:${ev.game}:${ev.sale_group}`) ?? 0} />
                     )}
                   </div>
                 </div>
@@ -962,7 +988,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
                       </>
                     )}
                     {ev.sale_group != null && (
-                      <ReceiptsDialog ownerType={`sale:${ev.game}`} ownerId={ev.sale_group} />
+                      <ReceiptsDialog ownerType={`sale:${ev.game}`} ownerId={ev.sale_group} initialCount={receiptCounts.get(`sale:${ev.game}:${ev.sale_group}`) ?? 0} />
                     )}
                   </div>
                 </div>

@@ -52,6 +52,9 @@ vi.mock("./owned-inventory", () => ({
     `${game}:${cardId ?? ""}`,
   useOwnedInventoryCounts: () => new Map(),
 }));
+// The observation lookup builds a Supabase client on mount; this suite has no
+// Supabase env, so stub it like the owned-count hook above.
+vi.mock("./card-observations", () => ({ useCardObservations: () => new Map() }));
 
 afterEach(cleanup);
 
