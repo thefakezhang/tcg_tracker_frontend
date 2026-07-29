@@ -1076,6 +1076,22 @@ const en = {
   "events.scope.set": "Set",
   "events.scope.character": "Character",
   "events.scope.card_list": "Card list",
+  // Theoretical (mark-to-market) ROI on unsold stock. Deliberately worded as a
+  // hypothetical ("could return", "if sold today") - it is a buying-decision
+  // metric, never a booked gain.
+  "roi.theoretical": "If sold today",
+  "roi.netOf": "net, on ${cost} cost",
+  "roi.coverage": "priced {priced} of {total}",
+  "roi.belowCost": "Below cost",
+  "roi.belowCostN": "{n} below cost",
+  "roi.unpriced": "No exit price",
+  "roi.notValued": "Not valued - no trusted JP market price yet",
+  "roi.legImport": "Import leg, if sold today",
+  "roi.legExport": "Export leg, if sold today",
+  "roi.allInventory": "All inventory, if sold today",
+  "roi.heldDays": "held {n}d",
+  "roi.annualized": "{pct} / yr",
+  "roi.col": "If sold today",
   "inventory.title": "Inventory",
   "inventory.leg": "Leg",
   "inventory.allLegs": "All legs",
