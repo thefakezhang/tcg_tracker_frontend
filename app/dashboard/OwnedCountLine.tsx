@@ -13,20 +13,33 @@ export function OwnedCountLine({
   incoming,
   avgCost,
   totalCost,
+  consigned,
+  availableOnly,
 }: {
   owned?: number;
   incoming?: number;
   avgCost?: number | null;
   totalCost?: number | null;
+  consigned?: number;
+  // When true, tally the copies you can actually sell (owned - consigned).
+  availableOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const ownedQty = owned ?? 0;
   const incomingQty = incoming ?? 0;
+  const consignedQty = consigned ?? 0;
+  const availableQty = Math.max(0, ownedQty - consignedQty);
   if (ownedQty <= 0 && incomingQty <= 0) return null;
   return (
     <div className="text-[11px] text-muted-foreground">
-      {ownedQty > 0 && (
-        <span>{t("inventory.owned")} {ownedQty}</span>
+      {ownedQty > 0 && availableOnly && (
+        <span>{t("inventory.available")} {availableQty}</span>
+      )}
+      {ownedQty > 0 && !availableOnly && (
+        <span>
+          {t("inventory.owned")} {ownedQty}
+          {consignedQty > 0 && <span className="text-violet-500/90"> · {t("inventory.consignedN", { n: consignedQty })}</span>}
+        </span>
       )}
       {/* Landed cost of the owned copies: labelled once, per-copy avg + total. */}
       {ownedQty > 0 && avgCost != null && (

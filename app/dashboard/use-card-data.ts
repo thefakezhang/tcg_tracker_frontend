@@ -123,6 +123,7 @@ export interface CardRowData {
   incomingQty?: number;
   ownedAvgCostUsd?: number | null;
   ownedCostBasisUsd?: number | null;
+  ownedConsigned?: number;
   observed?: import("./card-observations").CardObservation;
   psaGrade?: number;
   prices: PriceSummary;
