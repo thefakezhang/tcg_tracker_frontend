@@ -67,7 +67,7 @@ import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
 import { RefreshPricesAction } from "./RefreshPricesAction";
 import { UidChip } from "./UidChip";
-import { useOwnedInventoryVersion } from "./owned-inventory";
+import { useOwnedInventoryVersion, bumpOwnedInventory } from "./owned-inventory";
 import GradeEvidencePanel from "./GradeEvidencePanel";
 import { decisionSnapshot } from "./DecisionActions";
 import { detailOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
@@ -141,6 +141,7 @@ interface SourceRow {
   tripName: string | null;
   qtyOnHand: number;
   unitCostUsd: number;
+  consigned: number;
 }
 
 // One on-the-ground observation the operator logged for this card.
@@ -316,7 +317,7 @@ export default function CardDetailModal({
           // on-hand only (qty_remaining > 0 is set at finalize).
           supabase
             .from(activeGame === "mtg" ? "mtg_lot_lines" : "pokemon_lot_lines")
-            .select("line_id, quantity, qty_remaining, allocated_cost_usd, acquisition_lots(shop_label, acquired_at, leg, trips(name))")
+            .select("line_id, quantity, qty_remaining, consigned_qty, allocated_cost_usd, acquisition_lots(shop_label, acquired_at, leg, trips(name))")
             .eq("card_id", card!.card.card_id)
             .gt("qty_remaining", 0),
           // Observations the operator logged for this card (Pokemon-only deal
@@ -370,6 +371,7 @@ export default function CardDetailModal({
             tripName: lot?.trips?.name ?? null,
             qtyOnHand: Number(r.qty_remaining) || 0,
             unitCostUsd: Number(r.allocated_cost_usd) / qty,
+            consigned: Number(r.consigned_qty) || 0,
           } satisfies SourceRow;
         })).sort((a, b) => (a.acquiredAt ?? "").localeCompare(b.acquiredAt ?? "")),
       );
@@ -500,6 +502,17 @@ export default function CardDetailModal({
     return { total, breakdown };
   }, [heldRows, conditionsMap, t]);
 
+  // Mark how many of a source line's copies are on consignment (out with a 3rd
+  // party to sell). Bumping the owned store refetches this modal + the browser.
+  async function setConsignment(lineId: number, qty: number) {
+    await createClient().rpc("set_line_consignment", {
+      p_game: activeGame,
+      p_lot_line_id: lineId,
+      p_consigned_qty: Math.max(0, Math.floor(qty) || 0),
+    });
+    bumpOwnedInventory();
+  }
+
   if (!card) return null;
 
   const { card: def } = card;
@@ -586,12 +599,27 @@ export default function CardDetailModal({
                   <div className="mt-1 space-y-0.5 rounded-md border bg-muted/30 p-2 text-[11px]">
                     <div className="font-medium text-muted-foreground">{t("inventory.ownedFrom")}</div>
                     {sourceRows.map((s) => (
-                      <div key={s.lineId} className="flex items-baseline justify-between gap-2">
+                      <div key={s.lineId} className="flex items-center justify-between gap-2">
                         <span className="min-w-0 truncate text-muted-foreground">
                           {s.shopLabel || s.acquiredAt || t("inventory.lot")}
                           {s.leg ? ` · ${s.leg}` : ""}{s.tripName ? ` · ${s.tripName}` : ""}
                         </span>
-                        <span className="shrink-0 tabular-nums">{s.qtyOnHand}× · ${s.unitCostUsd.toFixed(2)}/ea</span>
+                        <span className="flex shrink-0 items-center gap-1.5 tabular-nums">
+                          <span>{s.qtyOnHand}× · ${s.unitCostUsd.toFixed(2)}/ea</span>
+                          <label className="flex items-center gap-1 text-violet-500/90" title={t("inventory.consignQty")}>
+                            {t("inventory.consigned")}
+                            <input
+                              type="number"
+                              min={0}
+                              max={s.qtyOnHand}
+                              defaultValue={s.consigned}
+                              key={`${s.lineId}-${s.consigned}`}
+                              aria-label={t("inventory.consignQty")}
+                              className="w-10 rounded border bg-background px-1 py-0.5 text-[11px]"
+                              onBlur={(e) => { const v = Number(e.target.value); if (v !== s.consigned) void setConsignment(s.lineId, v); }}
+                            />
+                          </label>
+                        </span>
                       </div>
                     ))}
                     <div className="flex items-baseline justify-between gap-2 border-t pt-0.5 font-medium">

@@ -23,6 +23,8 @@ export interface OwnedInventoryCountRow {
   qty_incoming: number;
   cost_basis_usd: number | null;
   avg_cost_usd: number | null;
+  qty_consigned?: number;
+  qty_available?: number;
 }
 
 // qty_owned counts finalized on-hand copies (FIFO qty_remaining); qty_incoming
@@ -35,6 +37,9 @@ export interface OwnedInventoryCounts {
   incoming: number;
   costBasis: number | null;
   avgCost: number | null;
+  // Copies out with a 3rd party to sell, and what's left to sell yourself.
+  consigned: number;
+  available: number;
 }
 
 export function ownedInventoryKey(identity: OwnedInventoryIdentity): string {
@@ -66,6 +71,8 @@ export function ownedInventoryCountMap(
       incoming: Number(row.qty_incoming),
       costBasis: row.cost_basis_usd == null ? null : Number(row.cost_basis_usd),
       avgCost: row.avg_cost_usd == null ? null : Number(row.avg_cost_usd),
+      consigned: Number(row.qty_consigned ?? 0),
+      available: Number(row.qty_available ?? row.qty_owned),
     });
   }
   return counts;
@@ -126,7 +133,7 @@ export function useOwnedInventoryCounts(
     void supabase
       .from("owned_inventory_counts_v")
       .select(
-        "game, card_id, product_id, sealed_condition, variant_edition, qty_owned, qty_incoming, cost_basis_usd, avg_cost_usd",
+        "game, card_id, product_id, sealed_condition, variant_edition, qty_owned, qty_incoming, cost_basis_usd, avg_cost_usd, qty_consigned, qty_available",
       )
       .eq("game", game)
       .in(idColumn, ids)

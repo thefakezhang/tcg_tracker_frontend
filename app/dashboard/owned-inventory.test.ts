@@ -22,7 +22,7 @@ describe("owned inventory identity", () => {
 
     expect(
       counts.get(ownedInventoryKey({ game: "pokemon", cardId: 42 })),
-    ).toEqual({ owned: 7, incoming: 0, costBasis: 70, avgCost: 10 });
+    ).toEqual({ owned: 7, incoming: 0, costBasis: 70, avgCost: 10, consigned: 0, available: 7 });
   });
 
   it("keeps draft-lot copies separate as incoming, never folded into owned", () => {
@@ -54,10 +54,10 @@ describe("owned inventory identity", () => {
 
     expect(
       counts.get(ownedInventoryKey({ game: "pokemon", cardId: 7 })),
-    ).toEqual({ owned: 1, incoming: 2, costBasis: 15, avgCost: 15 });
+    ).toEqual({ owned: 1, incoming: 2, costBasis: 15, avgCost: 15, consigned: 0, available: 1 });
     expect(
       counts.get(ownedInventoryKey({ game: "pokemon", cardId: 8 })),
-    ).toEqual({ owned: 0, incoming: 3, costBasis: 0, avgCost: null });
+    ).toEqual({ owned: 0, incoming: 3, costBasis: 0, avgCost: null, consigned: 0, available: 0 });
   });
 
   it("keeps sealed condition and edition in the visible inventory identity", () => {
@@ -91,12 +91,12 @@ describe("owned inventory identity", () => {
       productId: 99,
       sealedCondition: "shrink",
       variantEdition: "1ed",
-    }))).toEqual({ owned: 2, incoming: 0, costBasis: 50, avgCost: 25 });
+    }))).toEqual({ owned: 2, incoming: 0, costBasis: 50, avgCost: 25, consigned: 0, available: 2 });
     expect(counts.get(ownedInventoryKey({
       game: "pokemon_sealed",
       productId: 99,
       sealedCondition: "no_shrink",
       variantEdition: "unlimited",
-    }))).toEqual({ owned: 1, incoming: 1, costBasis: 30, avgCost: 30 });
+    }))).toEqual({ owned: 1, incoming: 1, costBasis: 30, avgCost: 30, consigned: 0, available: 1 });
   });
 });
