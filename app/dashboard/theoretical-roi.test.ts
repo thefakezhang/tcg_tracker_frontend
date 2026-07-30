@@ -22,6 +22,7 @@ function line(over: Partial<RoiLine> = {}): RoiLine {
     qty_on_hand: 1,
     on_hand_cost_usd: 100,
     exit_unit_usd: 200,
+    net_pct: 0.8,
     exit_net_usd: 160,
     theoretical_profit_usd: 60,
     theoretical_roi_pct: 60,
@@ -92,6 +93,45 @@ describe("rollupRoi", () => {
     const s = rollupRoi([]);
     expect(s.lines).toBe(0);
     expect(s.roiPct).toBeNull();
+  });
+
+  // Every ROI figure is built on the NET, so the UI has to be able to say what
+  // the gross market value was and what rate produced the net - otherwise a
+  // bare dollar amount reads as the market price.
+  it("reports gross market value alongside the net", () => {
+    const s = rollupRoi([line(), line({ line_key: "pokemon:2" })]);
+    expect(s.grossUsd).toBe(400);
+    expect(s.netUsd).toBe(320);
+    expect(s.netPct).toBe(0.8);
+  });
+
+  it("scales gross by the copies on hand", () => {
+    const s = rollupRoi([line({ qty_on_hand: 3, exit_unit_usd: 200, exit_net_usd: 480 })]);
+    expect(s.grossUsd).toBe(600);
+    expect(s.netUsd).toBe(480);
+  });
+
+  it("ignores unpriced lines when reporting gross", () => {
+    const s = rollupRoi([
+      line(),
+      line({ line_key: "pokemon:2", priced: false, exit_unit_usd: null, exit_net_usd: null, net_pct: null }),
+    ]);
+    expect(s.grossUsd).toBe(200);
+    expect(s.netPct).toBe(0.8);
+  });
+
+  // Fees are one uniform rate today, but if they ever go per-platform a single
+  // printed rate would be a claim about lines it wasn't true of.
+  it("withholds the rate when the group's lines disagree on it", () => {
+    const s = rollupRoi([line(), line({ line_key: "pokemon:2", net_pct: 0.85 })]);
+    expect(s.netPct).toBeNull();
+    expect(s.grossUsd).toBe(400);
+  });
+
+  it("has no rate to report when nothing is priced", () => {
+    const s = rollupRoi([line({ priced: false, exit_net_usd: null, net_pct: null })]);
+    expect(s.netPct).toBeNull();
+    expect(s.grossUsd).toBe(0);
   });
 });
 

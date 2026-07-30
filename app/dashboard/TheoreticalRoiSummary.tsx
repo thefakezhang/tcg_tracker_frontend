@@ -31,10 +31,20 @@ export default function TheoreticalRoiSummary({
     <span className="text-muted-foreground">{t("roi.notValued")}</span>
   ) : (
     <>
+      {/* The headline number is NET, not the market price. Say so, and say the
+          rate it was netted at - a bare dollar figure here reads as market. */}
       <span className="font-medium tabular-nums">
         ${summary.netUsd.toFixed(2)}
       </span>{" "}
-      <span className="text-muted-foreground">{t("roi.netOf", { cost: summary.pricedCostUsd.toFixed(2) })}</span>
+      <span className="text-muted-foreground">
+        {summary.netPct != null
+          ? t("roi.netOfAt", {
+              pct: Math.round(summary.netPct * 100),
+              gross: summary.grossUsd.toFixed(2),
+              cost: summary.pricedCostUsd.toFixed(2),
+            })
+          : t("roi.netOf", { cost: summary.pricedCostUsd.toFixed(2) })}
+      </span>
       {" · "}
       <span className={`font-medium tabular-nums ${roiToneClass(summary.roiPct)}`}>
         {summary.profitUsd >= 0 ? "+" : "-"}${Math.abs(summary.profitUsd).toFixed(2)}

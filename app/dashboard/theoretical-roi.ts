@@ -39,7 +39,11 @@ export interface RoiLine {
   variant_edition: string | null;
   qty_on_hand: number;
   on_hand_cost_usd: number | null;
+  /** Gross market price per copy - the bid BEFORE the fee assumption. */
   exit_unit_usd: number | null;
+  /** Fraction of gross assumed to survive fees (0.80 today, uniform). */
+  net_pct: number | null;
+  /** exit_unit_usd * qty * net_pct. Every ROI figure is built on THIS. */
   exit_net_usd: number | null;
   theoretical_profit_usd: number | null;
   theoretical_roi_pct: number | null;
@@ -53,7 +57,7 @@ export interface RoiLine {
 const COLUMNS =
   "line_key, lot_line_id, lot_id, trip_id, leg, game, item_type, card_id, product_id, " +
   "condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, on_hand_cost_usd, " +
-  "exit_unit_usd, exit_net_usd, theoretical_profit_usd, theoretical_roi_pct, days_held, " +
+  "exit_unit_usd, net_pct, exit_net_usd, theoretical_profit_usd, theoretical_roi_pct, days_held, " +
   "annualized_roi_pct, below_cost, age_bucket, priced";
 
 const num = (v: unknown): number | null => (v == null ? null : Number(v));
@@ -64,6 +68,7 @@ function normalize(row: Record<string, unknown>): RoiLine {
     qty_on_hand: Number(row.qty_on_hand),
     on_hand_cost_usd: num(row.on_hand_cost_usd),
     exit_unit_usd: num(row.exit_unit_usd),
+    net_pct: num(row.net_pct),
     exit_net_usd: num(row.exit_net_usd),
     theoretical_profit_usd: num(row.theoretical_profit_usd),
     theoretical_roi_pct: num(row.theoretical_roi_pct),
@@ -107,8 +112,17 @@ export interface RoiSummary {
   costUsd: number;
   /** Carrying cost of the PRICED lines only: the ROI denominator. */
   pricedCostUsd: number;
+  /** Gross market value of the priced lines, BEFORE the fee assumption. */
+  grossUsd: number;
   /** Net proceeds of the priced lines at the flat fee assumption. */
   netUsd: number;
+  /**
+   * The fee assumption behind netUsd, as a fraction (0.80). Null when the
+   * group is empty or - once fees ever go per-platform - when its lines do
+   * NOT share one rate, so a caller can never print a single rate that only
+   * some of the figure was built on.
+   */
+  netPct: number | null;
   profitUsd: number;
   /** Null when nothing in the group is priced (e.g. the whole export leg). */
   roiPct: number | null;
@@ -118,8 +132,9 @@ export interface RoiSummary {
 }
 
 export function rollupRoi(lines: readonly RoiLine[]): RoiSummary {
-  let priced = 0, qty = 0, costUsd = 0, pricedCostUsd = 0, netUsd = 0;
+  let priced = 0, qty = 0, costUsd = 0, pricedCostUsd = 0, netUsd = 0, grossUsd = 0;
   let belowCost = 0, belowCostUsd = 0;
+  const rates = new Set<number>();
   for (const l of lines) {
     const cost = Number(l.on_hand_cost_usd ?? 0);
     qty += Number(l.qty_on_hand ?? 0);
@@ -128,9 +143,13 @@ export function rollupRoi(lines: readonly RoiLine[]): RoiSummary {
     priced += 1;
     pricedCostUsd += cost;
     netUsd += Number(l.exit_net_usd ?? 0);
+    grossUsd += Number(l.exit_unit_usd ?? 0) * Number(l.qty_on_hand ?? 0);
+    if (l.net_pct != null) rates.add(l.net_pct);
     if (l.below_cost) { belowCost += 1; belowCostUsd += cost; }
   }
   return {
+    grossUsd,
+    netPct: rates.size === 1 ? [...rates][0] : null,
     lines: lines.length,
     priced,
     unpriced: lines.length - priced,
