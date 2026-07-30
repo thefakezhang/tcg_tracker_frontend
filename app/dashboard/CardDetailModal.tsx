@@ -145,7 +145,10 @@ interface SourceRow {
   consigned: number;
   // Theoretical exit for THIS lot's remaining copies (null when the line has no
   // exit quote, or on the export leg, which is deliberately unvalued).
+  // Gross is the market price; net is gross * netPct, and every ROI uses net.
+  exitGrossUsd: number | null;
   exitNetUsd: number | null;
+  netPct: number | null;
   roiPct: number | null;
   belowCost: boolean;
 }
@@ -347,7 +350,7 @@ export default function CardDetailModal({
           // line - the same figures the lot and leg rollups are built from.
           supabase
             .from("inventory_theoretical_roi_v")
-            .select("lot_line_id, qty_on_hand, on_hand_cost_usd, exit_unit_usd, exit_net_usd, theoretical_profit_usd, theoretical_roi_pct, days_held, below_cost, priced")
+            .select("lot_line_id, qty_on_hand, on_hand_cost_usd, exit_unit_usd, net_pct, exit_net_usd, theoretical_profit_usd, theoretical_roi_pct, days_held, below_cost, priced")
             .eq("game", activeGame)
             .eq("card_id", card!.card.card_id),
         ]);
@@ -372,10 +375,13 @@ export default function CardDetailModal({
 
       setRawListings(listings);
       setHeldRows((held.data as HeldRow[] | null) ?? []);
-      const roiByLineId = new Map<number, { exit_net_usd: number | null; theoretical_roi_pct: number | null; below_cost: boolean | null; priced: boolean }>();
+      const roiByLineId = new Map<number, { exit_gross_usd: number | null; exit_net_usd: number | null; net_pct: number | null; theoretical_roi_pct: number | null; below_cost: boolean | null; priced: boolean }>();
       for (const r of ((roi.data as Record<string, unknown>[] | null) ?? [])) {
+        const unit = r.exit_unit_usd == null ? null : Number(r.exit_unit_usd);
         roiByLineId.set(Number(r.lot_line_id), {
+          exit_gross_usd: unit == null ? null : unit * Number(r.qty_on_hand ?? 0),
           exit_net_usd: r.exit_net_usd == null ? null : Number(r.exit_net_usd),
+          net_pct: r.net_pct == null ? null : Number(r.net_pct),
           theoretical_roi_pct: r.theoretical_roi_pct == null ? null : Number(r.theoretical_roi_pct),
           below_cost: r.below_cost as boolean | null,
           priced: r.priced === true,
@@ -395,7 +401,9 @@ export default function CardDetailModal({
             qtyOnHand: Number(r.qty_remaining) || 0,
             unitCostUsd: Number(r.allocated_cost_usd) / qty,
             consigned: Number(r.consigned_qty) || 0,
+            exitGrossUsd: hit?.priced ? hit.exit_gross_usd : null,
             exitNetUsd: hit?.priced ? hit.exit_net_usd : null,
+            netPct: hit?.priced ? hit.net_pct : null,
             roiPct: hit?.priced ? hit.theoretical_roi_pct : null,
             belowCost: hit?.priced === true && hit.below_cost === true,
           } satisfies SourceRow;
@@ -720,7 +728,11 @@ export default function CardDetailModal({
           const priced = sourceRows.filter((r) => r.exitNetUsd != null);
           const pricedCost = priced.reduce((s, r) => s + r.qtyOnHand * r.unitCostUsd, 0);
           const pricedNet = priced.reduce((s, r) => s + Number(r.exitNetUsd), 0);
+          const pricedGross = priced.reduce((s, r) => s + Number(r.exitGrossUsd ?? 0), 0);
           const cardRoiPct = pricedCost > 0 ? ((pricedNet - pricedCost) / pricedCost) * 100 : null;
+          // Only print a single rate if every priced lot shares one.
+          const rates = new Set(priced.map((r) => r.netPct).filter((p): p is number => p != null));
+          const netPct = rates.size === 1 ? [...rates][0] : null;
           return (
             <div className="mt-1 space-y-0.5 rounded-md border bg-muted/30 p-2 text-[11px]">
               <div className="font-medium text-muted-foreground">{t("inventory.ownedFrom")}</div>
@@ -758,18 +770,25 @@ export default function CardDetailModal({
                 <span className="tabular-nums">${avg.toFixed(2)}/ea</span>
               </div>
               {cardRoiPct != null && (
-                <div className="flex items-baseline justify-between gap-2 font-medium">
-                  <span className="text-muted-foreground">
-                    {t("roi.theoretical")}
-                    {priced.length < sourceRows.length && (
-                      <span className="font-normal"> · {t("roi.coverage", { priced: priced.length, total: sourceRows.length })}</span>
-                    )}
-                  </span>
-                  <span className="tabular-nums">
-                    ${pricedNet.toFixed(2)}{" "}
-                    <span className={roiToneClass(cardRoiPct)}>{formatRoiPct(cardRoiPct)}</span>
-                  </span>
-                </div>
+                <>
+                  <div className="flex items-baseline justify-between gap-2 font-medium">
+                    <span className="text-muted-foreground">
+                      {t("roi.theoretical")}
+                      {priced.length < sourceRows.length && (
+                        <span className="font-normal"> · {t("roi.coverage", { priced: priced.length, total: sourceRows.length })}</span>
+                      )}
+                    </span>
+                    <span className="tabular-nums">
+                      ${pricedNet.toFixed(2)}{" "}
+                      <span className={roiToneClass(cardRoiPct)}>{formatRoiPct(cardRoiPct)}</span>
+                    </span>
+                  </div>
+                  {/* Where that net came from: gross market, and the fee rate. */}
+                  <div className="flex items-baseline justify-between gap-2 text-muted-foreground">
+                    <span>{t("roi.marketGross", { usd: pricedGross.toFixed(2) })}</span>
+                    {netPct != null && <span>{t("roi.netBasis", { pct: Math.round(netPct * 100) })}</span>}
+                  </div>
+                </>
               )}
             </div>
           );

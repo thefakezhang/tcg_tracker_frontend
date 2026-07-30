@@ -1079,19 +1079,23 @@ const en = {
   // Theoretical (mark-to-market) ROI on unsold stock. Deliberately worded as a
   // hypothetical ("could return", "if sold today") - it is a buying-decision
   // metric, never a booked gain.
-  "roi.theoretical": "If sold today",
-  "roi.netOf": "net, on ${cost} cost",
+  // Every ROI figure in the app is NET of the fee assumption, never the raw
+  // market price. The labels have to carry that, and carry the rate, or a bare
+  // dollar amount reads as market value.
+  "roi.theoretical": "Net if sold today",
+  "roi.netOf": "net of fees, on ${cost} cost",
+  "roi.netOfAt": "net of fees at {pct}% of ${gross} market, on ${cost} cost",
+  "roi.netBasis": "net @ {pct}%",
+  "roi.marketGross": "market ${usd}",
   "roi.coverage": "priced {priced} of {total}",
   "roi.belowCost": "Below cost",
   "roi.belowCostN": "{n} below cost",
   "roi.unpriced": "No exit price",
   "roi.notValued": "Not valued - no trusted JP market price yet",
-  "roi.legImport": "Import leg, if sold today",
-  "roi.legExport": "Export leg, if sold today",
-  "roi.allInventory": "All inventory, if sold today",
-  "roi.heldDays": "held {n}d",
-  "roi.annualized": "{pct} / yr",
-  "roi.col": "If sold today",
+  "roi.legImport": "Import leg, net if sold today",
+  "roi.legExport": "Export leg, net if sold today",
+  "roi.allInventory": "All inventory, net if sold today",
+  "roi.col": "Net if sold today",
   "inventory.title": "Inventory",
   "inventory.leg": "Leg",
   "inventory.allLegs": "All legs",

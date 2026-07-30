@@ -471,6 +471,14 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
         <div className={`tabular-nums ${roiToneClass(r.theoretical_roi_pct)}`}>
           {formatRoiPct(r.theoretical_roi_pct)}
         </div>
+        {/* The market price the net was derived from, so the figure above is
+            never mistaken for what the card sells at. */}
+        {r.exit_unit_usd != null && (
+          <div className="text-muted-foreground">
+            {t("roi.marketGross", { usd: (Number(r.exit_unit_usd) * r.qty_on_hand).toFixed(2) })}
+            {r.net_pct != null && <> · {t("roi.netBasis", { pct: Math.round(r.net_pct * 100) })}</>}
+          </div>
+        )}
         {r.qty_on_hand > 1 && (
           <div className="text-muted-foreground">
             ${(Number(r.exit_net_usd) / r.qty_on_hand).toFixed(2)} {t("trips.landedCostPerUnit")}

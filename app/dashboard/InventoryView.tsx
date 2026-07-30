@@ -163,6 +163,12 @@ export default function InventoryView() {
       <div className="text-xs">
         <div className="tabular-nums">${r.netUsd.toFixed(2)}</div>
         <div className={`tabular-nums ${roiToneClass(r.roiPct)}`}>{formatRoiPct(r.roiPct)}</div>
+        {/* The gross market value behind the net, so the column can't be read
+            as what the card sells for. */}
+        <div className="text-muted-foreground">
+          {t("roi.marketGross", { usd: r.grossUsd.toFixed(2) })}
+          {r.netPct != null && <> · {t("roi.netBasis", { pct: Math.round(r.netPct * 100) })}</>}
+        </div>
         {r.unpriced > 0 && (
           <div className="text-muted-foreground">{t("roi.coverage", { priced: r.priced, total: r.lines })}</div>
         )}
