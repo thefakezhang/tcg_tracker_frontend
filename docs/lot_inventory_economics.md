@@ -46,6 +46,7 @@ Sealed lines preserve `product_id`, sealed condition, and edition.
 The acquisition-cost editor supports shipping, handling, travel, food, tax or duty, insurance, discount or refund, and custom types.
 It freezes original currency, FX, USD value, and note for each cost.
 Draft cost edits and deletes operate on the cost row, not the lot purchase total.
+The finalized lot summary labels its analytical trip-overhead figure as "Fully loaded cost" and explains that it adds the lot's allocated share of every expense attached to the trip, including airfare, lodging, and food.
 
 `SalesTab.tsx` reads the unified on-hand holdings view.
 Several products can be selected and submitted to `record_lot_sale` with one total.
