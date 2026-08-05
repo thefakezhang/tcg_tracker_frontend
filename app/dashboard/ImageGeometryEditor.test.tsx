@@ -88,7 +88,7 @@ describe("ImageGeometryEditor", () => {
     release.mockReset();
   });
 
-  it("moves and resizes both boxes with captured phone pointers and scaled coordinates", () => {
+  it("moves both boxes from dedicated phone touch targets without changing their size", () => {
     render(<Harness />);
     const image = screen.getByAltText("Source buylist with editable card and price crop boxes");
     vi.spyOn(image, "getBoundingClientRect").mockReturnValue({
@@ -103,30 +103,65 @@ describe("ImageGeometryEditor", () => {
       toJSON: () => ({}),
     });
 
-    drag(screen.getByRole("group", { name: "Card crop" }), 11, { x: 20, y: 20 }, { x: 30, y: 30 });
+    const cardMove = screen.getByRole("button", { name: "Move Card box" });
+    const priceMove = screen.getByRole("button", { name: "Move Price box" });
+    expect(cardMove.className).toContain("min-h-11");
+    expect(cardMove.className).toContain("min-w-11");
+    expect(priceMove.className).toContain("min-h-11");
+    expect(priceMove.className).toContain("min-w-11");
+
+    drag(cardMove, 11, { x: 20, y: 20 }, { x: 30, y: 30 });
     expect(geometry().card).toEqual({ x0: 150, y0: 150, x1: 350, y1: 350 });
+    expect(geometry().card.x1 - geometry().card.x0).toBe(200);
+    expect(geometry().card.y1 - geometry().card.y0).toBe(200);
+
+    drag(priceMove, 12, { x: 80, y: 80 }, { x: 70, y: 70 });
+    expect(geometry().price).toEqual({ x0: 550, y0: 300, x1: 850, y1: 400 });
+    expect(geometry().price!.x1 - geometry().price!.x0).toBe(300);
+    expect(geometry().price!.y1 - geometry().price!.y0).toBe(100);
+
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(release).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps four 44px corner targets per box and resizes the intended bounds", () => {
+    render(<Harness />);
+    const image = screen.getByAltText("Source buylist with editable card and price crop boxes");
+    vi.spyOn(image, "getBoundingClientRect").mockReturnValue({
+      width: 200,
+      height: 100,
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 200,
+      bottom: 100,
+      toJSON: () => ({}),
+    });
+
+    for (const kind of ["Card", "Price"]) {
+      for (const corner of ["nw", "ne", "sw", "se"]) {
+        expect(screen.getByRole("button", { name: `Resize ${kind} from the ${corner} corner` }).className).toContain("size-11");
+      }
+    }
 
     const cardHandle = screen.getByRole("button", { name: "Resize Card from the se corner" });
-    expect(cardHandle.className).toContain("size-11");
-    drag(cardHandle, 12, { x: 30, y: 30 }, { x: 40, y: 35 });
-    expect(geometry().card).toEqual({ x0: 150, y0: 150, x1: 400, y1: 375 });
-
-    drag(screen.getByRole("group", { name: "Price crop" }), 13, { x: 80, y: 80 }, { x: -200, y: -200 });
-    expect(geometry().price).toEqual({ x0: 0, y0: 0, x1: 300, y1: 100 });
+    expect(screen.getByText("Card").className).toContain("left-11");
+    drag(cardHandle, 21, { x: 30, y: 30 }, { x: 40, y: 35 });
+    expect(geometry().card).toEqual({ x0: 100, y0: 100, x1: 350, y1: 325 });
 
     const priceHandle = screen.getByRole("button", { name: "Resize Price from the se corner" });
-    expect(priceHandle.className).toContain("size-11");
-    drag(priceHandle, 14, { x: 0, y: 0 }, { x: 10, y: 10 });
-    expect(geometry().price).toEqual({ x0: 0, y0: 0, x1: 350, y1: 150 });
+    drag(priceHandle, 22, { x: 0, y: 0 }, { x: 10, y: 10 });
+    expect(geometry().price).toEqual({ x0: 600, y0: 350, x1: 950, y1: 500 });
 
-    expect(capture).toHaveBeenCalledTimes(4);
-    expect(release).toHaveBeenCalledTimes(4);
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(release).toHaveBeenCalledTimes(2);
   });
 
   it("supports keyboard adjustment and removing and restoring the price box", () => {
     render(<Harness />);
 
-    fireEvent.keyDown(screen.getByRole("group", { name: "Card crop" }), {
+    fireEvent.keyDown(screen.getByRole("button", { name: "Move Card box" }), {
       key: "ArrowLeft",
       altKey: true,
     });

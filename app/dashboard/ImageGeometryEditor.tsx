@@ -133,18 +133,11 @@ export function ImageGeometryEditor({
       <div
         key={kind}
         role="group"
-        tabIndex={0}
         aria-label={t("curation.geometry.cropLabel", { kind: kindLabel })}
-        aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
-        className={`absolute touch-none border-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${tone}`}
+        className={`pointer-events-none absolute border-2 ${tone}`}
         style={style}
-        onPointerDown={(event) => start(event, kind, "move", box)}
-        onPointerMove={move}
-        onPointerUp={stop}
-        onPointerCancel={stop}
-        onKeyDown={(event) => keyAdjust(event, kind, "move", box)}
       >
-        <span className="pointer-events-none absolute left-0 top-0 bg-black/70 px-1 text-[10px] text-white">
+        <span className="pointer-events-none absolute left-11 top-0 bg-black/70 px-1 text-[10px] text-white">
           {kindLabel}
         </span>
         {handles.map(([handle, position, markerShape]) => (
@@ -153,7 +146,7 @@ export function ImageGeometryEditor({
             type="button"
             aria-label={t("curation.geometry.resizeLabel", { kind: kindLabel, handle })}
             aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
-            className={`absolute flex size-11 touch-none bg-transparent p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${position}`}
+            className={`pointer-events-auto absolute flex size-11 touch-none bg-transparent p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${position}`}
             onPointerDown={(event) => start(event, kind, handle, box)}
             onPointerMove={move}
             onPointerUp={stop}
@@ -164,6 +157,27 @@ export function ImageGeometryEditor({
           </button>
         ))}
       </div>
+    );
+  };
+
+  const moveControl = (kind: "card" | "price", box: ImageBox, tone: string) => {
+    const kindLabel = t(`curation.geometry.${kind}` as "curation.geometry.card" | "curation.geometry.price");
+    return (
+      <button
+        key={kind}
+        type="button"
+        aria-label={t("curation.geometry.moveLabel", { kind: kindLabel })}
+        aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
+        className={`inline-flex min-h-11 min-w-11 touch-none cursor-move items-center gap-2 rounded-md border-2 bg-background px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${tone}`}
+        onPointerDown={(event) => start(event, kind, "move", box)}
+        onPointerMove={move}
+        onPointerUp={stop}
+        onPointerCancel={stop}
+        onKeyDown={(event) => keyAdjust(event, kind, "move", box)}
+      >
+        <span aria-hidden="true" className="text-base leading-none">↕</span>
+        {t("curation.geometry.move", { kind: kindLabel })}
+      </button>
     );
   };
 
@@ -189,6 +203,12 @@ export function ImageGeometryEditor({
           </>
         )}
       </div>
+      {naturalWidth > 0 && naturalHeight > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {moveControl("card", geometry.card, "border-sky-400")}
+          {geometry.price && moveControl("price", geometry.price, "border-amber-400")}
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" className="min-h-11" onClick={onReset}>
           {t("curation.geometry.reset")}

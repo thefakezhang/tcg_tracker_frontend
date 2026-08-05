@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ImageOff, ArrowRight, Check, X, Pencil, Clock, Search, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
@@ -294,9 +294,9 @@ export default function CurationView() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">{t("curation.title")}</h1>
         <Tabs value={status} onValueChange={(v) => setStatus(String(v) as Status)}>
-          <TabsList>
-            <TabsTrigger value="needs_review">{t("curation.needsReview")}</TabsTrigger>
-            <TabsTrigger value="pending">{t("curation.pending")}</TabsTrigger>
+          <TabsList className="min-h-11 sm:min-h-11">
+            <TabsTrigger className="min-h-11 sm:min-h-11" value="needs_review">{t("curation.needsReview")}</TabsTrigger>
+            <TabsTrigger className="min-h-11 sm:min-h-11" value="pending">{t("curation.pending")}</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -331,7 +331,7 @@ export default function CurationView() {
           <button
             type="button"
             onClick={() => setSelectedBuyer(null)}
-            className={`shrink-0 rounded-full border px-2.5 py-1 font-medium transition-colors ${
+            className={`min-h-11 shrink-0 rounded-full border px-2.5 py-1 font-medium transition-colors ${
               selectedBuyer == null
                 ? "border-primary bg-primary text-primary-foreground"
                 : "border-border bg-background hover:bg-muted"
@@ -344,7 +344,7 @@ export default function CurationView() {
               key={handle}
               type="button"
               onClick={() => setSelectedBuyer(handle)}
-              className={`shrink-0 rounded-full border px-2.5 py-1 font-medium transition-colors ${
+              className={`min-h-11 shrink-0 rounded-full border px-2.5 py-1 font-medium transition-colors ${
                 selectedBuyer === handle
                   ? "border-primary bg-primary text-primary-foreground"
                   : "border-border bg-background hover:bg-muted"
@@ -356,7 +356,7 @@ export default function CurationView() {
         </div>
       )}
 
-      {error && <QueryError onRetry={retry} />}
+      {error && <QueryError error={error} onRetry={retry} />}
       {batchResult && (
         <div
           role={batchResult.summary.failed ? "alert" : "status"}
@@ -396,7 +396,7 @@ export default function CurationView() {
                 {t(`curation.band.${band}` as never)} · {list.length}
               </span>
               {band === "high" && matched.length > 0 && (
-                <Button size="sm" variant="outline" disabled={saving || batchProgress != null} onClick={() => approveBand(band)}>
+                <Button size="sm" variant="outline" className="min-h-11 sm:min-h-11" disabled={saving || batchProgress != null} onClick={() => approveBand(band)}>
                   <Check className="size-3 mr-1" />
                   {batchProgress != null
                     ? t("curation.approveAllProgress", { n: `${batchProgress}/${matched.length}` })
@@ -408,7 +408,7 @@ export default function CurationView() {
               {list.map((c, i) => {
                 const idx = offset + i;
                 return (
-                  <CandidateCard
+                  <CurationCandidateCard
                     key={c.candidate_id}
                     c={c}
                     idx={idx}
@@ -438,7 +438,7 @@ export default function CurationView() {
 
 interface SearchHit { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string | null; misc_info: string | null; image_url: string | null; }
 
-function CandidateCard({ c, idx, status, language, saving, selected, onSelect, onApprove, onReject, onSendBack }: {
+export function CurationCandidateCard({ c, idx, status, language, saving, selected, onSelect, onApprove, onReject, onSendBack }: {
   c: Candidate; idx: number; status: Status; language: "en" | "ja"; saving: boolean;
   selected: boolean; onSelect: () => void;
   onApprove: (c: Candidate, o?: {
@@ -457,6 +457,13 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
   const [search, setSearch] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [zoom, setZoom] = useState<string | null>(null); // image URL shown in the lightbox
+  const idPrefix = useId();
+  const ids = {
+    grading: `${idPrefix}-grading`,
+    price: `${idPrefix}-price`,
+    search: `${idPrefix}-search`,
+    notes: `${idPrefix}-notes`,
+  };
   const detectorGeometry = useMemo(() => parseGridGeometry(c.source_grid_bbox), [c.source_grid_bbox]);
   const initialGeometry = useMemo(
     () => parseGridGeometry(c.effective_source_grid_bbox) ?? detectorGeometry,
@@ -657,41 +664,42 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
               />
             )}
             <div className="grid grid-cols-2 gap-2">
-              <div><Label className="text-xs">{t("curation.grading")}</Label>
-                <select value={grading} onChange={(e) => setGrading(e.target.value)} className="h-8 w-full rounded-md border bg-background px-2 text-sm">
+              <div><Label htmlFor={ids.grading} className="text-xs">{t("curation.grading")}</Label>
+                <select id={ids.grading} value={grading} onChange={(e) => setGrading(e.target.value)} className="min-h-11 w-full rounded-md border bg-background px-2 text-sm">
                   <option value="raw">{t("curation.raw")}</option>
                   <option value="psa_10">PSA 10</option>
                 </select></div>
-              <div><Label className="text-xs">{t("curation.priceJpy")}</Label>
-                <Input type="number" value={price} onChange={(e) => setPrice(e.target.value)} className="h-8" /></div>
+              <div><Label htmlFor={ids.price} className="text-xs">{t("curation.priceJpy")}</Label>
+                <Input id={ids.price} type="number" value={price} onChange={(e) => setPrice(e.target.value)} className="min-h-11" /></div>
             </div>
             <div>
-              <Label className="text-xs flex items-center gap-1"><Search className="size-3" />{t("curation.changeCard")}</Label>
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("curation.searchPlaceholder")} className="h-8" />
-              {override && <div className="mt-1 flex items-center gap-1 text-xs"><Badge variant="secondary">{getCardDisplayName(override, language)} · {cardMeta(override.set_code, override.card_number, override.misc_info)}</Badge><Button variant="ghost" size="icon" className="size-5" onClick={() => setOverride(null)}><X className="size-3" /></Button></div>}
+              <Label htmlFor={ids.search} className="text-xs flex items-center gap-1"><Search className="size-3" />{t("curation.changeCard")}</Label>
+              <Input id={ids.search} value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("curation.searchPlaceholder")} className="min-h-11" />
+              {override && <div className="mt-1 flex min-w-0 items-center gap-1 text-xs"><Badge variant="secondary" className="min-w-0 truncate">{getCardDisplayName(override, language)} · {cardMeta(override.set_code, override.card_number, override.misc_info)}</Badge><Button variant="ghost" size="icon" className="min-h-11 min-w-11 sm:min-h-11 sm:min-w-11" aria-label={t("curation.clearOverride")} onClick={() => setOverride(null)}><X className="size-3" /></Button></div>}
               {search && hits.length > 0 && (
                 <div className="mt-1 max-h-40 overflow-auto rounded-md border bg-background">
                   {hits.map((h) => (
                     <button key={h.card_id} onClick={() => { setOverride(h); setSearch(""); setHits([]); }}
-                      className="block w-full truncate px-2 py-1 text-left text-xs hover:bg-accent">
+                      className="block min-h-11 w-full truncate px-2 py-1 text-left text-xs hover:bg-accent">
                       {getCardDisplayName(h, language)} · {cardMeta(h.set_code, h.card_number, h.misc_info)}{cardVariant(h.misc_info) ? "" : ""}
                     </button>
                   ))}
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-2 border-t pt-2">
+            <div className="flex flex-col items-stretch gap-2 border-t pt-2 sm:flex-row sm:items-center">
               <Button
                 size="sm"
                 disabled={saving || !(override || hasMatch) || (geometryEdited && !geometryDirty)}
+                className="min-h-11 sm:min-h-11"
                 onClick={doApprove}
               >
                 <Check className="size-4 mr-1" />{t("curation.approveFixes")}
               </Button>
-              <Button size="sm" variant="outline" disabled={saving} onClick={() => onReject(c, notesArg())}>
+              <Button size="sm" variant="outline" className="min-h-11 sm:min-h-11" disabled={saving} onClick={() => onReject(c, notesArg())}>
                 <X className="size-4 mr-1" />{t("curation.rejectNoMatch")}
               </Button>
-              <span className="ml-auto text-[10px] text-muted-foreground">{t("curation.rejectHint")}</span>
+              <span className="text-[10px] text-muted-foreground sm:ml-auto">{t("curation.rejectHint")}</span>
             </div>
           </div>
         )}
@@ -700,13 +708,14 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
             first opening the correct panel — leftover intent lands on approve /
             reject / defer alike via COALESCE on the RPC's p_curator_notes. */}
         <div>
-          <Label className="text-xs flex items-center gap-1"><Pencil className="size-3" />{t("curation.curatorNotes")}</Label>
+          <Label htmlFor={ids.notes} className="text-xs flex items-center gap-1"><Pencil className="size-3" />{t("curation.curatorNotes")}</Label>
           <textarea
+            id={ids.notes}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder={t("curation.curatorNotesPlaceholder")}
             rows={2}
-            className="mt-0.5 w-full resize-y rounded-md border bg-background px-2 py-1 text-xs"
+            className="mt-0.5 min-h-11 w-full resize-y rounded-md border bg-background px-2 py-1 text-xs"
           />
         </div>
 
@@ -714,19 +723,20 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
           {/* the three curator decisions: it's right · it's wrong (fix or reject) · later */}
           <Button
             size="sm"
+            className="min-h-11 sm:min-h-11"
             disabled={saving || !hasMatch || (geometryEdited && !geometryDirty)}
             onClick={() => geometryEdited ? doApprove() : onApprove(c, { notes: notesArg() })}
           >
             <Check className="size-4 mr-1" />{t("curation.markCorrect")}
           </Button>
-          <Button size="sm" variant={correcting ? "secondary" : "outline"} disabled={saving} onClick={() => setCorrecting((v) => !v)}>
+          <Button size="sm" variant={correcting ? "secondary" : "outline"} className="min-h-11 sm:min-h-11" disabled={saving} onClick={() => setCorrecting((v) => !v)}>
             <Pencil className="size-4 mr-1" />{t("curation.correctMatch")}
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setShowDetails((v) => !v)}>
+          <Button size="sm" variant="ghost" className="min-h-11 sm:min-h-11" onClick={() => setShowDetails((v) => !v)}>
             {showDetails ? t("curation.hideDetails") : t("curation.showDetails")}
           </Button>
           {status === "pending" && (
-            <Button size="sm" variant="ghost" className="ml-auto" disabled={saving} onClick={() => onSendBack(c, notesArg())}>
+            <Button size="sm" variant="ghost" className="min-h-11 sm:ml-auto sm:min-h-11" disabled={saving} onClick={() => onSendBack(c, notesArg())}>
               <Clock className="size-4 mr-1" />{t("curation.deferLater")}
             </Button>
           )}
