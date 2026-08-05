@@ -63,6 +63,50 @@ describe("smartSearchFilters", () => {
   });
 });
 
+describe("G8 Iono discoverability contract", () => {
+  const INDEX_COLS = ["regional_name", "english_name", "set_code", "card_number"];
+  const BROWSER_COLS = ["regional_name", "english_name", "misc_info", "card_number", "set_code"];
+  const uid = "da807f6b-e540-44a1-bbbc-1b3179cf9211";
+
+  it.each([
+    ["Card Index", INDEX_COLS],
+    ["Browser", BROWSER_COLS],
+  ])("finds English name plus number on the %s query path", (_surface, cols) => {
+    const filters = smartSearchFilters("Iono 124", cols, "card_uid", "card_id", []);
+    expect(filters).toHaveLength(2);
+    expect(filters[0]).toContain("english_name.ilike.%Iono%");
+    expect(filters[1]).toContain("card_number.ilike.%124%");
+  });
+
+  it.each([
+    ["Card Index", INDEX_COLS],
+    ["Browser", BROWSER_COLS],
+  ])("finds Japanese name plus number on the %s query path", (_surface, cols) => {
+    const filters = smartSearchFilters("ナンジャモ 124", cols, "card_uid", "card_id", []);
+    expect(filters).toHaveLength(2);
+    expect(filters[0]).toContain("regional_name.ilike.%ナンジャモ%");
+    expect(filters[1]).toContain("card_number.ilike.%124%");
+  });
+
+  it.each([
+    ["Card Index", INDEX_COLS],
+    ["Browser", BROWSER_COLS],
+  ])("uses the exact uid alone on the %s query path", (_surface, cols) => {
+    expect(smartSearchFilters(uid, cols, "card_uid", "card_id", [])).toEqual([
+      `card_uid.eq.${uid}`,
+    ]);
+  });
+
+  it.each([
+    ["Card Index", INDEX_COLS],
+    ["Browser", BROWSER_COLS],
+  ])("uses the resolved TCGplayer id alone on the %s query path", (_surface, cols) => {
+    expect(smartSearchFilters("545661", cols, "card_uid", "card_id", [42])).toEqual([
+      "card_id.in.(42)",
+    ]);
+  });
+});
+
 describe("uidOrParts", () => {
   it("ignores terms that are neither uuid nor prefix", () => {
     expect(uidOrParts("blastoise", "card_uid")).toEqual([]);
