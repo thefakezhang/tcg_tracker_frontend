@@ -45,6 +45,7 @@ import {
   type RoiLine, type RoiSummary,
 } from "../theoretical-roi";
 import TheoreticalRoiSummary from "../TheoreticalRoiSummary";
+import FullyLoadedCostLabel from "./FullyLoadedCostLabel";
 
 type CardGame = "pokemon" | "mtg";
 type LotItemCatalog = CardGame | "pokemon_sealed";
@@ -917,7 +918,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                 {loadedPerUnitUsd != null && (
                   <>
                     {" · "}
-                    {t("trips.loadedCost")} ${lotLoadedUsd.toFixed(2)}
+                    <FullyLoadedCostLabel /> ${lotLoadedUsd.toFixed(2)}
                     {" · "}
                     ${loadedPerUnitUsd.toFixed(2)} {t("trips.landedCostPerUnit")}
                   </>
@@ -1431,7 +1432,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                         )}
                         {ln.loadedCostUsd != null && Number(ln.overheadAllocUsd ?? 0) > 0 && (
                           <div className="text-xs text-muted-foreground">
-                            {t("trips.loadedCost")} ${Number(ln.loadedCostUsd).toFixed(2)}
+                            <FullyLoadedCostLabel /> ${Number(ln.loadedCostUsd).toFixed(2)}
                             {ln.quantity > 1 && (
                               <> · ${(Number(ln.loadedCostUsd) / ln.quantity).toFixed(2)} {t("trips.landedCostPerUnit")}</>
                             )}
