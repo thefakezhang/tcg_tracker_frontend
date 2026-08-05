@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ImageOff, ArrowRight, Check, X, Pencil, Clock, Search, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
+import { CurationBatchResult, parseCurationBatchResult } from "@/lib/image-curation-batch";
 import { useLanguage } from "./LanguageContext";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue } from "./use-card-data";
@@ -14,6 +15,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { ImageGeometryEditor } from "./ImageGeometryEditor";
+import {
+  GridBBoxJSON,
+  ImageBox,
+  ImageGeometry,
+  parseGridGeometry,
+  sameGeometry,
+  shouldSubmitGeometryCorrection,
+} from "@/lib/image-curation-geometry";
 
 // Image-buylist curation for SEALED products. Sibling to CurationView.tsx —
 // same shape, but reads pokemon_sealed_image_buylist_candidates and matches
@@ -57,33 +67,16 @@ interface MatchedProduct {
   variant_edition: string | null; misc_info: string | null; image_url: string | null;
 }
 
-// Rectangle in source-image pixel coordinates.
-interface BBox { x0: number; y0: number; x1: number; y1: number; }
-
-// source_grid_bbox JSONB shape, with backwards compat. The orchestrator used
-// to store only the card box ({x0,y0,x1,y1}); the newer shape splits it into
-// {card, price} so the curation UI can render the card and the price banner
-// as two separate clean crops. parseGridBBox() collapses both into a single
-// {card, price?} view.
-type GridBBoxJSON = BBox | { card?: BBox; price?: BBox } | null | undefined;
-
-function parseGridBBox(raw: GridBBoxJSON): { card: BBox | null; price: BBox | null } {
-  if (!raw) return { card: null, price: null };
-  // Modern shape: explicit `card` / `price` keys.
-  if ("card" in raw || "price" in raw) {
-    return { card: raw.card ?? null, price: raw.price ?? null };
-  }
-  // Legacy shape: flat {x0,y0,x1,y1} = card box only.
-  if ("x0" in raw && "x1" in raw) return { card: raw as BBox, price: null };
-  return { card: null, price: null };
-}
-
 interface Candidate {
   candidate_id: number;
   status: string;
   cell_image_url: string | null;
   source_image_url: string | null;
   source_grid_bbox: GridBBoxJSON;
+  effective_source_grid_bbox: GridBBoxJSON;
+  source_image_width: number | null;
+  source_image_height: number | null;
+  active_geometry_correction_id: number | null;
   ocr_price_jpy: number | null;
   ocr_text: string | null;
   ocr_overlay_text: string | null;
@@ -108,7 +101,7 @@ interface Candidate {
 }
 
 const CAND_COLS =
-  "candidate_id, status, cell_image_url, source_image_url, source_grid_bbox, ocr_price_jpy, ocr_text, ocr_overlay_text, ocr_cell_label_text, confidence, match_method, match_score_features, match_score_embedding, match_score_text, sealed_condition, variant_attrs, variant_source, curator_notes, source_author_handle, source_tweet_url, source_tweet_date, source_thread_root_id, source_thread_position, source_thread_root_text, candidate_product_id";
+  "candidate_id, status, cell_image_url, source_image_url, source_grid_bbox, effective_source_grid_bbox, source_image_width, source_image_height, active_geometry_correction_id, ocr_price_jpy, ocr_text, ocr_overlay_text, ocr_cell_label_text, confidence, match_method, match_score_features, match_score_embedding, match_score_text, sealed_condition, variant_attrs, variant_source, curator_notes, source_author_handle, source_tweet_url, source_tweet_date, source_thread_root_id, source_thread_position, source_thread_root_text, candidate_product_id";
 
 // sealed_condition_enum values accepted by promote_sealed_image_buylist_candidate.
 const SEALED_CONDITIONS: readonly string[] = ["standard", "shrink", "no_shrink"] as const;
@@ -120,6 +113,7 @@ export default function SealedCurationView() {
   const [status, setStatus] = useState<Status>("needs_review");
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [batchProgress, setBatchProgress] = useState<number | null>(null);
+  const [batchResult, setBatchResult] = useState<CurationBatchResult | null>(null);
   const [selectedBuyer, setSelectedBuyer] = useState<string | null>(null); // null = all buyers
 
   const fetchCandidates = useCallback(async (st: Status): Promise<Candidate[]> => {
@@ -199,12 +193,26 @@ export default function SealedCurationView() {
     const ok = await save(async () => { const { error } = await fn(); if (error) throw error; });
     if (ok) retry();
   }
-  const approve = useCallback((c: Candidate, o?: { productId?: number; condition?: string | null; priceJpy?: number | null; notes?: string | null }) =>
-    act(() => supabase.rpc("promote_sealed_image_buylist_candidate", {
-      p_candidate_id: c.candidate_id,
-      p_product_id: o?.productId ?? null, p_sealed_condition: o?.condition ?? null,
-      p_price_jpy: o?.priceJpy ?? null, p_curator_notes: o?.notes ?? null,
-    })),
+  const approve = useCallback((c: Candidate, o?: {
+    productId?: number; condition?: string | null; priceJpy?: number | null; notes?: string | null;
+    geometry?: ImageGeometry; naturalWidth?: number; naturalHeight?: number;
+  }) =>
+    act(() => o?.geometry && o.naturalWidth && o.naturalHeight
+      ? supabase.rpc("correct_and_promote_sealed_image_buylist_candidate", {
+        p_candidate_id: c.candidate_id,
+        p_product_id: o.productId ?? c.candidate_product_id,
+        p_sealed_condition: o.condition ?? c.sealed_condition ?? "standard",
+        p_price_jpy: o.priceJpy ?? c.ocr_price_jpy,
+        p_curator_notes: o.notes ?? null,
+        p_effective_geometry: o.geometry,
+        p_natural_width: o.naturalWidth,
+        p_natural_height: o.naturalHeight,
+      })
+      : supabase.rpc("promote_sealed_image_buylist_candidate", {
+        p_candidate_id: c.candidate_id,
+        p_product_id: o?.productId ?? null, p_sealed_condition: o?.condition ?? null,
+        p_price_jpy: o?.priceJpy ?? null, p_curator_notes: o?.notes ?? null,
+      })),
   // supabase + save + retry are stable within a render pass; act closes over
   // them from the enclosing scope.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -225,18 +233,23 @@ export default function SealedCurationView() {
   async function approveBand(band: Band) {
     const list = grouped[band].filter((c) => c.candidate_product_id);
     if (!list.length) return;
+    setBatchResult(null);
     setBatchProgress(0);
     try {
       const ok = await save(async () => {
-        for (let i = 0; i < list.length; i++) {
-          const c = list[i];
-          const { error } = await supabase.rpc("promote_sealed_image_buylist_candidate", {
-            p_candidate_id: c.candidate_id,
-            p_product_id: null, p_sealed_condition: null, p_price_jpy: null,
-          });
-          if (error) throw error;
-          setBatchProgress(i + 1);
-        }
+        const { data, error } = await supabase.rpc("batch_promote_sealed_image_buylist_candidates", {
+          p_decisions: list.map((c) => ({
+            candidate_id: c.candidate_id,
+            product_id: c.candidate_product_id,
+            sealed_condition: c.sealed_condition ?? "standard",
+            price_jpy: c.ocr_price_jpy,
+            curator_notes: c.curator_notes,
+          })),
+        });
+        if (error) throw error;
+        const result = parseCurationBatchResult(data);
+        setBatchProgress(result.summary.succeeded + result.summary.failed);
+        setBatchResult(result);
       });
       if (ok) retry();
     } finally {
@@ -291,9 +304,9 @@ export default function SealedCurationView() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">{t("curation.titleSealed")}</h1>
         <Tabs value={status} onValueChange={(v) => setStatus(String(v) as Status)}>
-          <TabsList>
-            <TabsTrigger value="needs_review">{t("curation.needsReview")}</TabsTrigger>
-            <TabsTrigger value="pending">{t("curation.pending")}</TabsTrigger>
+          <TabsList className="min-h-11 sm:min-h-11">
+            <TabsTrigger className="min-h-11 sm:min-h-11" value="needs_review">{t("curation.needsReview")}</TabsTrigger>
+            <TabsTrigger className="min-h-11 sm:min-h-11" value="pending">{t("curation.pending")}</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -328,7 +341,7 @@ export default function SealedCurationView() {
           <button
             type="button"
             onClick={() => setSelectedBuyer(null)}
-            className={`shrink-0 rounded-full border px-2.5 py-1 font-medium transition-colors ${
+            className={`min-h-11 shrink-0 rounded-full border px-2.5 py-1 font-medium transition-colors ${
               selectedBuyer == null
                 ? "border-primary bg-primary text-primary-foreground"
                 : "border-border bg-background hover:bg-muted"
@@ -341,7 +354,7 @@ export default function SealedCurationView() {
               key={handle}
               type="button"
               onClick={() => setSelectedBuyer(handle)}
-              className={`shrink-0 rounded-full border px-2.5 py-1 font-medium transition-colors ${
+              className={`min-h-11 shrink-0 rounded-full border px-2.5 py-1 font-medium transition-colors ${
                 selectedBuyer === handle
                   ? "border-primary bg-primary text-primary-foreground"
                   : "border-border bg-background hover:bg-muted"
@@ -353,7 +366,32 @@ export default function SealedCurationView() {
         </div>
       )}
 
-      {error && <QueryError onRetry={retry} />}
+      {error && <QueryError error={error} onRetry={retry} />}
+      {batchResult && (
+        <div
+          role={batchResult.summary.failed ? "alert" : "status"}
+          className={`rounded-md border p-3 text-sm ${
+            batchResult.summary.failed ? "border-destructive/50 bg-destructive/10" : "border-green-500/50 bg-green-500/10"
+          }`}
+        >
+          <div className="font-medium">
+            {t("curation.batchSummary", {
+              succeeded: batchResult.summary.succeeded,
+              requested: batchResult.summary.requested,
+              failed: batchResult.summary.failed,
+            })}
+          </div>
+          {batchResult.results.filter((row) => !row.success).map((row, i) => (
+            <div key={`${row.candidate_id ?? "invalid"}-${i}`} className="mt-1 break-words text-xs">
+              {t("curation.batchFailure", {
+                id: row.candidate_id ?? "?",
+                code: row.error_code ?? "error",
+                message: row.error_message ?? row.error_detail ?? t("curation.batchUnknownError"),
+              })}
+            </div>
+          ))}
+        </div>
+      )}
 
       {BANDS.map((band) => {
         const list = grouped[band];
@@ -368,7 +406,7 @@ export default function SealedCurationView() {
                 {t(`curation.band.${band}` as never)} · {list.length}
               </span>
               {band === "high" && matched.length > 0 && (
-                <Button size="sm" variant="outline" disabled={saving || batchProgress != null} onClick={() => approveBand(band)}>
+                <Button size="sm" variant="outline" className="min-h-11 sm:min-h-11" disabled={saving || batchProgress != null} onClick={() => approveBand(band)}>
                   <Check className="size-3 mr-1" />
                   {batchProgress != null
                     ? t("curation.approveAllProgress", { n: `${batchProgress}/${matched.length}` })
@@ -380,7 +418,7 @@ export default function SealedCurationView() {
               {list.map((c, i) => {
                 const idx = offset + i;
                 return (
-                  <CandidateCard
+                  <SealedCurationCandidateCard
                     key={c.candidate_id}
                     c={c}
                     idx={idx}
@@ -433,10 +471,13 @@ function productMeta(setCode?: string | null, productType?: string | null, miscI
   return [setBits, edition, productVariant(miscInfo)].filter(Boolean).join(" · ");
 }
 
-function CandidateCard({ c, idx, status, language, saving, selected, onSelect, onApprove, onReject, onSendBack }: {
+export function SealedCurationCandidateCard({ c, idx, status, language, saving, selected, onSelect, onApprove, onReject, onSendBack }: {
   c: Candidate; idx: number; status: Status; language: "en" | "ja"; saving: boolean;
   selected: boolean; onSelect: () => void;
-  onApprove: (c: Candidate, o?: { productId?: number; condition?: string | null; priceJpy?: number | null; notes?: string | null }) => void;
+  onApprove: (c: Candidate, o?: {
+    productId?: number; condition?: string | null; priceJpy?: number | null; notes?: string | null;
+    geometry?: ImageGeometry; naturalWidth?: number; naturalHeight?: number;
+  }) => void;
   onReject: (c: Candidate, notes?: string | null) => void; onSendBack: (c: Candidate, notes?: string | null) => void;
 }) {
   const { t } = useTranslation();
@@ -449,6 +490,23 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
   const [search, setSearch] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [zoom, setZoom] = useState<string | null>(null); // image URL shown in the lightbox
+  const idPrefix = useId();
+  const ids = {
+    condition: `${idPrefix}-condition`,
+    price: `${idPrefix}-price`,
+    search: `${idPrefix}-search`,
+    notes: `${idPrefix}-notes`,
+  };
+  const detectorGeometry = useMemo(() => parseGridGeometry(c.source_grid_bbox), [c.source_grid_bbox]);
+  const initialGeometry = useMemo(
+    () => parseGridGeometry(c.effective_source_grid_bbox) ?? detectorGeometry,
+    [c.effective_source_grid_bbox, detectorGeometry],
+  );
+  const [geometry, setGeometry] = useState<ImageGeometry | null>(initialGeometry);
+  const [naturalSize, setNaturalSize] = useState({
+    width: c.source_image_width ?? 0,
+    height: c.source_image_height ?? 0,
+  });
   const dSearch = useDebouncedValue(search, 300);
   const matchedImg = override?.image_url ?? c.product?.image_url ?? null;
   // The notes value carried on approve / reject / defer. Empty string means
@@ -489,6 +547,15 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
   const matchMeta = override
     ? productMeta(override.set_code, override.product_type, override.misc_info, override.variant_edition)
     : c.product ? productMeta(c.product.set_code, c.product.product_type, c.product.misc_info, c.product.variant_edition) : "";
+  const sourceImg = c.source_image_url && /^https?:\/\//i.test(c.source_image_url) ? c.source_image_url : null;
+  const geometryEdited = !sameGeometry(geometry, initialGeometry);
+  const geometryDirty = shouldSubmitGeometryCorrection(
+    geometry,
+    initialGeometry,
+    !!sourceImg,
+    naturalSize.width,
+    naturalSize.height,
+  );
 
   function doApprove() {
     const priceJpy = price.trim() ? Math.round(Number(price)) : null;
@@ -497,16 +564,19 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
       condition: condition !== (c.sealed_condition || "standard") || override ? condition : null,
       priceJpy: priceJpy !== c.ocr_price_jpy ? priceJpy : null,
       notes: notesArg(),
+      geometry: geometryDirty && geometry ? geometry : undefined,
+      naturalWidth: geometryDirty ? naturalSize.width : undefined,
+      naturalHeight: geometryDirty ? naturalSize.height : undefined,
     });
   }
   const hasMatch = !!c.candidate_product_id; // mark-correct needs an existing match; no-match → correct/reject
 
-  const { card: cardBBox, price: priceBBox } = parseGridBBox(c.source_grid_bbox);
+  const cardBBox = geometry?.card ?? null;
+  const priceBBox = geometry?.price ?? null;
   // source_image_url is set by the orchestrator and was historically a local
   // filesystem path ("internal/image_recognition/eval/<buyer>/...jpg") which
   // the browser can't load. Only treat it as the CSS-crop source when it's a
   // real http(s) URL; otherwise we fall through to the cell-crop URL.
-  const sourceImg = c.source_image_url && /^https?:\/\//i.test(c.source_image_url) ? c.source_image_url : null;
   // Older candidates (pre source-upload) have a working R2 URL in
   // cell_image_url pointing at a pre-cropped card image. When the source
   // isn't a real URL we render that directly with no CSS cropping; the
@@ -527,12 +597,12 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
       className={`cursor-pointer transition-shadow ${selected ? "ring-2 ring-primary ring-offset-1" : ""}`}
     >
       <CardContent className="space-y-2 p-3">
-        <div className="flex gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:flex">
           {/* The card we found. New candidates have a real source URL + a
               card bbox - we CSS-crop the card region. Legacy candidates
               pre-date the source-upload work and only have an R2 URL of a
               pre-cropped card in cell_image_url - we show that directly. */}
-          <figure className="shrink-0 text-center">
+          <figure className="order-1 shrink-0 text-center sm:order-none">
             {showCardCrop ? (
               <CropPreview src={sourceImg!} bbox={cardBBox!} w={96} h={128}
                 onClick={() => lightboxImg && setZoom(lightboxImg)} />
@@ -550,7 +620,7 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
               out of a real source URL - the orchestrator's earlier
               "placeholder URL" pattern never gave us standalone price
               crops, so legacy rows simply show a "no price box" slot. */}
-          <figure className="shrink-0 text-center">
+          <figure className="order-3 shrink-0 text-center sm:order-none">
             {showPriceCrop ? (
               <CropPreview src={sourceImg!} bbox={priceBBox!} w={96} h={48}
                 onClick={() => lightboxImg && setZoom(lightboxImg)} />
@@ -561,11 +631,11 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
             )}
             <figcaption className="mt-0.5 text-[10px] text-muted-foreground">{t("curation.priceBanner")}</figcaption>
           </figure>
-          <ArrowRight className="mt-12 size-4 shrink-0 text-muted-foreground" />
+          <ArrowRight className="mt-12 hidden size-4 shrink-0 text-muted-foreground sm:block" />
           {/* The matched catalog card. Click opens the catalog image alone
               (no source context to pan around) in the same pan+zoom
               inspector. */}
-          <figure className="shrink-0 text-center">
+          <figure className="order-2 shrink-0 text-center sm:order-none">
             {matchedImg ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={matchedImg} alt="" loading="lazy" onClick={() => setZoom(matchedImg)}
@@ -576,7 +646,7 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
             <figcaption className="mt-0.5 text-[10px] text-muted-foreground">{t("curation.matched")}</figcaption>
           </figure>
           {/* signals */}
-          <div className="min-w-0 flex-1 space-y-1 text-xs">
+          <div className="order-4 col-span-2 min-w-0 flex-1 space-y-1 text-xs sm:order-none">
             <div className="truncate font-medium">{matchName}</div>
             {matchMeta && <div className="truncate text-muted-foreground">{matchMeta}</div>}
             <div className="flex flex-wrap gap-1">
@@ -600,39 +670,55 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
 
         {correcting && (
           <div className="space-y-2 rounded-md border bg-muted/30 p-2">
+            {sourceImg && geometry && detectorGeometry && (
+              <ImageGeometryEditor
+                src={sourceImg}
+                geometry={geometry}
+                naturalWidth={naturalSize.width}
+                naturalHeight={naturalSize.height}
+                onNaturalSize={(width, height) => setNaturalSize({ width, height })}
+                onChange={setGeometry}
+                onReset={() => setGeometry(detectorGeometry)}
+              />
+            )}
             <div className="grid grid-cols-2 gap-2">
-              <div><Label className="text-xs">{t("curation.sealedCondition")}</Label>
-                <select value={condition} onChange={(e) => setCondition(e.target.value)} className="h-8 w-full rounded-md border bg-background px-2 text-sm">
+              <div><Label htmlFor={ids.condition} className="text-xs">{t("curation.sealedCondition")}</Label>
+                <select id={ids.condition} value={condition} onChange={(e) => setCondition(e.target.value)} className="min-h-11 w-full rounded-md border bg-background px-2 text-sm">
                   {SEALED_CONDITIONS.map((cond) => (
                     <option key={cond} value={cond}>{t(`curation.sealedCondition.${cond}` as never)}</option>
                   ))}
                 </select></div>
-              <div><Label className="text-xs">{t("curation.priceJpy")}</Label>
-                <Input type="number" value={price} onChange={(e) => setPrice(e.target.value)} className="h-8" /></div>
+              <div><Label htmlFor={ids.price} className="text-xs">{t("curation.priceJpy")}</Label>
+                <Input id={ids.price} type="number" value={price} onChange={(e) => setPrice(e.target.value)} className="min-h-11" /></div>
             </div>
             <div>
-              <Label className="text-xs flex items-center gap-1"><Search className="size-3" />{t("curation.changeProduct")}</Label>
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("curation.searchProductPlaceholder")} className="h-8" />
-              {override && <div className="mt-1 flex items-center gap-1 text-xs"><Badge variant="secondary">{getProductDisplayName(override, language)} · {productMeta(override.set_code, override.product_type, override.misc_info, override.variant_edition)}</Badge><Button variant="ghost" size="icon" className="size-5" onClick={() => setOverride(null)}><X className="size-3" /></Button></div>}
+              <Label htmlFor={ids.search} className="text-xs flex items-center gap-1"><Search className="size-3" />{t("curation.changeProduct")}</Label>
+              <Input id={ids.search} value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("curation.searchProductPlaceholder")} className="min-h-11" />
+              {override && <div className="mt-1 flex min-w-0 items-center gap-1 text-xs"><Badge variant="secondary" className="min-w-0 truncate">{getProductDisplayName(override, language)} · {productMeta(override.set_code, override.product_type, override.misc_info, override.variant_edition)}</Badge><Button variant="ghost" size="icon" className="min-h-11 min-w-11 sm:min-h-11 sm:min-w-11" aria-label={t("curation.clearOverride")} onClick={() => setOverride(null)}><X className="size-3" /></Button></div>}
               {search && hits.length > 0 && (
                 <div className="mt-1 max-h-40 overflow-auto rounded-md border bg-background">
                   {hits.map((h) => (
                     <button key={h.product_id} onClick={() => { setOverride(h); setSearch(""); setHits([]); }}
-                      className="block w-full truncate px-2 py-1 text-left text-xs hover:bg-accent">
+                      className="block min-h-11 w-full truncate px-2 py-1 text-left text-xs hover:bg-accent">
                       {getProductDisplayName(h, language)} · {productMeta(h.set_code, h.product_type, h.misc_info, h.variant_edition)}
                     </button>
                   ))}
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-2 border-t pt-2">
-              <Button size="sm" disabled={saving || !(override || hasMatch)} onClick={doApprove}>
+            <div className="flex flex-col items-stretch gap-2 border-t pt-2 sm:flex-row sm:items-center">
+              <Button
+                size="sm"
+                disabled={saving || !(override || hasMatch) || (geometryEdited && !geometryDirty)}
+                className="min-h-11 sm:min-h-11"
+                onClick={doApprove}
+              >
                 <Check className="size-4 mr-1" />{t("curation.approveFixes")}
               </Button>
-              <Button size="sm" variant="outline" disabled={saving} onClick={() => onReject(c, notesArg())}>
+              <Button size="sm" variant="outline" className="min-h-11 sm:min-h-11" disabled={saving} onClick={() => onReject(c, notesArg())}>
                 <X className="size-4 mr-1" />{t("curation.rejectNoMatch")}
               </Button>
-              <span className="ml-auto text-[10px] text-muted-foreground">{t("curation.rejectHint")}</span>
+              <span className="text-[10px] text-muted-foreground sm:ml-auto">{t("curation.rejectHint")}</span>
             </div>
           </div>
         )}
@@ -641,29 +727,35 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
             first opening the correct panel — leftover intent lands on approve /
             reject / defer alike via COALESCE on the RPC's p_curator_notes. */}
         <div>
-          <Label className="text-xs flex items-center gap-1"><Pencil className="size-3" />{t("curation.curatorNotes")}</Label>
+          <Label htmlFor={ids.notes} className="text-xs flex items-center gap-1"><Pencil className="size-3" />{t("curation.curatorNotes")}</Label>
           <textarea
+            id={ids.notes}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder={t("curation.curatorNotesPlaceholder")}
             rows={2}
-            className="mt-0.5 w-full resize-y rounded-md border bg-background px-2 py-1 text-xs"
+            className="mt-0.5 min-h-11 w-full resize-y rounded-md border bg-background px-2 py-1 text-xs"
           />
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {/* the three curator decisions: it's right · it's wrong (fix or reject) · later */}
-          <Button size="sm" disabled={saving || !hasMatch} onClick={() => onApprove(c, { notes: notesArg() })}>
+          <Button
+            size="sm"
+            className="min-h-11 sm:min-h-11"
+            disabled={saving || !hasMatch || (geometryEdited && !geometryDirty)}
+            onClick={() => geometryEdited ? doApprove() : onApprove(c, { notes: notesArg() })}
+          >
             <Check className="size-4 mr-1" />{t("curation.markCorrect")}
           </Button>
-          <Button size="sm" variant={correcting ? "secondary" : "outline"} disabled={saving} onClick={() => setCorrecting((v) => !v)}>
+          <Button size="sm" variant={correcting ? "secondary" : "outline"} className="min-h-11 sm:min-h-11" disabled={saving} onClick={() => setCorrecting((v) => !v)}>
             <Pencil className="size-4 mr-1" />{t("curation.correctMatch")}
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setShowDetails((v) => !v)}>
+          <Button size="sm" variant="ghost" className="min-h-11 sm:min-h-11" onClick={() => setShowDetails((v) => !v)}>
             {showDetails ? t("curation.hideDetails") : t("curation.showDetails")}
           </Button>
           {status === "pending" && (
-            <Button size="sm" variant="ghost" className="ml-auto" disabled={saving} onClick={() => onSendBack(c, notesArg())}>
+            <Button size="sm" variant="ghost" className="min-h-11 sm:ml-auto sm:min-h-11" disabled={saving} onClick={() => onSendBack(c, notesArg())}>
               <Clock className="size-4 mr-1" />{t("curation.deferLater")}
             </Button>
           )}
@@ -722,7 +814,7 @@ function CandidateCard({ c, idx, status, language, saving, selected, onSelect, o
 // crop region at 1:1 image pixels, then transform:scale shrinks it down
 // (or up) so it fills the display rectangle while preserving aspect.
 function CropPreview({ src, bbox, w, h, onClick }: {
-  src: string; bbox: BBox; w: number; h: number; onClick?: () => void;
+  src: string; bbox: ImageBox; w: number; h: number; onClick?: () => void;
 }) {
   const cw = Math.max(1, bbox.x1 - bbox.x0);
   const ch = Math.max(1, bbox.y1 - bbox.y0);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { formatMutationError } from "./mutation-error";
 
 // Standard feedback for a save/mutation: a `saving` flag for disabling +
 // spinning the button, and surfacing any error (Supabase `{ error }` result or a
@@ -13,10 +14,10 @@ export function useSaving() {
     try {
       const result = await fn();
       const err = (result as { error?: { message?: string } | null } | null)?.error;
-      if (err) { alert(err.message ?? "Something went wrong."); return false; }
+      if (err) { alert(formatMutationError(err)); return false; }
       return true;
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e));
+      alert(formatMutationError(e));
       return false;
     } finally {
       setSaving(false);

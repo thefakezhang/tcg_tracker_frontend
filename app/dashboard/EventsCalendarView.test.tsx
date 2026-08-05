@@ -73,12 +73,16 @@ vi.mock("./use-query", () => ({
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
 describe("EventsCalendarView", () => {
   it("confirms a rumored feeder row and turns an unexplained break into a prefilled entry", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T12:00:00Z"));
     render(<EventsCalendarView />);
+    vi.useRealTimers();
 
     fireEvent.click(screen.getByRole("button", { name: "events.confirm" }));
     await waitFor(() => {
