@@ -22,6 +22,43 @@ interface DragState {
   displayHeight: number;
 }
 
+const RESIZE_HANDLES: ReadonlyArray<{
+  handle: Exclude<GeometryHandle, "move">;
+  cursor: string;
+  glyph: string;
+  markerPosition: string;
+  markerShape: string;
+}> = [
+  {
+    handle: "nw",
+    cursor: "cursor-nwse-resize",
+    glyph: "↖",
+    markerPosition: "left-0 top-0",
+    markerShape: "rounded-br-full",
+  },
+  {
+    handle: "ne",
+    cursor: "cursor-nesw-resize",
+    glyph: "↗",
+    markerPosition: "right-0 top-0",
+    markerShape: "rounded-bl-full",
+  },
+  {
+    handle: "sw",
+    cursor: "cursor-nesw-resize",
+    glyph: "↙",
+    markerPosition: "bottom-0 left-0",
+    markerShape: "rounded-tr-full",
+  },
+  {
+    handle: "se",
+    cursor: "cursor-nwse-resize",
+    glyph: "↘",
+    markerPosition: "bottom-0 right-0",
+    markerShape: "rounded-tl-full",
+  },
+];
+
 export function ImageGeometryEditor({
   src,
   geometry,
@@ -123,40 +160,60 @@ export function ImageGeometryEditor({
       height: `${(box.y1 - box.y0) / naturalHeight * 100}%`,
     };
     const kindLabel = t(`curation.geometry.${kind}` as "curation.geometry.card" | "curation.geometry.price");
-    const handles: Array<[GeometryHandle, string, string]> = [
-      ["nw", "left-0 top-0 cursor-nwse-resize items-start justify-start", "rounded-br-full"],
-      ["ne", "right-0 top-0 cursor-nesw-resize items-start justify-end", "rounded-bl-full"],
-      ["sw", "bottom-0 left-0 cursor-nesw-resize items-end justify-start", "rounded-tr-full"],
-      ["se", "bottom-0 right-0 cursor-nwse-resize items-end justify-end", "rounded-tl-full"],
-    ];
     return (
       <div
         key={kind}
         role="group"
         aria-label={t("curation.geometry.cropLabel", { kind: kindLabel })}
+        data-geometry-overlay={kind}
         className={`pointer-events-none absolute border-2 ${tone}`}
         style={style}
       >
-        <span className="pointer-events-none absolute left-11 top-0 bg-black/70 px-1 text-[10px] text-white">
+        <span className="pointer-events-none absolute left-4 top-0 bg-black/70 px-1 text-[10px] text-white">
           {kindLabel}
         </span>
-        {handles.map(([handle, position, markerShape]) => (
-          <button
+        {RESIZE_HANDLES.map(({ handle, markerPosition, markerShape }) => (
+          <span
             key={handle}
-            type="button"
-            aria-label={t("curation.geometry.resizeLabel", { kind: kindLabel, handle })}
-            aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
-            className={`pointer-events-auto absolute flex size-11 touch-none bg-transparent p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${position}`}
-            onPointerDown={(event) => start(event, kind, handle, box)}
-            onPointerMove={move}
-            onPointerUp={stop}
-            onPointerCancel={stop}
-            onKeyDown={(event) => keyAdjust(event, kind, handle, box)}
-          >
-            <span className={`block size-3 border-2 border-white bg-primary ${markerShape}`} />
-          </button>
+            aria-hidden="true"
+            data-geometry-marker={`${kind}-${handle}`}
+            className={`pointer-events-none absolute size-3 border-2 border-white bg-primary ${markerPosition} ${markerShape}`}
+          />
         ))}
       </div>
+    );
+  };
+
+  const resizeControls = (kind: "card" | "price", box: ImageBox, tone: string) => {
+    const kindLabel = t(`curation.geometry.${kind}` as "curation.geometry.card" | "curation.geometry.price");
+    return (
+      <fieldset
+        key={kind}
+        data-geometry-resize-group={kind}
+        className={`min-w-0 rounded-md border-2 p-2 ${tone}`}
+      >
+        <legend className="px-1 text-xs font-medium">{kindLabel}</legend>
+        <div className="grid grid-cols-2 gap-2">
+          {RESIZE_HANDLES.map(({ handle, cursor, glyph }) => (
+            <button
+              key={handle}
+              type="button"
+              aria-label={t("curation.geometry.resizeLabel", { kind: kindLabel, handle })}
+              aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
+              data-geometry-resize={`${kind}-${handle}`}
+              className={`inline-flex min-h-11 min-w-11 w-full touch-none items-center justify-center gap-1 rounded-md border bg-background px-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${cursor} ${tone}`}
+              onPointerDown={(event) => start(event, kind, handle, box)}
+              onPointerMove={move}
+              onPointerUp={stop}
+              onPointerCancel={stop}
+              onKeyDown={(event) => keyAdjust(event, kind, handle, box)}
+            >
+              <span aria-hidden="true" className="text-base leading-none">{glyph}</span>
+              <span aria-hidden="true">{handle.toUpperCase()}</span>
+            </button>
+          ))}
+        </div>
+      </fieldset>
     );
   };
 
@@ -204,10 +261,16 @@ export function ImageGeometryEditor({
         )}
       </div>
       {naturalWidth > 0 && naturalHeight > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {moveControl("card", geometry.card, "border-sky-400")}
-          {geometry.price && moveControl("price", geometry.price, "border-amber-400")}
-        </div>
+        <>
+          <div className="flex flex-wrap gap-2">
+            {moveControl("card", geometry.card, "border-sky-400")}
+            {geometry.price && moveControl("price", geometry.price, "border-amber-400")}
+          </div>
+          <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+            {resizeControls("card", geometry.card, "border-sky-400")}
+            {geometry.price && resizeControls("price", geometry.price, "border-amber-400")}
+          </div>
+        </>
       )}
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" className="min-h-11" onClick={onReset}>
