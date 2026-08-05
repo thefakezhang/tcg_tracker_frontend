@@ -28,6 +28,8 @@ export interface RoiLine {
   lot_line_id: number;
   lot_id: number;
   trip_id: number | null;
+  shop_label: string | null;
+  acquired_at: string | null;
   leg: string;
   game: string;
   item_type: "single" | "sealed";
@@ -38,6 +40,7 @@ export interface RoiLine {
   sealed_condition: string | null;
   variant_edition: string | null;
   qty_on_hand: number;
+  consigned_qty: number;
   on_hand_cost_usd: number | null;
   /** Gross market price per copy - the bid BEFORE the fee assumption. */
   exit_unit_usd: number | null;
@@ -55,17 +58,20 @@ export interface RoiLine {
 }
 
 const COLUMNS =
-  "line_key, lot_line_id, lot_id, trip_id, leg, game, item_type, card_id, product_id, " +
+  "line_key, lot_line_id, lot_id, trip_id, shop_label, acquired_at, leg, game, item_type, card_id, product_id, " +
   "condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, on_hand_cost_usd, " +
-  "exit_unit_usd, net_pct, exit_net_usd, theoretical_profit_usd, theoretical_roi_pct, days_held, " +
+  "consigned_qty, exit_unit_usd, net_pct, exit_net_usd, theoretical_profit_usd, theoretical_roi_pct, days_held, " +
   "annualized_roi_pct, below_cost, age_bucket, priced";
 
 const num = (v: unknown): number | null => (v == null ? null : Number(v));
 
 function normalize(row: Record<string, unknown>): RoiLine {
+  const qtyOnHand = Math.max(0, Math.floor(Number(row.qty_on_hand) || 0));
+  const storedConsigned = Math.floor(Number(row.consigned_qty) || 0);
   return {
     ...(row as unknown as RoiLine),
-    qty_on_hand: Number(row.qty_on_hand),
+    qty_on_hand: qtyOnHand,
+    consigned_qty: Math.max(0, Math.min(storedConsigned, qtyOnHand)),
     on_hand_cost_usd: num(row.on_hand_cost_usd),
     exit_unit_usd: num(row.exit_unit_usd),
     net_pct: num(row.net_pct),

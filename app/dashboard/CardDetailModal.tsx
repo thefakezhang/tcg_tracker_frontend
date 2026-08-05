@@ -67,7 +67,7 @@ import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
 import { RefreshPricesAction } from "./RefreshPricesAction";
 import { UidChip } from "./UidChip";
-import { useOwnedInventoryVersion, bumpOwnedInventory } from "./owned-inventory";
+import { useOwnedInventoryVersion } from "./owned-inventory";
 import GradeEvidencePanel from "./GradeEvidencePanel";
 import { decisionSnapshot } from "./DecisionActions";
 import { detailOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
@@ -391,6 +391,7 @@ export default function CardDetailModal({
         (((srcLots.data as Record<string, unknown>[] | null) ?? []).map((r) => {
           const lot = r.acquisition_lots as { shop_label: string | null; acquired_at: string | null; leg: string; trips: { name: string | null } | null } | null;
           const qty = Number(r.quantity) || 1;
+          const qtyOnHand = Number(r.qty_remaining) || 0;
           const hit = roiByLineId.get(Number(r.line_id));
           return {
             lineId: Number(r.line_id),
@@ -398,9 +399,9 @@ export default function CardDetailModal({
             acquiredAt: lot?.acquired_at ?? null,
             leg: lot?.leg ?? "",
             tripName: lot?.trips?.name ?? null,
-            qtyOnHand: Number(r.qty_remaining) || 0,
+            qtyOnHand,
             unitCostUsd: Number(r.allocated_cost_usd) / qty,
-            consigned: Number(r.consigned_qty) || 0,
+            consigned: Math.max(0, Math.min(Number(r.consigned_qty) || 0, qtyOnHand)),
             exitGrossUsd: hit?.priced ? hit.exit_gross_usd : null,
             exitNetUsd: hit?.priced ? hit.exit_net_usd : null,
             netPct: hit?.priced ? hit.net_pct : null,
@@ -535,17 +536,6 @@ export default function CardDetailModal({
       .join(" · ");
     return { total, breakdown };
   }, [heldRows, conditionsMap, t]);
-
-  // Mark how many of a source line's copies are on consignment (out with a 3rd
-  // party to sell). Bumping the owned store refetches this modal + the browser.
-  async function setConsignment(lineId: number, qty: number) {
-    await createClient().rpc("set_line_consignment", {
-      p_game: activeGame,
-      p_lot_line_id: lineId,
-      p_consigned_qty: Math.max(0, Math.floor(qty) || 0),
-    });
-    bumpOwnedInventory();
-  }
 
   if (!card) return null;
 
@@ -749,19 +739,12 @@ export default function CardDetailModal({
                         {formatRoiPct(s.roiPct)}
                       </span>
                     )}
-                    <label className="flex items-center gap-1 text-violet-500/90" title={t("inventory.consignQty")}>
-                      {t("inventory.consigned")}
-                      <input
-                        type="number"
-                        min={0}
-                        max={s.qtyOnHand}
-                        defaultValue={s.consigned}
-                        key={`${s.lineId}-${s.consigned}`}
-                        aria-label={t("inventory.consignQty")}
-                        className="w-10 rounded border bg-background px-1 py-0.5 text-[11px]"
-                        onBlur={(e) => { const v = Number(e.target.value); if (v !== s.consigned) void setConsignment(s.lineId, v); }}
-                      />
-                    </label>
+                    {s.consigned > 0 && (
+                      <span className="text-violet-500/90" title={t("inventory.manageConsignmentInInventory")}>
+                        {t("inventory.consignedN", { n: s.consigned })}
+                        {" · "}{t("inventory.availableN", { n: s.qtyOnHand - s.consigned })}
+                      </span>
+                    )}
                   </span>
                 </div>
               ))}
