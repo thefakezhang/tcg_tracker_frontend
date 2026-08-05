@@ -295,6 +295,9 @@ It preserves the full signal row, source flags, displayed market inputs, and an 
 - `SalesTab.tsx` records one bulk total, one shared expense, optional item expenses, and one allocation method across mixed card and sealed holdings.
 - Source-fact sale groups use a global history key, while legacy groups remain game-scoped.
 - `owned-inventory.ts` batches quiet `Owned N` counts for the buying surfaces without exposing finance detail there.
+- `InventoryView.tsx` is the sole consignment mutation surface for Pokémon singles, MTG singles, and Pokémon sealed products.
+- It groups the paged source lines from `inventory_theoretical_roi_v` at the exact holding identity and shows owned, consigned, and available quantities.
+- Card detail modals keep consignment status read-only so source-lot mutation has one predictable home.
 - `InventoryEconomics.tsx` owns the lifecycle and cost bridge under Finances.
 - Phone lot and sale surfaces default to card grids, right-side sheets use the full phone width, and global buttons, tabs, and sidebar controls keep 44px phone targets.
 - Architecture, goals, non-goals, local authentication guards, and browser acceptance are documented in `docs/lot_inventory_economics.md`.

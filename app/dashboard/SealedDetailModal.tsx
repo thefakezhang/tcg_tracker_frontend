@@ -75,6 +75,8 @@ interface OwnedVariantRow {
   variant_edition: string | null;
   qty_owned: number;
   qty_incoming: number;
+  qty_consigned: number;
+  qty_available: number;
 }
 
 interface SealedListing {
@@ -187,7 +189,7 @@ export default function SealedDetailModal({
         fetchLocationMap(supabase),
         supabase
           .from("owned_inventory_counts_v")
-          .select("sealed_condition, variant_edition, qty_owned, qty_incoming")
+          .select("sealed_condition, variant_edition, qty_owned, qty_incoming, qty_consigned, qty_available")
           .eq("game", "pokemon_sealed")
           .eq("product_id", card!.card.card_id),
       ]);
@@ -322,7 +324,13 @@ export default function SealedDetailModal({
                         const incoming = Number(r.qty_incoming) > 0
                           ? ` ${t("inventory.incoming", { n: Number(r.qty_incoming) })}`
                           : "";
-                        return `${Number(r.qty_owned)}× ${variant}${incoming}`;
+                        const owned = Number(r.qty_owned) || 0;
+                        const consigned = Math.max(0, Math.min(Number(r.qty_consigned) || 0, owned));
+                        const available = Math.max(0, Math.min(Number(r.qty_available) || 0, owned));
+                        const consignment = consigned > 0
+                          ? ` · ${t("inventory.consignedN", { n: consigned })} · ${t("inventory.availableN", { n: available })}`
+                          : "";
+                        return `${owned}× ${variant}${incoming}${consignment}`;
                       })
                       .join(", ")}
                   </span>
