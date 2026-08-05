@@ -563,7 +563,18 @@ export function useCardData(options: {
       const extTable = activeGame === "pokemon"
         ? "pokemon_external_identifiers"
         : "mtg_external_identifiers";
-      const extIds = await externalIdMatches(supabase, extTable, "card_id", s);
+      let extIds: number[];
+      try {
+        extIds = await externalIdMatches(supabase, extTable, "card_id", s);
+      } catch (lookupError) {
+        if (abort.signal.aborted) return;
+        setError(lookupError instanceof Error ? lookupError.message : String(lookupError));
+        setData([]);
+        setTotalCount(0);
+        setLoading(false);
+        return;
+      }
+      if (abort.signal.aborted) return;
       const textCols = activeGame === "pokemon"
         ? ["regional_name", "english_name", "misc_info", "card_number", "set_code"]
         : ["regional_name", "misc_info", "foil_type", "language", "card_number", "set_code"];

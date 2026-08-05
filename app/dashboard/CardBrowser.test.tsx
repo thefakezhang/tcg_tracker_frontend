@@ -4,7 +4,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CardBrowser from "./CardBrowser";
 
-const translate = (key: string) => key;
+const mocks = vi.hoisted(() => ({ useCardData: vi.fn() }));
+const translate = (key: string, values?: { message?: string }) =>
+  values?.message ? `${key}: ${values.message}` : key;
 
 vi.mock("@/lib/i18n", () => ({ useTranslation: () => ({ t: translate }) }));
 vi.mock("./LanguageContext", () => ({ useLanguage: () => ({ language: "en" }) }));
@@ -17,17 +19,7 @@ vi.mock("./ExitBasisContext", () => ({
 vi.mock("./HeaderContext", () => ({ useHeader: () => ({ setHeaderActions: vi.fn() }) }));
 vi.mock("./use-card-data", () => ({
   useAvailableCardSources: () => ["expedition_gaming"],
-  useCardData: () => ({
-    data: [{
-      key: "42:10",
-      card: { card_id: "42", regional_name: "Card", set_code: "M6", card_number: "001", misc_info: null, image_url: null },
-      psaGrade: 10,
-      prices: { highestBuy: null, lowestSell: null },
-      roi: null,
-      signal: null,
-    }], loading: false, error: null, availableTiers: [1], totalCount: 1,
-    refetch: vi.fn(), refresh: vi.fn(),
-  }),
+  useCardData: mocks.useCardData,
   getCardDisplayName: () => "Card",
 }));
 vi.mock("./columns", () => ({
@@ -59,6 +51,17 @@ vi.mock("./card-observations", () => ({ useCardObservations: () => new Map() }))
 afterEach(cleanup);
 
 beforeEach(() => {
+  mocks.useCardData.mockReturnValue({
+    data: [{
+      key: "42:10",
+      card: { card_id: "42", regional_name: "Card", set_code: "M6", card_number: "001", misc_info: null, image_url: null },
+      psaGrade: 10,
+      prices: { highestBuy: null, lowestSell: null },
+      roi: null,
+      signal: null,
+    }], loading: false, error: null, availableTiers: [1], totalCount: 1,
+    refetch: vi.fn(), refresh: vi.fn(),
+  });
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     value: vi.fn().mockReturnValue({ matches: false }),
@@ -89,5 +92,30 @@ describe("CardBrowser surfaces", () => {
     await waitFor(() => expect(screen.getByTestId("browse-table").getAttribute("data-view-mode")).toBe("grid"));
     expect(screen.getByRole("button", { name: "decision.watch" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "decision.dismissOpportunity" })).toBeTruthy();
+  });
+
+  it("uses one labeled search column on phones", () => {
+    render(<CardBrowser />);
+
+    expect(screen.getByText("cardBrowser.nameLabel")).toBeTruthy();
+    expect(screen.getByText("cardBrowser.cardNumberLabel")).toBeTruthy();
+    expect(screen.getByText("cardBrowser.setCodeLabel")).toBeTruthy();
+    expect(screen.getByTestId("browser-search-grid").className).toContain("grid-cols-1");
+  });
+
+  it("surfaces an external-identifier lookup failure", () => {
+    mocks.useCardData.mockReturnValue({
+      data: [],
+      loading: false,
+      error: "External identifier lookup failed for pokemon_external_identifiers: permission denied",
+      availableTiers: [1],
+      totalCount: 0,
+      refetch: vi.fn(),
+      refresh: vi.fn(),
+    });
+
+    render(<CardBrowser />);
+
+    expect(screen.getByText(/External identifier lookup failed/)).toBeTruthy();
   });
 });

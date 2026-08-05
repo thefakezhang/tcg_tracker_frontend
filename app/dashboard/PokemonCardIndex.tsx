@@ -44,9 +44,10 @@ interface CardLink {
   listing_url?: string | null;
   listing_only?: boolean;
 }
-interface IndexCard {
+export interface IndexCard {
   card_id: number;
   card_uid: string;
+  english_name_version: number;
   regional_name: string;
   english_name: string | null;
   set_code: string;
@@ -57,7 +58,7 @@ interface IndexCard {
   links: CardLink[];
 }
 
-const COLS = "card_id, card_uid, regional_name, english_name, set_code, card_number, language, misc_info, image_url";
+const COLS = "card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, image_url";
 const PLATFORMS = pokemonSinglePlatforms;
 const PLATFORM_SHORT: Record<string, string> = { tcgplayer: "TCG", snkrdunk: "SNKR", pricecharting: "PC", collectr: "COLL", cardladder: "CL", cardkingdom: "CK", shinsoku: "SHIN", surugaya: "SRG", expedition_gaming: "EXP", tcgplayer_SKU: "SKU" };
 const PLATFORM_HINT_KEYS: Record<string, TranslationKey> = {
@@ -78,7 +79,7 @@ const selectClass = "h-9 rounded-md border bg-transparent px-2 text-sm focus:out
 // with PLATFORMS/PLATFORM_SHORT above so the filter list can't drift.
 const FILTERABLE_PLATFORMS = pokemonSingleFilterPlatforms;
 
-async function fetchIndex(
+export async function fetchIndex(
   search: string,
   limit: number,
   platforms: string[],
@@ -118,7 +119,8 @@ async function fetchIndex(
   let cq = supabase.from("pokemon_card_definitions").select(`card_id${gateSelect}`, { count: "exact", head: true });
   if (s) for (const f of orFilters) cq = cq.or(f);
   cq = applyGate(cq);
-  const { count: total } = await cq;
+  const { count: total, error: countError } = await cq;
+  if (countError) throw countError;
   let q = supabase.from("pokemon_card_definitions").select(`${COLS}${gateSelect}`).order("regional_name").limit(limit);
   if (s) for (const f of orFilters) q = q.or(f);
   q = applyGate(q);
@@ -253,7 +255,7 @@ function CardsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         {/* Reserve the count's row even while loading so the search group stays
             put - previously the count was `{!isLoading && ...}`, so with
             justify-between the search snapped from left to right when the count
@@ -262,12 +264,15 @@ function CardsTab() {
           {!isLoading &&
             t("cardIndex.countOf").replace("{shown}", String(cards.length)).replace("{total}", String(total))}
         </span>
-        <div className="flex items-center gap-2">
-          <div className="relative w-72">
-            <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input className="pl-8" placeholder={t("cardIndex.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
-          <Button onClick={() => setCreating(true)}>
+        <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:items-end">
+          <label className="space-y-1">
+            <span className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardIndex.searchLabel")}</span>
+            <span className="relative block w-full sm:w-72">
+              <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input className="pl-8" placeholder={t("cardIndex.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
+            </span>
+          </label>
+          <Button className="w-full sm:w-auto" onClick={() => setCreating(true)}>
             <Plus className="size-4" /> {t("cardIndex.newCard")}
           </Button>
         </div>
@@ -382,6 +387,25 @@ function CardsTab() {
 
 const BLANK = { regional_name: "", english_name: "", set_code: "", card_number: "", language: "jp", misc_info: "", image_url: "" };
 
+export function pokemonEditRPCArgs(
+  cardID: number,
+  expectedVersion: number,
+  form: typeof BLANK,
+  imageURL: string,
+) {
+  return {
+    p_card_id: cardID,
+    p_expected_version: expectedVersion,
+    p_regional_name: form.regional_name,
+    p_english_name: form.english_name,
+    p_set_code: form.set_code,
+    p_card_number: form.card_number,
+    p_language: form.language,
+    p_misc_info: form.misc_info,
+    p_image_url: imageURL,
+  };
+}
+
 // Create OR edit a singles card_def + manage its platform links. All writes go
 // through the SECURITY DEFINER RPCs (000116).
 function PokemonCardModal({
@@ -466,7 +490,7 @@ function PokemonCardModal({
       const supabase = createClient();
       const { data } = await supabase
         .from("pokemon_card_definitions")
-        .select("card_id, card_uid, regional_name, english_name, set_code, card_number, language, misc_info, image_url")
+        .select("card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, image_url")
         .or(`regional_name.ilike.%${q}%,english_name.ilike.%${q}%`)
         .neq("card_uid", card.card_uid)
         .limit(8);
@@ -481,8 +505,9 @@ function PokemonCardModal({
     setBusy(true);
     setError(null);
     const supabase = createClient();
-    let rpcError;
+    let rpcError: { message: string } | null = null;
     let cardIdForUpload: number | null = null;
+    let expectedEditVersion = card?.english_name_version ?? 0;
     if (isCreate) {
       // Every staged link, plus a not-yet-added one still in the input row.
       const staged = [...newLinks, ...(linkId.trim() ? [{ platform: linkPlatform, id: linkId.trim() }] : [])];
@@ -505,11 +530,16 @@ function PokemonCardModal({
         }
       }
     } else if (card) {
-      ({ error: rpcError } = await supabase.rpc("card_index_edit_pokemon_card", {
-        p_card_id: card.card_id, p_regional_name: form.regional_name, p_english_name: form.english_name,
-        p_set_code: form.set_code, p_card_number: form.card_number, p_language: form.language, p_misc_info: form.misc_info,
-        p_image_url: form.image_url.trim(),
-      }));
+      const editResult = await supabase.rpc("card_index_edit_pokemon_card", {
+        ...pokemonEditRPCArgs(card.card_id, expectedEditVersion, form, form.image_url.trim()),
+      });
+      rpcError = editResult.error;
+      const report = editResult.data as { status?: string; version?: number } | null;
+      if (!rpcError && report?.status === "version_conflict") {
+        rpcError = { message: t("cardIndex.versionConflict") };
+      } else if (!rpcError && typeof report?.version === "number") {
+        expectedEditVersion = report.version;
+      }
       cardIdForUpload = card.card_id;
     }
     if (rpcError) { setBusy(false); setError(rpcError.message); return; }
@@ -519,12 +549,25 @@ function PokemonCardModal({
     if (uploadFile && cardIdForUpload != null) {
       const up = await uploadCardImage({ game: "pokemon", id: cardIdForUpload, file: uploadFile });
       if ("error" in up) { setBusy(false); setError(`Upload: ${up.error}`); return; }
-      const { error: setImgErr } = await supabase.rpc("card_index_edit_pokemon_card", {
-        p_card_id: cardIdForUpload, p_regional_name: form.regional_name, p_english_name: form.english_name,
-        p_set_code: form.set_code, p_card_number: form.card_number, p_language: form.language,
-        p_misc_info: form.misc_info, p_image_url: up.url,
+      if (isCreate) {
+        const versionResult = await supabase
+          .from("pokemon_card_definitions")
+          .select("english_name_version")
+          .eq("card_id", cardIdForUpload)
+          .single();
+        if (versionResult.error) { setBusy(false); setError(versionResult.error.message); return; }
+        expectedEditVersion = Number(versionResult.data?.english_name_version ?? 0);
+      }
+      const imageResult = await supabase.rpc("card_index_edit_pokemon_card", {
+        ...pokemonEditRPCArgs(cardIdForUpload, expectedEditVersion, form, up.url),
       });
-      if (setImgErr) { setBusy(false); setError(`Set image_url: ${setImgErr.message}`); return; }
+      if (imageResult.error) { setBusy(false); setError(`Set image_url: ${imageResult.error.message}`); return; }
+      const imageReport = imageResult.data as { status?: string } | null;
+      if (imageReport?.status === "version_conflict") {
+        setBusy(false);
+        setError(t("cardIndex.versionConflict"));
+        return;
+      }
     }
 
     setBusy(false);
@@ -632,12 +675,12 @@ function PokemonCardModal({
           <DialogTitle>{isCreate ? t("cardIndex.createTitlePokemon") : t("cardIndex.editTitlePokemon")}</DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2 space-y-1">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-1 sm:col-span-2">
             <Label>{t("cardIndex.fName")}</Label>
             <Input value={form.regional_name} onChange={(e) => set("regional_name", e.target.value)} />
           </div>
-          <div className="col-span-2 space-y-1">
+          <div className="space-y-1 sm:col-span-2">
             <Label>{t("cardIndex.fEnglish")}</Label>
             <Input value={form.english_name} onChange={(e) => set("english_name", e.target.value)} />
           </div>
@@ -661,7 +704,7 @@ function PokemonCardModal({
               held in memory until Save; on save the RPC returns a card_id
               and we upload to {game}/{card_uid}/user_{ts}.{ext} in Supabase
               Storage, then set image_url to the resulting public URL. */}
-          <div className="col-span-2 space-y-1">
+          <div className="space-y-1 sm:col-span-2">
             <Label>{t("cardIndex.fImageUrl")}</Label>
             <div className="flex items-center gap-2">
               <Input

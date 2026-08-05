@@ -296,18 +296,22 @@ export default function CardBrowser() {
   return (
     <div className="space-y-4">
       {activeGame === "pokemon" && surfaceTabs}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 [&_input]:h-11 sm:[&_input]:h-8">
-        <Input
-          type="text"
-          placeholder={t("cardBrowser.namePlaceholder")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="col-span-2"
-        />
+      <div data-testid="browser-search-grid" className="grid grid-cols-1 gap-3 sm:grid-cols-4 sm:gap-2 [&_input]:h-11 sm:[&_input]:h-8">
+        <label className="space-y-1 sm:col-span-2">
+          <span className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardBrowser.nameLabel")}</span>
+          <Input
+            type="text"
+            placeholder={t("cardBrowser.namePlaceholder")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
         {/* Split card number: numeric numerator + a sticky suffix, joined by a
             static "/" you never type. Editing one part is one tap, not a caret
             hunt inside "123/078", and the numerator gets a numeric keypad. */}
-        <div className="flex items-center gap-1">
+        <fieldset className="space-y-1">
+          <legend className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardBrowser.cardNumberLabel")}</legend>
+          <div className="flex items-center gap-1">
           <Input
             type="text"
             inputMode="numeric"
@@ -326,13 +330,17 @@ export default function CardBrowser() {
             onChange={(e) => setCardNumberPart("denom", e.target.value)}
             className="min-w-0 flex-1"
           />
-        </div>
-        <Input
-          type="text"
-          placeholder={t("cardBrowser.setCodePlaceholder")}
-          value={searchSetCode}
-          onChange={(e) => setSearchSetCode(e.target.value)}
-        />
+          </div>
+        </fieldset>
+        <label className="space-y-1">
+          <span className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardBrowser.setCodeLabel")}</span>
+          <Input
+            type="text"
+            placeholder={t("cardBrowser.setCodePlaceholder")}
+            value={searchSetCode}
+            onChange={(e) => setSearchSetCode(e.target.value)}
+          />
+        </label>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <DropdownMenu>

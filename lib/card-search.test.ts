@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { smartSearchFilters, tokenizeSearchTerm, uidOrParts } from "./card-search";
+import { externalIdMatches, smartSearchFilters, tokenizeSearchTerm, uidOrParts } from "./card-search";
 
 describe("tokenizeSearchTerm", () => {
   it("splits on whitespace and drops empties", () => {
@@ -111,5 +111,23 @@ describe("uidOrParts", () => {
   it("ignores terms that are neither uuid nor prefix", () => {
     expect(uidOrParts("blastoise", "card_uid")).toEqual([]);
     expect(uidOrParts("0b7e9d6", "card_uid")).toEqual([]);
+  });
+});
+
+describe("externalIdMatches", () => {
+  it("rejects identifier-table failures instead of turning them into no results", async () => {
+    const client = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            limit: async () => ({ data: null, error: { message: "permission denied" } }),
+          }),
+        }),
+      }),
+    };
+
+    await expect(
+      externalIdMatches(client, "pokemon_external_identifiers", "card_id", "545661"),
+    ).rejects.toThrow("External identifier lookup failed for pokemon_external_identifiers: permission denied");
   });
 });

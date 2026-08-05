@@ -55,7 +55,9 @@ export async function externalIdMatches(
   if (!term) return [];
   const client = supabase as ExtIdClient;
   const { data, error } = await client.from(extTable).select(idCol).eq("external_reference_id", term).limit(100);
-  if (error) return [];
+  if (error) {
+    throw new Error(`External identifier lookup failed for ${extTable}: ${error.message}`);
+  }
   const ids = new Set<number>();
   for (const r of (data ?? []) as Record<string, number>[]) ids.add(r[idCol]);
   return [...ids];
