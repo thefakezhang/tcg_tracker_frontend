@@ -3,6 +3,7 @@
 import useSWR, { type Key } from "swr";
 import { useTranslation } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
+import { EXTERNAL_IDENTIFIER_LOOKUP_ERROR_CODE } from "@/lib/card-search";
 
 // Thin SWR wrapper for Supabase reads. Caching by `key` makes navigating back to
 // a view instant and dedupes in-flight requests; `keepPreviousData` avoids the
@@ -24,7 +25,7 @@ export function useSupabaseQuery<T>(key: Key, fetcher: () => Promise<T>) {
   };
 }
 
-export type QueryErrorKind = "session-expired" | "forbidden" | "generic";
+export type QueryErrorKind = "session-expired" | "forbidden" | "external-identifier" | "generic";
 
 export function classifyQueryError(error: unknown): QueryErrorKind {
   if (!error || typeof error !== "object") return "generic";
@@ -33,6 +34,12 @@ export function classifyQueryError(error: unknown): QueryErrorKind {
     .filter((value): value is string => typeof value === "string")
     .join(" ");
   const statuses = [candidate.status, candidate.code].map(String);
+  if (
+    candidate.code === EXTERNAL_IDENTIFIER_LOOKUP_ERROR_CODE
+    || candidate.name === "ExternalIdentifierLookupError"
+  ) {
+    return "external-identifier";
+  }
   if (
     statuses.includes("401")
     || /\bPGRST301\b/i.test(detail)
@@ -55,13 +62,18 @@ export function QueryError({ error, onRetry }: { error?: unknown; onRetry: () =>
   const kind = classifyQueryError(error);
   const title = kind === "session-expired"
     ? t("common.sessionExpired")
-    : kind === "forbidden" ? t("common.accessDenied") : t("common.loadError");
+    : kind === "forbidden"
+      ? t("common.accessDenied")
+      : kind === "external-identifier"
+        ? t("common.externalIdentifierLookupError")
+        : t("common.loadError");
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
+    <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
       <div className="min-w-0 text-destructive">
         <div>{title}</div>
         {kind === "session-expired" && <div className="text-xs text-muted-foreground">{t("common.sessionExpiredHelp")}</div>}
         {kind === "forbidden" && <div className="text-xs text-muted-foreground">{t("common.accessDeniedHelp")}</div>}
+        {kind === "external-identifier" && <div className="text-xs text-muted-foreground">{t("common.externalIdentifierLookupHelp")}</div>}
       </div>
       {kind === "session-expired" ? (
         <a
@@ -70,7 +82,7 @@ export function QueryError({ error, onRetry }: { error?: unknown; onRetry: () =>
         >
           {t("common.signInAgain")}
         </a>
-      ) : kind === "generic" ? (
+      ) : kind === "generic" || kind === "external-identifier" ? (
         <Button variant="outline" size="sm" className="min-h-11 sm:min-h-11" onClick={onRetry}>{t("common.retry")}</Button>
       ) : null}
     </div>

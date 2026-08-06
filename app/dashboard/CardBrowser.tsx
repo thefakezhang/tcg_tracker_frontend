@@ -58,6 +58,8 @@ import {
 } from "./owned-inventory";
 import { OwnedCountLine, ObservedLine } from "./OwnedCountLine";
 import { useCardObservations } from "./card-observations";
+import { QueryError } from "./use-query";
+import { activateOnEnterOrSpace } from "@/lib/keyboard-activation";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -275,6 +277,15 @@ export default function CardBrowser() {
   );
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+
+  const cardDetailLabel = (row: CardRowData) => {
+    const identity = [
+      getCardDisplayName(row.card, language),
+      row.card.set_code !== "UNKNOWN" ? row.card.set_code : null,
+      row.card.card_number !== "UNKNOWN" ? row.card.card_number : null,
+    ].filter(Boolean).join(" ");
+    return t("cardBrowser.openDetails", { card: identity });
+  };
 
   const columnVisibility = {
     psa_grade: psaMode === "psa",
@@ -582,7 +593,7 @@ export default function CardBrowser() {
       </div>
 
       {error && (
-        <p className="text-destructive text-sm">{t("cardBrowser.error", { message: error })}</p>
+        <QueryError error={error} onRetry={refetch} />
       )}
 
       {/* Multi-select refresh (redesign R6). The action hides itself when none of
@@ -599,7 +610,7 @@ export default function CardBrowser() {
         </div>
       )}
 
-      <DataTable
+      {(!error || visibleData.length > 0) && <DataTable
         columns={activeGame === "mtg"
           ? createMtgColumns(t, language, availableOnly)
           : [selectColumn, ...createColumns(t, language, availableOnly)]}
@@ -609,6 +620,7 @@ export default function CardBrowser() {
         onSortingChange={handleSortingChange}
         columnVisibility={columnVisibility}
         onRowClick={setSelectedCard}
+        getRowAriaLabel={cardDetailLabel}
         viewMode={viewMode}
         getRowId={(row) => row.key}
         rowSelection={selectionEnabled ? rowSelection : undefined}
@@ -646,8 +658,15 @@ export default function CardBrowser() {
             return (
               <Card
                 size="sm"
-                className="h-full cursor-pointer gap-0 !py-0 transition-colors hover:bg-accent/50"
+                className="h-full cursor-pointer gap-0 !py-0 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+                role="button"
+                tabIndex={0}
+                aria-label={cardDetailLabel(row)}
                 onClick={() => setSelectedCard(row)}
+                onKeyDown={(event) => activateOnEnterOrSpace(
+                  event,
+                  () => setSelectedCard(row),
+                )}
               >
                 {row.card.image_url ? (
                   <img
@@ -712,7 +731,7 @@ export default function CardBrowser() {
               </Card>
             );
           }}
-      />
+      />}
 
       <CardDetailModal
         card={selectedCard}

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { externalIdMatches, smartSearchFilters, tokenizeSearchTerm, uidOrParts } from "./card-search";
+import {
+  EXTERNAL_IDENTIFIER_LOOKUP_ERROR_CODE,
+  externalIdMatches,
+  smartSearchFilters,
+  tokenizeSearchTerm,
+  uidOrParts,
+} from "./card-search";
 
 describe("tokenizeSearchTerm", () => {
   it("splits on whitespace and drops empties", () => {
@@ -126,8 +132,12 @@ describe("externalIdMatches", () => {
       }),
     };
 
-    await expect(
-      externalIdMatches(client, "pokemon_external_identifiers", "card_id", "545661"),
-    ).rejects.toThrow("External identifier lookup failed for pokemon_external_identifiers: permission denied");
+    const result = externalIdMatches(client, "pokemon_external_identifiers", "card_id", "545661");
+    await expect(result).rejects.toMatchObject({
+      name: "ExternalIdentifierLookupError",
+      code: EXTERNAL_IDENTIFIER_LOOKUP_ERROR_CODE,
+      message: "External identifier lookup is temporarily unavailable.",
+    });
+    await expect(result).rejects.not.toThrow(/permission denied|pokemon_external_identifiers/);
   });
 });

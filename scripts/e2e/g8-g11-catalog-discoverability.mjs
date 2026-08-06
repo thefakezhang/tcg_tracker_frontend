@@ -220,6 +220,25 @@ async function visibleCount(locator) {
   return visible;
 }
 
+async function exerciseBrowserResultActivation(page, result, label) {
+  const openAndClose = async (activation) => {
+    if (activation === "pointer") {
+      await result.click();
+    } else {
+      await assertFocus(result, `${label} ${activation} target`);
+      await page.keyboard.press(activation);
+    }
+    const dialog = page.getByRole("dialog").last();
+    await dialog.waitFor({ state: "visible", timeout: 30_000 });
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden", timeout: 30_000 });
+  };
+
+  await openAndClose("pointer");
+  await openAndClose("Enter");
+  await openAndClose("Space");
+}
+
 async function browserSearch(page, term, mobile = false) {
   const input = page.getByPlaceholder("Name...");
   await input.fill(term);
@@ -330,8 +349,36 @@ async function runDesktop(browser, token) {
   await assertSession(page);
 
   for (const term of searchTerms) await browserSearch(page, term);
-  await page.getByPlaceholder("Name...").fill("Iono 124");
-  await page.locator("tbody tr").filter({ hasText: expectedEnglishName }).first().waitFor({ state: "visible" });
+  const desktopBrowserResult = await browserSearch(page, "Iono 124");
+  await exerciseBrowserResultActivation(page, desktopBrowserResult, "desktop Card Browser result");
+
+  let failBrowserExternalLookups = true;
+  let failedBrowserExternalRequests = 0;
+  const browserExternalRoute = async (route) => {
+    if (!failBrowserExternalLookups) return route.continue();
+    failedBrowserExternalRequests++;
+    return route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ code: "PGRST500", message: "catalog link lookup unavailable" }),
+    });
+  };
+  await page.route("**/rest/v1/pokemon_external_identifiers**", browserExternalRoute);
+  await page.getByPlaceholder("Name...").fill(expectedTCGPlayerID);
+  const browserLoadAlert = page.getByRole("alert").filter({ hasText: "External ID lookup is temporarily unavailable." });
+  await browserLoadAlert.waitFor({ state: "visible", timeout: 30_000 });
+  assert(failedBrowserExternalRequests > 0, "Card Browser external-id failure route did not intercept a request");
+  assert(await visibleCount(desktopBrowserResult) === 1, "Card Browser discarded the last successful result after external-id failure");
+  assert(await page.getByText("catalog link lookup unavailable", { exact: false }).count() === 0, "Card Browser exposed the raw lookup failure");
+  const browserRetry = browserLoadAlert.getByRole("button", { name: "Retry", exact: true });
+  await browserRetry.waitFor({ state: "visible" });
+  await page.screenshot({ path: `${artifactRoot}/desktop-browser-external-lookup-error.png`, fullPage: false });
+  failBrowserExternalLookups = false;
+  await browserRetry.click();
+  await browserLoadAlert.waitFor({ state: "hidden", timeout: 30_000 });
+  await browserSearch(page, expectedTCGPlayerID);
+  await page.unroute("**/rest/v1/pokemon_external_identifiers**", browserExternalRoute);
+
   await assertNoPageOverflow(page, "desktop Card Browser");
   await page.screenshot({ path: `${artifactRoot}/desktop-card-browser.png`, fullPage: false });
 
@@ -339,6 +386,7 @@ async function runDesktop(browser, token) {
   for (const term of searchTerms) await indexSearch(page, term);
   const indexInput = page.getByPlaceholder("Search name / set / uid / platform id…");
 
+  const retainedIndexRow = await indexSearch(page, "Iono 124");
   let failExternalLookups = true;
   let failedExternalRequests = 0;
   const externalRoute = async (route) => {
@@ -351,16 +399,19 @@ async function runDesktop(browser, token) {
     });
   };
   await page.route("**/rest/v1/pokemon_external_identifiers**", externalRoute);
-  await indexInput.fill("external lookup failure evidence");
-  const loadError = page.getByText("Couldn't load data.", { exact: true });
+  await indexInput.fill(expectedTCGPlayerID);
+  const loadError = page.getByRole("alert").filter({ hasText: "External ID lookup is temporarily unavailable." });
   await loadError.waitFor({ state: "visible", timeout: 30_000 });
   assert(failedExternalRequests > 0, "external-id failure route did not intercept a request");
-  const retry = page.getByRole("button", { name: "Retry", exact: true });
+  assert(await visibleCount(retainedIndexRow) === 1, "Card Index discarded the last successful result after external-id failure");
+  assert(await page.getByText("catalog link lookup unavailable", { exact: false }).count() === 0, "Card Index exposed the raw lookup failure");
+  const retry = loadError.getByRole("button", { name: "Retry", exact: true });
   await retry.waitFor({ state: "visible" });
   await page.screenshot({ path: `${artifactRoot}/desktop-external-lookup-error.png`, fullPage: false });
   failExternalLookups = false;
   await retry.click();
-  await page.getByText("No products found.", { exact: true }).waitFor({ state: "visible", timeout: 30_000 });
+  await loadError.waitFor({ state: "hidden", timeout: 30_000 });
+  await indexSearch(page, expectedTCGPlayerID);
   await page.unroute("**/rest/v1/pokemon_external_identifiers**", externalRoute);
 
   const staleRow = await indexSearch(page, "Iono 124");
@@ -458,6 +509,7 @@ async function runPhone(browser) {
     .filter({ hasText: expectedEnglishName })
     .first();
   await phoneBrowserCard.waitFor({ state: "visible" });
+  await exerciseBrowserResultActivation(page, phoneBrowserCard, "phone Card Browser result");
   const columns = await page.getByTestId("browser-search-grid").evaluate(
     (element) => getComputedStyle(element).gridTemplateColumns.split(" ").filter(Boolean).length,
   );

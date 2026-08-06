@@ -208,12 +208,11 @@ function MtgCardsTab() {
       </div>
       <p className="text-xs text-muted-foreground">{t("cardIndex.hintMtg")}</p>
 
-      {error ? (
-        <QueryError onRetry={retry} />
-      ) : isLoading ? (
+      {error && <QueryError error={error} onRetry={retry} />}
+      {isLoading && !data ? (
         <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
       ) : cards.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t("cardIndex.empty")}</p>
+        !error && <p className="text-sm text-muted-foreground">{t("cardIndex.empty")}</p>
       ) : (
         <div className="overflow-x-auto rounded-md border">
           <table className="w-full table-fixed text-sm">
@@ -296,7 +295,7 @@ function MtgCardsTab() {
         </div>
       )}
 
-      {!isLoading && cards.length < total && (
+      {!isLoading && !error && cards.length < total && (
         <div className="flex justify-center">
           <Button variant="outline" size="sm" onClick={() => setLimit((n) => n + CATALOG_PAGE)}>
             {t("cardIndex.loadMore").replace("{n}", String(Math.min(CATALOG_PAGE, total - cards.length)))}

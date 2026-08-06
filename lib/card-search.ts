@@ -41,6 +41,17 @@ interface ExtIdClient {
   };
 }
 
+export const EXTERNAL_IDENTIFIER_LOOKUP_ERROR_CODE = "external_identifier_lookup_failed";
+
+export class ExternalIdentifierLookupError extends Error {
+  readonly code = EXTERNAL_IDENTIFIER_LOOKUP_ERROR_CODE;
+
+  constructor() {
+    super("External identifier lookup is temporarily unavailable.");
+    this.name = "ExternalIdentifierLookupError";
+  }
+}
+
 // externalIdMatches resolves an EXACT external_reference_id (any platform) to
 // the catalog ids carrying it. Exact by design: platform ids are opaque tokens
 // the curator pastes whole, and a substring match over the identifier tables
@@ -56,7 +67,7 @@ export async function externalIdMatches(
   const client = supabase as ExtIdClient;
   const { data, error } = await client.from(extTable).select(idCol).eq("external_reference_id", term).limit(100);
   if (error) {
-    throw new Error(`External identifier lookup failed for ${extTable}: ${error.message}`);
+    throw new ExternalIdentifierLookupError();
   }
   const ids = new Set<number>();
   for (const r of (data ?? []) as Record<string, number>[]) ids.add(r[idCol]);
