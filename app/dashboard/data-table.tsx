@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/lib/i18n";
+import { activateOnEnterOrSpace } from "@/lib/keyboard-activation";
 
 interface ServerPagination {
   page: number;
@@ -40,6 +41,7 @@ interface DataTableProps<TData, TValue> {
   columnVisibility?: VisibilityState;
   loading?: boolean;
   onRowClick?: (row: TData) => void;
+  getRowAriaLabel?: (row: TData) => string;
   viewMode?: "list" | "grid";
   renderGridItem?: (row: TData) => React.ReactNode;
   serverPagination?: ServerPagination;
@@ -58,6 +60,7 @@ export function DataTable<TData, TValue>({
   onSortingChange,
   columnVisibility,
   onRowClick,
+  getRowAriaLabel,
   viewMode = "list",
   renderGridItem,
   serverPagination,
@@ -165,8 +168,17 @@ export function DataTable<TData, TValue>({
                 table.getRowModel().rows.map((row) => (
                   <TableRow
                     key={row.id}
-                    className={onRowClick ? "cursor-pointer" : undefined}
+                    className={onRowClick
+                      ? "cursor-pointer outline-none focus-visible:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                      : undefined}
+                    role={onRowClick ? "button" : undefined}
+                    tabIndex={onRowClick ? 0 : undefined}
+                    aria-label={onRowClick ? getRowAriaLabel?.(row.original) : undefined}
                     onClick={() => onRowClick?.(row.original)}
+                    onKeyDown={(event) => activateOnEnterOrSpace(
+                      event,
+                      () => onRowClick?.(row.original),
+                    )}
                   >
                     {row.getVisibleCells().map((cell) => {
                       const meta = cell.column.columnDef.meta as

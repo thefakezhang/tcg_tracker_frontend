@@ -20,3 +20,10 @@ The list surface keeps its decision column pinned to the right and hides seconda
 Browser toolbars and card-detail footers wrap instead of increasing the page width.
 Primary phone controls use a 44px minimum target, including store-sighting fields, Watch, Dismiss, dismissal reason, pagination, modal close, refresh, and lot actions.
 The store-sighting form exposes an explicit Raw or PSA 1 through PSA 10 selector, preselected from the browser row while remaining editable before save.
+
+## G8-G11 catalog discoverability
+
+The interaction and recovery contract is documented in [`docs/catalog_discoverability.md`](../catalog_discoverability.md).
+Local component evidence covers pointer, Enter, and Space result activation plus retained-result recovery from an external-identifier lookup failure.
+The authenticated browser acceptance flow now covers the same behavior at 1440-pixel desktop and 390-pixel phone widths.
+That updated browser flow has not yet run against a deployment containing the remediation, so screenshots and deployed-browser passage remain pending rollout evidence.

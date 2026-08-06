@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RowSelectionState } from "@tanstack/react-table";
-import { ChevronDown, CircleAlert, Hash, Layers, RefreshCw } from "lucide-react";
+import { ChevronDown, CircleAlert, Hash, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -58,6 +58,8 @@ import {
 } from "./owned-inventory";
 import { OwnedCountLine, ObservedLine } from "./OwnedCountLine";
 import { useCardObservations } from "./card-observations";
+import { QueryError } from "./use-query";
+import { activateOnEnterOrSpace } from "@/lib/keyboard-activation";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -276,6 +278,15 @@ export default function CardBrowser() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
+  const cardDetailLabel = (row: CardRowData) => {
+    const identity = [
+      getCardDisplayName(row.card, language),
+      row.card.set_code !== "UNKNOWN" ? row.card.set_code : null,
+      row.card.card_number !== "UNKNOWN" ? row.card.card_number : null,
+    ].filter(Boolean).join(" ");
+    return t("cardBrowser.openDetails", { card: identity });
+  };
+
   const columnVisibility = {
     psa_grade: psaMode === "psa",
   };
@@ -296,18 +307,22 @@ export default function CardBrowser() {
   return (
     <div className="space-y-4">
       {activeGame === "pokemon" && surfaceTabs}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 [&_input]:h-11 sm:[&_input]:h-8">
-        <Input
-          type="text"
-          placeholder={t("cardBrowser.namePlaceholder")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="col-span-2"
-        />
+      <div data-testid="browser-search-grid" className="grid grid-cols-1 gap-3 sm:grid-cols-4 sm:gap-2 [&_input]:h-11 sm:[&_input]:h-8">
+        <label className="space-y-1 sm:col-span-2">
+          <span className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardBrowser.nameLabel")}</span>
+          <Input
+            type="text"
+            placeholder={t("cardBrowser.namePlaceholder")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
         {/* Split card number: numeric numerator + a sticky suffix, joined by a
             static "/" you never type. Editing one part is one tap, not a caret
             hunt inside "123/078", and the numerator gets a numeric keypad. */}
-        <div className="flex items-center gap-1">
+        <fieldset className="space-y-1">
+          <legend className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardBrowser.cardNumberLabel")}</legend>
+          <div className="flex items-center gap-1">
           <Input
             type="text"
             inputMode="numeric"
@@ -326,13 +341,17 @@ export default function CardBrowser() {
             onChange={(e) => setCardNumberPart("denom", e.target.value)}
             className="min-w-0 flex-1"
           />
-        </div>
-        <Input
-          type="text"
-          placeholder={t("cardBrowser.setCodePlaceholder")}
-          value={searchSetCode}
-          onChange={(e) => setSearchSetCode(e.target.value)}
-        />
+          </div>
+        </fieldset>
+        <label className="space-y-1">
+          <span className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardBrowser.setCodeLabel")}</span>
+          <Input
+            type="text"
+            placeholder={t("cardBrowser.setCodePlaceholder")}
+            value={searchSetCode}
+            onChange={(e) => setSearchSetCode(e.target.value)}
+          />
+        </label>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <DropdownMenu>
@@ -432,34 +451,43 @@ export default function CardBrowser() {
         >
           {t("inventory.excludeConsigned")}
         </Button>
-        <Input
-          type="number"
-          placeholder={t("cardBrowser.minBuyPrice")}
-          value={minBuyPrice}
-          onChange={(e) => setMinBuyPrice(e.target.value)}
-          className="h-11 min-w-0 flex-1 sm:h-8"
-        />
-        <Input
-          type="number"
-          placeholder={t("cardBrowser.minSellPrice")}
-          value={minSellPrice}
-          onChange={(e) => setMinSellPrice(e.target.value)}
-          className="h-11 min-w-0 flex-1 sm:h-8"
-        />
-        <Input
-          type="number"
-          placeholder={t("cardBrowser.roiFloor")}
-          value={roiFloor}
-          onChange={(e) => setRoiFloor(e.target.value)}
-          className="h-11 min-w-0 flex-1 sm:h-8"
-        />
-        <Input
-          type="number"
-          placeholder={t("cardBrowser.roiCeiling")}
-          value={roiCeiling}
-          onChange={(e) => setRoiCeiling(e.target.value)}
-          className="h-11 min-w-0 flex-1 sm:h-8"
-        />
+        <div
+          data-testid="browser-price-filters"
+          className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:w-auto xl:flex-1 xl:grid-cols-4"
+        >
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.minBuyPrice")}
+            aria-label={t("cardBrowser.minBuyPrice")}
+            value={minBuyPrice}
+            onChange={(e) => setMinBuyPrice(e.target.value)}
+            className="h-11 w-full min-w-0 sm:h-8"
+          />
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.minSellPrice")}
+            aria-label={t("cardBrowser.minSellPrice")}
+            value={minSellPrice}
+            onChange={(e) => setMinSellPrice(e.target.value)}
+            className="h-11 w-full min-w-0 sm:h-8"
+          />
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.roiFloor")}
+            aria-label={t("cardBrowser.roiFloor")}
+            value={roiFloor}
+            onChange={(e) => setRoiFloor(e.target.value)}
+            className="h-11 w-full min-w-0 sm:h-8"
+          />
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.roiCeiling")}
+            aria-label={t("cardBrowser.roiCeiling")}
+            value={roiCeiling}
+            onChange={(e) => setRoiCeiling(e.target.value)}
+            className="h-11 w-full min-w-0 sm:h-8"
+          />
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Tabs
@@ -480,6 +508,8 @@ export default function CardBrowser() {
                 size="icon"
                 disabled={loading}
                 className="size-11 shrink-0 sm:size-8"
+                aria-label={t("refresh.confirm")}
+                title={t("refresh.confirm")}
               />
             }
           >
@@ -563,7 +593,7 @@ export default function CardBrowser() {
       </div>
 
       {error && (
-        <p className="text-destructive text-sm">{t("cardBrowser.error", { message: error })}</p>
+        <QueryError error={error} onRetry={refetch} />
       )}
 
       {/* Multi-select refresh (redesign R6). The action hides itself when none of
@@ -580,7 +610,7 @@ export default function CardBrowser() {
         </div>
       )}
 
-      <DataTable
+      {(!error || visibleData.length > 0) && <DataTable
         columns={activeGame === "mtg"
           ? createMtgColumns(t, language, availableOnly)
           : [selectColumn, ...createColumns(t, language, availableOnly)]}
@@ -590,6 +620,7 @@ export default function CardBrowser() {
         onSortingChange={handleSortingChange}
         columnVisibility={columnVisibility}
         onRowClick={setSelectedCard}
+        getRowAriaLabel={cardDetailLabel}
         viewMode={viewMode}
         getRowId={(row) => row.key}
         rowSelection={selectionEnabled ? rowSelection : undefined}
@@ -611,6 +642,15 @@ export default function CardBrowser() {
               row.card.card_number && row.card.card_number !== "UNKNOWN"
                 ? row.card.card_number
                 : null;
+            const setCode =
+              row.card.set_code && row.card.set_code !== "UNKNOWN"
+                ? row.card.set_code
+                : null;
+            const compactIdentity = cardNumber && setCode
+              ? setCode.endsWith("-P") && !cardNumber.includes("/")
+                ? `${cardNumber}/${setCode}`
+                : `${setCode} · ${cardNumber}`
+              : cardNumber ?? setCode;
             const buyEntry = row.prices.highestBuy;
             const sellEntry = row.prices.lowestSell;
             const conservativeExit = exitValue(row.signal, exitPercentile);
@@ -618,8 +658,15 @@ export default function CardBrowser() {
             return (
               <Card
                 size="sm"
-                className="h-full cursor-pointer gap-0 !py-0 transition-colors hover:bg-accent/50"
+                className="h-full cursor-pointer gap-0 !py-0 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+                role="button"
+                tabIndex={0}
+                aria-label={cardDetailLabel(row)}
                 onClick={() => setSelectedCard(row)}
+                onKeyDown={(event) => activateOnEnterOrSpace(
+                  event,
+                  () => setSelectedCard(row),
+                )}
               >
                 {row.card.image_url ? (
                   <img
@@ -636,16 +683,12 @@ export default function CardBrowser() {
                 <CardHeader className="pt-1">
                   <CardAction>
                     <div className="flex flex-col items-end gap-1">
-                      {cardNumber && (
+                      {compactIdentity && (
                         <Badge variant="secondary" className="h-auto px-1.5 py-px">
                           <Hash className="size-3" />
-                          {cardNumber}
+                          {compactIdentity}
                         </Badge>
                       )}
-                      <Badge variant="secondary" className="h-auto px-1.5 py-px">
-                        <Layers className="size-3" />
-                        {row.card.set_code}
-                      </Badge>
                     </div>
                   </CardAction>
                   <CardTitle className="truncate text-lg">{getCardDisplayName(row.card, language)}</CardTitle>
@@ -688,7 +731,7 @@ export default function CardBrowser() {
               </Card>
             );
           }}
-      />
+      />}
 
       <CardDetailModal
         card={selectedCard}

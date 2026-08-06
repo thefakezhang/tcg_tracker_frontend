@@ -161,6 +161,7 @@ Each context follows the same pattern:
 - Filters: game, PSA mode, name search, card number, set code, single selected tier.
 - Source availability is an exact server-side presence gate backed by `*_price_summaries_by_source_v`; source choices come from `card_browser_source_options_v` and keep buylist evidence separate from for-sale evidence.
 - A selected source changes the query target but not the meaning of the global best-price columns shown in the result rows.
+- External-identifier lookup failures use a typed safe error, keep the last successful page visible, and expose an accessible Retry action without rendering database details.
 - AbortController cancels stale requests. No client-side caching needed (queries are fast paginated reads).
 - The `aggregate-prices` edge function pre-computes summaries from raw listings into `pokemon_price_summaries` / `mtg_price_summaries`. Invoke it to refresh data.
 - Three caches still exist for `CardDetailModal` use:
@@ -210,7 +211,9 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 
 - `DataTable` in `data-table.tsx` wraps TanStack React Table.
 - Column definitions created by `createColumns(t, showSecond)` in `columns.tsx`.
-- Features: sorting (with nulls-last), pagination (50 rows/page), column visibility, row click handler.
+- Features: sorting (with nulls-last), pagination (50 rows/page), column visibility, and an optional actionable-row contract.
+- Actionable rows have a meaningful label, visible keyboard focus, and equivalent pointer, Enter, and Space activation.
+Nested interactive controls stop their own events so they do not activate the row.
 - `PriceCell` component handles currency conversion via `useCurrency()`.
 - **Optional row selection**: pass `rowSelection` / `onRowSelectionChange` / `getRowId`. All three are optional, so a view passing none is unaffected. Opt in by prepending the `selectColumn` export from `columns.tsx` (its checkbox stops click propagation, so ticking a row does not fire `onRowClick`).
 

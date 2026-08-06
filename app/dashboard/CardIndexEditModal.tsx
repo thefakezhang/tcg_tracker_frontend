@@ -297,7 +297,8 @@ export default function CardIndexEditModal({
                     className="size-7"
                     disabled={busy}
                     onClick={() => removeLink(l.platform_name)}
-                    title={t("cardIndex.removeLink")}
+                    aria-label={`${t("cardIndex.removeLink")}: ${l.platform_name}`}
+                    title={`${t("cardIndex.removeLink")}: ${l.platform_name}`}
                   >
                     <Trash2 className="size-3.5" />
                   </Button>

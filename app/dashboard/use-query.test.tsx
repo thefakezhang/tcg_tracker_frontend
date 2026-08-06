@@ -52,6 +52,31 @@ describe("QueryError", () => {
       </LanguageProvider>,
     );
 
+    expect(screen.getByRole("alert")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("names external-identifier failures without exposing the raw cause", () => {
+    const retry = vi.fn();
+    render(
+      <LanguageProvider>
+        <QueryError
+          error={{
+            name: "ExternalIdentifierLookupError",
+            code: "external_identifier_lookup_failed",
+            message: "External identifier lookup is temporarily unavailable.",
+            cause: new Error("permission denied for pokemon_external_identifiers"),
+          }}
+          onRetry={retry}
+        />
+      </LanguageProvider>,
+    );
+
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("External ID lookup is temporarily unavailable.");
+    expect(alert.textContent).toContain("Any last successful results remain visible. Retry when the catalog link service is available.");
+    expect(alert.textContent).not.toContain("permission denied");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retry).toHaveBeenCalledOnce();
   });
