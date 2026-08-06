@@ -10,8 +10,14 @@ vi.mock("@/lib/supabase/select-all", () => ({ selectAll: mocks.selectAll }));
 
 import { fetchIndex, pokemonEditRPCArgs } from "./PokemonCardIndex";
 
+const queryMethods = ["select", "eq", "in", "or", "order", "limit", "maybeSingle"] as const;
+type QueryMethod = (typeof queryMethods)[number];
+type QueryBuilder = Record<QueryMethod, ReturnType<typeof vi.fn>> & {
+  then: PromiseLike<unknown>["then"];
+};
+
 function queryBuilder(result: unknown) {
-  const builder: Record<string, ReturnType<typeof vi.fn>> & PromiseLike<unknown> = {
+  const builder: QueryBuilder = {
     select: vi.fn(),
     eq: vi.fn(),
     in: vi.fn(),
@@ -21,7 +27,7 @@ function queryBuilder(result: unknown) {
     maybeSingle: vi.fn(),
     then: (resolve, reject) => Promise.resolve(result).then(resolve, reject),
   };
-  for (const method of ["select", "eq", "in", "or", "order", "limit", "maybeSingle"] as const) {
+  for (const method of queryMethods) {
     builder[method].mockReturnValue(builder);
   }
   return builder;

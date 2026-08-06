@@ -440,34 +440,43 @@ export default function CardBrowser() {
         >
           {t("inventory.excludeConsigned")}
         </Button>
-        <Input
-          type="number"
-          placeholder={t("cardBrowser.minBuyPrice")}
-          value={minBuyPrice}
-          onChange={(e) => setMinBuyPrice(e.target.value)}
-          className="h-11 min-w-0 flex-1 sm:h-8"
-        />
-        <Input
-          type="number"
-          placeholder={t("cardBrowser.minSellPrice")}
-          value={minSellPrice}
-          onChange={(e) => setMinSellPrice(e.target.value)}
-          className="h-11 min-w-0 flex-1 sm:h-8"
-        />
-        <Input
-          type="number"
-          placeholder={t("cardBrowser.roiFloor")}
-          value={roiFloor}
-          onChange={(e) => setRoiFloor(e.target.value)}
-          className="h-11 min-w-0 flex-1 sm:h-8"
-        />
-        <Input
-          type="number"
-          placeholder={t("cardBrowser.roiCeiling")}
-          value={roiCeiling}
-          onChange={(e) => setRoiCeiling(e.target.value)}
-          className="h-11 min-w-0 flex-1 sm:h-8"
-        />
+        <div
+          data-testid="browser-price-filters"
+          className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:w-auto xl:flex-1 xl:grid-cols-4"
+        >
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.minBuyPrice")}
+            aria-label={t("cardBrowser.minBuyPrice")}
+            value={minBuyPrice}
+            onChange={(e) => setMinBuyPrice(e.target.value)}
+            className="h-11 w-full min-w-0 sm:h-8"
+          />
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.minSellPrice")}
+            aria-label={t("cardBrowser.minSellPrice")}
+            value={minSellPrice}
+            onChange={(e) => setMinSellPrice(e.target.value)}
+            className="h-11 w-full min-w-0 sm:h-8"
+          />
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.roiFloor")}
+            aria-label={t("cardBrowser.roiFloor")}
+            value={roiFloor}
+            onChange={(e) => setRoiFloor(e.target.value)}
+            className="h-11 w-full min-w-0 sm:h-8"
+          />
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.roiCeiling")}
+            aria-label={t("cardBrowser.roiCeiling")}
+            value={roiCeiling}
+            onChange={(e) => setRoiCeiling(e.target.value)}
+            className="h-11 w-full min-w-0 sm:h-8"
+          />
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Tabs
@@ -488,6 +497,8 @@ export default function CardBrowser() {
                 size="icon"
                 disabled={loading}
                 className="size-11 shrink-0 sm:size-8"
+                aria-label={t("refresh.confirm")}
+                title={t("refresh.confirm")}
               />
             }
           >

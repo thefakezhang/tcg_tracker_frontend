@@ -180,6 +180,27 @@ async function assertFitsViewport(locator, label) {
   assert(result.offenders.length === 0, `${label} clips visible content: ${JSON.stringify(result)}`);
 }
 
+async function assertVisibleInViewport(locator, label) {
+  const result = await locator.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return {
+      top: Math.round(box.top),
+      right: Math.round(box.right),
+      bottom: Math.round(box.bottom),
+      left: Math.round(box.left),
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  assert(
+    result.top >= 0
+      && result.left >= 0
+      && result.right <= result.viewportWidth
+      && result.bottom <= result.viewportHeight,
+    `${label} is outside the viewport: ${JSON.stringify(result)}`,
+  );
+}
+
 async function assertTouchTarget(locator, label) {
   const box = await locator.boundingBox();
   assert(box && box.height >= 44, `${label} is shorter than 44px: ${JSON.stringify(box)}`);
@@ -352,6 +373,16 @@ async function runDesktop(browser, token) {
   const modalInputs = dialog.locator('input:not([type="file"])');
   assert(await modalInputs.nth(0).inputValue() === expectedRegionalName, "edit modal changed the regional name");
   assert(await modalInputs.nth(1).inputValue() === expectedEnglishName, "edit modal did not load the effective English name");
+  const platformDeleteButtons = dialog.locator('button[aria-label^="Remove link:"]');
+  const platformDeleteCount = await platformDeleteButtons.count();
+  assert(platformDeleteCount > 0, "edit modal did not expose any named platform-link delete actions");
+  for (let index = 0; index < platformDeleteCount; index++) {
+    const button = platformDeleteButtons.nth(index);
+    const label = await button.getAttribute("aria-label");
+    const title = await button.getAttribute("title");
+    assert(label?.trim(), `platform-link delete action ${index} has no accessible name`);
+    assert(title?.trim(), `platform-link delete action ${index} has no title`);
+  }
 
   let concurrent;
   try {
@@ -364,10 +395,15 @@ async function runDesktop(browser, token) {
     assert(concurrent.status === "changed", `concurrent update did not change: ${JSON.stringify(concurrent)}`);
     await modalInputs.nth(1).fill("Iono stale browser attempt");
     await dialog.getByRole("button", { name: "Save", exact: true }).click();
-    await dialog.getByText(
-      "This card changed while the editor was open. Reload it before saving again.",
-      { exact: true },
-    ).waitFor({ state: "visible", timeout: 30_000 });
+    const conflictAlert = dialog.getByRole("alert").filter({
+      hasText: "This card changed while the editor was open. Reload it before saving again.",
+    });
+    await conflictAlert.waitFor({ state: "visible", timeout: 30_000 });
+    await assertVisibleInViewport(conflictAlert, "stale-CAS mutation alert");
+    assert(
+      await conflictAlert.evaluate((element) => document.activeElement === element),
+      "stale-CAS mutation alert did not receive programmatic focus",
+    );
     await page.screenshot({ path: `${artifactRoot}/desktop-version-conflict.png`, fullPage: false });
 
     const afterConflict = await getIono(token);
@@ -408,6 +444,9 @@ async function runPhone(browser) {
   await page.getByText("Name or identifier", { exact: true }).waitFor({ state: "visible" });
   await page.getByText("Card number", { exact: true }).waitFor({ state: "visible" });
   await page.getByText("Set code", { exact: true }).waitFor({ state: "visible" });
+  const refreshButton = page.getByRole("button", { name: "Refresh", exact: true });
+  await refreshButton.waitFor({ state: "visible" });
+  assert(await refreshButton.getAttribute("title") === "Refresh", "Card Browser refresh action has no matching title");
   await assertTouchTarget(browserName, "phone Card Browser name search");
   await assertTouchTarget(page.getByLabel("No.", { exact: true }), "phone card-number numerator");
   await assertTouchTarget(page.getByLabel("Total", { exact: true }), "phone card-number denominator");
@@ -423,6 +462,25 @@ async function runPhone(browser) {
     (element) => getComputedStyle(element).gridTemplateColumns.split(" ").filter(Boolean).length,
   );
   assert(columns === 1, `phone Card Browser search grid has ${columns} columns`);
+  const priceFilters = page.getByTestId("browser-price-filters");
+  const priceColumns = await priceFilters.evaluate(
+    (element) => getComputedStyle(element).gridTemplateColumns.split(" ").filter(Boolean).length,
+  );
+  assert(priceColumns === 1, `phone price filter grid has ${priceColumns} columns`);
+  const priceFilterBox = await priceFilters.boundingBox();
+  assert(priceFilterBox, "phone price filter grid has no bounding box");
+  const priceInputs = priceFilters.locator("input");
+  assert(await priceInputs.count() === 4, "phone price filter grid does not contain four controls");
+  for (let index = 0; index < 4; index++) {
+    const input = priceInputs.nth(index);
+    const box = await input.boundingBox();
+    assert(
+      box && Math.abs(box.width - priceFilterBox.width) <= 1,
+      `phone price control ${index} is not full-width: ${JSON.stringify({ box, priceFilterBox })}`,
+    );
+    await assertTouchTarget(input, `phone price control ${index}`);
+  }
+  await assertFitsViewport(priceFilters, "phone price filters");
   await assertNoPageOverflow(page, "phone Card Browser");
   await assertFitsViewport(phoneBrowserCard, "phone Card Browser result");
   await page.screenshot({ path: `${artifactRoot}/phone-card-browser.png`, fullPage: true });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Search, ImageOff, Pencil, Plus, Trash2, GitMerge } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
@@ -43,6 +43,30 @@ interface CardLink {
   external_reference_id: string;
   listing_url?: string | null;
   listing_only?: boolean;
+}
+
+export function CardIndexMutationError({ message }: { message: string | null }) {
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (message) errorRef.current?.focus({ preventScroll: true });
+  }, [message]);
+
+  if (!message) return null;
+
+  return (
+    <div
+      ref={errorRef}
+      role="alert"
+      aria-live="assertive"
+      aria-atomic="true"
+      tabIndex={-1}
+      data-testid="card-index-mutation-error"
+      className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+    >
+      {message}
+    </div>
+  );
 }
 export interface IndexCard {
   card_id: number;
@@ -747,7 +771,15 @@ function PokemonCardModal({
                 <div key={l.platform_name} className="flex items-center gap-2 text-sm">
                   <span className="w-24 shrink-0 text-xs text-muted-foreground">{PLATFORM_SHORT[l.platform_name] ?? l.platform_name}</span>
                   <span className="flex-1 truncate font-mono text-xs">{l.external_reference_id}</span>
-                  <Button variant="ghost" size="icon" className="size-7" disabled={busy} onClick={() => removeLink(l.platform_name)}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    disabled={busy}
+                    onClick={() => removeLink(l.platform_name)}
+                    aria-label={`${t("cardIndex.removeLink")}: ${PLATFORM_SHORT[l.platform_name] ?? l.platform_name}`}
+                    title={`${t("cardIndex.removeLink")}: ${PLATFORM_SHORT[l.platform_name] ?? l.platform_name}`}
+                  >
                     <Trash2 className="size-3.5" />
                   </Button>
                 </div>
@@ -762,8 +794,15 @@ function PokemonCardModal({
                 <div key={l.platform + l.id + i} className="flex items-center gap-2 text-sm">
                   <span className="w-24 shrink-0 text-xs text-muted-foreground">{PLATFORM_SHORT[l.platform] ?? l.platform}</span>
                   <span className="flex-1 truncate font-mono text-xs">{l.id}</span>
-                  <Button variant="ghost" size="icon" className="size-7" disabled={busy}
-                    onClick={() => setNewLinks((p) => p.filter((_, j) => j !== i))}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    disabled={busy}
+                    onClick={() => setNewLinks((p) => p.filter((_, j) => j !== i))}
+                    aria-label={`${t("cardIndex.removeLink")}: ${PLATFORM_SHORT[l.platform] ?? l.platform}`}
+                    title={`${t("cardIndex.removeLink")}: ${PLATFORM_SHORT[l.platform] ?? l.platform}`}
+                  >
                     <Trash2 className="size-3.5" />
                   </Button>
                 </div>
@@ -924,15 +963,16 @@ function PokemonCardModal({
             </div>
           </div>
         )}
-
-        {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>{t("common.cancel")}</Button>
-          <Button onClick={save} disabled={busy || !form.regional_name.trim()}>
-            {busy ? t("common.saving") : isCreate ? t("cardIndex.create") : t("common.save")}
-          </Button>
-        </DialogFooter>
+        <div className="sticky bottom-0 z-10 space-y-2 bg-background pt-2">
+          <CardIndexMutationError message={error} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>{t("common.cancel")}</Button>
+            <Button onClick={save} disabled={busy || !form.regional_name.trim()}>
+              {busy ? t("common.saving") : isCreate ? t("cardIndex.create") : t("common.save")}
+            </Button>
+          </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );

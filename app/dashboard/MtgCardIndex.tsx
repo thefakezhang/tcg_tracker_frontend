@@ -522,7 +522,15 @@ function MtgCardModal({
                 <div key={l.platform_name} className="flex items-center gap-2 text-sm">
                   <span className="w-24 shrink-0 text-xs text-muted-foreground">{PLATFORM_SHORT[l.platform_name] ?? l.platform_name}</span>
                   <span className="flex-1 truncate font-mono text-xs">{l.external_reference_id}</span>
-                  <Button variant="ghost" size="icon" className="size-7" disabled={busy} onClick={() => removeLink(l.platform_name)}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    disabled={busy}
+                    onClick={() => removeLink(l.platform_name)}
+                    aria-label={`${t("cardIndex.removeLink")}: ${PLATFORM_SHORT[l.platform_name] ?? l.platform_name}`}
+                    title={`${t("cardIndex.removeLink")}: ${PLATFORM_SHORT[l.platform_name] ?? l.platform_name}`}
+                  >
                     <Trash2 className="size-3.5" />
                   </Button>
                 </div>

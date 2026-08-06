@@ -104,6 +104,27 @@ describe("CardBrowser surfaces", () => {
     expect(screen.getByTestId("browser-search-grid").className).toContain("grid-cols-1");
   });
 
+  it("keeps price filters full-width on phones and names the refresh action", () => {
+    render(<CardBrowser />);
+
+    const priceFilters = screen.getByTestId("browser-price-filters");
+    expect(priceFilters.className).toContain("w-full");
+    expect(priceFilters.className).toContain("grid-cols-1");
+    expect(priceFilters.className).toContain("sm:grid-cols-2");
+    expect(priceFilters.className).toContain("xl:grid-cols-4");
+    for (const label of [
+      "cardBrowser.minBuyPrice",
+      "cardBrowser.minSellPrice",
+      "cardBrowser.roiFloor",
+      "cardBrowser.roiCeiling",
+    ]) {
+      expect(screen.getByRole("spinbutton", { name: label }).className).toContain("w-full");
+    }
+
+    const refresh = screen.getByRole("button", { name: "refresh.confirm" });
+    expect(refresh.getAttribute("title")).toBe("refresh.confirm");
+  });
+
   it("surfaces an external-identifier lookup failure", () => {
     mocks.useCardData.mockReturnValue({
       data: [],
