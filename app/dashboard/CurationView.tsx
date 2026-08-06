@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
-import { CurationBatchResult, parseCurationBatchResult } from "@/lib/image-curation-batch";
+import { CurationAcceptResult, parseCurationAcceptResult } from "@/lib/image-curation-batch";
 import { useLanguage } from "./LanguageContext";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { getCardDisplayName, cardMeta, cardVariant, useDebouncedValue } from "./use-card-data";
@@ -55,6 +55,31 @@ const BAND_CLASS: Record<Band, string> = {
   unknown: "border-border bg-muted text-muted-foreground",
 };
 
+// Frontend Band -> the SQL band token image_curation_queue_stats (G5) and
+// batch_accept_image_buylist_candidates (G6) understand. They share bandOf's
+// cuts, so a per-band Accept routes through the same idempotent RPC as a
+// whole-queue one.
+const SQL_BAND: Record<Band, string> = {
+  high: "high", medium: "medium", low: "low", veryLow: "very_low", unknown: "unknown",
+};
+
+// PAGE_SIZE rows render initially; "Load more" pulls the next keyset page. The
+// review queue can be enormous (118k+ pending in prod), so we never render the
+// whole thing - the G5 header shows the true total, and G6 Accept All acts
+// server-side over the WHOLE snapshot regardless of how many rows render here,
+// so bulk actions are never limited to the loaded slice. ACCEPT_MAX is the
+// server RPC's own per-call ceiling (it reports truncation and you run again).
+const PAGE_SIZE = 200;
+const ACCEPT_MAX = 5000;
+
+interface QueueStats {
+  high_water: number;
+  total: number;
+  matched: number;
+  band_counts: Record<string, { total: number; matched: number }>;
+}
+interface QueueData { rows: Candidate[]; stats: QueueStats; loadedAll: boolean; }
+
 interface MatchedCard {
   regional_name: string; english_name: string | null; set_code: string;
   card_number: string | null; misc_info: string | null; image_url: string | null;
@@ -102,20 +127,41 @@ export default function CurationView() {
   const { saving, save } = useSaving();
   const [status, setStatus] = useState<Status>("needs_review");
   const [selectedIdx, setSelectedIdx] = useState(0);
-  const [batchProgress, setBatchProgress] = useState<number | null>(null);
-  const [batchResult, setBatchResult] = useState<CurationBatchResult | null>(null);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchResult, setBatchResult] = useState<CurationAcceptResult | null>(null);
   const [selectedBuyer, setSelectedBuyer] = useState<string | null>(null); // null = all buyers
+  const [visibleLimit, setVisibleLimit] = useState(PAGE_SIZE); // "Load more" raises this
 
-  const fetchCandidates = useCallback(async (st: Status): Promise<Candidate[]> => {
+  const fetchCandidates = useCallback(async (st: Status, limit: number): Promise<QueueData> => {
     const supabase = createClient();
-    const { data, error } = await supabase
-      .from("pokemon_image_buylist_candidates")
-      .select(CAND_COLS)
-      .eq("status", st)
-      .order("confidence", { ascending: false, nullsFirst: false }) // highest first — band sections sort within
-      .limit(200);
-    if (error) throw error;
-    const rows = (data as Omit<Candidate, "card">[]) ?? [];
+    // G5: one snapshot read gives the TRUE total/matched/per-band counts and the
+    // high-water candidate_id that pins the snapshot for pagination + Accept All.
+    const { data: statsRaw, error: statsErr } = await supabase.rpc("image_curation_queue_stats", {
+      p_kind: "singles", p_status: st, p_buyer: null,
+    });
+    if (statsErr) throw statsErr;
+    const stats = statsRaw as QueueStats;
+
+    // Keyset-paginate by candidate_id (unique + monotonic, so no float-cursor
+    // fragility) capped at the snapshot high-water, up to `limit` rows.
+    const rows: Omit<Candidate, "card">[] = [];
+    let cursor: number | null = null;
+    while (rows.length < limit) {
+      let q = supabase
+        .from("pokemon_image_buylist_candidates")
+        .select(CAND_COLS)
+        .eq("status", st)
+        .lte("candidate_id", stats.high_water)
+        .order("candidate_id", { ascending: false })
+        .limit(Math.min(PAGE_SIZE, limit - rows.length));
+      if (cursor != null) q = q.lt("candidate_id", cursor);
+      const { data, error } = await q;
+      if (error) throw error;
+      const batch = (data as Omit<Candidate, "card">[]) ?? [];
+      rows.push(...batch);
+      if (batch.length < PAGE_SIZE) break; // exhausted the snapshot
+      cursor = batch[batch.length - 1].candidate_id;
+    }
     // batch-fetch the matched card defs by id (robust vs FK-embed guessing)
     const ids = [...new Set(rows.map((r) => r.candidate_card_id).filter((x): x is number => !!x))];
     const cardMap = new Map<number, MatchedCard>();
@@ -126,11 +172,20 @@ export default function CurationView() {
         .in("card_id", ids);
       for (const d of (defs as ({ card_id: number } & MatchedCard)[]) ?? []) cardMap.set(d.card_id, d);
     }
-    return rows.map((r) => ({ ...r, card: r.candidate_card_id ? cardMap.get(r.candidate_card_id) ?? null : null }));
+    return {
+      rows: rows.map((r) => ({ ...r, card: r.candidate_card_id ? cardMap.get(r.candidate_card_id) ?? null : null })),
+      stats,
+      loadedAll: rows.length >= stats.total,
+    };
   }, []);
 
-  const { data, error, isLoading, retry } = useSupabaseQuery(["curation", status], () => fetchCandidates(status));
-  const allCandidates = useMemo(() => data ?? [], [data]);
+  // A new status tab is a fresh queue - reset the visible window before fetching.
+  useEffect(() => { setVisibleLimit(PAGE_SIZE); }, [status]);
+
+  const { data, error, isLoading, retry } = useSupabaseQuery(["curation", status, visibleLimit], () => fetchCandidates(status, visibleLimit));
+  const allCandidates = useMemo(() => data?.rows ?? [], [data]);
+  const stats = data?.stats ?? null;
+  const loadedAll = data?.loadedAll ?? true;
 
   // Per-buyer counts across the full fetched set — chip labels stay stable
   // as the reviewer works down through candidates, not just the filtered slice.
@@ -216,36 +271,37 @@ export default function CurationView() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   []);
 
-  // Batch approve every candidate in a band that has a matched card. One
-  // save/retry cycle for the whole batch — otherwise each per-item RPC would
-  // trigger a full candidate re-fetch. Progress state drives the button label
-  // so the curator sees the batch advance instead of freezing.
-  async function approveBand(band: Band) {
-    const list = grouped[band].filter((c) => c.candidate_card_id);
-    if (!list.length) return;
+  // G6: accept matched pending candidates in one idempotent server-side call.
+  // The RPC enumerates the whole snapshot (candidate_id <= high_water) server-
+  // side, so it accepts everything the operator saw even if only a page is
+  // loaded here, and promotes each through the AUDITED promote with a derived
+  // per-candidate request_id, so a retried batch never double-promotes. bands =
+  // null accepts every confidence band (whole queue); a single band scopes it.
+  const runBatchAccept = useCallback(async (bands: string[] | null) => {
+    if (!stats) return;
     setBatchResult(null);
-    setBatchProgress(0);
+    setBatchRunning(true);
     try {
       const ok = await save(async () => {
-        const { data, error } = await supabase.rpc("batch_promote_image_buylist_candidates", {
-          p_decisions: list.map((c) => ({
-            candidate_id: c.candidate_id,
-            card_id: c.candidate_card_id,
-            card_grading: c.card_grading ?? "raw",
-            price_jpy: c.ocr_price_jpy,
-            curator_notes: c.curator_notes,
-          })),
+        const { data, error } = await supabase.rpc("batch_accept_image_buylist_candidates", {
+          p_snapshot_high_water: stats.high_water,
+          p_request_id: crypto.randomUUID(),
+          p_status: status,
+          p_buyer: selectedBuyer,
+          p_bands: bands,
+          p_max: ACCEPT_MAX,
         });
         if (error) throw error;
-        const result = parseCurationBatchResult(data);
-        setBatchProgress(result.summary.succeeded + result.summary.failed);
-        setBatchResult(result);
+        setBatchResult(parseCurationAcceptResult(data));
       });
       if (ok) retry();
     } finally {
-      setBatchProgress(null);
+      setBatchRunning(false);
     }
-  }
+  // supabase/save/retry are stable within a render pass; stats/status/buyer are
+  // the real deps.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stats, status, selectedBuyer]);
 
   // Global keyboard shortcuts. Skips when the curator is typing (inputs,
   // textareas, contenteditable) or holding a modifier so browser shortcuts
@@ -289,6 +345,11 @@ export default function CurationView() {
     el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [selectedIdx, flat.length]);
 
+  // Accept-All target for the current view (respects the buyer filter). The set
+  // is loaded up to LOAD_CAP, so this equals the snapshot's matched count in
+  // practice; the RPC re-derives the real set server-side regardless.
+  const matchedInView = useMemo(() => candidates.filter((c) => c.candidate_card_id).length, [candidates]);
+
   return (
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -322,6 +383,25 @@ export default function CurationView() {
           </span>
         )}
       </div>
+
+      {/* G5 queue truth + G6 whole-queue Accept All. Counts come from the
+          snapshot RPC (the whole queue, not the loaded slice), so a queue
+          larger than what is rendered shows as a number instead of silently
+          truncated. */}
+      {stats && stats.total > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <span className="text-muted-foreground">
+            {t("curation.queueTotal", { total: stats.total, matched: stats.matched })}
+            {!loadedAll && <> · {t("curation.showingOf", { shown: allCandidates.length, total: stats.total })}</>}
+          </span>
+          {matchedInView > 0 && (
+            <Button size="sm" className="min-h-11 sm:min-h-11" disabled={saving || batchRunning} onClick={() => runBatchAccept(null)}>
+              <Check className="size-3 mr-1" />
+              {batchRunning ? t("curation.acceptAllProgress") : t("curation.acceptAll", { n: matchedInView })}
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Per-buyer filter chips. Horizontal scrollable list so many buyers
           stay one glance away without wrapping the layout. Chips render only
@@ -367,9 +447,10 @@ export default function CurationView() {
           <div className="font-medium">
             {t("curation.batchSummary", {
               succeeded: batchResult.summary.succeeded,
-              requested: batchResult.summary.requested,
+              requested: batchResult.summary.processed,
               failed: batchResult.summary.failed,
             })}
+            {batchResult.summary.truncated && <> · {t("curation.acceptAllTruncated", { n: ACCEPT_MAX })}</>}
           </div>
           {batchResult.results.filter((row) => !row.success).map((row, i) => (
             <div key={`${row.candidate_id ?? "invalid"}-${i}`} className="mt-1 break-words text-xs">
@@ -396,11 +477,9 @@ export default function CurationView() {
                 {t(`curation.band.${band}` as never)} · {list.length}
               </span>
               {band === "high" && matched.length > 0 && (
-                <Button size="sm" variant="outline" className="min-h-11 sm:min-h-11" disabled={saving || batchProgress != null} onClick={() => approveBand(band)}>
+                <Button size="sm" variant="outline" className="min-h-11 sm:min-h-11" disabled={saving || batchRunning} onClick={() => runBatchAccept([SQL_BAND[band]])}>
                   <Check className="size-3 mr-1" />
-                  {batchProgress != null
-                    ? t("curation.approveAllProgress", { n: `${batchProgress}/${matched.length}` })
-                    : t("curation.approveAllHigh", { n: matched.length })}
+                  {batchRunning ? t("curation.approveAllProgress") : t("curation.approveAllHigh", { n: matched.length })}
                 </Button>
               )}
             </div>
@@ -427,6 +506,14 @@ export default function CurationView() {
           </section>
         );
       })}
+
+      {stats && !loadedAll && (
+        <div className="flex justify-center pt-2">
+          <Button variant="outline" className="min-h-11 sm:min-h-11" disabled={isLoading} onClick={() => setVisibleLimit((l) => l + PAGE_SIZE)}>
+            {isLoading ? t("common.loading") : t("curation.loadMore", { n: stats.total - allCandidates.length })}
+          </Button>
+        </div>
+      )}
 
       {!isLoading && candidates.length === 0 && !error && (
         <p className="text-sm text-muted-foreground">{t("curation.empty")}</p>
