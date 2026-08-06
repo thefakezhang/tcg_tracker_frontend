@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RowSelectionState } from "@tanstack/react-table";
-import { ChevronDown, CircleAlert, Hash, Layers, RefreshCw } from "lucide-react";
+import { ChevronDown, CircleAlert, Hash, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -619,6 +619,15 @@ export default function CardBrowser() {
               row.card.card_number && row.card.card_number !== "UNKNOWN"
                 ? row.card.card_number
                 : null;
+            const setCode =
+              row.card.set_code && row.card.set_code !== "UNKNOWN"
+                ? row.card.set_code
+                : null;
+            const compactIdentity = cardNumber && setCode
+              ? setCode.endsWith("-P") && !cardNumber.includes("/")
+                ? `${cardNumber}/${setCode}`
+                : `${setCode} · ${cardNumber}`
+              : cardNumber ?? setCode;
             const buyEntry = row.prices.highestBuy;
             const sellEntry = row.prices.lowestSell;
             const conservativeExit = exitValue(row.signal, exitPercentile);
@@ -644,16 +653,12 @@ export default function CardBrowser() {
                 <CardHeader className="pt-1">
                   <CardAction>
                     <div className="flex flex-col items-end gap-1">
-                      {cardNumber && (
+                      {compactIdentity && (
                         <Badge variant="secondary" className="h-auto px-1.5 py-px">
                           <Hash className="size-3" />
-                          {cardNumber}
+                          {compactIdentity}
                         </Badge>
                       )}
-                      <Badge variant="secondary" className="h-auto px-1.5 py-px">
-                        <Layers className="size-3" />
-                        {row.card.set_code}
-                      </Badge>
                     </div>
                   </CardAction>
                   <CardTitle className="truncate text-lg">{getCardDisplayName(row.card, language)}</CardTitle>

@@ -214,8 +214,8 @@ export default function PokemonCardIndex() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<"cards" | "matches">("cards");
   return (
-    <div className="space-y-4">
-      <div className="flex gap-1">
+    <div className="min-w-0 space-y-4">
+      <div className="flex flex-wrap gap-1">
         <Button size="sm" variant={tab === "cards" ? "default" : "outline"} onClick={() => setTab("cards")}>
           {t("cardIndex.tabCards")}
         </Button>
@@ -254,8 +254,8 @@ function CardsTab() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+    <div className="min-w-0 space-y-4">
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         {/* Reserve the count's row even while loading so the search group stays
             put - previously the count was `{!isLoading && ...}`, so with
             justify-between the search snapped from left to right when the count
@@ -264,15 +264,15 @@ function CardsTab() {
           {!isLoading &&
             t("cardIndex.countOf").replace("{shown}", String(cards.length)).replace("{total}", String(total))}
         </span>
-        <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:items-end">
-          <label className="space-y-1">
+        <div className="grid min-w-0 w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:items-end">
+          <label className="min-w-0 w-full space-y-1 sm:w-auto">
             <span className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardIndex.searchLabel")}</span>
-            <span className="relative block w-full sm:w-72">
+            <span className="relative block min-w-0 w-full sm:w-72">
               <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input className="pl-8" placeholder={t("cardIndex.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
+              <Input className="h-11 pl-8 sm:h-8" placeholder={t("cardIndex.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
             </span>
           </label>
-          <Button className="w-full sm:w-auto" onClick={() => setCreating(true)}>
+          <Button className="h-11 w-full sm:h-8 sm:w-auto" onClick={() => setCreating(true)}>
             <Plus className="size-4" /> {t("cardIndex.newCard")}
           </Button>
         </div>
@@ -297,9 +297,9 @@ function CardsTab() {
       ) : cards.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("cardIndex.empty")}</p>
       ) : (
-        <div className="overflow-x-auto rounded-md border">
+        <div data-testid="pokemon-index-results" className="overflow-hidden rounded-md border">
           <table className="w-full table-fixed text-sm">
-            <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+            <thead className="hidden border-b bg-muted/40 text-left text-xs text-muted-foreground sm:table-header-group">
               <tr>
                 <th className="w-[44%] px-3 py-2 font-medium">{t("cardIndex.colCard")}</th>
                 <th className="w-[14%] px-3 py-2 font-medium">{t("cardIndex.colVariant")}</th>
@@ -307,10 +307,10 @@ function CardsTab() {
                 <th className="w-[12%] px-3 py-2 font-medium">{t("cardIndex.colUid")}</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="block sm:table-row-group">
               {cards.map((c) => (
-                <tr key={c.card_uid} className="border-b last:border-0">
-                  <td className="px-3 py-2">
+                <tr key={c.card_uid} className="block border-b p-3 last:border-0 sm:table-row sm:p-0">
+                  <td className="block p-0 pb-2 sm:table-cell sm:px-3 sm:py-2">
                     <div className="flex items-center gap-3">
                       {c.image_url ? (
                         <ZoomableImage src={c.image_url} className="h-10 w-7 rounded border object-cover" />
@@ -329,15 +329,15 @@ function CardsTab() {
                       </div>
                     </div>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="block p-0 py-1 sm:table-cell sm:px-3 sm:py-2">
                     {c.misc_info && c.misc_info !== "UNKNOWN" ? (
                       <Badge variant="outline">{c.misc_info}</Badge>
                     ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
+                      <span className="hidden text-xs text-muted-foreground sm:inline">-</span>
                     )}
                   </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-wrap gap-1">
+                  <td className="block min-w-0 p-0 py-1 sm:table-cell sm:px-3 sm:py-2">
+                    <div className="flex min-w-0 flex-wrap gap-1">
                       {c.links.length === 0 ? (
                         <span className="text-xs text-muted-foreground">{t("cardIndex.noLinks")}</span>
                       ) : (
@@ -357,7 +357,7 @@ function CardsTab() {
                       )}
                     </div>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="mt-2 block border-t p-0 pt-2 sm:mt-0 sm:table-cell sm:border-0 sm:px-3 sm:py-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-mono text-xs text-muted-foreground">{c.card_uid.slice(0, 8)}</span>
                       <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={() => setEditing(c)} title={t("cardIndex.edit")}>
@@ -670,11 +670,12 @@ function PokemonCardModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <DialogHeader>
           <DialogTitle>{isCreate ? t("cardIndex.createTitlePokemon") : t("cardIndex.editTitlePokemon")}</DialogTitle>
         </DialogHeader>
 
+        <div className="min-h-0 space-y-4 overflow-y-auto px-1 [&_input]:h-11 [&_select]:h-11 sm:[&_input]:h-8 sm:[&_select]:h-9">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="space-y-1 sm:col-span-2">
             <Label>{t("cardIndex.fName")}</Label>
@@ -925,6 +926,7 @@ function PokemonCardModal({
         )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>{t("common.cancel")}</Button>
           <Button onClick={save} disabled={busy || !form.regional_name.trim()}>

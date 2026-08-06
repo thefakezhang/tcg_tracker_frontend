@@ -54,7 +54,7 @@ beforeEach(() => {
   mocks.useCardData.mockReturnValue({
     data: [{
       key: "42:10",
-      card: { card_id: "42", regional_name: "Card", set_code: "M6", card_number: "001", misc_info: null, image_url: null },
+      card: { card_id: "42", regional_name: "Card", set_code: "SV-P", card_number: "124", misc_info: null, image_url: null },
       psaGrade: 10,
       prices: { highestBuy: null, lowestSell: null },
       roi: null,
@@ -90,6 +90,7 @@ describe("CardBrowser surfaces", () => {
     render(<CardBrowser />);
 
     await waitFor(() => expect(screen.getByTestId("browse-table").getAttribute("data-view-mode")).toBe("grid"));
+    expect(screen.getByText("124/SV-P")).toBeTruthy();
     expect(screen.getByRole("button", { name: "decision.watch" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "decision.dismissOpportunity" })).toBeTruthy();
   });
