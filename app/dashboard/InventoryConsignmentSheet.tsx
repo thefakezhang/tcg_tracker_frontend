@@ -18,6 +18,12 @@ import type { RoiLine } from "./theoretical-roi";
 /** A source-lot row shares the authoritative inventory ROI read-model shape. */
 export type ConsignmentRoiLine = RoiLine;
 
+export interface RecordSaleInput {
+  saleUsd: number;
+  feeUsd: number;
+  soldAt: string; // YYYY-MM-DD
+}
+
 export interface InventoryConsignmentSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -27,7 +33,12 @@ export interface InventoryConsignmentSheetProps {
   consigned: number;
   available: number;
   lines: readonly ConsignmentRoiLine[];
-  onSave: (line: ConsignmentRoiLine, integerQty: number) => Promise<void>;
+  /** Set the consigned quantity and consignee. Empty consignee = qty-only. */
+  onSave: (line: ConsignmentRoiLine, integerQty: number, consignee: string) => Promise<void>;
+  /** Record the consignor's sale. Requires a consignee already saved. */
+  onRecordSale: (line: ConsignmentRoiLine, input: RecordSaleInput) => Promise<void>;
+  /** Reset a line's consignment entirely (qty, consignee, and any sale). */
+  onClear: (line: ConsignmentRoiLine) => Promise<void>;
 }
 
 function lineId(line: ConsignmentRoiLine): string {
@@ -45,6 +56,16 @@ function parseQuantity(value: string, maximum: number): number | null {
   return quantity;
 }
 
+function parseMoney(value: string): number | null {
+  if (!/^\d+(\.\d{1,2})?$/.test(value.trim())) return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export default function InventoryConsignmentSheet({
   open,
   onOpenChange,
@@ -55,37 +76,60 @@ export default function InventoryConsignmentSheet({
   available,
   lines,
   onSave,
+  onRecordSale,
+  onClear,
 }: InventoryConsignmentSheetProps) {
   const { t } = useTranslation();
   const [values, setValues] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState<string | null>(null);
+  const [consignees, setConsignees] = useState<Record<string, string>>({});
+  const [saleForm, setSaleForm] = useState<Record<string, { usd: string; fee: string; at: string }>>({});
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const initialValues = useMemo(
     () => Object.fromEntries(lines.map((line) => [lineId(line), initialQuantity(line)])),
     [lines],
   );
+  const initialConsignees = useMemo(
+    () => Object.fromEntries(lines.map((line) => [lineId(line), line.consignee ?? ""])),
+    [lines],
+  );
 
   useEffect(() => {
     if (open) {
       setValues(initialValues);
+      setConsignees(initialConsignees);
+      setSaleForm({});
       setError(null);
     }
-  }, [initialValues, open]);
+  }, [initialValues, initialConsignees, open]);
 
-  const save = async (line: ConsignmentRoiLine) => {
-    const id = lineId(line);
-    const quantity = parseQuantity(values[id] ?? initialQuantity(line), line.qty_on_hand);
-    if (quantity == null) return;
-    setSaving(id);
+  const runMutation = async (id: string, mutate: () => Promise<void>) => {
+    setBusy(id);
     setError(null);
     try {
-      await onSave(line, quantity);
+      await mutate();
     } catch (reason) {
       setError(formatMutationError(reason));
     } finally {
-      setSaving(null);
+      setBusy(null);
     }
+  };
+
+  const saveConsignment = (line: ConsignmentRoiLine) => {
+    const id = lineId(line);
+    const quantity = parseQuantity(values[id] ?? initialQuantity(line), line.qty_on_hand);
+    if (quantity == null) return;
+    void runMutation(id, () => onSave(line, quantity, (consignees[id] ?? "").trim()));
+  };
+
+  const recordSale = (line: ConsignmentRoiLine) => {
+    const id = lineId(line);
+    const form = saleForm[id] ?? { usd: "", fee: "0", at: today() };
+    const saleUsd = parseMoney(form.usd);
+    const feeUsd = parseMoney(form.fee || "0");
+    if (saleUsd == null || feeUsd == null || !form.at) return;
+    void runMutation(id, () => onRecordSale(line, { saleUsd, feeUsd, soldAt: form.at }));
   };
 
   return (
@@ -126,6 +170,11 @@ export default function InventoryConsignmentSheet({
             const invalid = quantity == null;
             const lineConsigned = Math.max(0, Math.min(line.qty_on_hand, Math.floor(Number(line.consigned_qty) || 0)));
             const lineAvailable = Math.max(0, line.qty_on_hand - lineConsigned);
+            const savedConsignee = (line.consignee ?? "").trim();
+            const sold = line.consignment_sold_at != null;
+            const form = saleForm[id] ?? { usd: "", fee: "0", at: today() };
+            const saleValid = parseMoney(form.usd) != null && parseMoney(form.fee || "0") != null && !!form.at;
+            const net = line.consignment_sale_usd == null ? null : line.consignment_sale_usd - (line.consignment_fee_usd ?? 0);
             return (
               <section key={id} className="rounded-lg border p-3" aria-label={t("inventory.sourceLine", { lot: line.lot_id, line: line.lot_line_id })}>
                 <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
@@ -144,7 +193,7 @@ export default function InventoryConsignmentSheet({
                 </div>
 
                 <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
-                  <label className="flex-1 text-sm font-medium">
+                  <label className="w-24 text-sm font-medium">
                     {t("inventory.consignQty")}
                     <Input
                       aria-label={t("inventory.consignQtyForSourceLine", { lot: line.lot_id, line: line.lot_line_id })}
@@ -159,11 +208,72 @@ export default function InventoryConsignmentSheet({
                       onChange={(event) => setValues((current) => ({ ...current, [id]: event.target.value }))}
                     />
                   </label>
-                  <Button className="min-h-11 sm:min-h-9" disabled={invalid || saving === id} onClick={() => void save(line)}>
-                    {saving === id ? t("common.saving") : t("common.save")}
+                  <label className="flex-1 text-sm font-medium">
+                    {t("inventory.consignee")}
+                    <Input
+                      aria-label={t("inventory.consigneeForSourceLine", { lot: line.lot_id, line: line.lot_line_id })}
+                      className="mt-1 min-h-11 sm:min-h-9"
+                      placeholder={t("inventory.consigneePlaceholder")}
+                      value={consignees[id] ?? ""}
+                      onChange={(event) => setConsignees((current) => ({ ...current, [id]: event.target.value }))}
+                    />
+                  </label>
+                  <Button className="min-h-11 sm:min-h-9" disabled={invalid || busy === id} onClick={() => saveConsignment(line)}>
+                    {busy === id ? t("common.saving") : t("common.save")}
                   </Button>
                 </div>
                 {invalid && <p className="mt-1 text-xs text-destructive">{t("inventory.consignmentRange", { max: line.qty_on_hand })}</p>}
+
+                {/* Sale tracking - only meaningful once the line has a consignee. */}
+                <div className="mt-3 border-t pt-3">
+                  {savedConsignee === "" ? (
+                    <p className="text-xs text-muted-foreground">{t("inventory.saleNeedsConsignee")}</p>
+                  ) : sold ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-sm">
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">{t("inventory.soldTo", { who: savedConsignee })}</span>
+                        <span className="ml-2 text-muted-foreground">
+                          {line.consignment_sold_at?.slice(0, 10)} · {t("inventory.saleGross")} {formatUsd(line.consignment_sale_usd ?? 0)}
+                          {(line.consignment_fee_usd ?? 0) > 0 && <> · {t("inventory.saleFee")} {formatUsd(line.consignment_fee_usd ?? 0)}</>}
+                          {net != null && <> · {t("inventory.saleNet")} <strong>{formatUsd(net)}</strong></>}
+                        </span>
+                      </div>
+                      <Button variant="outline" size="sm" className="min-h-11 sm:min-h-8" disabled={busy === id} onClick={() => void runMutation(id, () => onClear(line))}>
+                        {t("inventory.clearConsignment")}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("inventory.recordSaleFor", { who: savedConsignee })}</div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                        <label className="flex-1 text-sm">
+                          {t("inventory.saleGross")}
+                          <Input className="mt-1 min-h-11 sm:min-h-9" inputMode="decimal" placeholder="0.00"
+                            value={form.usd}
+                            onChange={(e) => setSaleForm((c) => ({ ...c, [id]: { ...form, usd: e.target.value } }))} />
+                        </label>
+                        <label className="w-24 text-sm">
+                          {t("inventory.saleFee")}
+                          <Input className="mt-1 min-h-11 sm:min-h-9" inputMode="decimal" placeholder="0.00"
+                            value={form.fee}
+                            onChange={(e) => setSaleForm((c) => ({ ...c, [id]: { ...form, fee: e.target.value } }))} />
+                        </label>
+                        <label className="w-40 text-sm">
+                          {t("inventory.saleDate")}
+                          <Input className="mt-1 min-h-11 sm:min-h-9" type="date"
+                            value={form.at}
+                            onChange={(e) => setSaleForm((c) => ({ ...c, [id]: { ...form, at: e.target.value } }))} />
+                        </label>
+                        <Button className="min-h-11 sm:min-h-9" disabled={!saleValid || busy === id} onClick={() => recordSale(line)}>
+                          {t("inventory.recordSale")}
+                        </Button>
+                      </div>
+                      <Button variant="ghost" size="sm" className="min-h-11 px-2 text-muted-foreground sm:min-h-8" disabled={busy === id} onClick={() => void runMutation(id, () => onClear(line))}>
+                        {t("inventory.clearConsignment")}
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </section>
             );
           })}

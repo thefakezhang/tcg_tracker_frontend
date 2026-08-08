@@ -41,6 +41,12 @@ export interface RoiLine {
   variant_edition: string | null;
   qty_on_hand: number;
   consigned_qty: number;
+  /** Who this line is consigned to (000243); null when not consigned. */
+  consignee: string | null;
+  /** Recorded consignment sale (000243); null until the consignor reports one. */
+  consignment_sold_at: string | null;
+  consignment_sale_usd: number | null;
+  consignment_fee_usd: number | null;
   on_hand_cost_usd: number | null;
   /** Gross market price per copy - the bid BEFORE the fee assumption. */
   exit_unit_usd: number | null;
@@ -60,7 +66,8 @@ export interface RoiLine {
 const COLUMNS =
   "line_key, lot_line_id, lot_id, trip_id, shop_label, acquired_at, leg, game, item_type, card_id, product_id, " +
   "condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, on_hand_cost_usd, " +
-  "consigned_qty, exit_unit_usd, net_pct, exit_net_usd, theoretical_profit_usd, theoretical_roi_pct, days_held, " +
+  "consigned_qty, consignee, consignment_sold_at, consignment_sale_usd, consignment_fee_usd, " +
+  "exit_unit_usd, net_pct, exit_net_usd, theoretical_profit_usd, theoretical_roi_pct, days_held, " +
   "annualized_roi_pct, below_cost, age_bucket, priced";
 
 const num = (v: unknown): number | null => (v == null ? null : Number(v));
@@ -72,6 +79,10 @@ function normalize(row: Record<string, unknown>): RoiLine {
     ...(row as unknown as RoiLine),
     qty_on_hand: qtyOnHand,
     consigned_qty: Math.max(0, Math.min(storedConsigned, qtyOnHand)),
+    consignee: row.consignee == null ? null : String(row.consignee),
+    consignment_sold_at: row.consignment_sold_at == null ? null : String(row.consignment_sold_at),
+    consignment_sale_usd: num(row.consignment_sale_usd),
+    consignment_fee_usd: num(row.consignment_fee_usd),
     on_hand_cost_usd: num(row.on_hand_cost_usd),
     exit_unit_usd: num(row.exit_unit_usd),
     net_pct: num(row.net_pct),

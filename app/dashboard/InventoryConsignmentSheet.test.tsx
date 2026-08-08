@@ -35,6 +35,10 @@ function line(patch: Partial<ConsignmentRoiLine> = {}): ConsignmentRoiLine {
     age_bucket: null,
     priced: false,
     consigned_qty: 2,
+    consignee: null,
+    consignment_sold_at: null,
+    consignment_sale_usd: null,
+    consignment_fee_usd: null,
     shop_label: "Tokyo Cards",
     acquired_at: "2026-08-01",
     ...patch,
@@ -43,6 +47,8 @@ function line(patch: Partial<ConsignmentRoiLine> = {}): ConsignmentRoiLine {
 
 function renderSheet(onSave = vi.fn().mockResolvedValue(undefined)) {
   const inventoryLine = line();
+  const onRecordSale = vi.fn().mockResolvedValue(undefined);
+  const onClear = vi.fn().mockResolvedValue(undefined);
   render(
     <LanguageProvider>
       <InventoryConsignmentSheet
@@ -55,10 +61,12 @@ function renderSheet(onSave = vi.fn().mockResolvedValue(undefined)) {
         available={3}
         lines={[inventoryLine]}
         onSave={onSave}
+        onRecordSale={onRecordSale}
+        onClear={onClear}
       />
     </LanguageProvider>,
   );
-  return { onSave, inventoryLine };
+  return { onSave, onRecordSale, onClear, inventoryLine };
 }
 
 describe("InventoryConsignmentSheet", () => {
@@ -90,7 +98,7 @@ describe("InventoryConsignmentSheet", () => {
     fireEvent.change(screen.getByLabelText("On consignment for lot #42, line #1"), { target: { value: "4" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith(inventoryLine, 4));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(inventoryLine, 4, ""));
   });
 
   it("renders structured mutation errors as readable text", async () => {

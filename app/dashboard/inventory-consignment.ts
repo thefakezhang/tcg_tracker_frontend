@@ -49,6 +49,67 @@ export async function setInventoryLineConsignment(
   return normalizedConsignedQty(data, line.qty_on_hand);
 }
 
+export interface ConsignLineArgs {
+  p_game: InventoryConsignmentGame;
+  p_lot_line_id: number;
+  p_consigned_qty: number;
+  p_consignee: string;
+}
+
+export interface RecordConsignmentSaleArgs {
+  p_game: InventoryConsignmentGame;
+  p_lot_line_id: number;
+  p_sale_usd: number;
+  p_fee_usd: number;
+  p_sold_at: string;
+}
+
+export interface ClearConsignmentArgs {
+  p_game: InventoryConsignmentGame;
+  p_lot_line_id: number;
+}
+
+type Rpc<A> = (args: A) => PromiseLike<{ data: unknown; error: unknown }>;
+
+// consign_line sets the consigned quantity AND records the consignee in one
+// call; the backend requires a non-empty consignee (use setInventoryLineConsignment
+// for the quantity-only path).
+export async function consignInventoryLine(
+  line: InventoryConsignmentLine,
+  qty: number,
+  consignee: string,
+  rpc: Rpc<ConsignLineArgs>,
+): Promise<number> {
+  if (!isInventoryConsignmentGame(line.game)) throw new Error(`Unsupported inventory game: ${line.game}`);
+  if (!Number.isSafeInteger(qty) || qty < 0 || qty > line.qty_on_hand) {
+    throw new Error(`Consigned quantity must be an integer from 0 to ${line.qty_on_hand}.`);
+  }
+  if (consignee.trim() === "") throw new Error("A consignee is required.");
+  const { data, error } = await rpc({ p_game: line.game, p_lot_line_id: line.lot_line_id, p_consigned_qty: qty, p_consignee: consignee.trim() });
+  if (error) throw error;
+  return normalizedConsignedQty(data, line.qty_on_hand);
+}
+
+export async function recordInventoryLineSale(
+  line: InventoryConsignmentLine,
+  input: { saleUsd: number; feeUsd: number; soldAt: string },
+  rpc: Rpc<RecordConsignmentSaleArgs>,
+): Promise<void> {
+  if (!isInventoryConsignmentGame(line.game)) throw new Error(`Unsupported inventory game: ${line.game}`);
+  if (!(input.saleUsd >= 0) || !(input.feeUsd >= 0)) throw new Error("Sale and fee must be non-negative.");
+  const { error } = await rpc({ p_game: line.game, p_lot_line_id: line.lot_line_id, p_sale_usd: input.saleUsd, p_fee_usd: input.feeUsd, p_sold_at: input.soldAt });
+  if (error) throw error;
+}
+
+export async function clearInventoryLineConsignment(
+  line: InventoryConsignmentLine,
+  rpc: Rpc<ClearConsignmentArgs>,
+): Promise<void> {
+  if (!isInventoryConsignmentGame(line.game)) throw new Error(`Unsupported inventory game: ${line.game}`);
+  const { error } = await rpc({ p_game: line.game, p_lot_line_id: line.lot_line_id });
+  if (error) throw error;
+}
+
 export function inventoryConsignmentLinesByHolding(
   lines: readonly InventoryConsignmentLine[],
 ): ReadonlyMap<string, InventoryConsignmentLine[]> {

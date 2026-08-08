@@ -28,8 +28,11 @@ import {
   inventoryConsignmentCounts,
   inventoryConsignmentLinesByHolding,
   setInventoryLineConsignment,
+  consignInventoryLine,
+  recordInventoryLineSale,
+  clearInventoryLineConsignment,
 } from "./inventory-consignment";
-import InventoryConsignmentSheet from "./InventoryConsignmentSheet";
+import InventoryConsignmentSheet, { type RecordSaleInput } from "./InventoryConsignmentSheet";
 
 // Master inventory = everything currently on hand, across all trips and both
 // legs. inventory_holdings_v aggregates qty_remaining by SKU+leg; image_url and
@@ -201,18 +204,34 @@ export default function InventoryView() {
     [selected, sourceLinesByHolding],
   );
 
-  const saveConsignment = useCallback(async (line: RoiLine, qty: number) => {
-    await setInventoryLineConsignment(
-      line,
-      qty,
-      (args) => createClient().rpc("set_line_consignment", args),
-    );
+  // After any consignment write the row is durable; a follow-up read failure is
+  // surfaced by the view's QueryError and must not be reported as a failed
+  // mutation, so the refresh is best-effort.
+  const refreshAfterWrite = useCallback(async () => {
     bumpOwnedInventory();
-    // The write is already durable at this point. A follow-up read failure is
-    // surfaced by the view's QueryError and must not be reported as a failed
-    // consignment mutation.
     await retry().catch(() => undefined);
   }, [retry]);
+
+  // A consignee names WHO the copies are out with (consign_line); with no
+  // consignee it is a quantity-only consignment (set_line_consignment).
+  const saveConsignment = useCallback(async (line: RoiLine, qty: number, consignee: string) => {
+    if (consignee.trim() === "") {
+      await setInventoryLineConsignment(line, qty, (args) => createClient().rpc("set_line_consignment", args));
+    } else {
+      await consignInventoryLine(line, qty, consignee, (args) => createClient().rpc("consign_line", args));
+    }
+    await refreshAfterWrite();
+  }, [refreshAfterWrite]);
+
+  const recordSale = useCallback(async (line: RoiLine, input: RecordSaleInput) => {
+    await recordInventoryLineSale(line, input, (args) => createClient().rpc("record_line_consignment_sale", args));
+    await refreshAfterWrite();
+  }, [refreshAfterWrite]);
+
+  const clearConsignment = useCallback(async (line: RoiLine) => {
+    await clearInventoryLineConsignment(line, (args) => createClient().rpc("clear_line_consignment", args));
+    await refreshAfterWrite();
+  }, [refreshAfterWrite]);
 
   // A holdings row whose lines are all unpriced says so rather than showing a
   // zero, which would read as "worthless" instead of "unknown".
@@ -396,6 +415,8 @@ export default function InventoryView() {
           available={selected.qty_available}
           lines={selectedLines}
           onSave={saveConsignment}
+          onRecordSale={recordSale}
+          onClear={clearConsignment}
         />
       )}
     </div>
