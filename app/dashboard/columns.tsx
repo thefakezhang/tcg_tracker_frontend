@@ -174,7 +174,7 @@ export const selectColumn: ColumnDef<CardRowData> = {
   ),
 };
 
-export function createColumns(t: TranslateFn, language: Language = "en", availableOnly = false): ColumnDef<CardRowData>[] {
+export function createColumns(t: TranslateFn, language: Language = "en", availableOnly = false, tcgMarket?: Map<number, number>): ColumnDef<CardRowData>[] {
   return [
     {
       id: "regional_name",
@@ -258,6 +258,21 @@ export function createColumns(t: TranslateFn, language: Language = "en", availab
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
       meta: { className: "hidden xl:table-cell" },
+    },
+    {
+      // #2: per-card tcgplayer market value from the pokemon_tcgplayer_market
+      // view (looked up in CardBrowser and passed in via the map).
+      id: "tcg_market",
+      accessorFn: (row) => tcgMarket?.get(Number(row.card.card_id)) ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("cardBrowser.tcgMarket")} />,
+      cell: ({ getValue }) => {
+        const v = getValue() as number | undefined;
+        if (v == null) return "—";
+        return v >= 100 ? `$${Math.round(v).toLocaleString()}` : `$${v.toFixed(2)}`;
+      },
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+      meta: { className: "hidden lg:table-cell" },
     },
     {
       id: "conservativeExit",

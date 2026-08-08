@@ -27,6 +27,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
 import { useAvailableCardSources, useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
+import { createClient } from "@/lib/supabase/client";
 import { RefreshPricesAction } from "./RefreshPricesAction";
 import { RefreshInFlightStrip } from "./RefreshInFlightStrip";
 import { useLanguage } from "./LanguageContext";
@@ -77,6 +78,12 @@ const POKEMON_RARITIES = [
 // cross-cutting promo filter (set_code/rarity) rather than a single rarity value.
 const PROMOS_OPTION = "__promos__";
 
+// Compact USD for the tcgplayer market value: whole dollars once it's meaningful,
+// cents for the sub-$100 long tail.
+function fmtUsd(n: number): string {
+  return n >= 100 ? `$${Math.round(n).toLocaleString()}` : `$${n.toFixed(2)}`;
+}
+
 export default function CardBrowser() {
   const { t } = useTranslation();
   const { language } = useLanguage();
@@ -121,6 +128,10 @@ export default function CardBrowser() {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
   const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
+  // #2 (show feedback): a per-card tcgplayer market value (USD), fetched for the
+  // loaded page from the pokemon_tcgplayer_market view, so the browse can show
+  // it prominently on mobile and sum it across a multi-selection.
+  const [tcgMarket, setTcgMarket] = useState<Map<number, number>>(() => new Map());
   const [weakEvidenceOnly, setWeakEvidenceOnly] = useState(false);
   // Tally the copies you can actually sell: owned minus consignment.
   const [availableOnly, setAvailableOnly] = useState(false);
@@ -211,6 +222,41 @@ export default function CardBrowser() {
     }
     return [...ids];
   }, [data, rowSelection, selectionEnabled]);
+
+  // Load tcgplayer market values for the cards currently on screen (pokemon
+  // only; the view is pokemon-keyed).
+  useEffect(() => {
+    if (activeGame !== "pokemon") { setTcgMarket(new Map()); return; }
+    const ids = [...new Set(data.map((r) => Number(r.card.card_id)).filter((n) => Number.isFinite(n)))];
+    if (ids.length === 0) { setTcgMarket(new Map()); return; }
+    let cancelled = false;
+    (async () => {
+      const { data: rows, error } = await createClient()
+        .from("pokemon_tcgplayer_market")
+        .select("card_id, market_usd")
+        .in("card_id", ids);
+      if (cancelled || error || !rows) return;
+      const m = new Map<number, number>();
+      for (const r of rows as { card_id: number; market_usd: number | string }[]) {
+        const v = Number(r.market_usd);
+        if (Number.isFinite(v)) m.set(Number(r.card_id), v);
+      }
+      setTcgMarket(m);
+    })();
+    return () => { cancelled = true; };
+  }, [data, activeGame]);
+
+  // Collective tcgplayer market value over the current selection (the "list on
+  // tcgplayer" the operator used to build by hand). priced < count when some
+  // selected cards have no tcgplayer market on file.
+  const selectedMarket = useMemo(() => {
+    let total = 0, priced = 0;
+    for (const id of selectedCardIds) {
+      const v = tcgMarket.get(id);
+      if (v != null) { total += v; priced++; }
+    }
+    return { total, priced };
+  }, [selectedCardIds, tcgMarket]);
 
   // Reset filters on game change
   useEffect(() => {
@@ -617,10 +663,21 @@ export default function CardBrowser() {
       {selectionEnabled && <RefreshInFlightStrip />}
 
       {selectionEnabled && selectedCardIds.length > 0 && (
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="text-muted-foreground text-xs">
             {t("cardBrowser.selectedCount", { count: selectedCardIds.length })}
           </span>
+          {selectedMarket.priced > 0 && (
+            <span className="text-xs font-medium">
+              {t("cardBrowser.selectionMarketTotal", { total: fmtUsd(selectedMarket.total) })}
+              {selectedMarket.priced < selectedCardIds.length && (
+                <span className="text-muted-foreground font-normal">
+                  {" "}
+                  {t("cardBrowser.selectionMarketPriced", { priced: selectedMarket.priced, count: selectedCardIds.length })}
+                </span>
+              )}
+            </span>
+          )}
           <RefreshPricesAction cardIds={selectedCardIds} />
         </div>
       )}
@@ -628,7 +685,7 @@ export default function CardBrowser() {
       {(!error || visibleData.length > 0) && <DataTable
         columns={activeGame === "mtg"
           ? createMtgColumns(t, language, availableOnly)
-          : [selectColumn, ...createColumns(t, language, availableOnly)]}
+          : [selectColumn, ...createColumns(t, language, availableOnly, tcgMarket)]}
         data={visibleData}
         loading={loading}
         sorting={sorting}
@@ -731,6 +788,12 @@ export default function CardBrowser() {
                     <span className="text-muted-foreground">{t("column.roi")}</span>
                     <span>{row.roi !== null ? `${Math.round(row.roi * 100) / 100}%` : "\u2014"}</span>
                   </div>
+                  {activeGame === "pokemon" && tcgMarket.get(Number(row.card.card_id)) != null && (
+                    <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
+                      <span className="text-muted-foreground">{t("cardBrowser.tcgMarket")}</span>
+                      <span className="font-medium">{fmtUsd(tcgMarket.get(Number(row.card.card_id))!)}</span>
+                    </div>
+                  )}
                   {activeGame === "pokemon" && (
                     <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
                       <span className="text-muted-foreground">P{exitPercentile} {t("column.conservativeExit")}</span>
