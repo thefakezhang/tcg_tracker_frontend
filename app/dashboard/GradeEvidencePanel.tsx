@@ -17,6 +17,7 @@ import {
   eventAppliesToCard,
   exitValue,
   latestSignals,
+  slabConfidenceClasses,
   type GradeSignal,
   type SignalEvent,
   type SlabSale,
@@ -36,7 +37,7 @@ interface GradeEvidencePanelProps {
   onAskingCurrencyChange?: (value: "JPY" | "USD") => void;
 }
 
-const SIGNAL_COLUMNS = "card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, entry_at_default, net_at_default, annualized_at_default, exit_platform, raw_to_grade_ev_usd, relative_value_pct, flags";
+const SIGNAL_COLUMNS = "card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, entry_at_default, net_at_default, annualized_at_default, exit_platform, raw_to_grade_ev_usd, relative_value_pct, recent_volatility, slab_confidence, flags";
 
 function moneyJpy(value: number | null): string {
   return value == null ? "-" : `¥${Math.round(value).toLocaleString()}`;
@@ -65,6 +66,10 @@ function trendIcon(direction: string | null) {
 
 function flagLabels(signal: GradeSignal, t: TranslateFn): string[] {
   const labels: string[] = [];
+  // #3 slab-buying concerns first - these are the reasons behind the grade.
+  if (signal.flags.high_volatility) labels.push(t("evidence.highVolatility"));
+  if (signal.flags.downtrend) labels.push(t("evidence.downtrend"));
+  if (signal.flags.high_pop_supply) labels.push(t("evidence.highPopSupply"));
   if (signal.flags.thin_evidence) labels.push(t("evidence.thinEvidence"));
   if (signal.flags.cohort_derived) labels.push(signal.flags.cohort_own_weight != null
     ? t("evidence.cohortDerivedWeight", { weight: Math.round(signal.flags.cohort_own_weight * 100) })
@@ -73,6 +78,13 @@ function flagLabels(signal: GradeSignal, t: TranslateFn): string[] {
     ? t("evidence.gradeInversionConfidence", { confidence: Math.round(signal.flags.inversion_confidence * 100) })
     : t("evidence.gradeInversion"));
   return labels;
+}
+
+function confidenceLabel(level: string | null, t: TranslateFn): string | null {
+  if (level === "high") return t("evidence.confHigh");
+  if (level === "medium") return t("evidence.confMedium");
+  if (level === "low") return t("evidence.confLow");
+  return null;
 }
 
 function Metric({ label, value }: { label: string; value: React.ReactNode }) {
@@ -159,6 +171,7 @@ function GradeEvidenceCard({
   const { t } = useTranslation();
   const { exitPercentile } = useExitBasis();
   const flags = flagLabels(signal, t);
+  const confLabel = confidenceLabel(signal.slabConfidence, t);
   const basis = exitValue(signal, exitPercentile);
   const pricePerPop = basis != null && signal.pop != null && signal.pop > 0 ? basis / signal.pop : null;
   const hasSparkline = sales.filter((sale) => sale.saleDate).length >= 2;
@@ -173,6 +186,11 @@ function GradeEvidenceCard({
           <h4 className="font-semibold">{signal.psaGrade === 0 ? t("evidence.raw") : `PSA ${signal.psaGrade}`}</h4>
           {trendIcon(signal.trendDirection)}
           <Badge variant="outline" className="capitalize">{signalTierLabel(signal.tier, t("evidence.unknownSource"))}</Badge>
+          {confLabel && (
+            <Badge variant="outline" className={slabConfidenceClasses(signal.slabConfidence)} title={t("evidence.slabConfidenceHint")}>
+              {t("evidence.slabConfidence")}: {confLabel}
+            </Badge>
+          )}
         </div>
         <div className="text-right">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">P{exitPercentile} {t("evidence.conservativeExit")}</div>
@@ -209,6 +227,7 @@ function GradeEvidenceCard({
         <Metric label={t("evidence.listings")} value={signal.listingCount ?? "-"} />
         <Metric label={t("evidence.sellThrough")} value={percentage(signal.sellThrough)} />
         <Metric label={t("evidence.clearingVsAsk")} value={percentage(signal.clearingVsAsk)} />
+        <Metric label={t("evidence.recentVolatility")} value={percentage(signal.recentVolatility)} />
         <Metric label={t("evidence.bestJpBid")} value={<span>{moneyJpy(signal.bestJpBidJpy)}{bidLocation ? <span className="block text-xs font-normal text-muted-foreground">{bidLocation}</span> : null}</span>} />
         <Metric label={t("evidence.bidHeld")} value={signal.bestJpBidAgeDays == null ? t("evidence.unknown") : t("evidence.days", { count: signal.bestJpBidAgeDays })} />
         <Metric label={t("evidence.population")} value={signal.pop ?? "-"} />

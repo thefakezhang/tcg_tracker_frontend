@@ -663,7 +663,7 @@ export function useCardData(options: {
             ["card_id", "psa_grade", "model_version"],
             (chunk) => supabase
               .from("pokemon_grade_signals")
-              .select("card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, entry_at_default, net_at_default, annualized_at_default, exit_platform, raw_to_grade_ev_usd, relative_value_pct, flags")
+              .select("card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, entry_at_default, net_at_default, annualized_at_default, exit_platform, raw_to_grade_ev_usd, relative_value_pct, recent_volatility, slab_confidence, flags")
               .in("card_id", chunk),
           ),
           supabase.from("exit_cost_profiles").select("platform, fee_pct, fixed_fee, shipping_jpy, grading_cost_jpy, grading_days, margin_pct, floor_usd, updated_at").eq("platform", "ebay").maybeSingle(),
