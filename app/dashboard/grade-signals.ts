@@ -43,6 +43,10 @@ export interface GradeSignal {
   exitPlatform: string | null;
   rawToGradeEvUsd: number | null;
   relativeValuePct: number | null;
+  // #3 slab-buying discipline: coefficient of variation of the last 5 sales,
+  // and a composite buy-confidence grade. Null until the next signals run.
+  recentVolatility: number | null;
+  slabConfidence: string | null; // "high" | "medium" | "low"
   flags: GradeSignalFlags;
 }
 
@@ -108,8 +112,29 @@ export function parseGradeSignal(row: Record<string, unknown>): GradeSignal {
     exitPlatform: row.exit_platform == null ? null : String(row.exit_platform),
     rawToGradeEvUsd: nullableNumber(row.raw_to_grade_ev_usd),
     relativeValuePct: nullableNumber(row.relative_value_pct),
+    recentVolatility: nullableNumber(row.recent_volatility),
+    slabConfidence: row.slab_confidence == null ? null : String(row.slab_confidence),
     flags,
   };
+}
+
+// slabConfidenceRank orders the buy-confidence grade for sorting (high first when
+// sorted descending). Missing/unknown grades sort last via undefined.
+export function slabConfidenceRank(level: string | null | undefined): number | undefined {
+  if (level === "high") return 3;
+  if (level === "medium") return 2;
+  if (level === "low") return 1;
+  return undefined;
+}
+
+// slabConfidenceClasses is the shared color language for the buy-confidence grade
+// (green = buy with confidence, amber = look closer, rose = be stringent). Reused
+// by the evidence panel and the deal-browser column so they never diverge.
+export function slabConfidenceClasses(level: string | null | undefined): string {
+  if (level === "high") return "border-emerald-500/60 text-emerald-700 dark:text-emerald-300";
+  if (level === "medium") return "border-amber-500/60 text-amber-700 dark:text-amber-300";
+  if (level === "low") return "border-rose-500/60 text-rose-700 dark:text-rose-300";
+  return "border-muted-foreground/30 text-muted-foreground";
 }
 
 export function latestSignals(rows: Record<string, unknown>[]): GradeSignal[] {
