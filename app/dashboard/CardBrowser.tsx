@@ -114,6 +114,7 @@ export default function CardBrowser() {
   const [minSellPrice, setMinSellPrice] = useState<string>("");
   const [roiFloor, setRoiFloor] = useState<string>("");
   const [roiCeiling, setRoiCeiling] = useState<string>("");
+  const [showFilters, setShowFilters] = useState(false); // mobile: advanced filters collapsed behind a toggle
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [sortColumn, setSortColumn] = useState("roi");
   const [sortAsc, setSortAsc] = useState(false);
@@ -307,6 +308,9 @@ export default function CardBrowser() {
   return (
     <div className="space-y-4">
       {activeGame === "pokemon" && surfaceTabs}
+      {/* Sticky search: the primary lookup stays pinned at the top on mobile
+          instead of scrolling away behind a long result list (show feedback). */}
+      <div className="sticky top-0 z-20 space-y-2 bg-background pb-2 pt-1">
       <div data-testid="browser-search-grid" className="grid grid-cols-1 gap-3 sm:grid-cols-4 sm:gap-2 [&_input]:h-11 sm:[&_input]:h-8">
         <label className="space-y-1 sm:col-span-2">
           <span className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardBrowser.nameLabel")}</span>
@@ -353,7 +357,18 @@ export default function CardBrowser() {
           />
         </label>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Mobile-only toggle so the advanced filters don't bury the search bar. */}
+      <Button
+        type="button"
+        variant="outline"
+        className="h-11 w-full justify-center sm:hidden"
+        onClick={() => setShowFilters((v) => !v)}
+      >
+        {t("cardBrowser.filters")}
+        <ChevronDown className={`ml-1 size-4 transition-transform ${showFilters ? "rotate-180" : ""}`} />
+      </Button>
+      </div>
+      <div className={`flex-wrap items-center gap-2 ${showFilters ? "flex" : "hidden"} sm:flex`}>
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
