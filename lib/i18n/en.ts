@@ -366,6 +366,7 @@ const en = {
   "cardBrowser.sourceTypeBuylist": "Buylist",
   "cardBrowser.sourceTypeForSale": "For sale",
   "cardBrowser.rarityAll": "All Rarities",
+  "cardBrowser.filters": "Filters",
   "cardBrowser.promosOnly": "Promos",
   "cardBrowser.jpExclusiveOnly": "JP-exclusive",
   "column.rarity": "Rarity",

@@ -368,6 +368,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardBrowser.sourceTypeBuylist": "買取",
   "cardBrowser.sourceTypeForSale": "販売",
   "cardBrowser.rarityAll": "全レアリティ",
+  "cardBrowser.filters": "絞り込み",
   "cardBrowser.promosOnly": "プロモ",
   "cardBrowser.jpExclusiveOnly": "日本限定",
   "column.rarity": "レアリティ",
