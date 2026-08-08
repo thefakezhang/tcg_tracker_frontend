@@ -46,6 +46,7 @@ import {
 } from "../theoretical-roi";
 import TheoreticalRoiSummary from "../TheoreticalRoiSummary";
 import FullyLoadedCostLabel from "./FullyLoadedCostLabel";
+import ConsignmentControl from "./ConsignmentControl";
 
 type CardGame = "pokemon" | "mtg";
 type LotItemCatalog = CardGame | "pokemon_sealed";
@@ -1336,7 +1337,12 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
             <TableBody>
               {lines.map((ln) => (
                 <TableRow key={`${ln.table}-${ln.line_id}`}>
-                  <TableCell className="truncate max-w-[280px]">{lineLabel(ln)} <span className="text-muted-foreground">· {ln.kind === "sealed" ? `${ln.setCode} · ${ln.sealedLabel}` : cardMeta(ln.setCode, ln.cardNumber, ln.miscInfo)}</span></TableCell>
+                  <TableCell className="max-w-[280px]">
+                    <div className="truncate">{lineLabel(ln)} <span className="text-muted-foreground">· {ln.kind === "sealed" ? `${ln.setCode} · ${ln.sealedLabel}` : cardMeta(ln.setCode, ln.cardNumber, ln.miscInfo)}</span></div>
+                    {lot.lines_imported && (
+                      <ConsignmentControl game={gameForLine(ln)} lineId={ln.line_id} qtyRemaining={ln.qty_remaining} />
+                    )}
+                  </TableCell>
                   <TableCell>
                     {lot.lines_imported ? (
                       <div>
