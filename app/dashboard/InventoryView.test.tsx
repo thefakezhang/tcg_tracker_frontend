@@ -123,6 +123,38 @@ describe("InventoryView consignment management", () => {
     expect(mocks.retry).toHaveBeenCalledOnce();
   });
 
+  it("reconciles the current ledger count without inventing a sale", async () => {
+    render(
+      <LanguageProvider>
+        <InventoryView />
+      </LanguageProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    fireEvent.change(screen.getByLabelText("Actual owned count"), {
+      target: { value: "3" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Record shortage" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Record shortage of 2" }));
+
+    await waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith(
+      "record_pokemon_inventory_shortage",
+      expect.objectContaining({
+        p_card_id: 5,
+        p_expected_quantity: 5,
+        p_observed_quantity: 3,
+        p_reason: "Physical count reconciliation",
+        p_notes: null,
+        p_condition_id: 2,
+        p_psa_grade: 0,
+        p_leg: "import",
+      }),
+    ));
+    expect(mocks.rpc.mock.calls[0][1].p_adjusted_at).toEqual(expect.any(String));
+    expect(mocks.bumpOwnedInventory).toHaveBeenCalledOnce();
+    expect(mocks.retry).toHaveBeenCalledOnce();
+  });
+
   it("defaults a phone viewport to the tappable card workflow", async () => {
     vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
 
@@ -133,7 +165,7 @@ describe("InventoryView consignment management", () => {
     );
 
     const manageCard = await screen.findByRole("button", {
-      name: "Manage consignment for Charizard",
+      name: "Manage inventory for Charizard",
     });
     expect(manageCard.className).toContain("focus-visible:ring-3");
   });
