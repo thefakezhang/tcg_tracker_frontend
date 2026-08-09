@@ -5,6 +5,17 @@ import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 // #6: per lot-line consignment control. Self-contained - it reads and writes the
 // consignment fields (000243: consignee + consignment sale) for one lot line, so
@@ -20,6 +31,7 @@ interface State {
   consignee: string | null;
   consignedQty: number;
   soldAt: string | null;
+  soldQty: number | null;
   saleUsd: number | null;
   feeUsd: number | null;
 }
@@ -49,18 +61,20 @@ export default function ConsignmentControl({
     if (!table) return;
     const { data } = await createClient()
       .from(table)
-      .select("consignee, consigned_qty, consignment_sold_at, consignment_sale_usd, consignment_fee_usd")
+      .select("consignee, consigned_qty, consignment_sold_at, consignment_sold_quantity, consignment_sale_usd, consignment_fee_usd")
       .eq("line_id", lineId)
       .maybeSingle();
     const row = data as {
       consignee: string | null; consigned_qty: number | null;
-      consignment_sold_at: string | null; consignment_sale_usd: number | string | null;
+      consignment_sold_at: string | null; consignment_sold_quantity: number | null;
+      consignment_sale_usd: number | string | null;
       consignment_fee_usd: number | string | null;
     } | null;
     setSt({
       consignee: row?.consignee ?? null,
       consignedQty: Number(row?.consigned_qty ?? 0),
       soldAt: row?.consignment_sold_at ?? null,
+      soldQty: row?.consignment_sold_quantity == null ? null : Number(row.consignment_sold_quantity),
       saleUsd: row?.consignment_sale_usd != null ? Number(row.consignment_sale_usd) : null,
       feeUsd: row?.consignment_fee_usd != null ? Number(row.consignment_fee_usd) : null,
     });
@@ -86,26 +100,45 @@ export default function ConsignmentControl({
 
   return (
     <div className="text-xs">
-      {active ? (
+      {sold ? (
+        <div className="space-y-1">
+          <div className="font-medium text-emerald-600 dark:text-emerald-400">
+            {st.soldQty == null
+              ? t("consign.soldFor", { amount: `$${(st.saleUsd ?? 0).toFixed(2)}` })
+              : t("consign.soldCopiesFor", { qty: st.soldQty, amount: `$${(st.saleUsd ?? 0).toFixed(2)}` })}
+            {st.feeUsd ? ` (${t("consign.net", { amount: `$${((st.saleUsd ?? 0) - (st.feeUsd ?? 0)).toFixed(2)}` })})` : ""}
+          </div>
+          <AlertDialog>
+            <AlertDialogTrigger render={<Button type="button" variant="outline" size="sm" className="min-h-11 sm:h-7" disabled={saving} />}>
+              {t("consign.undoSale")}
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t("consign.undoSale")}</AlertDialogTitle>
+                <AlertDialogDescription>{t("consign.undoSaleConfirm")}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                <AlertDialogAction disabled={saving} onClick={() => run(() => supabase().rpc("clear_line_consignment", { p_game: game, p_lot_line_id: lineId }))}>
+                  {t("consign.undoSale")}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      ) : active ? (
         <div className="space-y-0.5">
           <div className="font-medium">
             {t("consign.toLabel", { consignee: st.consignee ?? "", qty: st.consignedQty })}
           </div>
-          {sold ? (
-            <div className="text-muted-foreground">
-              {t("consign.soldFor", { amount: `$${(st.saleUsd ?? 0).toFixed(2)}` })}
-              {st.feeUsd ? ` (${t("consign.net", { amount: `$${((st.saleUsd ?? 0) - (st.feeUsd ?? 0)).toFixed(2)}` })})` : ""}
-            </div>
-          ) : (
-            <div className="flex gap-2">
-              <button type="button" className="text-primary underline disabled:opacity-50" disabled={saving} onClick={() => setMode(mode === "sale" ? "none" : "sale")}>
-                {t("consign.recordSale")}
-              </button>
-              <button type="button" className="text-muted-foreground underline disabled:opacity-50" disabled={saving} onClick={() => run(() => supabase().rpc("clear_line_consignment", { p_game: game, p_lot_line_id: lineId }))}>
-                {t("consign.clear")}
-              </button>
-            </div>
-          )}
+          <div className="flex gap-2">
+            <button type="button" className="min-h-11 text-primary underline disabled:opacity-50 sm:min-h-7" disabled={saving} onClick={() => setMode(mode === "sale" ? "none" : "sale")}>
+              {t("consign.recordSale")}
+            </button>
+            <button type="button" className="min-h-11 text-muted-foreground underline disabled:opacity-50 sm:min-h-7" disabled={saving} onClick={() => run(() => supabase().rpc("clear_line_consignment", { p_game: game, p_lot_line_id: lineId }))}>
+              {t("consign.clear")}
+            </button>
+          </div>
         </div>
       ) : (
         <button type="button" className="text-primary underline disabled:opacity-50" disabled={saving} onClick={() => setMode(mode === "consign" ? "none" : "consign")}>
@@ -127,9 +160,23 @@ export default function ConsignmentControl({
         <div className="mt-1 flex flex-wrap items-center gap-1">
           <Input className="h-7 w-20" type="number" step="0.01" placeholder={t("consign.price")} value={price} onChange={(e) => setPrice(e.target.value)} />
           <Input className="h-7 w-20" type="number" step="0.01" placeholder={t("consign.fee")} value={fee} onChange={(e) => setFee(e.target.value)} />
-          <Button size="sm" className="h-7" disabled={saving || price === ""} onClick={() => run(() => supabase().rpc("record_line_consignment_sale", { p_game: game, p_lot_line_id: lineId, p_sale_usd: Number(price), p_fee_usd: Number(fee) || 0 }))}>
-            {t("common.save")}
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger render={<Button size="sm" className="min-h-11 sm:h-7" disabled={saving || price === ""} />}>
+              {t("common.save")}
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t("consign.recordSale")}</AlertDialogTitle>
+                <AlertDialogDescription>{t("consign.recordSaleConfirm", { qty: st.consignedQty })}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                <AlertDialogAction disabled={saving} onClick={() => run(() => supabase().rpc("record_line_consignment_sale", { p_game: game, p_lot_line_id: lineId, p_sale_usd: Number(price), p_fee_usd: Number(fee) || 0 }))}>
+                  {t("consign.recordSale")}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       )}
     </div>

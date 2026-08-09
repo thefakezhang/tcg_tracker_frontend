@@ -300,6 +300,8 @@ It preserves the full signal row, source flags, displayed market inputs, and an 
 - `owned-inventory.ts` batches quiet `Owned N` counts for the buying surfaces without exposing finance detail there.
 - `InventoryView.tsx` is the sole consignment mutation surface for Pokémon singles, MTG singles, and Pokémon sealed products.
 - It groups the paged source lines from `inventory_theoretical_roi_v` at the exact holding identity and shows owned, consigned, and available quantities.
+- A reported consignment sale books all currently consigned copies through the exact source-line sales ledger path, while undo creates a confirmed full accounting reversal.
+- The ordinary single-holding sale dialog requires an explicit quantity and never defaults silently to one.
 - Card detail modals keep consignment status read-only so source-lot mutation has one predictable home.
 - `InventoryEconomics.tsx` owns the lifecycle and cost bridge under Finances.
 - Phone lot and sale surfaces default to card grids, right-side sheets use the full phone width, and global buttons, tabs, and sidebar controls keep 44px phone targets.

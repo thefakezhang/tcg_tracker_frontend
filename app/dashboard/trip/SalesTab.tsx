@@ -21,6 +21,7 @@ import {
   type SaleAllocationMethod,
   type SaleExpenseCategory,
 } from "./sale-lot-model";
+import { parseSaleQuantity } from "./sale-input";
 import ReceiptsDialog from "../Receipts";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -121,7 +122,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [sel, setSel] = useState<Holding | null>(null);
-  const [qty, setQty] = useState("1");
+  const [qty, setQty] = useState("");
   const [currency, setCurrency] = useState("USD");
   const [proceeds, setProceeds] = useState("");
   const [fx, setFx] = useState("0.0067");
@@ -332,18 +333,22 @@ export default function SalesTab({ tripId }: { tripId: number }) {
 
   function openSale(h: Holding) {
     setSel(h);
-    setQty("1"); setProceeds(""); setFees("0"); setSaleCustomerId(null);
+    // Quantity is intentionally blank. A silent default of one made a
+    // multi-copy physical sale easy to under-record in the inventory ledger.
+    setQty(""); setProceeds(""); setFees("0"); setSaleCustomerId(null);
     setCurrency(h.leg === "export" ? "JPY" : "USD");
   }
 
   async function recordSale() {
     if (!sel) return;
+    const saleQuantity = parseSaleQuantity(qty, sel.qty_on_hand);
+    if (saleQuantity == null) return;
     const supabase = createClient();
     const isExport = sel.leg === "export";
     const native = isExport && currency.toUpperCase() !== "USD";
     const grossUsd = native ? Math.round(Number(proceeds) * Number(fx) * 100) / 100 : Number(proceeds);
     const common = {
-      p_quantity: Number(qty), p_gross_usd: native ? 0 : grossUsd, p_fees_usd: Number(fees) || 0,
+      p_quantity: saleQuantity, p_gross_usd: native ? 0 : grossUsd, p_fees_usd: Number(fees) || 0,
       p_sold_at: soldAt, p_leg: sel.leg,
       p_orig_currency: native ? currency.toUpperCase() : null,
       p_proceeds_orig: native ? Number(proceeds) : null,
@@ -1157,8 +1162,18 @@ export default function SalesTab({ tripId }: { tripId: number }) {
             {sel && <DialogDescription>{[holdingMeta(sel), sel.psa_grade ? `PSA ${sel.psa_grade}` : null].filter(Boolean).join(" · ")}</DialogDescription>}
           </DialogHeader>
           <FieldGroup>
-            <Field><Label>{t("trips.saleQty")}</Label>
-              <Input type="number" value={qty} onChange={(e) => setQty(e.target.value)} /></Field>
+            <Field><Label>{t("trips.saleQty")} · {t("trips.sellRemaining", { n: sel?.qty_on_hand ?? 0 })}</Label>
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={sel?.qty_on_hand}
+                step={1}
+                placeholder="1"
+                value={qty}
+                aria-invalid={(qty !== "" && parseSaleQuantity(qty, sel?.qty_on_hand ?? 0) == null) || undefined}
+                onChange={(e) => setQty(e.target.value)}
+              /></Field>
             {sel?.leg === "export" && (
               <Field><Label>{t("trips.saleCurrency")}</Label>
                 <Input value={currency} onChange={(e) => setCurrency(e.target.value)} /></Field>
@@ -1183,7 +1198,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
           </FieldGroup>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSel(null)}>{t("trips.cancel")}</Button>
-            <Button disabled={!proceeds || saving} onClick={recordSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.recordSale")}</Button>
+            <Button disabled={parseSaleQuantity(qty, sel?.qty_on_hand ?? 0) == null || !proceeds || saving} onClick={recordSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.recordSale")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

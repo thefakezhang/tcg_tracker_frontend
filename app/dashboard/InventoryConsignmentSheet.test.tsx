@@ -45,8 +45,10 @@ function line(patch: Partial<ConsignmentRoiLine> = {}): ConsignmentRoiLine {
   };
 }
 
-function renderSheet(onSave = vi.fn().mockResolvedValue(undefined)) {
-  const inventoryLine = line();
+function renderSheet(
+  onSave = vi.fn().mockResolvedValue(undefined),
+  inventoryLine = line(),
+) {
   const onRecordSale = vi.fn().mockResolvedValue(undefined);
   const onClear = vi.fn().mockResolvedValue(undefined);
   render(
@@ -114,5 +116,45 @@ describe("InventoryConsignmentSheet", () => {
     renderSheet();
     expect(screen.getByLabelText("On consignment for lot #42, line #1").className).toContain("min-h-11");
     expect(screen.getByRole("button", { name: "Save" }).className).toContain("min-h-11");
+  });
+
+  it("confirms that recording a consignment sale consumes every consigned copy", async () => {
+    const { onRecordSale, inventoryLine } = renderSheet(
+      undefined,
+      line({ consignee: "Influencer", consigned_qty: 2 }),
+    );
+    fireEvent.change(screen.getByLabelText("Total gross proceeds"), { target: { value: "40" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record sale (2 copies)" }));
+
+    expect(onRecordSale).not.toHaveBeenCalled();
+    expect(screen.getByText(/Record all 2 consigned copies with Influencer/)).toBeTruthy();
+    const actions = screen.getAllByRole("button", { name: "Record sale (2 copies)" });
+    fireEvent.click(actions[actions.length - 1]);
+
+    await waitFor(() => expect(onRecordSale).toHaveBeenCalledWith(
+      inventoryLine,
+      expect.objectContaining({ saleUsd: 40, feeUsd: 0 }),
+    ));
+  });
+
+  it("requires confirmation before reversing a booked consignment sale", async () => {
+    const { onClear, inventoryLine } = renderSheet(
+      undefined,
+      line({
+        consigned_qty: 0,
+        consignee: "Influencer",
+        consignment_sold_at: "2026-08-08T00:00:00Z",
+        consignment_sale_usd: 40,
+        consignment_fee_usd: 4,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Undo sale" }));
+
+    expect(onClear).not.toHaveBeenCalled();
+    expect(screen.getByText(/full accounting reversal/)).toBeTruthy();
+    const actions = screen.getAllByRole("button", { name: "Undo sale" });
+    fireEvent.click(actions[actions.length - 1]);
+
+    await waitFor(() => expect(onClear).toHaveBeenCalledWith(inventoryLine));
   });
 });
