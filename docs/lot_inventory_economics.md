@@ -36,7 +36,9 @@ The create dialog no longer forces a total, a lot with no total displays "Total 
 - The client does not invent item sale prices when the operator enters one bulk total.
 - The client does not implement allocation math independently from the database.
 - The workflow does not replace receipts, the general ledger, or exit-cost assumptions.
-- Consignment marking does not track a consignee, commission, payout, or settlement, and it does not transfer ownership or remove inventory cost basis.
+- An unsold consignment does not transfer ownership or remove inventory cost basis.
+- The consignment surface records only a named consignee, total gross proceeds, total fee, and sale date.
+- It does not model partial settlement, installment payouts, or per-copy proceeds inside one consignment event.
 
 ## Component architecture
 
@@ -56,6 +58,8 @@ Several products can be selected and submitted to `record_lot_sale` with one tot
 The operator chooses market value, landed cost, equal per unit, or explicit item proceeds.
 The request contains one shared expense plus optional item expenses.
 Mixed card and sealed source-fact rows share one global event key so the history renders one sale.
+The single-holding dialog leaves quantity blank and requires an explicit whole-copy count within current on-hand stock.
+This prevents its former default of one from silently under-recording a multi-copy physical sale.
 
 `owned-inventory.ts` performs one batched read from `owned_inventory_counts_v`.
 `CardBrowser`, `SealedBrowser`, and list columns render only `Owned N`.
@@ -70,6 +74,10 @@ Effective consignment is clamped to current on-hand quantity because a later sal
 
 Selecting an Inventory list row or grid card opens `InventoryConsignmentSheet.tsx`.
 The sheet shows owned, consigned, and available totals plus every source lot, then saves one integer quantity through `set_line_consignment(game, lot_line_id, quantity)`.
+A named consignment can record the full consigned quantity as one sale through `record_line_consignment_sale`.
+The confirmation names the copy count and explains that the operation removes those copies from owned inventory while booking proceeds, fees, COGS, and profit.
+A booked consignment sale stays visible even after its active consigned quantity becomes zero.
+Undo is a confirmed accounting reversal that restores the exact source-line quantity before clearing the workflow record.
 A successful mutation revalidates Inventory and refreshes shared owned counts.
 Mutation failures remain visible in the sheet and never masquerade as a successful refresh.
 The regular single-card and sealed detail modals show consignment status as read-only context so editing has one predictable home.
@@ -124,7 +132,9 @@ The runner leaves production data untouched.
 - `owned-inventory.test.ts` covers batch count keys and mapping.
 - `inventory-economics.test.ts` covers finance totals.
 - `inventory-consignment.test.ts` covers exact holding identity, source-lot ordering, and stale quantity clamping.
-- `InventoryConsignmentSheet.test.tsx` covers summaries, integer range validation, exact source-line saves, structured mutation failures, and phone target sizing.
+- `sale-input.test.ts` covers mandatory, bounded whole-copy sale quantities.
+- `InventoryConsignmentSheet.test.tsx` covers summaries, integer range validation, exact source-line saves, booked-sale and reversal confirmations, structured mutation failures, and phone target sizing.
+- `ConsignmentControl.test.tsx` covers visibility and reversal of a sold event after active consigned quantity reaches zero.
 - `InventoryView.test.tsx` covers Inventory totals, exact RPC identity, shared-count refresh, and the phone card workflow.
 - `e2e-auth-guard.test.ts` covers the local-only authentication boundary.
 - `lot-economics-browser.mjs` covers the complete authenticated desktop and phone journey.

@@ -7,6 +7,17 @@ import { formatUsd } from "@/lib/money";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -37,7 +48,7 @@ export interface InventoryConsignmentSheetProps {
   onSave: (line: ConsignmentRoiLine, integerQty: number, consignee: string) => Promise<void>;
   /** Record the consignor's sale. Requires a consignee already saved. */
   onRecordSale: (line: ConsignmentRoiLine, input: RecordSaleInput) => Promise<void>;
-  /** Reset a line's consignment entirely (qty, consignee, and any sale). */
+  /** Clear an unsold consignment or reverse and clear a booked sale. */
   onClear: (line: ConsignmentRoiLine) => Promise<void>;
 }
 
@@ -238,16 +249,32 @@ export default function InventoryConsignmentSheet({
                           {net != null && <> · {t("inventory.saleNet")} <strong>{formatUsd(net)}</strong></>}
                         </span>
                       </div>
-                      <Button variant="outline" size="sm" className="min-h-11 sm:min-h-8" disabled={busy === id} onClick={() => void runMutation(id, () => onClear(line))}>
-                        {t("inventory.clearConsignment")}
-                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger
+                          render={<Button variant="outline" size="sm" className="min-h-11 sm:min-h-8" disabled={busy === id} />}
+                        >
+                          {t("inventory.undoConsignmentSale")}
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>{t("inventory.undoConsignmentSale")}</AlertDialogTitle>
+                            <AlertDialogDescription>{t("inventory.undoConsignmentSaleConfirm")}</AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                            <AlertDialogAction disabled={busy === id} onClick={() => void runMutation(id, () => onClear(line))}>
+                              {t("inventory.undoConsignmentSale")}
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
                   ) : (
                     <div className="space-y-2">
                       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("inventory.recordSaleFor", { who: savedConsignee })}</div>
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                         <label className="flex-1 text-sm">
-                          {t("inventory.saleGross")}
+                          {t("inventory.saleGrossTotal")}
                           <Input className="mt-1 min-h-11 sm:min-h-9" inputMode="decimal" placeholder="0.00"
                             value={form.usd}
                             onChange={(e) => setSaleForm((c) => ({ ...c, [id]: { ...form, usd: e.target.value } }))} />
@@ -264,9 +291,27 @@ export default function InventoryConsignmentSheet({
                             value={form.at}
                             onChange={(e) => setSaleForm((c) => ({ ...c, [id]: { ...form, at: e.target.value } }))} />
                         </label>
-                        <Button className="min-h-11 sm:min-h-9" disabled={!saleValid || busy === id} onClick={() => recordSale(line)}>
-                          {t("inventory.recordSale")}
-                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger
+                            render={<Button className="min-h-11 sm:min-h-9" disabled={!saleValid || busy === id} />}
+                          >
+                            {t("inventory.recordSaleCopies", { n: lineConsigned })}
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>{t("inventory.recordSale")}</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                {t("inventory.recordSaleConfirm", { n: lineConsigned, who: savedConsignee })}
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                              <AlertDialogAction disabled={busy === id} onClick={() => recordSale(line)}>
+                                {t("inventory.recordSaleCopies", { n: lineConsigned })}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </div>
                       <Button variant="ghost" size="sm" className="min-h-11 px-2 text-muted-foreground sm:min-h-8" disabled={busy === id} onClick={() => void runMutation(id, () => onClear(line))}>
                         {t("inventory.clearConsignment")}
