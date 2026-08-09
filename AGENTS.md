@@ -87,6 +87,7 @@ app/
     CardBrowser.tsx       # Search filters + data table + modal trigger
     CardDetailModal.tsx   # Card detail dialog with buy/sell listing tables + add to buy list
     GradeEvidencePanel.tsx # Per-grade bands, comps, demand, flags, and event annotations
+    PriceEvidenceBadge.tsx # Independent semantic price evidence for image-curation candidates
     InventoryEconomics.tsx # Line-level direct, landed, sale, and profit drill-down under Finances
     owned-inventory.ts     # Batched catalog-level Owned N read model
     grade-signals.ts      # Typed S2 signal parser and conservative-exit helpers
@@ -216,6 +217,13 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 Nested interactive controls stop their own events so they do not activate the row.
 - `PriceCell` component handles currency conversion via `useCurrency()`.
 - **Optional row selection**: pass `rowSelection` / `onRowSelectionChange` / `getRowId`. All three are optional, so a view passing none is unaffected. Opt in by prepending the `selectColumn` export from `columns.tsx` (its checkbox stops click propagation, so ticking a row does not fire `onRowClick`).
+
+### Image curation price evidence
+
+- `confidence` on an image-curation candidate describes card or product identity only.
+- `price_evidence` independently records semantic price verification, OCR readability, and any configured banner score and threshold.
+- `PriceEvidenceBadge` renders that distinction for singles and sealed candidates, while `lib/image-curation-price-evidence.ts` limits bulk-action eligibility to evidence that mirrors the backend predicate.
+- The database remains authoritative and rejects every automatic approval path when semantic price evidence is absent or below its source-safe threshold.
 
 ### Targeted price refresh (redesign R6)
 

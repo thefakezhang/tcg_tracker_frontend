@@ -19,6 +19,12 @@ const baseCandidate = {
   source_image_height: null,
   active_geometry_correction_id: null,
   ocr_price_jpy: 1200,
+  price_evidence: {
+    verified: false,
+    method: "recognition_fallback",
+    ocr_confidence: 0.99,
+    banner: null,
+  },
   ocr_text: null,
   ocr_overlay_text: null,
   ocr_cell_label_text: null,
@@ -65,6 +71,8 @@ describe("curation correction cards", () => {
     expect(screen.getByRole("button", { name: "Approve with fixes" }).className).toContain("min-h-11");
     expect(screen.getByRole("button", { name: "Reject - no match" }).className).toContain("min-h-11");
     expect(screen.getByText("No real card to map to? Reject it.").parentElement?.className).toContain("flex-col");
+    expect(screen.getByText("Identity 90% · test").className).toContain("whitespace-normal");
+    expect(screen.getByText("Price needs review").className).toContain("whitespace-normal");
   });
 
   it("keeps sealed correction controls labelled and touch-sized", () => {
@@ -82,5 +90,37 @@ describe("curation correction cards", () => {
     ["Condition", "Price (¥)", "Change matched product", "Notes"].forEach(expectAssociatedControl);
     expect(screen.getByRole("button", { name: "Approve with fixes" }).className).toContain("min-h-11");
     expect(screen.getByRole("button", { name: "Reject - no match" }).className).toContain("min-h-11");
+    expect(screen.getByText("Identity 90% · test")).toBeTruthy();
+    expect(screen.getByText("Price needs review")).toBeTruthy();
+  });
+
+  it("keeps a 99% identity match separate from a failed price-banner threshold", () => {
+    render(
+      <LanguageProvider>
+        <CurationCandidateCard
+          c={{
+            ...baseCandidate,
+            confidence: 0.99,
+            price_evidence: {
+              verified: false,
+              method: "banner_plain_digits",
+              ocr_confidence: 0.99,
+              banner: { kind: "yellow", score: 0.54, threshold: 0.55, matched: false },
+            },
+            card_grading: "raw",
+            candidate_card_id: 7,
+            card: null,
+          }}
+          idx={0} status="needs_review" language="en" saving={false} selected={false}
+          onSelect={vi.fn()} onApprove={vi.fn()} onReject={vi.fn()} onSendBack={vi.fn()}
+        />
+      </LanguageProvider>,
+    );
+
+    expect(screen.getByText("Identity 99% · test")).toBeTruthy();
+    expect(screen.getByText("Price review · banner 54%/55%")).toBeTruthy();
+    expect(screen.getByLabelText(
+      "yellow price banner score: 54%; required: 55%. OCR readability: 99%. This is separate from card identity confidence.",
+    )).toBeTruthy();
   });
 });
