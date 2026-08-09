@@ -23,6 +23,8 @@ import {
 } from "./sale-lot-model";
 import { parseSaleQuantity } from "./sale-input";
 import ReceiptsDialog from "../Receipts";
+import TcgplayerImportDialog, { type TcgImportEntry } from "./TcgplayerImportDialog";
+import { type MatchableHolding } from "./tcgplayer-collection-match";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -148,6 +150,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
   // Lot sale: pick several holdings, enter one total.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lotOpen, setLotOpen] = useState(false);
+  const [tcgImportOpen, setTcgImportOpen] = useState(false);
   const [lotGross, setLotGross] = useState("");
   const [lotFees, setLotFees] = useState("0");
   const [lotCurrency, setLotCurrency] = useState("USD");
@@ -538,6 +541,21 @@ export default function SalesTab({ tripId }: { tripId: number }) {
   const holdingKey = (h: Holding) =>
     `${h.game}-${h.card_id ?? h.product_id}-${h.condition_id ?? h.sealed_condition}-${h.psa_grade ?? h.variant_edition}-${h.leg}`;
   const selectedHoldings = holdings.filter((h) => selected.has(holdingKey(h)));
+  // Holdings in the shape the TCGplayer-CSV matcher needs (keyed by holdingKey).
+  const matchableHoldings: MatchableHolding[] = useMemo(
+    () => holdings.map((h) => ({
+      key: holdingKey(h),
+      card_id: h.card_id,
+      set_code: h.set_code,
+      card_number: h.card_number,
+      name: h.name,
+      englishName: h.englishName,
+      leg: h.leg,
+      qty_on_hand: h.qty_on_hand,
+    })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [holdings],
+  );
   const selectedLeg = selectedHoldings[0]?.leg ?? null;
   const label = (h: Holding) => getCardDisplayName({ regional_name: h.name, english_name: h.englishName }, language);
   // The disambiguating identity for a holding: set code + card number (singles)
@@ -700,6 +718,49 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     const k = holdingKey(h);
     setSelected((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   }
+  // Stage a sell lot from a TCGplayer collection CSV: match rows to holdings,
+  // preselect them with the CSV quantities/prices, and open the lot dialog for
+  // review. It never records the sale directly - the operator confirms.
+  function importFromTcg(entries: TcgImportEntry[]) {
+    if (entries.length === 0) return;
+    const keys = new Set(entries.map((e) => e.holdingKey));
+    const q: Record<string, string> = {};
+    const explicitGross: Record<string, string> = {};
+    const itemExpense: Record<string, string> = {};
+    const itemCategory: Record<string, SaleExpenseCategory> = {};
+    const hasAllPrices = entries.every((e) => e.priceUsd != null && e.priceUsd > 0);
+    let grossSum = 0;
+    for (const e of entries) {
+      q[e.holdingKey] = String(e.qty);
+      itemExpense[e.holdingKey] = "";
+      itemCategory[e.holdingKey] = "shipping";
+      const lineGross = (e.priceUsd ?? 0) * e.qty;
+      explicitGross[e.holdingKey] = hasAllPrices ? lineGross.toFixed(2) : "";
+      grossSum += lineGross;
+    }
+    setSelected(keys);
+    setLotQty(q);
+    setLotItemExpenses(itemExpense);
+    setLotItemExpenseCategories(itemCategory);
+    setLotExplicitGross(explicitGross);
+    setLotExpenseCategory("platform_fee");
+    setLotFees("0");
+    setLotDate(new Date().toISOString().slice(0, 10));
+    setLotCustomerId(null);
+    // Determine currency from the imported holdings' leg (single leg -> that leg).
+    const legs = new Set(entries.map((e) => holdings.find((h) => holdingKey(h) === e.holdingKey)?.leg).filter(Boolean));
+    const oneLeg = legs.size === 1 ? [...legs][0] : null;
+    setLotCurrency(oneLeg === "export" ? "JPY" : "USD");
+    if (hasAllPrices) {
+      setLotAllocationMethod("explicit_prices");
+      setLotGross(grossSum.toFixed(2));
+    } else {
+      setLotAllocationMethod("market_value");
+      setLotGross("");
+    }
+    setLotOpen(true);
+  }
+
   function openLot() {
     const q: Record<string, string> = {};
     const itemExpense: Record<string, string> = {};
@@ -824,6 +885,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
           {selected.size > 0 && (
             <Button size="sm" onClick={openLot}>{t("trips.sellLot", { n: selected.size })}</Button>
           )}
+          <Button size="sm" variant="outline" onClick={() => setTcgImportOpen(true)}>{t("trips.tcgCsvImport")}</Button>
           <div className="flex items-center gap-1">
             <select value={sortCol ?? ""} onChange={(e) => setSortCol((e.target.value || null) as typeof sortCol)}
               className="min-h-11 rounded-md border bg-background px-2 text-xs sm:min-h-8" aria-label={t("trips.sortBy")}>
@@ -1262,6 +1324,13 @@ export default function SalesTab({ tripId }: { tripId: number }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <TcgplayerImportDialog
+        open={tcgImportOpen}
+        onOpenChange={setTcgImportOpen}
+        holdings={matchableHoldings}
+        onImport={importFromTcg}
+      />
 
       <Dialog open={lotOpen} onOpenChange={(o) => !o && setLotOpen(false)}>
         <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-xl">
