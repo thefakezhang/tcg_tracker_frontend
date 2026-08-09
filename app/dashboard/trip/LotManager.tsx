@@ -47,6 +47,7 @@ import {
 import TheoreticalRoiSummary from "../TheoreticalRoiSummary";
 import FullyLoadedCostLabel from "./FullyLoadedCostLabel";
 import ConsignmentControl from "./ConsignmentControl";
+import { type InventoryEconomicsRow } from "../inventory-economics";
 
 type CardGame = "pokemon" | "mtg";
 type LotItemCatalog = CardGame | "pokemon_sealed";
@@ -162,6 +163,8 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   // open lot, and rolled up for the whole leg of this trip. Both come from the
   // same view, so the per-card, per-lot and per-leg figures can never disagree.
   const [lotRoiLines, setLotRoiLines] = useState<RoiLine[]>([]);
+  // Realized sale economics per lot line (gross sold / margin), keyed by line_key.
+  const [econByLine, setEconByLine] = useState<Map<string, InventoryEconomicsRow>>(new Map());
   const [legRoi, setLegRoi] = useState<RoiSummary | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   useEffect(() => {
@@ -394,6 +397,16 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     // qty_remaining can never leave the ROI figures one render behind the
     // quantities they are computed from.
     setLotRoiLines(await fetchRoiLines({ lotId }));
+    // Realized sale economics for this lot's finalized lines (gross sold + margin).
+    // Fetched here alongside the lines so a sale can never leave the realized
+    // figures a render behind the quantities they came from.
+    const econRows = await selectAll<InventoryEconomicsRow>(
+      () => supabase.from("inventory_economics_v").select(
+        "line_key, lot_line_id, qty_sold, lifecycle_status, gross_usd, net_proceeds_usd, cogs_usd, profit_usd",
+      ).eq("lot_id", lotId),
+      ["line_key"],
+    );
+    setEconByLine(new Map(econRows.map((r) => [r.line_key, r])));
   }, []);
 
   const fetchCosts = useCallback(async (lotId: number) => {
@@ -512,6 +525,29 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     return { text: t("trips.soldN", { n: sold }), cls: "text-amber-600 dark:text-amber-400" };
   };
   const canSell = (ln: LotLine) => !!lot?.lines_imported && ln.qty_remaining != null && ln.qty_remaining > 0;
+
+  // Realized sale for a finalized line: what it actually sold for and the margin.
+  // Distinct from lineRoi (theoretical mark-to-market on the UNSOLD copies).
+  const lineRealized = (ln: LotLine): InventoryEconomicsRow | null => {
+    const row = econByLine.get(roiLineKeyFromTable(ln.table, ln.line_id));
+    return row && Number(row.qty_sold) > 0 ? row : null;
+  };
+  const renderRealized = (ln: LotLine) => {
+    const r = lineRealized(ln);
+    if (!r) return null;
+    const gross = Number(r.gross_usd);
+    const profit = Number(r.profit_usd);
+    const marginPct = gross > 0 ? (profit / gross) * 100 : null;
+    return (
+      <div className="text-[11px] text-muted-foreground">
+        {t("trips.soldFor")}: <span className="tabular-nums text-foreground">${gross.toFixed(2)}</span>
+        {" · "}
+        <span className={`tabular-nums ${profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+          {profit >= 0 ? "+" : ""}${profit.toFixed(2)}{marginPct != null ? ` (${marginPct.toFixed(0)}%)` : ""}
+        </span>
+      </div>
+    );
+  };
 
   // Per-line cost override is stored in USD, but entered in the lot's buying
   // currency (e.g. JPY for a JP import lot), converted via the lot's FX rate.
@@ -1288,6 +1324,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                     {lot.lines_imported && lineSold(ln) && (
                       <div className={`text-[11px] ${lineSold(ln)!.cls}`}>{lineSold(ln)!.text}</div>
                     )}
+                    {lot.lines_imported && renderRealized(ln)}
                     {/* Card level, mobile: one line, value then return. */}
                     {lot.lines_imported && lineRoi(ln)?.priced && (
                       <div className="flex items-center justify-between gap-1 text-[11px]">
@@ -1348,6 +1385,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                       <div>
                         <div>{ln.quantity}</div>
                         {lineSold(ln) && <div className={`text-[11px] ${lineSold(ln)!.cls}`}>{lineSold(ln)!.text}</div>}
+                        {renderRealized(ln)}
                       </div>
                     ) : (
                       <Input type="number" defaultValue={ln.quantity} className="min-h-11 w-16 sm:min-h-8"
