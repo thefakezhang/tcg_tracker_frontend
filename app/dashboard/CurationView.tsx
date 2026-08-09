@@ -7,6 +7,10 @@ import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
 import { CurationAcceptResult, parseCurationAcceptResult } from "@/lib/image-curation-batch";
+import {
+  isAutoApprovePriceEvidence,
+  type PriceEvidence,
+} from "@/lib/image-curation-price-evidence";
 import { useLanguage } from "./LanguageContext";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { getCardDisplayName, cardMeta, cardVariant, useDebouncedValue } from "./use-card-data";
@@ -17,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ImageGeometryEditor } from "./ImageGeometryEditor";
+import { PriceEvidenceBadge } from "./PriceEvidenceBadge";
 import {
   GridBBoxJSON,
   ImageBox,
@@ -99,6 +104,7 @@ interface Candidate {
   ocr_text: string | null;
   ocr_overlay_text: string | null;
   ocr_cell_label_text: string | null;
+  price_evidence: PriceEvidence | null;
   confidence: number | null;
   match_method: string | null;
   match_score_features: number | null;
@@ -119,7 +125,7 @@ interface Candidate {
 }
 
 const CAND_COLS =
-  "candidate_id, status, cell_image_url, source_image_url, source_grid_bbox, effective_source_grid_bbox, source_image_width, source_image_height, active_geometry_correction_id, ocr_price_jpy, ocr_text, ocr_overlay_text, ocr_cell_label_text, confidence, match_method, match_score_features, match_score_embedding, match_score_text, card_grading, variant_attrs, variant_source, curator_notes, source_author_handle, source_tweet_url, source_tweet_date, source_thread_root_id, source_thread_position, source_thread_root_text, candidate_card_id";
+  "candidate_id, status, cell_image_url, source_image_url, source_grid_bbox, effective_source_grid_bbox, source_image_width, source_image_height, active_geometry_correction_id, ocr_price_jpy, price_evidence, ocr_text, ocr_overlay_text, ocr_cell_label_text, confidence, match_method, match_score_features, match_score_embedding, match_score_text, card_grading, variant_attrs, variant_source, curator_notes, source_author_handle, source_tweet_url, source_tweet_date, source_thread_root_id, source_thread_position, source_thread_root_text, candidate_card_id";
 
 export default function CurationView() {
   const { t } = useTranslation();
@@ -348,7 +354,10 @@ export default function CurationView() {
   // Accept-All target for the current view (respects the buyer filter). The set
   // is loaded up to LOAD_CAP, so this equals the snapshot's matched count in
   // practice; the RPC re-derives the real set server-side regardless.
-  const matchedInView = useMemo(() => candidates.filter((c) => c.candidate_card_id).length, [candidates]);
+  const matchedInView = useMemo(
+    () => candidates.filter((c) => c.candidate_card_id && isAutoApprovePriceEvidence(c.price_evidence)).length,
+    [candidates],
+  );
 
   return (
     <div className="space-y-4 p-4">
@@ -469,7 +478,9 @@ export default function CurationView() {
         if (!list.length) return null;
         // Offset of this band's first item within the flat keyboard-nav list.
         const offset = BANDS.slice(0, BANDS.indexOf(band)).reduce((sum, b) => sum + grouped[b].length, 0);
-        const matched = list.filter((c) => c.candidate_card_id);
+        const matched = list.filter(
+          (c) => c.candidate_card_id && isAutoApprovePriceEvidence(c.price_evidence),
+        );
         return (
           <section key={band} className="space-y-2">
             <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background/95 py-1 backdrop-blur">
@@ -718,7 +729,17 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
             <div className="truncate font-medium">{matchName}</div>
             {matchMeta && <div className="truncate text-muted-foreground">{matchMeta}</div>}
             <div className="flex flex-wrap gap-1">
-              {conf != null && <Badge variant="outline" className={`font-semibold ${confBadgeClass}`}>{conf}% · {c.match_method}</Badge>}
+              {conf != null && (
+                <Badge
+                  variant="outline"
+                  className={`max-w-full whitespace-normal break-words font-semibold ${confBadgeClass}`}
+                  title={t("curation.identityConfidenceHint")}
+                  aria-label={`${t("curation.identityConfidence", { confidence: conf })}. ${t("curation.identityConfidenceHint")}`}
+                >
+                  {t("curation.identityConfidence", { confidence: conf })}{c.match_method ? ` · ${c.match_method}` : ""}
+                </Badge>
+              )}
+              <PriceEvidenceBadge evidence={c.price_evidence} />
               {c.card_grading && c.card_grading !== "raw" && <Badge variant="secondary" className="text-[10px]">{c.card_grading}</Badge>}
               {cellLabel ? <Badge className="text-[10px] border-blue-500/50 bg-blue-500/10 text-blue-700 dark:text-blue-400" variant="outline">{cellLabel}</Badge> : null}
               {ribbon ? <Badge variant="secondary" className="text-[10px]">{t("curation.variant")}</Badge> : null}
