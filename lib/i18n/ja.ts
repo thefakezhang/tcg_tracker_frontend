@@ -504,6 +504,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.soldOut": "販売済み",
   "trips.unsold": "未販売",
   "trips.soldN": "{n} 販売済み",
+  "trips.soldFor": "販売額",
   "trips.addToSale": "販売に追加",
   "trips.inCart": "追加済み",
   "trips.saleCartCount": "販売に {n} 枚",

@@ -502,6 +502,7 @@ const en = {
   "trips.soldOut": "sold",
   "trips.unsold": "unsold",
   "trips.soldN": "{n} sold",
+  "trips.soldFor": "Sold for",
   "trips.addToSale": "Add to sale",
   "trips.inCart": "In sale",
   "trips.saleCartCount": "{n} in sale",
