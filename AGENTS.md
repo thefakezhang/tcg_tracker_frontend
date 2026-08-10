@@ -88,6 +88,7 @@ app/
     CardDetailModal.tsx   # Card detail dialog with buy/sell listing tables + add to buy list
     GradeEvidencePanel.tsx # Per-grade bands, comps, demand, flags, and event annotations
     PriceEvidenceBadge.tsx # Independent semantic price evidence for image-curation candidates
+    ImageAutoAcceptView.tsx # Catalog calibration, controls, capped canaries, run audit, and rollback
     InventoryEconomics.tsx # Line-level direct, landed, sale, and profit drill-down under Finances
     owned-inventory.ts     # Batched catalog-level Owned N read model
     grade-signals.ts      # Typed S2 signal parser and conservative-exit helpers
@@ -224,6 +225,26 @@ Nested interactive controls stop their own events so they do not activate the ro
 - `price_evidence` independently records semantic price verification, OCR readability, and any configured banner score and threshold.
 - `PriceEvidenceBadge` renders that distinction for singles and sealed candidates, while `lib/image-curation-price-evidence.ts` limits bulk-action eligibility to evidence that mirrors the backend predicate.
 - The database remains authoritative and rejects every automatic approval path when semantic price evidence is absent or below its source-safe threshold.
+
+### Calibrated image auto-accept
+
+- `ImageAutoAcceptView.tsx` is registered under Catalog because it is a source-quality and catalog-operations workflow, not ordinary candidate curation.
+- `lib/image-autoaccept.ts` parses the authenticated status RPC and owns source readiness, remaining-review, and display calculations.
+- Calibration is independent for each source, product kind, and exact classifier fingerprint.
+The reviewer presents the frozen item crop, price crop, catalog match, amount, grade or condition, identity confidence, semantic method, and source link together before one complete-listing verdict is recorded.
+- `Correct latest label` reopens the source's newest current label and passes its label UUID as the append-only supersession guard.
+It never edits or deletes the original verdict.
+- The database, not the browser, enforces 381 included labels, zero failures, the 99 percent Wilson lower-bound gate, exact-fingerprint freshness, source and global controls, and all run caps.
+- Global enablement also requires a non-empty clean operator canary for the source's exact fingerprint.
+The scheduler and promotion RPC recheck this gate even when the global switch was already on for another source.
+- The UI exposes the global emergency stop, source enable or disable, a reasoned source-scoped canary that can run while the scheduler stays globally stopped, recent run results, and audited rollback.
+Enablement, canaries, rollback, and every non-pass label require an operator note.
+- Emergency stop and source disable are the exception to typed-note entry.
+When the field is blank, the UI supplies a stable automatic reason so shutdown stays one tap and the database event remains attributable.
+- Source cards use wrapping grids instead of tables, evidence collapses to one column on phones, and every action has at least a 44px target.
+The surface must never create page-level horizontal overflow.
+- Exact same-source repeat-memory auto-accept remains a separate conservative path and is not controlled by this generalized switch.
+- Backend architecture, activation, caps, scheduler behavior, and rollback are documented in `docs/image_curation_autoaccept.md` in the backend repository.
 
 ### Targeted price refresh (redesign R6)
 
