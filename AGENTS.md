@@ -307,6 +307,9 @@ It preserves the full signal row, source flags, displayed market inputs, and an 
 - Source-fact sale groups use a global history key, while legacy groups remain game-scoped.
 - `owned-inventory.ts` batches quiet `Owned N` counts for the buying surfaces without exposing finance detail there.
 - `InventoryView.tsx` is the sole consignment mutation surface for Pokémon singles, MTG singles, and Pokémon sealed products.
+It is also the physical-count reconciliation surface for Pokémon singles.
+Reconciliation compares an observed count only with the current holding balance, records a shortage through `record_pokemon_inventory_shortage`, and never fabricates a sale or assumes a historical peak quantity was held at once.
+The mutation sends both the displayed ledger balance and observed count so the backend can reject a stale screen after a concurrent inventory change.
 - It groups the paged source lines from `inventory_theoretical_roi_v` at the exact holding identity and shows owned, consigned, and available quantities.
 - A reported consignment sale books all currently consigned copies through the exact source-line sales ledger path, while undo creates a confirmed full accounting reversal.
 - The ordinary single-holding sale dialog requires an explicit quantity and never defaults silently to one.

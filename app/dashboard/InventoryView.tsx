@@ -33,6 +33,10 @@ import {
   clearInventoryLineConsignment,
 } from "./inventory-consignment";
 import InventoryConsignmentSheet, { type RecordSaleInput } from "./InventoryConsignmentSheet";
+import {
+  buildPokemonInventoryShortageArgs,
+  type InventoryReconciliationInput,
+} from "./inventory-reconciliation";
 
 // Master inventory = everything currently on hand, across all trips and both
 // legs. inventory_holdings_v aggregates qty_remaining by SKU+leg; image_url and
@@ -40,7 +44,7 @@ import InventoryConsignmentSheet, { type RecordSaleInput } from "./InventoryCons
 interface Holding {
   game: string;
   item_type: "single" | "sealed";
-  leg: string;
+  leg: "import" | "export";
   card_id: number | null;
   product_id: number | null;
   name: string;
@@ -233,6 +237,23 @@ export default function InventoryView() {
     await refreshAfterWrite();
   }, [refreshAfterWrite]);
 
+  const reconcileCount = useCallback(async (input: InventoryReconciliationInput) => {
+    if (!selected || selected.game !== "pokemon" || selected.item_type !== "single" || selected.card_id == null) {
+      throw new Error("Only Pokemon singles can be reconciled from this inventory surface");
+    }
+    const args = buildPokemonInventoryShortageArgs({
+      cardId: selected.card_id,
+      conditionId: selected.condition_id,
+      psaGrade: selected.psa_grade,
+      leg: selected.leg,
+      ledgerQuantity: selected.qty_on_hand,
+    }, input, new Date().toISOString());
+    const { error: mutationError } = await createClient().rpc("record_pokemon_inventory_shortage", args);
+    if (mutationError) throw mutationError;
+    await refreshAfterWrite();
+    setSelectedKey(null);
+  }, [refreshAfterWrite, selected]);
+
   // A holdings row whose lines are all unpriced says so rather than showing a
   // zero, which would read as "worthless" instead of "unknown".
   const renderRoiCell = (r: RoiSummary | null) => {
@@ -308,7 +329,7 @@ export default function InventoryView() {
             <button
               key={keyOf(h)}
               type="button"
-              aria-label={t("inventory.manageConsignmentFor", { item: label(h) })}
+              aria-label={t("inventory.manageInventoryFor", { item: label(h) })}
               className="min-w-0 rounded-xl text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
               onClick={() => setSelectedKey(keyOf(h))}
             >
@@ -347,7 +368,7 @@ export default function InventoryView() {
                     </span>
                   </div>
                 ) : null}
-                <div className="pt-1 text-center text-[11px] font-medium text-primary">{t("inventory.manageConsignment")}</div>
+                <div className="pt-1 text-center text-[11px] font-medium text-primary">{t("inventory.manageInventory")}</div>
               </CardContent>
             </Card>
             </button>
@@ -368,7 +389,7 @@ export default function InventoryView() {
               <TableHead className="w-24">{t("trips.avgCost")}</TableHead>
               <TableHead className="w-28">{t("inventory.totalCostCol")}</TableHead>
               <TableHead className="w-32">{t("roi.col")}</TableHead>
-              <TableHead className="w-28"><span className="sr-only">{t("inventory.manageConsignment")}</span></TableHead>
+              <TableHead className="w-28"><span className="sr-only">{t("inventory.manageInventory")}</span></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -417,6 +438,7 @@ export default function InventoryView() {
           onSave={saveConsignment}
           onRecordSale={recordSale}
           onClear={clearConsignment}
+          onReconcile={selected.game === "pokemon" && selected.item_type === "single" ? reconcileCount : undefined}
         />
       )}
     </div>

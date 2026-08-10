@@ -6,6 +6,7 @@ import { formatMutationError } from "@/lib/mutation-error";
 import { formatUsd } from "@/lib/money";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,6 +26,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import type { RoiLine } from "./theoretical-roi";
+import {
+  inventoryShortage,
+  parsePhysicalCount,
+  validReconciliationReason,
+  type InventoryReconciliationInput,
+} from "./inventory-reconciliation";
 
 /** A source-lot row shares the authoritative inventory ROI read-model shape. */
 export type ConsignmentRoiLine = RoiLine;
@@ -50,6 +57,8 @@ export interface InventoryConsignmentSheetProps {
   onRecordSale: (line: ConsignmentRoiLine, input: RecordSaleInput) => Promise<void>;
   /** Clear an unsold consignment or reverse and clear a booked sale. */
   onClear: (line: ConsignmentRoiLine) => Promise<void>;
+  /** Reconcile a lower current count without fabricating a sale. */
+  onReconcile?: (input: InventoryReconciliationInput) => Promise<void>;
 }
 
 function lineId(line: ConsignmentRoiLine): string {
@@ -89,11 +98,15 @@ export default function InventoryConsignmentSheet({
   onSave,
   onRecordSale,
   onClear,
+  onReconcile,
 }: InventoryConsignmentSheetProps) {
   const { t } = useTranslation();
   const [values, setValues] = useState<Record<string, string>>({});
   const [consignees, setConsignees] = useState<Record<string, string>>({});
   const [saleForm, setSaleForm] = useState<Record<string, { usd: string; fee: string; at: string }>>({});
+  const [physicalCount, setPhysicalCount] = useState(String(owned));
+  const [reconciliationReason, setReconciliationReason] = useState(() => t("inventory.defaultReconciliationReason"));
+  const [reconciliationNotes, setReconciliationNotes] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -111,9 +124,12 @@ export default function InventoryConsignmentSheet({
       setValues(initialValues);
       setConsignees(initialConsignees);
       setSaleForm({});
+      setPhysicalCount(String(owned));
+      setReconciliationReason(t("inventory.defaultReconciliationReason"));
+      setReconciliationNotes("");
       setError(null);
     }
-  }, [initialValues, initialConsignees, open]);
+  }, [initialValues, initialConsignees, open, owned, t]);
 
   const runMutation = async (id: string, mutate: () => Promise<void>) => {
     setBusy(id);
@@ -143,15 +159,32 @@ export default function InventoryConsignmentSheet({
     void runMutation(id, () => onRecordSale(line, { saleUsd, feeUsd, soldAt: form.at }));
   };
 
+  const observedQuantity = parsePhysicalCount(physicalCount);
+  const shortage = observedQuantity == null ? null : inventoryShortage(owned, observedQuantity);
+  const countIsSurplus = observedQuantity != null && observedQuantity > owned;
+  const reconciliationValid = onReconcile != null
+    && shortage != null
+    && shortage > 0
+    && validReconciliationReason(reconciliationReason);
+
+  const reconcile = () => {
+    if (!onReconcile || observedQuantity == null || !reconciliationValid) return;
+    void runMutation("physical-count", () => onReconcile({
+      observedQuantity,
+      reason: reconciliationReason,
+      notes: reconciliationNotes,
+    }));
+  };
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="data-[side=right]:w-full data-[side=right]:max-w-none sm:data-[side=right]:w-[36rem] sm:data-[side=right]:max-w-[36rem]">
         <SheetHeader>
-          <SheetTitle>{t("inventory.manageConsignment")}</SheetTitle>
+          <SheetTitle>{t("inventory.manageInventory")}</SheetTitle>
           <SheetDescription>
             <span className="block font-medium text-foreground">{itemLabel}</span>
             {itemMeta && <span className="block">{itemMeta}</span>}
-            <span className="mt-2 block">{t("inventory.consignmentHelp")}</span>
+            <span className="mt-2 block">{t("inventory.manageInventoryHelp")}</span>
           </SheetDescription>
         </SheetHeader>
 
@@ -170,10 +203,93 @@ export default function InventoryConsignmentSheet({
 
         {error && <p role="alert" className="mx-4 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{t("cardBrowser.error", { message: error })}</p>}
 
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pb-4">
+          {onReconcile && (
+            <section className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+              <h3 className="text-sm font-semibold">{t("inventory.reconcileCount")}</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("inventory.reconcileCountHelp", { n: owned, consigned })}
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="text-sm font-medium">
+                  {t("inventory.actualOwnedCount")}
+                  <Input
+                    aria-label={t("inventory.actualOwnedCount")}
+                    className="mt-1 min-h-11 sm:min-h-9"
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    step={1}
+                    value={physicalCount}
+                    aria-invalid={(shortage == null) || undefined}
+                    onChange={(event) => setPhysicalCount(event.target.value)}
+                  />
+                </label>
+                <label className="text-sm font-medium">
+                  {t("inventory.reconciliationReason")}
+                  <Input
+                    aria-label={t("inventory.reconciliationReason")}
+                    className="mt-1 min-h-11 sm:min-h-9"
+                    maxLength={500}
+                    value={reconciliationReason}
+                    aria-invalid={!validReconciliationReason(reconciliationReason) || undefined}
+                    onChange={(event) => setReconciliationReason(event.target.value)}
+                  />
+                </label>
+              </div>
+              <label className="mt-3 block text-sm font-medium">
+                {t("inventory.reconciliationNotes")}
+                <Textarea
+                  aria-label={t("inventory.reconciliationNotes")}
+                  className="mt-1 min-h-20"
+                  placeholder={t("inventory.reconciliationNotesPlaceholder")}
+                  value={reconciliationNotes}
+                  onChange={(event) => setReconciliationNotes(event.target.value)}
+                />
+              </label>
+              {countIsSurplus ? (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{t("inventory.surplusNeedsAcquisition")}</p>
+              ) : shortage === 0 ? (
+                <p className="mt-2 text-xs text-muted-foreground">{t("inventory.countsMatch")}</p>
+              ) : shortage == null ? (
+                <p className="mt-2 text-xs text-destructive">{t("inventory.physicalCountRange", { max: owned })}</p>
+              ) : (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                  {t("inventory.shortagePreview", { n: shortage })}
+                </p>
+              )}
+              <AlertDialog>
+                <AlertDialogTrigger
+                  render={<Button variant="outline" className="mt-3 min-h-11 sm:min-h-9" disabled={!reconciliationValid || busy === "physical-count"} />}
+                >
+                  {busy === "physical-count" ? t("common.saving") : t("inventory.recordShortage")}
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{t("inventory.recordShortage")}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {t("inventory.recordShortageConfirm", {
+                        ledger: owned,
+                        observed: observedQuantity ?? 0,
+                        shortage: shortage ?? 0,
+                      })}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                    <AlertDialogAction disabled={!reconciliationValid || busy === "physical-count"} onClick={reconcile}>
+                      {t("inventory.confirmShortage", { n: shortage ?? 0 })}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </section>
+          )}
+
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {t("inventory.sourceLots")}
           </h3>
+          <p className="text-xs text-muted-foreground">{t("inventory.consignmentHelp")}</p>
           {lines.map((line) => {
             const id = lineId(line);
             const value = values[id] ?? initialQuantity(line);
