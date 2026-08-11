@@ -201,6 +201,11 @@ Prices flow through two layers:
 
 Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (USD rate = 1).
 
+Raw Pokemon cards also carry independent market-source evidence from Collectr and TCGPlayer.
+`market-evidence.ts` owns the comparison contract, including the inclusive 20 percent discrepancy threshold, while `MarketEvidenceCallout.tsx` owns the compact and detail presentation.
+Collectr-only estimates remain visible as low-confidence leads, and query failures suppress comparison labels so an unanswered source cannot be mistaken for an empty one.
+See `docs/market_source_evidence.md` for the architecture and non-goals.
+
 ### i18n System
 
 - Translation keys defined in `lib/i18n/en.ts` (source of truth).

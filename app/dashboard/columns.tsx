@@ -13,6 +13,8 @@ import { useTranslation } from "@/lib/i18n";
 import { DecisionActions } from "./DecisionActions";
 import { OwnedCountLine, ObservedLine } from "./OwnedCountLine";
 import { UidChip } from "./UidChip";
+import { MarketEvidenceBadge } from "./MarketEvidenceCallout";
+import type { MarketEvidence } from "./market-evidence";
 
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
   const { displayCurrency, convertPrice } = useCurrency();
@@ -199,7 +201,13 @@ export const selectColumn: ColumnDef<CardRowData> = {
   ),
 };
 
-export function createColumns(t: TranslateFn, language: Language = "en", availableOnly = false, tcgMarket?: Map<number, number>): ColumnDef<CardRowData>[] {
+export function createColumns(
+  t: TranslateFn,
+  language: Language = "en",
+  availableOnly = false,
+  tcgMarket?: Map<number, number>,
+  marketEvidence?: Map<number, MarketEvidence>,
+): ColumnDef<CardRowData>[] {
   return [
     {
       id: "regional_name",
@@ -290,10 +298,17 @@ export function createColumns(t: TranslateFn, language: Language = "en", availab
       id: "tcg_market",
       accessorFn: (row) => tcgMarket?.get(Number(row.card.card_id)) ?? undefined,
       header: ({ column }) => <SortableHeader column={column} label={t("cardBrowser.tcgMarket")} />,
-      cell: ({ getValue }) => {
+      cell: ({ getValue, row }) => {
         const v = getValue() as number | undefined;
-        if (v == null) return "—";
-        return v >= 100 ? `$${Math.round(v).toLocaleString()}` : `$${v.toFixed(2)}`;
+        const evidence = Number(row.original.psaGrade ?? 0) === 0
+          ? marketEvidence?.get(Number(row.original.card.card_id))
+          : undefined;
+        return (
+          <div className="space-y-1">
+            <div>{v == null ? "\u2014" : v >= 100 ? `$${Math.round(v).toLocaleString()}` : `$${v.toFixed(2)}`}</div>
+            <MarketEvidenceBadge evidence={evidence} />
+          </div>
+        );
       },
       sortUndefined: "last",
       sortingFn: nullsLastNumber,

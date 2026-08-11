@@ -61,6 +61,13 @@ import { OwnedCountLine, ObservedLine } from "./OwnedCountLine";
 import { useCardObservations } from "./card-observations";
 import { QueryError } from "./use-query";
 import { activateOnEnterOrSpace } from "@/lib/keyboard-activation";
+import { MarketEvidenceBadge } from "./MarketEvidenceCallout";
+import {
+  buildMarketEvidenceMaps,
+  buildTcgMarketMap,
+  type MarketEvidence,
+  type MarketPriceRow,
+} from "./market-evidence";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -132,6 +139,7 @@ export default function CardBrowser() {
   // loaded page from the pokemon_tcgplayer_market view, so the browse can show
   // it prominently on mobile and sum it across a multi-selection.
   const [tcgMarket, setTcgMarket] = useState<Map<number, number>>(() => new Map());
+  const [marketEvidence, setMarketEvidence] = useState<Map<number, MarketEvidence>>(() => new Map());
   const [weakEvidenceOnly, setWeakEvidenceOnly] = useState(false);
   // Tally the copies you can actually sell: owned minus consignment.
   const [availableOnly, setAvailableOnly] = useState(false);
@@ -223,25 +231,45 @@ export default function CardBrowser() {
     return [...ids];
   }, [data, rowSelection, selectionEnabled]);
 
-  // Load tcgplayer market values for the cards currently on screen (pokemon
-  // only; the view is pokemon-keyed).
+  // Load TCGPlayer and Collectr raw-market values for the cards currently on
+  // screen. Evidence is classified only when both queries succeed, so a source
+  // outage can never appear as a real Collectr-only card.
   useEffect(() => {
-    if (activeGame !== "pokemon") { setTcgMarket(new Map()); return; }
+    setTcgMarket(new Map());
+    setMarketEvidence(new Map());
+    if (activeGame !== "pokemon") return;
     const ids = [...new Set(data.map((r) => Number(r.card.card_id)).filter((n) => Number.isFinite(n)))];
-    if (ids.length === 0) { setTcgMarket(new Map()); return; }
+    if (ids.length === 0) return;
     let cancelled = false;
     (async () => {
-      const { data: rows, error } = await createClient()
-        .from("pokemon_tcgplayer_market")
-        .select("card_id, market_usd")
-        .in("card_id", ids);
-      if (cancelled || error || !rows) return;
-      const m = new Map<number, number>();
-      for (const r of rows as { card_id: number; market_usd: number | string }[]) {
-        const v = Number(r.market_usd);
-        if (Number.isFinite(v)) m.set(Number(r.card_id), v);
+      const supabase = createClient();
+      const [tcgplayer, collectr] = await Promise.all([
+        supabase
+          .from("pokemon_tcgplayer_market")
+          .select("card_id, market_usd")
+          .in("card_id", ids),
+        supabase
+          .from("pokemon_market_listings")
+          .select("card_id, price, locations!inner(name)")
+          .in("card_id", ids)
+          .eq("price_type", "Sell")
+          .eq("psa_grade", 0)
+          .eq("currency", "USD")
+          .eq("locations.name", "collectr"),
+      ]);
+      if (cancelled) return;
+
+      if (!tcgplayer.error) {
+        setTcgMarket(buildTcgMarketMap((tcgplayer.data ?? []) as MarketPriceRow[]));
       }
-      setTcgMarket(m);
+      if (!tcgplayer.error && !collectr.error) {
+        const maps = buildMarketEvidenceMaps(
+          ids,
+          (tcgplayer.data ?? []) as MarketPriceRow[],
+          (collectr.data ?? []) as MarketPriceRow[],
+        );
+        setMarketEvidence(maps.evidence);
+      }
     })();
     return () => { cancelled = true; };
   }, [data, activeGame]);
@@ -685,7 +713,7 @@ export default function CardBrowser() {
       {(!error || visibleData.length > 0) && <DataTable
         columns={activeGame === "mtg"
           ? createMtgColumns(t, language, availableOnly)
-          : [selectColumn, ...createColumns(t, language, availableOnly, tcgMarket)]}
+          : [selectColumn, ...createColumns(t, language, availableOnly, tcgMarket, marketEvidence)]}
         data={visibleData}
         loading={loading}
         sorting={sorting}
@@ -726,6 +754,9 @@ export default function CardBrowser() {
             const buyEntry = row.prices.highestBuy;
             const sellEntry = row.prices.lowestSell;
             const conservativeExit = exitValue(row.signal, exitPercentile);
+            const rawMarketEvidence = Number(row.psaGrade ?? 0) === 0
+              ? marketEvidence.get(Number(row.card.card_id))
+              : undefined;
 
             return (
               <Card
@@ -792,6 +823,14 @@ export default function CardBrowser() {
                     <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
                       <span className="text-muted-foreground">{t("cardBrowser.tcgMarket")}</span>
                       <span className="font-medium">{fmtUsd(tcgMarket.get(Number(row.card.card_id))!)}</span>
+                    </div>
+                  )}
+                  {activeGame === "pokemon" && (
+                    rawMarketEvidence?.status === "collectr_only"
+                    || rawMarketEvidence?.status === "discrepant"
+                  ) && (
+                    <div className="flex w-full justify-end border-t border-foreground/10 pt-2">
+                      <MarketEvidenceBadge evidence={rawMarketEvidence} />
                     </div>
                   )}
                   {activeGame === "pokemon" && (

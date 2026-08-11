@@ -4,9 +4,21 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CardBrowser from "./CardBrowser";
 
-const mocks = vi.hoisted(() => ({ useCardData: vi.fn(), refetch: vi.fn() }));
-const translate = (key: string, values?: { message?: string }) =>
-  values?.message ? `${key}: ${values.message}` : key;
+const mocks = vi.hoisted(() => ({
+  useCardData: vi.fn(),
+  refetch: vi.fn(),
+  from: vi.fn(),
+  queryResolved: vi.fn(),
+  tcgResult: { data: [] as Record<string, unknown>[], error: null as unknown },
+  collectrResult: { data: [] as Record<string, unknown>[], error: null as unknown },
+}));
+const translate = (key: string, values?: Record<string, string | number>) => {
+  if (values?.message) return `${key}: ${values.message}`;
+  if (key.startsWith("marketEvidence.") && values) {
+    return `${key} ${Object.values(values).join(" ")}`;
+  }
+  return key;
+};
 
 vi.mock("@/lib/i18n", () => ({ useTranslation: () => ({ t: translate }) }));
 vi.mock("./LanguageContext", () => ({ useLanguage: () => ({ language: "en" }) }));
@@ -54,11 +66,34 @@ vi.mock("./owned-inventory", () => ({
 // The observation lookup builds a Supabase client on mount; this suite has no
 // Supabase env, so stub it like the owned-count hook above.
 vi.mock("./card-observations", () => ({ useCardObservations: () => new Map() }));
+vi.mock("@/lib/supabase/client", () => ({
+  createClient: () => ({ from: mocks.from }),
+}));
 
 afterEach(cleanup);
 
 beforeEach(() => {
   mocks.refetch.mockReset();
+  mocks.from.mockReset();
+  mocks.queryResolved.mockReset();
+  mocks.tcgResult = { data: [], error: null };
+  mocks.collectrResult = { data: [], error: null };
+  mocks.from.mockImplementation((table: string) => {
+    const builder: Record<string, unknown> = {};
+    for (const method of ["select", "in", "eq"]) {
+      builder[method] = vi.fn(() => builder);
+    }
+    builder.then = (
+      onFulfilled: (value: unknown) => unknown,
+      onRejected?: (reason: unknown) => unknown,
+    ) => Promise.resolve(
+      table === "pokemon_tcgplayer_market" ? mocks.tcgResult : mocks.collectrResult,
+    ).then((value) => {
+      mocks.queryResolved(table);
+      return onFulfilled(value);
+    }, onRejected);
+    return builder;
+  });
   mocks.useCardData.mockReturnValue({
     data: [{
       key: "42:10",
@@ -101,6 +136,69 @@ describe("CardBrowser surfaces", () => {
     expect(screen.getByText("124/SV-P")).toBeTruthy();
     expect(screen.getByRole("button", { name: "decision.watch" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "decision.dismissOpportunity" })).toBeTruthy();
+  });
+
+  it("calls out Collectr-only raw estimates on phones", async () => {
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
+    mocks.useCardData.mockReturnValue({
+      ...mocks.useCardData(),
+      data: [{
+        key: "42:0",
+        card: { card_id: "42", regional_name: "Card", set_code: "SV-P", card_number: "124", misc_info: null, image_url: null },
+        psaGrade: 0,
+        prices: { highestBuy: null, lowestSell: null },
+        roi: null,
+        signal: null,
+      }],
+    });
+    mocks.collectrResult = { data: [{ card_id: 42, price: 81.21 }], error: null };
+
+    render(<CardBrowser />);
+
+    expect(await screen.findByText("marketEvidence.collectrOnlyBadge")).toBeTruthy();
+  });
+
+  it("shows the direction and size of a significant raw-market gap", async () => {
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
+    mocks.useCardData.mockReturnValue({
+      ...mocks.useCardData(),
+      data: [{
+        key: "42:0",
+        card: { card_id: "42", regional_name: "Card", set_code: "SV-P", card_number: "124", misc_info: null, image_url: null },
+        psaGrade: 0,
+        prices: { highestBuy: null, lowestSell: null },
+        roi: null,
+        signal: null,
+      }],
+    });
+    mocks.tcgResult = { data: [{ card_id: 42, market_usd: 100 }], error: null };
+    mocks.collectrResult = { data: [{ card_id: 42, price: 150 }], error: null };
+
+    render(<CardBrowser />);
+
+    expect(await screen.findByText("marketEvidence.discrepancyAboveBadge 50")).toBeTruthy();
+  });
+
+  it("does not mislabel a TCGPlayer query failure as Collectr-only", async () => {
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
+    mocks.useCardData.mockReturnValue({
+      ...mocks.useCardData(),
+      data: [{
+        key: "42:0",
+        card: { card_id: "42", regional_name: "Card", set_code: "SV-P", card_number: "124", misc_info: null, image_url: null },
+        psaGrade: 0,
+        prices: { highestBuy: null, lowestSell: null },
+        roi: null,
+        signal: null,
+      }],
+    });
+    mocks.tcgResult = { data: [], error: { message: "temporary failure" } };
+    mocks.collectrResult = { data: [{ card_id: 42, price: 81.21 }], error: null };
+
+    render(<CardBrowser />);
+
+    await waitFor(() => expect(mocks.queryResolved).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("marketEvidence.collectrOnlyBadge")).toBeNull();
   });
 
   it.each(["pointer", "Enter", "Space"])("opens phone card details with %s activation", async (activation) => {
