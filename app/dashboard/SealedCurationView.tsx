@@ -133,7 +133,10 @@ export default function SealedCurationView() {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const { saving, save } = useSaving();
-  const [status, setStatus] = useState<Status>("needs_review");
+  // Recognition writes new candidates to pending. Open on the intake queue so
+  // a healthy sealed pipeline never appears empty merely because nothing has
+  // been deferred into needs_review yet.
+  const [status, setStatus] = useState<Status>("pending");
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchResult, setBatchResult] = useState<CurationAcceptResult | null>(null);
