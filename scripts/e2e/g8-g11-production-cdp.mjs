@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { chromium } from "playwright";
+import { reloadHydratedDashboard, waitForHydratedSearch } from "./g8-g11-browser-readiness.mjs";
 import { createRestMutationFirewall, requireParkedAnchorPage } from "./g8-g11-mutation-firewall.mjs";
 
 const appUrl = process.env.APP_URL;
@@ -98,13 +99,6 @@ async function primeSearchInput(page, input, resultTable) {
   );
   await input.fill(sentinel);
   await responsePromise;
-}
-
-async function waitForHydratedSearch(page, placeholder) {
-  await page.waitForLoadState("load");
-  const input = page.getByPlaceholder(placeholder);
-  await input.waitFor({ state: "visible", timeout: 30_000 });
-  await page.waitForTimeout(750);
 }
 
 function responseMatchesTerm(response, term) {
@@ -356,9 +350,7 @@ async function runViewport(page, viewport, artifacts) {
   for (const term of searchTerms) matrix.cardBrowser.searches[term] = await browserSearch(page, term, mobile).then(({ locator, ...evidence }) => ({ passed: true, ...evidence }));
   const browserActivationResult = await browserSearch(page, "Iono 124", mobile);
   matrix.cardBrowser.activation = await activate(page, browserActivationResult.locator, `${viewport.name} Card Browser result`);
-  await page.reload({ waitUntil: "domcontentloaded", timeout: 90_000 });
-  assert(page.url().includes("/dashboard"), `${viewport.name} Card Browser recovery reload lost the session`);
-  await waitForHydratedSearch(page, "Name...");
+  await reloadHydratedDashboard(page, `${viewport.name} Card Browser recovery`);
   const retainedBrowser = await browserSearch(page, "Iono 124", mobile);
   matrix.cardBrowser.recovery = await exerciseRecovery({
     page,
@@ -384,8 +376,7 @@ async function runViewport(page, viewport, artifacts) {
   if (mobile) await assertTouchTarget(edit, "Card Index phone edit action");
   matrix.cardIndex.measurements.editAction = { passed: true, accessibleName: await edit.getAttribute("aria-label"), box: editBox };
   matrix.cardIndex.activation = await activate(page, edit, `${viewport.name} Card Index edit action`);
-  await page.reload({ waitUntil: "domcontentloaded", timeout: 90_000 });
-  assert(page.url().includes("/dashboard"), `${viewport.name} Card Index recovery reload lost the session`);
+  await reloadHydratedDashboard(page, `${viewport.name} Card Index recovery`);
   await openPokemonIndex(page, mobile);
   await waitForHydratedSearch(page, "Search name / set / uid / platform id…");
   const recoveryIndex = await indexSearch(page, "Iono 124");
