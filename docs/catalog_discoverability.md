@@ -30,11 +30,14 @@ It does not cache a failed external-identifier response or fabricate an empty re
 Component tests cover desktop row and phone card activation by pointer, Enter, and Space, including isolation of nested controls.
 Query and card-search tests cover typed safe errors, accessible alerts, retained results, raw-cause suppression, and Retry.
 The authenticated `scripts/e2e/g8-g11-production-cdp.mjs` production acceptance flow attaches to a fresh app-scoped Edge session after interactive login.
+The operator parks its sole anchor page at `about:blank` before launch so authentication cookies remain available without any live application hydration.
+The runner refuses any other starting page state and installs its context-wide REST mutation firewall before the first application navigation, user-agent check, or revision check.
 It records a per-surface and per-viewport matrix for Card Browser and Card Index at 1440x960 desktop and 390x844 phone viewports.
 Each surface proves exact English name and number, Japanese name and number, full uid, and external-id lookup resolve to the same Iono identity.
 Each surface exercises pointer, Enter, and Space activation, then forces the exact external-identifier request to fail and proves the prior result remains visible, the safe alert hides raw details, and Retry restores the same request and identity.
 The flow captures pre-Retry and post-Retry screenshots, runtime viewport metadata, a runtime-observed deployed revision, assertion results, and artifact SHA-256 digests.
 It intercepts opportunity-exposure RPCs with a mutation firewall and records the blocked request count so the acceptance journey cannot change production data.
+The manifest derives its allowed-mutation count from every observed non-read REST request that was not handled by the firewall and fails if that count is nonzero.
 The Card Index edit action is explicitly named and uses a 44x44 phone target while retaining its compact desktop size.
 
 The remediation component suite passed locally with 43 tests and no skips on 2026-08-06.

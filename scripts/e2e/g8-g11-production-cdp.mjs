@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { chromium } from "playwright";
+import { createRestMutationFirewall, requireParkedAnchorPage } from "./g8-g11-mutation-firewall.mjs";
 
 const appUrl = process.env.APP_URL;
 const cdpUrl = process.env.CDP_URL ?? "http://127.0.0.1:9229";
@@ -409,8 +410,10 @@ const contexts = browser.contexts();
 assert(contexts.length === 1, `expected one Edge context, got ${contexts.length}`);
 const context = contexts[0];
 const pages = context.pages();
-assert(pages.length <= 1, `expected a fresh app-scoped Edge context with at most one page, got ${pages.length}`);
-const initialPage = pages[0] ?? await context.newPage();
+const initialPage = requireParkedAnchorPage(pages);
+const mutationFirewall = createRestMutationFirewall();
+context.on("request", mutationFirewall.observeRequest);
+await context.route("**/rest/v1/**", mutationFirewall.routeHandler);
 const artifacts = [];
 const matrix = {};
 
@@ -422,14 +425,7 @@ try {
   const initialOrigin = new URL(initialPage.url()).origin;
   assert(initialOrigin === appOrigin, `CDP page origin ${initialOrigin} is not ${appOrigin}`);
   assert(initialPage.url().includes("/dashboard"), `isolated Edge profile is not authenticated: ${initialPage.url()}`);
-  const blockedMutations = [];
-  await context.route("**/rest/v1/**", async (route) => {
-    const method = route.request().method();
-    if (method === "GET" || method === "HEAD") return route.continue();
-    const url = new URL(route.request().url());
-    blockedMutations.push({ method, path: url.pathname });
-    await route.fulfill({ status: 200, contentType: "application/json", body: "null" });
-  });
+  await initialPage.goto("about:blank");
   const revisionResponse = await context.request.get(`${appOrigin}/api/build-revision`);
   assert(revisionResponse.status() === 200, `deployed revision endpoint returned ${revisionResponse.status()}`);
   const observedRevision = (await revisionResponse.json()).revision;
@@ -446,21 +442,29 @@ try {
     basename(path),
     createHash("sha256").update(readFileSync(path)).digest("hex"),
   ]));
+  const mutationEvidence = mutationFirewall.evidence();
   const manifest = {
-    status: "pass",
+    status: mutationEvidence.passed ? "pass" : "fail",
     completedAt: new Date().toISOString(),
     appUrl: appOrigin,
     finalUrl: `${appOrigin}/dashboard`,
     deployedFrontendRevision: { expected: expectedRevision, observed: observedRevision, verified: true },
-    mutationFirewall: { scope: "/rest/v1/**", blockedRequests: blockedMutations, allowedMutationRequests: 0, passed: true },
+    mutationFirewall: {
+      scope: "/rest/v1/**",
+      installedBeforeAppNavigation: true,
+      ...mutationEvidence,
+    },
     exactCardUid: cardUid,
     exactExternalId: externalId,
     matrix,
     artifactDigests,
   };
   writeFileSync(join(artifactRoot, "result.json"), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+  assert(mutationEvidence.passed, `REST mutations escaped the firewall: ${JSON.stringify(mutationEvidence.allowedMutationRequestDetails)}`);
   console.log(`G8/G11 production acceptance passed; artifacts: ${artifactRoot}`);
 } finally {
+  context.off("request", mutationFirewall.observeRequest);
+  await context.unroute("**/rest/v1/**", mutationFirewall.routeHandler);
   // Exiting the runner drops the CDP transport. Do not call browser.close(),
   // which would terminate the user-visible app-scoped Edge process itself.
 }
