@@ -8,7 +8,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/supabase/client", () => ({ createClient: mocks.createClient }));
 vi.mock("@/lib/supabase/select-all", () => ({ selectAll: mocks.selectAll }));
 
-import { fetchIndex, pokemonEditRPCArgs } from "./PokemonCardIndex";
+import {
+  fetchIndex,
+  pokemonEditActionClassName,
+  pokemonEditActionLabel,
+  pokemonEditRPCArgs,
+} from "./PokemonCardIndex";
 
 const queryMethods = ["select", "eq", "in", "or", "order", "limit", "maybeSingle"] as const;
 type QueryMethod = (typeof queryMethods)[number];
@@ -117,5 +122,12 @@ describe("Pokemon Card Index query boundary", () => {
       p_expected_version: 8,
       p_image_url: "https://example.test/iono.jpg",
     });
+  });
+
+  it("gives the edit action an explicit card-specific accessible name", () => {
+    expect(pokemonEditActionLabel({ regional_name: "ナンジャモ", card_number: "124" }, "Edit"))
+      .toBe("Edit ナンジャモ 124");
+    expect(pokemonEditActionClassName).toContain("size-11");
+    expect(pokemonEditActionClassName).toContain("sm:size-7");
   });
 });

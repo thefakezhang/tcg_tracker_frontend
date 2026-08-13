@@ -25,5 +25,6 @@ The store-sighting form exposes an explicit Raw or PSA 1 through PSA 10 selector
 
 The interaction and recovery contract is documented in [`docs/catalog_discoverability.md`](../catalog_discoverability.md).
 Local component evidence covers pointer, Enter, and Space result activation plus retained-result recovery from an external-identifier lookup failure.
-The authenticated browser acceptance flow now covers the same behavior at 1440-pixel desktop and 390-pixel phone widths.
-That updated browser flow has not yet run against a deployment containing the remediation, so screenshots and deployed-browser passage remain pending rollout evidence.
+The authenticated production flow in `scripts/e2e/g8-g11-production-cdp.mjs` covers Card Browser and Card Index independently at 1440x960 desktop and 390x844 phone viewports.
+For each surface and viewport it records exact identity searches, pointer and keyboard activation, pre-Retry and post-Retry failure recovery, responsive checks, runtime viewport metadata, a runtime-observed deployed revision, mutation-firewall counts, and artifact SHA-256 digests.
+The partial 2026-08-13 run did not execute the full matrix, so deployment of the corrected Card Index action and a complete rerun remain pending evidence.

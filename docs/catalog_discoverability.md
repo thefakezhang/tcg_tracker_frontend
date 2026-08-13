@@ -29,9 +29,14 @@ It does not cache a failed external-identifier response or fabricate an empty re
 
 Component tests cover desktop row and phone card activation by pointer, Enter, and Space, including isolation of nested controls.
 Query and card-search tests cover typed safe errors, accessible alerts, retained results, raw-cause suppression, and Retry.
-The authenticated `scripts/e2e/g8-g11-catalog-discoverability.mjs` acceptance flow exercises these contracts at 1440-pixel desktop and 390-pixel phone widths.
-It also intercepts the exact external-identifier request, proves the previous result remains visible, verifies the raw failure is absent, restores the route, and retries the same identifier successfully.
+The authenticated `scripts/e2e/g8-g11-production-cdp.mjs` production acceptance flow attaches to a fresh app-scoped Edge session after interactive login.
+It records a per-surface and per-viewport matrix for Card Browser and Card Index at 1440x960 desktop and 390x844 phone viewports.
+Each surface proves exact English name and number, Japanese name and number, full uid, and external-id lookup resolve to the same Iono identity.
+Each surface exercises pointer, Enter, and Space activation, then forces the exact external-identifier request to fail and proves the prior result remains visible, the safe alert hides raw details, and Retry restores the same request and identity.
+The flow captures pre-Retry and post-Retry screenshots, runtime viewport metadata, a runtime-observed deployed revision, assertion results, and artifact SHA-256 digests.
+It intercepts opportunity-exposure RPCs with a mutation firewall and records the blocked request count so the acceptance journey cannot change production data.
+The Card Index edit action is explicitly named and uses a 44x44 phone target while retaining its compact desktop size.
 
 The remediation component suite passed locally with 43 tests and no skips on 2026-08-06.
-The browser acceptance script was updated for the remediation but has not yet been run against a deployment containing this change.
-Deployment screenshots and the authenticated browser result therefore remain a rollout gate, not completed evidence.
+The partial 2026-08-13 production run proved both exact-search surfaces and desktop recovery, but did not execute Card Index activation or phone recovery and exposed the undersized Card Index phone action.
+Deployment of the corrected action followed by a complete run of the new matrix remains the rollout gate.

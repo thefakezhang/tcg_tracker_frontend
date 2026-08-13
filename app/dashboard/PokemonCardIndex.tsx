@@ -82,6 +82,15 @@ export interface IndexCard {
   links: CardLink[];
 }
 
+export function pokemonEditActionLabel(
+  card: Pick<IndexCard, "regional_name" | "card_number">,
+  editLabel: string,
+) {
+  return `${editLabel} ${card.regional_name} ${card.card_number}`;
+}
+
+export const pokemonEditActionClassName = "size-11 shrink-0 sm:size-7";
+
 const COLS = "card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, image_url";
 const PLATFORMS = pokemonSinglePlatforms;
 const PLATFORM_SHORT: Record<string, string> = { tcgplayer: "TCG", snkrdunk: "SNKR", pricecharting: "PC", collectr: "COLL", cardladder: "CL", cardkingdom: "CK", shinsoku: "SHIN", surugaya: "SRG", expedition_gaming: "EXP", tcgplayer_SKU: "SKU" };
@@ -383,7 +392,14 @@ function CardsTab() {
                   <td className="mt-2 block border-t p-0 pt-2 sm:mt-0 sm:table-cell sm:border-0 sm:px-3 sm:py-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-mono text-xs text-muted-foreground">{c.card_uid.slice(0, 8)}</span>
-                      <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={() => setEditing(c)} title={t("cardIndex.edit")}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={pokemonEditActionClassName}
+                        onClick={() => setEditing(c)}
+                        aria-label={pokemonEditActionLabel(c, t("cardIndex.edit"))}
+                        title={t("cardIndex.edit")}
+                      >
                         <Pencil className="size-3.5" />
                       </Button>
                     </div>
