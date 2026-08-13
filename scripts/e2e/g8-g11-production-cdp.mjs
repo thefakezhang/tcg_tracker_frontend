@@ -13,6 +13,7 @@ const externalId = "545661";
 const englishName = "Iono";
 const regionalName = "ナンジャモ";
 const searchTerms = ["Iono 124", "ナンジャモ 124", cardUid, externalId];
+let searchSequence = 0;
 const viewports = [
   { name: "desktop", width: 1440, height: 960 },
   { name: "phone", width: 390, height: 844 },
@@ -88,11 +89,28 @@ async function resultResponseEvidence(response, label) {
   return { status: response.status(), cardUids };
 }
 
-function assertResponseMatchesTerm(response, term, label) {
-  if (term === externalId) return;
+async function primeSearchInput(page, input, resultTable) {
+  const sentinel = `g8g11-no-match-${++searchSequence}`;
+  const responsePromise = page.waitForResponse(
+    (candidate) => isResultResponse(candidate, resultTable) && responseMatchesTerm(candidate, sentinel),
+    { timeout: 30_000 },
+  );
+  await input.fill(sentinel);
+  await responsePromise;
+}
+
+async function waitForHydratedSearch(page, placeholder) {
+  await page.waitForLoadState("load");
+  const input = page.getByPlaceholder(placeholder);
+  await input.waitFor({ state: "visible", timeout: 30_000 });
+  await page.waitForTimeout(750);
+}
+
+function responseMatchesTerm(response, term) {
+  if (term === externalId) return true;
   const decodedUrl = decodeURIComponent(response.url()).toLowerCase();
   const markers = term === cardUid ? [cardUid] : term.toLowerCase().split(/\s+/);
-  assert(markers.every((marker) => decodedUrl.includes(marker)), `${label} response URL does not bind ${JSON.stringify(term)}`);
+  return markers.every((marker) => decodedUrl.includes(marker));
 }
 
 async function waitForExactExternalIdResponse(page, term) {
@@ -142,8 +160,15 @@ async function activate(page, target, label) {
     const dialog = page.getByRole("dialog").last();
     await dialog.waitFor({ state: "visible", timeout: 30_000 });
     const dialogText = (await dialog.textContent()) ?? "";
-    assert(dialogText.includes(englishName) || dialogText.includes(regionalName), `${label} ${input} opened the wrong dialog`);
-    outcomes[input] = { passed: true, dialogIdentity: englishName };
+    if (label.includes("Card Index")) {
+      await dialog.getByRole("heading", { name: "Edit pokemon card", exact: true }).waitFor({ state: "visible" });
+      const values = await dialog.locator('input:not([type="file"])').evaluateAll((inputs) => inputs.map((element) => element.value));
+      assert(values.includes(regionalName) && values.includes(englishName), `${label} ${input} opened the wrong edit dialog: ${JSON.stringify(values)}`);
+      outcomes[input] = { passed: true, dialogIdentity: { regionalName, englishName } };
+    } else {
+      assert(dialogText.includes(englishName) || dialogText.includes(regionalName), `${label} ${input} opened the wrong dialog`);
+      outcomes[input] = { passed: true, dialogIdentity: englishName };
+    }
     await page.keyboard.press("Escape");
     await dialog.waitFor({ state: "hidden", timeout: 30_000 });
   }
@@ -157,17 +182,16 @@ function browserResults(page, mobile) {
 }
 
 async function browserSearch(page, term, mobile) {
+  const input = page.getByPlaceholder("Name...");
+  await primeSearchInput(page, input, "pokemon_price_summaries");
   const responsePromise = term === externalId ? waitForExactExternalIdResponse(page, term) : null;
   const resultResponsePromise = page.waitForResponse(
-    (candidate) => isResultResponse(candidate, "pokemon_price_summaries"),
+    (candidate) => isResultResponse(candidate, "pokemon_price_summaries") && responseMatchesTerm(candidate, term),
     { timeout: 30_000 },
   );
-  const input = page.getByPlaceholder("Name...");
-  await input.fill("");
   await input.fill(term);
   const response = responsePromise ? await responsePromise : null;
   const resultResponse = await resultResponsePromise;
-  assertResponseMatchesTerm(resultResponse, term, "Card Browser");
   const resultEvidence = await resultResponseEvidence(resultResponse, `Card Browser ${JSON.stringify(term)}`);
   const results = browserResults(page, mobile);
   await results.first().waitFor({ state: "visible", timeout: 30_000 });
@@ -183,7 +207,13 @@ async function browserSearch(page, term, mobile) {
 }
 
 async function openPokemonIndex(page, mobile) {
-  if (mobile) await page.getByRole("button", { name: "Toggle Sidebar" }).first().click();
+  if (mobile) {
+    await page.waitForLoadState("load");
+    const toggle = page.getByRole("button", { name: "Toggle Sidebar" }).first();
+    await toggle.waitFor({ state: "visible", timeout: 30_000 });
+    await page.waitForTimeout(750);
+    await toggle.click();
+  }
   await page.getByRole("button", { name: "Index", exact: true }).click();
   if (mobile) await page.keyboard.press("Escape");
   const main = page.locator('[data-slot="sidebar-inset"] > main');
@@ -197,17 +227,16 @@ function indexResults(page) {
 }
 
 async function indexSearch(page, term) {
+  const input = page.getByPlaceholder("Search name / set / uid / platform id…");
+  await primeSearchInput(page, input, "pokemon_card_definitions");
   const responsePromise = term === externalId ? waitForExactExternalIdResponse(page, term) : null;
   const resultResponsePromise = page.waitForResponse(
-    (candidate) => isResultResponse(candidate, "pokemon_card_definitions"),
+    (candidate) => isResultResponse(candidate, "pokemon_card_definitions") && responseMatchesTerm(candidate, term),
     { timeout: 30_000 },
   );
-  const input = page.getByPlaceholder("Search name / set / uid / platform id…");
-  await input.fill("");
   await input.fill(term);
   const response = responsePromise ? await responsePromise : null;
   const resultResponse = await resultResponsePromise;
-  assertResponseMatchesTerm(resultResponse, term, "Card Index");
   const resultEvidence = await resultResponseEvidence(resultResponse, `Card Index ${JSON.stringify(term)}`);
   const results = indexResults(page);
   await results.first().waitFor({ state: "visible", timeout: 30_000 });
@@ -310,20 +339,26 @@ async function exerciseRecovery({ page, surface, viewport, resultTable, currentR
 }
 
 async function runViewport(page, viewport, artifacts) {
+  console.log(`Starting ${viewport.name} acceptance`);
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
   await page.goto(`${appUrl}/dashboard`, { waitUntil: "domcontentloaded", timeout: 90_000 });
   assert(page.url().includes("/dashboard"), `${viewport.name} session is not authenticated: ${page.url()}`);
   const runtimeViewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
   assert(runtimeViewport.width === viewport.width && runtimeViewport.height === viewport.height, `${viewport.name} runtime viewport mismatch: ${JSON.stringify(runtimeViewport)}`);
   const mobile = viewport.name === "phone";
+  await waitForHydratedSearch(page, "Name...");
   const matrix = {
     cardBrowser: newSurfaceEvidence(runtimeViewport),
     cardIndex: newSurfaceEvidence(runtimeViewport),
   };
 
   for (const term of searchTerms) matrix.cardBrowser.searches[term] = await browserSearch(page, term, mobile).then(({ locator, ...evidence }) => ({ passed: true, ...evidence }));
+  const browserActivationResult = await browserSearch(page, "Iono 124", mobile);
+  matrix.cardBrowser.activation = await activate(page, browserActivationResult.locator, `${viewport.name} Card Browser result`);
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 90_000 });
+  assert(page.url().includes("/dashboard"), `${viewport.name} Card Browser recovery reload lost the session`);
+  await waitForHydratedSearch(page, "Name...");
   const retainedBrowser = await browserSearch(page, "Iono 124", mobile);
-  matrix.cardBrowser.activation = await activate(page, retainedBrowser.locator, `${viewport.name} Card Browser result`);
   matrix.cardBrowser.recovery = await exerciseRecovery({
     page,
     surface: "card-browser",
@@ -336,8 +371,10 @@ async function runViewport(page, viewport, artifacts) {
   });
   matrix.cardBrowser.measurements.normalOverflow = await assertNoOverflow(page, `${viewport.name} Card Browser normal state`);
   await screenshot(page, `${viewport.name}-card-browser.png`, artifacts);
+  console.log(`Completed ${viewport.name} Card Browser`);
 
   await openPokemonIndex(page, mobile);
+  console.log(`Opened ${viewport.name} Card Index`);
   for (const term of searchTerms) matrix.cardIndex.searches[term] = await indexSearch(page, term).then(({ locator, ...evidence }) => ({ passed: true, ...evidence }));
   const retainedIndex = await indexSearch(page, "Iono 124");
   const edit = retainedIndex.locator.getByRole("button", { name: `Edit ${regionalName} 124`, exact: true });
@@ -346,6 +383,11 @@ async function runViewport(page, viewport, artifacts) {
   if (mobile) await assertTouchTarget(edit, "Card Index phone edit action");
   matrix.cardIndex.measurements.editAction = { passed: true, accessibleName: await edit.getAttribute("aria-label"), box: editBox };
   matrix.cardIndex.activation = await activate(page, edit, `${viewport.name} Card Index edit action`);
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 90_000 });
+  assert(page.url().includes("/dashboard"), `${viewport.name} Card Index recovery reload lost the session`);
+  await openPokemonIndex(page, mobile);
+  await waitForHydratedSearch(page, "Search name / set / uid / platform id…");
+  const recoveryIndex = await indexSearch(page, "Iono 124");
   matrix.cardIndex.recovery = await exerciseRecovery({
     page,
     surface: "card-index",
@@ -353,11 +395,12 @@ async function runViewport(page, viewport, artifacts) {
     resultTable: "pokemon_card_definitions",
     currentResult: currentIndexResult,
     input: page.getByPlaceholder("Search name / set / uid / platform id…"),
-    retained: retainedIndex,
+    retained: recoveryIndex,
     artifacts,
   });
   matrix.cardIndex.measurements.normalOverflow = await assertNoOverflow(page, `${viewport.name} Card Index normal state`);
   await screenshot(page, `${viewport.name}-card-index.png`, artifacts);
+  console.log(`Completed ${viewport.name} Card Index`);
   return matrix;
 }
 
@@ -367,29 +410,38 @@ assert(contexts.length === 1, `expected one Edge context, got ${contexts.length}
 const context = contexts[0];
 const pages = context.pages();
 assert(pages.length <= 1, `expected a fresh app-scoped Edge context with at most one page, got ${pages.length}`);
-const page = pages[0] ?? await context.newPage();
+const initialPage = pages[0] ?? await context.newPage();
 const artifacts = [];
 const matrix = {};
 
 try {
-  assert(page.context().browser()?.browserType().name() === "chromium", "CDP target is not Chromium-compatible Edge");
-  const userAgent = await page.evaluate(() => navigator.userAgent);
+  assert(initialPage.context().browser()?.browserType().name() === "chromium", "CDP target is not Chromium-compatible Edge");
+  const userAgent = await initialPage.evaluate(() => navigator.userAgent);
   assert(userAgent.includes("Edg/"), `CDP target is not Microsoft Edge: ${userAgent}`);
-  const initialOrigin = new URL(page.url() === "about:blank" ? appUrl : page.url()).origin;
+  await initialPage.goto(`${appOrigin}/dashboard`, { waitUntil: "domcontentloaded", timeout: 90_000 });
+  const initialOrigin = new URL(initialPage.url()).origin;
   assert(initialOrigin === appOrigin, `CDP page origin ${initialOrigin} is not ${appOrigin}`);
+  assert(initialPage.url().includes("/dashboard"), `isolated Edge profile is not authenticated: ${initialPage.url()}`);
   const blockedMutations = [];
-  await page.route("**/rest/v1/**", async (route) => {
+  await context.route("**/rest/v1/**", async (route) => {
     const method = route.request().method();
     if (method === "GET" || method === "HEAD") return route.continue();
     const url = new URL(route.request().url());
     blockedMutations.push({ method, path: url.pathname });
     await route.fulfill({ status: 200, contentType: "application/json", body: "null" });
   });
-  const revisionResponse = await page.request.get(`${appOrigin}/api/build-revision`);
+  const revisionResponse = await context.request.get(`${appOrigin}/api/build-revision`);
   assert(revisionResponse.status() === 200, `deployed revision endpoint returned ${revisionResponse.status()}`);
   const observedRevision = (await revisionResponse.json()).revision;
   assert(observedRevision === expectedRevision, `deployed revision ${observedRevision} does not match ${expectedRevision}`);
-  for (const viewport of viewports) matrix[viewport.name] = await runViewport(page, viewport, artifacts);
+  for (const viewport of viewports) {
+    const viewportPage = await context.newPage();
+    try {
+      matrix[viewport.name] = await runViewport(viewportPage, viewport, artifacts);
+    } finally {
+      await viewportPage.close();
+    }
+  }
   const artifactDigests = Object.fromEntries(artifacts.map((path) => [
     basename(path),
     createHash("sha256").update(readFileSync(path)).digest("hex"),
@@ -398,7 +450,7 @@ try {
     status: "pass",
     completedAt: new Date().toISOString(),
     appUrl: appOrigin,
-    finalUrl: page.url(),
+    finalUrl: `${appOrigin}/dashboard`,
     deployedFrontendRevision: { expected: expectedRevision, observed: observedRevision, verified: true },
     mutationFirewall: { scope: "/rest/v1/**", blockedRequests: blockedMutations, allowedMutationRequests: 0, passed: true },
     exactCardUid: cardUid,
@@ -409,5 +461,6 @@ try {
   writeFileSync(join(artifactRoot, "result.json"), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
   console.log(`G8/G11 production acceptance passed; artifacts: ${artifactRoot}`);
 } finally {
-  await browser.close();
+  // Exiting the runner drops the CDP transport. Do not call browser.close(),
+  // which would terminate the user-visible app-scoped Edge process itself.
 }
