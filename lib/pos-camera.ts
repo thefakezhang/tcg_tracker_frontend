@@ -74,6 +74,56 @@ export interface RecognitionStatus {
   cudaRequired: boolean;
 }
 
+export const RECOGNIZER_REQUEST_TIMEOUT_MS = 15_000;
+
+interface RequestDeadline {
+  signal: AbortSignal;
+  clear: () => void;
+  race: <T>(promise: Promise<T>) => Promise<T>;
+}
+
+function requestDeadline(
+  callerSignal: AbortSignal | undefined,
+  timeoutMs = RECOGNIZER_REQUEST_TIMEOUT_MS,
+): RequestDeadline {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("Recognizer request timeout must be positive");
+  }
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) abortFromCaller();
+  else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timer = window.setTimeout(() => {
+    controller.abort(new DOMException("Recognizer request timed out", "TimeoutError"));
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    race: <T>(promise: Promise<T>) => new Promise<T>((resolve, reject) => {
+      const rejectOnAbort = () => reject(controller.signal.reason
+        ?? new DOMException("Recognizer request aborted", "AbortError"));
+      if (controller.signal.aborted) {
+        rejectOnAbort();
+        return;
+      }
+      controller.signal.addEventListener("abort", rejectOnAbort, { once: true });
+      promise.then(
+        (value) => {
+          controller.signal.removeEventListener("abort", rejectOnAbort);
+          resolve(value);
+        },
+        (error) => {
+          controller.signal.removeEventListener("abort", rejectOnAbort);
+          reject(error);
+        },
+      );
+    }),
+    clear: () => {
+      window.clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", abortFromCaller);
+    },
+  };
+}
+
 export function posErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message;
   if (typeof error === "string" && error.trim()) return error;
@@ -369,6 +419,8 @@ export interface FrozenSaleAdd {
     p_manual_market_unit_usd: number | null;
     p_manual_market_reason: string | null;
     p_browser_snapshot: Record<string, unknown>;
+    p_expected_preview_token: string;
+    p_expected_preview_cogs_usd: number;
   };
 }
 
@@ -465,7 +517,7 @@ function validateMedia(
   value: unknown,
   ownerID: string,
 ): FrozenAcquisitionMedia[] {
-  if (!Array.isArray(value) || value.length > 3) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 3) {
     throw new Error("Stored POS retry media list is invalid");
   }
   const media = value.map((entry, index) => {
@@ -494,6 +546,7 @@ function validateMedia(
   if (
     new Set(media.map((entry) => entry.object_key)).size !== media.length
     || new Set(media.map((entry) => entry.media_kind)).size !== media.length
+    || media.filter((entry) => entry.media_kind === "front").length !== 1
     || media.filter((entry) => entry.is_recognition_capture).length > 1
     || media.some((entry) => entry.is_recognition_capture && entry.media_kind !== "front")
   ) throw new Error("Stored POS retry media evidence is inconsistent");
@@ -535,7 +588,7 @@ export function parseFrozenPOSOperation(
       "p_condition_code", "p_psa_grade", "p_quantity",
       "p_agreed_unit_price_usd", "p_recognition_request_id", "p_sell_percentage",
       "p_rounding_mode", "p_manual_market_unit_usd", "p_manual_market_reason",
-      "p_browser_snapshot",
+      "p_browser_snapshot", "p_expected_preview_token", "p_expected_preview_cogs_usd",
     ], "sale RPC");
     if (
       typeof root.session_id !== "string"
@@ -553,6 +606,12 @@ export function parseFrozenPOSOperation(
       || Number(rpc.p_quantity) > 1_000_000
       || rpc.p_sell_percentage !== null
       || rpc.p_rounding_mode !== null
+      || typeof rpc.p_expected_preview_token !== "string"
+      || !/^[0-9a-f]{64}$/.test(rpc.p_expected_preview_token)
+      || typeof rpc.p_expected_preview_cogs_usd !== "number"
+      || !Number.isFinite(rpc.p_expected_preview_cogs_usd)
+      || rpc.p_expected_preview_cogs_usd < 0
+      || rpc.p_expected_preview_cogs_usd > 1_000_000_000_000_000
       || (rpc.p_recognition_request_id !== null
         && (typeof rpc.p_recognition_request_id !== "string"
           || !UUID_PATTERN.test(rpc.p_recognition_request_id)))
@@ -622,15 +681,34 @@ export function parseFrozenPOSOperation(
     || !Array.isArray(browser.attachments)
     || exactPOSValue(browser.attachments) !== exactPOSValue(media)
     || (rpc.p_recognition_request_id === null && browser.selection_method !== "manual_search")
-    || (rpc.p_recognition_request_id !== null && browser.selection_method !== "candidate_tap")
+    || (rpc.p_recognition_request_id !== null
+      && browser.selection_method !== "candidate_tap"
+      && browser.selection_method !== "manual_search")
+    || (rpc.p_recognition_request_id === null
+      && media.some((entry) => entry.is_recognition_capture))
+    || (rpc.p_recognition_request_id !== null
+      && (
+        media.filter((entry) => entry.is_recognition_capture).length !== 1
+        || !media.some((entry) => (
+          entry.media_kind === "front" && entry.is_recognition_capture
+        ))
+      ))
   ) throw new Error("Stored POS retry acquisition browser evidence is inconsistent");
   const latency = jsonRecord(browser.latency, "latency evidence");
   exactObjectKeys(latency, [
-    "capture_to_response_ms", "tap_to_response_ms", "response_to_paint_ms",
-    "audit_ready_ms",
+    "permission_ms", "capture_ms", "capture_to_response_ms", "tap_to_response_ms",
+    "response_to_paint_ms", "audit_ready_ms", "total_tap_to_ready_ms",
   ], "latency evidence");
   for (const value of Object.values(latency)) {
-    if (value !== null && (typeof value !== "number" || !Number.isFinite(value) || value < 0)) {
+    if (
+      value !== null
+      && (
+        typeof value !== "number"
+        || !Number.isFinite(value)
+        || value < 0
+        || value > 120_000
+      )
+    ) {
       throw new Error("Stored POS retry latency evidence is invalid");
     }
   }
@@ -1015,6 +1093,10 @@ export class StableFrameGate {
     this.transition = null;
   }
 
+  needsRemoval(): boolean {
+    return this.awaitingRemoval;
+  }
+
   reset(forgetSubmission = false): void {
     this.prior = null;
     this.stableSamples = 0;
@@ -1361,6 +1443,7 @@ export async function recognizeCapture(args: {
   capture: Blob;
   crop?: CaptureMetadata;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<RecognitionResponse> {
   if (!["image/jpeg", "image/png", "image/webp"].includes(args.capture.type)) {
     throw new Error("Recognition requires JPEG, PNG, or WebP capture bytes");
@@ -1374,6 +1457,7 @@ export async function recognizeCapture(args: {
   const origin = validatedRecognitionOrigin(args.baseURL);
   const query = new URLSearchParams({ use_case: args.useCase });
   if (args.inventoryLeg) query.set("inventory_leg", args.inventoryLeg);
+  const deadline = requestDeadline(args.signal, args.timeoutMs);
   const request = (accessToken: string) => fetch(
       `${origin}/v1/recognize?${query.toString()}`,
       {
@@ -1387,31 +1471,36 @@ export async function recognizeCapture(args: {
         ...(args.crop ? { "X-Recognition-Crop": JSON.stringify(args.crop) } : {}),
       },
       body: args.capture,
-      signal: args.signal,
+      signal: deadline.signal,
     },
   );
-  let response = await request(args.accessToken);
-  if (response.status === 401 && args.refreshAccessToken) {
-    response = await request(await args.refreshAccessToken());
+  try {
+    let response = await request(args.accessToken);
+    if (response.status === 401 && args.refreshAccessToken) {
+      const refreshedToken = await deadline.race(args.refreshAccessToken());
+      response = await request(refreshedToken);
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = typeof payload?.detail === "string"
+        ? payload.detail
+        : `Recognition failed (${response.status})`;
+      throw new Error(detail);
+    }
+    if (response.headers.get("X-Request-ID") !== args.requestID) {
+      throw new Error("Recognizer returned a mismatched response request UUID");
+    }
+    return {
+      result: parseRecognitionResult(payload, {
+        requestID: args.requestID,
+        useCase: args.useCase,
+        inventoryLeg: args.inventoryLeg,
+      }),
+      serverTiming: parseServerTiming(response.headers.get("Server-Timing")),
+    };
+  } finally {
+    deadline.clear();
   }
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = typeof payload?.detail === "string"
-      ? payload.detail
-      : `Recognition failed (${response.status})`;
-    throw new Error(detail);
-  }
-  if (response.headers.get("X-Request-ID") !== args.requestID) {
-    throw new Error("Recognizer returned a mismatched response request UUID");
-  }
-  return {
-    result: parseRecognitionResult(payload, {
-      requestID: args.requestID,
-      useCase: args.useCase,
-      inventoryLeg: args.inventoryLeg,
-    }),
-    serverTiming: parseServerTiming(response.headers.get("Server-Timing")),
-  };
 }
 
 export async function prewarmRecognition(args: {
@@ -1420,29 +1509,33 @@ export async function prewarmRecognition(args: {
   refreshAccessToken?: () => Promise<string>;
   inventoryLeg?: "import" | "export";
   signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<RecognitionStatus> {
   const origin = validatedRecognitionOrigin(args.baseURL);
   const query = new URLSearchParams();
   if (args.inventoryLeg) query.set("inventory_leg", args.inventoryLeg);
   const suffix = query.size ? `?${query.toString()}` : "";
+  const deadline = requestDeadline(args.signal, args.timeoutMs);
   const request = (accessToken: string) => fetch(`${origin}/v1/status${suffix}`, {
     method: "GET",
     cache: "no-store",
     redirect: "error",
     headers: { Authorization: `Bearer ${accessToken}` },
-    signal: args.signal,
+    signal: deadline.signal,
   });
-  let response = await request(args.accessToken);
-  if (response.status === 401 && args.refreshAccessToken) {
-    response = await request(await args.refreshAccessToken());
-  }
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = typeof payload?.detail === "string"
-      ? payload.detail
-      : `Recognition prewarm failed (${response.status})`;
-    throw new Error(detail);
-  }
+  try {
+    let response = await request(args.accessToken);
+    if (response.status === 401 && args.refreshAccessToken) {
+      const refreshedToken = await deadline.race(args.refreshAccessToken());
+      response = await request(refreshedToken);
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = typeof payload?.detail === "string"
+        ? payload.detail
+        : `Recognition prewarm failed (${response.status})`;
+      throw new Error(detail);
+    }
   const status = objectValue(payload, "status");
   exactKeys(status, [
     "status", "model_catalog_ready", "sale_ready", "sale_scope_error",
@@ -1547,6 +1640,9 @@ export async function prewarmRecognition(args: {
     cudaDeviceName,
     cudaRequired: status.cuda_required,
   };
+  } finally {
+    deadline.clear();
+  }
 }
 
 export function validatedRecognitionOrigin(

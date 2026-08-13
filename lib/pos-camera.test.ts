@@ -17,6 +17,7 @@ import {
   manualSelectionEvidence,
   normalizeCaptureImage,
   patchPOSSessionSettings,
+  parseFrozenPOSOperation,
   proposedSalePrice,
   posErrorMessage,
   parseRecognitionResult,
@@ -31,6 +32,60 @@ import {
 } from "./pos-camera";
 
 const requestID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const ownerID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const acquisitionOperationID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const cardUID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+function validFrozenAcquisition() {
+  const media = [{
+    media_kind: "front",
+    object_key: `${ownerID}/${"e".repeat(64)}.jpg`,
+    mime_type: "image/jpeg",
+    byte_size: 120_000,
+    sha256: "e".repeat(64),
+    is_recognition_capture: true,
+  }];
+  return {
+    schema_version: 1,
+    kind: "acquisition-add",
+    display_name: "Frozen Pikachu",
+    lot_id: 42,
+    rpc_args: {
+      p_operation_id: acquisitionOperationID,
+      p_recognition_request_id: requestID,
+      p_lot_id: 42,
+      p_condition_standard: "TCGPlayer",
+      p_condition_code: "NM",
+      p_psa_grade: 0,
+      p_quantity: 1,
+      p_price_override_usd: 5.478,
+      p_market_value_usd: 12.34,
+      p_browser_snapshot: {
+        selection_method: "candidate_tap",
+        card_uid: cardUID,
+        acquisition_cost: {
+          native_amount: 830,
+          native_currency: "JPY",
+          fx_rate_to_usd: 0.0066,
+          price_usd: 5.478,
+        },
+        market_value_usd: 12.34,
+        attachments: media,
+        latency: {
+          permission_ms: 1,
+          capture_ms: 2,
+          capture_to_response_ms: 40,
+          tap_to_response_ms: 43,
+          response_to_paint_ms: 3,
+          audit_ready_ms: 50,
+          total_tap_to_ready_ms: 55,
+        },
+      },
+      p_card_uid: cardUID,
+    },
+    media,
+  };
+}
 
 function validPayload() {
   return {
@@ -232,11 +287,13 @@ describe("POS camera capture contract", () => {
     expect(gate.observe(cardA, 100)).toBe(false);
     expect(gate.observe(cardA, 200)).toBe(true);
     gate.markSubmitted(cardA, 200);
+    expect(gate.needsRemoval()).toBe(true);
     expect(gate.observe(cardA, 1_500)).toBe(false);
     const background = new Uint8Array([80, 80, 80, 80]);
     expect(gate.observe(background, 1_800)).toBe(false);
     expect(gate.observe(background, 1_900)).toBe(false);
     expect(gate.observe(background, 2_000)).toBe(false);
+    expect(gate.needsRemoval()).toBe(false);
     expect(gate.observe(background, 2_100)).toBe(false);
     expect(gate.observe(background, 2_200)).toBe(false);
     expect(gate.observe(background, 2_300)).toBe(false);
@@ -351,6 +408,111 @@ describe("POS camera capture contract", () => {
         card_uid: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       });
     expect(() => manualSelectionEvidence("local-card-17")).toThrow(/stable card UUID/);
+  });
+
+  it("accepts exact recognized and corrected acquisition retry evidence", () => {
+    const candidate = validFrozenAcquisition();
+    expect(parseFrozenPOSOperation(
+      JSON.stringify(candidate),
+      "acquisition-add",
+      ownerID,
+    )).toEqual(candidate);
+
+    const corrected = JSON.parse(JSON.stringify(candidate));
+    corrected.rpc_args.p_browser_snapshot.selection_method = "manual_search";
+    expect(parseFrozenPOSOperation(
+      JSON.stringify(corrected),
+      "acquisition-add",
+      ownerID,
+    )).toEqual(corrected);
+  });
+
+  it("rejects substituted or internally inconsistent frozen acquisition media", () => {
+    const mismatchedManifest = JSON.parse(JSON.stringify(validFrozenAcquisition()));
+    mismatchedManifest.media[0].byte_size += 1;
+    expect(() => parseFrozenPOSOperation(
+      JSON.stringify(mismatchedManifest),
+      "acquisition-add",
+      ownerID,
+    )).toThrow(/browser evidence is inconsistent/);
+
+    const duplicateKind = validFrozenAcquisition();
+    duplicateKind.media.push({
+      ...duplicateKind.media[0],
+      object_key: `${ownerID}/${"f".repeat(64)}.jpg`,
+      sha256: "f".repeat(64),
+      is_recognition_capture: false,
+    });
+    duplicateKind.rpc_args.p_browser_snapshot.attachments = duplicateKind.media;
+    expect(() => parseFrozenPOSOperation(
+      JSON.stringify(duplicateKind),
+      "acquisition-add",
+      ownerID,
+    )).toThrow(/media evidence is inconsistent/);
+
+    const manualCapture = JSON.parse(JSON.stringify(validFrozenAcquisition()));
+    manualCapture.rpc_args.p_recognition_request_id = null;
+    manualCapture.rpc_args.p_browser_snapshot.selection_method = "manual_search";
+    expect(() => parseFrozenPOSOperation(
+      JSON.stringify(manualCapture),
+      "acquisition-add",
+      ownerID,
+    )).toThrow(/browser evidence is inconsistent/);
+
+    const noMedia = validFrozenAcquisition();
+    noMedia.media = [];
+    noMedia.rpc_args.p_browser_snapshot.attachments = [];
+    expect(() => parseFrozenPOSOperation(
+      JSON.stringify(noMedia),
+      "acquisition-add",
+      ownerID,
+    )).toThrow(/media list is invalid/);
+
+    const noFront = validFrozenAcquisition();
+    noFront.media[0].media_kind = "back";
+    noFront.media[0].is_recognition_capture = false;
+    noFront.rpc_args.p_browser_snapshot.attachments = noFront.media;
+    expect(() => parseFrozenPOSOperation(
+      JSON.stringify(noFront),
+      "acquisition-add",
+      ownerID,
+    )).toThrow(/media evidence is inconsistent/);
+
+    const recognizedNoncaptureFront = validFrozenAcquisition();
+    recognizedNoncaptureFront.media[0].is_recognition_capture = false;
+    recognizedNoncaptureFront.rpc_args.p_browser_snapshot.attachments =
+      recognizedNoncaptureFront.media;
+    expect(() => parseFrozenPOSOperation(
+      JSON.stringify(recognizedNoncaptureFront),
+      "acquisition-add",
+      ownerID,
+    )).toThrow(/browser evidence is inconsistent/);
+  });
+
+  it("rejects acquisition cost, market, and latency drift in frozen retries", () => {
+    const costDrift = validFrozenAcquisition();
+    costDrift.rpc_args.p_browser_snapshot.acquisition_cost.price_usd = 5.479;
+    expect(() => parseFrozenPOSOperation(
+      JSON.stringify(costDrift),
+      "acquisition-add",
+      ownerID,
+    )).toThrow(/native cost evidence is invalid/);
+
+    const marketDrift = validFrozenAcquisition();
+    marketDrift.rpc_args.p_browser_snapshot.market_value_usd = 12.35;
+    expect(() => parseFrozenPOSOperation(
+      JSON.stringify(marketDrift),
+      "acquisition-add",
+      ownerID,
+    )).toThrow(/browser evidence is inconsistent/);
+
+    const excessiveLatency = validFrozenAcquisition();
+    excessiveLatency.rpc_args.p_browser_snapshot.latency.audit_ready_ms = 120_001;
+    expect(() => parseFrozenPOSOperation(
+      JSON.stringify(excessiveLatency),
+      "acquisition-add",
+      ownerID,
+    )).toThrow(/latency evidence is invalid/);
   });
 
   it("shows the server-equivalent proposal without overriding an explicit agreement", () => {
@@ -657,6 +819,49 @@ describe("POS camera capture contract", () => {
         source_height: 1080,
       });
     expect(output.result.candidates[0].card_number).toBe("");
+  });
+
+  it("bounds recognition token refresh with the same cleaned request deadline", async () => {
+    vi.useFakeTimers();
+    const caller = new AbortController();
+    const removeSpy = vi.spyOn(caller.signal, "removeEventListener");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 401 })));
+    const pending = recognizeCapture({
+      baseURL: "https://recognizer.test",
+      accessToken: "expired-token",
+      refreshAccessToken: () => new Promise<string>(() => undefined),
+      requestID,
+      useCase: "sale",
+      inventoryLeg: "import",
+      capture: new Blob(["jpeg"], { type: "image/jpeg" }),
+      signal: caller.signal,
+      timeoutMs: 25,
+    });
+    const rejection = expect(pending).rejects.toMatchObject({ name: "TimeoutError" });
+    await vi.advanceTimersByTimeAsync(25);
+    await rejection;
+    expect(removeSpy).toHaveBeenCalledWith("abort", expect.any(Function));
+    vi.useRealTimers();
+  });
+
+  it("forwards caller cancellation to status fetch and clears its listener", async () => {
+    const caller = new AbortController();
+    const removeSpy = vi.spyOn(caller.signal, "removeEventListener");
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(
+          init.signal?.reason ?? new DOMException("aborted", "AbortError"),
+        ));
+      })
+    )));
+    const pending = prewarmRecognition({
+      baseURL: "https://recognizer.test",
+      accessToken: "token",
+      signal: caller.signal,
+    });
+    caller.abort(new DOMException("caller stopped", "AbortError"));
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(removeSpy).toHaveBeenCalledWith("abort", expect.any(Function));
   });
 
   it("prewarms the exact authenticated sale scope without following redirects", async () => {

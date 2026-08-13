@@ -118,6 +118,8 @@ function acquisitionState(args: Record<string, unknown>, registeredMedia: unknow
       recognition: [],
       browser: args.p_browser_snapshot,
     },
+    expected_attachments: (args.p_browser_snapshot as { attachments?: unknown[] })
+      .attachments ?? [],
     registered_media: registeredMedia,
   };
 }
@@ -211,6 +213,9 @@ beforeEach(() => {
     if (name === "record_card_recognition_audit") {
       return { data: "40000000-0000-4000-8000-000000000004", error: null };
     }
+    if (name === "complete_card_recognition_browser_timing") {
+      return { data: true, error: null };
+    }
     return { data: null, error: null };
   });
   mocks.storageDownload.mockReset();
@@ -275,6 +280,9 @@ describe("camera POS mobile recognition", () => {
         if (auditAttempts === 1) return { data: null, error: { code: "XX001", message: "audit unavailable" } };
         return { data: "40000000-0000-4000-8000-000000000004", error: null };
       }
+      if (name === "complete_card_recognition_browser_timing") {
+        return { data: true, error: null };
+      }
       return { data: null, error: null };
     });
     const { container } = render(<LanguageProvider><POSView /></LanguageProvider>);
@@ -295,6 +303,66 @@ describe("camera POS mobile recognition", () => {
     expect(mocks.recognizeCapture).toHaveBeenCalledTimes(1);
     expect(auditAttempts).toBe(2);
     expect(mocks.rpc.mock.calls.map(([name]) => name)).not.toContain("add_pos_sale_line");
+  });
+
+  it("replays the exact audit payload when the record response is lost", async () => {
+    const recordArgs: Record<string, unknown>[] = [];
+    let attempts = 0;
+    mocks.rpc.mockImplementation(async (name: string, args?: Record<string, unknown>) => {
+      if (name === "get_pos_sale_session_state") return { data: session, error: null };
+      if (name === "record_card_recognition_audit") {
+        recordArgs.push(structuredClone(args ?? {}));
+        attempts += 1;
+        if (attempts === 1) {
+          return { data: null, error: new TypeError("response connection closed") };
+        }
+        return { data: "40000000-0000-4000-8000-000000000004", error: null };
+      }
+      if (name === "complete_card_recognition_browser_timing") {
+        return { data: true, error: null };
+      }
+      return { data: null, error: null };
+    });
+    const { container } = render(<LanguageProvider><POSView /></LanguageProvider>);
+    await screen.findByText("The saved sale is empty.");
+    fireEvent.change(container.querySelector<HTMLInputElement>("input[type=file]") as HTMLInputElement, {
+      target: { files: [new File(["phone"], "capture.jpg", { type: "image/jpeg" })] },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry evidence save" }));
+    await waitFor(() => expect(recordArgs).toHaveLength(2));
+    expect(recordArgs[1]).toEqual(recordArgs[0]);
+    expect(mocks.recognizeCapture).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays frozen completion timing when the completion response is lost", async () => {
+    const completionArgs: Record<string, unknown>[] = [];
+    let attempts = 0;
+    mocks.rpc.mockImplementation(async (name: string, args?: Record<string, unknown>) => {
+      if (name === "get_pos_sale_session_state") return { data: session, error: null };
+      if (name === "record_card_recognition_audit") {
+        return { data: "40000000-0000-4000-8000-000000000004", error: null };
+      }
+      if (name === "complete_card_recognition_browser_timing") {
+        completionArgs.push(structuredClone(args ?? {}));
+        attempts += 1;
+        if (attempts === 1) {
+          return { data: null, error: new TypeError("response connection closed") };
+        }
+        return { data: true, error: null };
+      }
+      return { data: null, error: null };
+    });
+    const { container } = render(<LanguageProvider><POSView /></LanguageProvider>);
+    await screen.findByText("The saved sale is empty.");
+    fireEvent.change(container.querySelector<HTMLInputElement>("input[type=file]") as HTMLInputElement, {
+      target: { files: [new File(["phone"], "capture.jpg", { type: "image/jpeg" })] },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry evidence save" }));
+    await waitFor(() => expect(completionArgs).toHaveLength(2));
+    expect(completionArgs[1]).toEqual(completionArgs[0]);
+    expect(mocks.recognizeCapture).toHaveBeenCalledTimes(1);
   });
 
   it("keeps file fallback and manual search usable when camera permission is denied", async () => {
@@ -356,16 +424,36 @@ describe("camera POS mobile recognition", () => {
 
   it("uses one frozen sale UUID across an ambiguous retry without rescanning", async () => {
     const operationIDs: string[] = [];
-    mocks.rpc.mockImplementation(async (name: string, args?: Record<string, unknown>) => {
-      if (name === "get_pos_sale_session_state") return { data: session, error: null };
-      if (name === "record_card_recognition_audit") return { data: "40000000-0000-4000-8000-000000000004", error: null };
-      if (name === "confirm_card_recognition_audit") return { data: candidate.card_uid, error: null };
-      if (name === "search_pos_inventory") return { data: [sku], error: null };
+    mocks.rpc.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "preview_pos_sale_line") return queryResult({
+        available_quantity: 2,
+        requested_quantity: 1,
+        sufficient: true,
+        preview_cogs_usd: 10,
+        projected_session_cogs_usd: 10,
+        affected_lines: [{
+          line_id: null,
+          line_position: 1,
+          preview_cogs_usd: 10,
+          fifo_fingerprint: "fifo-add",
+        }],
+        fifo_fingerprint: "fifo-add",
+        preview_token: "c".repeat(64),
+      });
+      if (name === "get_pos_sale_session_state") return Promise.resolve({ data: session, error: null });
+      if (name === "record_card_recognition_audit") return Promise.resolve({ data: "40000000-0000-4000-8000-000000000004", error: null });
+      if (name === "complete_card_recognition_browser_timing") return Promise.resolve({ data: true, error: null });
+      if (name === "confirm_card_recognition_audit") return Promise.resolve({ data: candidate.card_uid, error: null });
+      if (name === "search_pos_inventory") return Promise.resolve({ data: [sku], error: null });
       if (name === "add_pos_sale_line") {
         operationIDs.push(String(args?.p_line_id));
-        return { data: null, error: null };
+        expect(args).toEqual(expect.objectContaining({
+          p_expected_preview_token: "c".repeat(64),
+          p_expected_preview_cogs_usd: 10,
+        }));
+        return Promise.resolve({ data: null, error: null });
       }
-      return { data: null, error: null };
+      return Promise.resolve({ data: null, error: null });
     });
     const { container } = render(<LanguageProvider><POSView /></LanguageProvider>);
     await screen.findByText("The saved sale is empty.");
@@ -378,14 +466,123 @@ describe("camera POS mobile recognition", () => {
     expect(screen.getByText(/SV2A 025 · Japanese · Holo/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Confirm identity" }));
     const nearMint = (await screen.findByText("Near Mint")).closest("button") as HTMLButtonElement;
-    expect(screen.getByText("fixture · 2026-08-11 · confidence fixture")).toBeTruthy();
+    expect(screen.getByText(/fixture · (updated|stale:).* · fixture/)).toBeTruthy();
     fireEvent.click(nearMint);
+    expect(await screen.findByText("FIFO preview for 1 card(s): COGS $10.00")).toBeTruthy();
+    expect(await screen.findByText("Projected cart COGS: $10.00")).toBeTruthy();
+    expect(screen.getByText("Projected margin: $70.00")).toBeTruthy();
+    const sellPercentage = screen.getByLabelText("Custom sell percentage");
+    fireEvent.change(sellPercentage, { target: { value: "79" } });
+    expect((screen.getByRole("button", { name: "Add to saved sale" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(sellPercentage, { target: { value: "80" } });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Add to saved sale" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Add to saved sale" }));
     expect(await screen.findByRole("button", { name: "Retry exact saved add" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Retry exact saved add" }));
     await waitFor(() => expect(operationIDs).toHaveLength(2));
     expect(new Set(operationIDs).size).toBe(1);
     expect(mocks.recognizeCapture).toHaveBeenCalledTimes(1);
+  });
+
+  it("reviews every shifted duplicate-SKU FIFO layer before applying an exact update", async () => {
+    const baseLine = {
+      line_position: 1,
+      identity: {
+        card_uid: candidate.card_uid,
+        regional_name: candidate.regional_name,
+        english_name: candidate.english_name,
+        set_code: candidate.set_code,
+        card_number: candidate.card_number,
+        condition_standard: "TCGPlayer",
+        condition_code: "NM",
+        psa_grade: 0,
+      },
+      quantity: 1,
+      available_qty_at_add: 3,
+      avg_cost_unit_usd: 10,
+      preview_cogs_usd: 10,
+      preview_fifo_fingerprint: "first-old",
+      market_unit_usd: 100,
+      proposed_unit_price_usd: 80,
+      agreed_unit_price_usd: 80,
+      add_request: {
+        requested_agreed_unit_price_usd: 80,
+        requested_sell_percentage: null,
+        requested_rounding_mode: null,
+        manual_market_unit_usd: null,
+        manual_market_reason: null,
+        browser_snapshot: {},
+        expected_preview_token: "a".repeat(64),
+        expected_preview_cogs_usd: 10,
+      },
+    };
+    const firstID = "60000000-0000-4000-8000-000000000001";
+    const secondID = "60000000-0000-4000-8000-000000000002";
+    let currentSession = {
+      ...session,
+      lines: [
+        { ...baseLine, line_id: firstID },
+        {
+          ...baseLine,
+          line_id: secondID,
+          line_position: 2,
+          preview_fifo_fingerprint: "second-old",
+        },
+      ],
+    };
+    const quote = {
+      available_quantity: 2,
+      requested_quantity: 2,
+      sufficient: true,
+      preview_cogs_usd: 20,
+      projected_session_cogs_usd: 40,
+      affected_lines: [
+        { line_id: firstID, line_position: 1, preview_cogs_usd: 20, fifo_fingerprint: "first-new" },
+        { line_id: secondID, line_position: 2, preview_cogs_usd: 20, fifo_fingerprint: "second-new" },
+      ],
+      fifo_fingerprint: "first-new",
+      preview_token: "d".repeat(64),
+    };
+    const updates: Record<string, unknown>[] = [];
+    mocks.rpc.mockImplementation(async (name: string, args?: Record<string, unknown>) => {
+      if (name === "get_pos_sale_session_state") return { data: currentSession, error: null };
+      if (name === "preview_pos_sale_line") return { data: quote, error: null };
+      if (name === "update_pos_sale_line") {
+        updates.push(structuredClone(args ?? {}));
+        currentSession = {
+          ...currentSession,
+          lines: currentSession.lines.map((line) => line.line_id === firstID
+            ? { ...line, quantity: 2, preview_cogs_usd: 20, preview_fifo_fingerprint: "first-new" }
+            : { ...line, preview_cogs_usd: 20, preview_fifo_fingerprint: "second-new" }),
+        };
+        return { data: firstID, error: null };
+      }
+      return { data: null, error: null };
+    });
+
+    render(<LanguageProvider><POSView /></LanguageProvider>);
+    await screen.findByText("$160.00");
+    fireEvent.click(screen.getAllByRole("button", { name: "Increase quantity" })[0]);
+
+    const review = await screen.findByRole("region", { name: "Review quoted line change" });
+    await waitFor(() => expect(document.activeElement).toBe(review));
+    expect(screen.getByText("$40.00")).toBeTruthy();
+    expect(screen.getByText("$200.00")).toBeTruthy();
+    expect(screen.getAllByText(/\$10\.00 to \$20\.00/)).toHaveLength(2);
+    expect(updates).toHaveLength(0);
+
+    const apply = screen.getByRole("button", { name: "Apply quoted change" });
+    apply.focus();
+    expect(document.activeElement).toBe(apply);
+    fireEvent.click(apply);
+    await waitFor(() => expect(updates).toEqual([{
+      p_line_id: firstID,
+      p_quantity: 2,
+      p_agreed_unit_price_usd: 80,
+      p_expected_preview_token: "d".repeat(64),
+      p_expected_preview_cogs_usd: 20,
+      p_expected_session_cogs_usd: 40,
+    }]));
   });
 
   it("preserves uploaded bytes when media registration committed before its response was lost", async () => {
@@ -402,6 +599,9 @@ describe("camera POS mobile recognition", () => {
       if (name === "get_pos_sale_session_state") return { data: session, error: null };
       if (name === "record_card_recognition_audit") {
         return { data: "40000000-0000-4000-8000-000000000004", error: null };
+      }
+      if (name === "complete_card_recognition_browser_timing") {
+        return { data: true, error: null };
       }
       if (name === "confirm_card_recognition_audit") return { data: candidate.card_uid, error: null };
       if (name === "get_pos_acquisition_operation_state") {
@@ -445,7 +645,10 @@ describe("camera POS mobile recognition", () => {
     await waitFor(() => expect(ranked.disabled).toBe(false));
     fireEvent.click(ranked);
     fireEvent.click(screen.getByRole("button", { name: "Confirm identity" }));
-    fireEvent.click(await screen.findByRole("checkbox"));
+    expect(await screen.findByText(
+      "Use this recognition capture as the single private front image",
+    )).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Add to acquisition lot" }));
 
     expect(await screen.findByText(/was added to acquisition lot 1/)).toBeTruthy();
@@ -473,5 +676,35 @@ describe("camera POS mobile recognition", () => {
     }
     screen.getByRole("button", { name: "Pause" }).focus();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Pause" }));
+    expect((screen.getByLabelText("Platform") as HTMLInputElement).maxLength).toBe(255);
+    expect((screen.getByLabelText("Notes") as HTMLInputElement).maxLength).toBe(1000);
+  });
+
+  it("keeps a finalized session visible while surfacing ledger reversal", async () => {
+    mocks.rpc.mockImplementation(async (name: string) => {
+      if (name === "get_pos_sale_session_state") return {
+        data: {
+          ...session,
+          status: "finalized",
+          finalization: {
+            line_count: 1,
+            total_cogs_usd: 10,
+            total_margin_usd: 10,
+            total_gross_usd: 20,
+          },
+          ledger: {
+            status: "reversed",
+            reversed_at: "2026-08-12T10:00:00Z",
+          },
+        },
+        error: null,
+      };
+      return { data: null, error: null };
+    });
+    render(<LanguageProvider><POSView /></LanguageProvider>);
+
+    expect(await screen.findByText("Finalized")).toBeTruthy();
+    expect(screen.getByText("This finalized sale was reversed in the ledger")).toBeTruthy();
+    expect(screen.getByText(/Reversed on 2026-08-12/)).toBeTruthy();
   });
 });

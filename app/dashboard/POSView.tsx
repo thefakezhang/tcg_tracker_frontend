@@ -100,6 +100,7 @@ interface InventorySKU {
 
 interface SaleLine {
   line_id: string;
+  line_position: number;
   identity: {
     card_uid: string;
     regional_name: string;
@@ -114,6 +115,7 @@ interface SaleLine {
   available_qty_at_add: number;
   avg_cost_unit_usd: number;
   preview_cogs_usd: number;
+  preview_fifo_fingerprint: string;
   market_unit_usd: number;
   proposed_unit_price_usd: number;
   agreed_unit_price_usd: number;
@@ -124,6 +126,8 @@ interface SaleLine {
     manual_market_unit_usd: number | null;
     manual_market_reason: string | null;
     browser_snapshot: Record<string, unknown>;
+    expected_preview_token: string;
+    expected_preview_cogs_usd: number;
   };
   recognition?: { request_id: string; status: string };
 }
@@ -142,6 +146,12 @@ interface SaleSessionState {
     total_cogs_usd: number;
     total_margin_usd: number;
     total_gross_usd: number;
+  };
+  ledger?: {
+    status: "finalized" | "reversed";
+    reversed_at?: string;
+    reversal_sold_at?: string;
+    reversal_gross_usd?: number;
   };
   lines: SaleLine[];
 }
@@ -173,17 +183,27 @@ interface StableCardIdentity {
 }
 
 interface LatencyEvidence {
+  permissionMs: number;
+  captureMs: number;
   captureToResponseMs: number;
   tapToResponseMs: number | null;
   responseToPaintMs: number;
   auditReadyMs: number | null;
+  totalTapToReadyMs: number | null;
   serverTiming: Record<string, number>;
 }
 
 interface PendingRecognitionAudit {
   requestID: string;
   args: Record<string, unknown>;
+  captureStarted: number;
+  tappedAt: number | null;
   responseAt: number;
+  auditStartedAt: number | null;
+  completionTiming: {
+    auditReadyMs: number;
+    totalTapToReadyMs: number;
+  } | null;
 }
 
 interface FinalizeResponse {
@@ -207,6 +227,29 @@ interface FinalizeResponse {
   total_cogs_usd?: number;
   total_margin_usd?: number;
   total_gross_usd?: number;
+}
+
+interface SaleLinePreview {
+  available_quantity: number;
+  requested_quantity: number;
+  sufficient: boolean;
+  preview_cogs_usd: number | null;
+  projected_session_cogs_usd: number | null;
+  affected_lines: Array<{
+    line_id: string | null;
+    line_position: number;
+    preview_cogs_usd: number;
+    fifo_fingerprint: string;
+  }>;
+  fifo_fingerprint: string | null;
+  preview_token: string | null;
+}
+
+interface PendingSaleLineChange {
+  lineID: string;
+  quantity: number;
+  agreedUnitPriceUSD: number;
+  preview: SaleLinePreview;
 }
 
 type InventoryLeg = "import" | "export";
@@ -240,6 +283,7 @@ interface AcquisitionOperationState {
     recognition: unknown[];
     browser: Record<string, unknown>;
   };
+  expected_attachments: FrozenAcquisitionMedia[];
   registered_media: FrozenAcquisitionMedia[];
 }
 
@@ -260,6 +304,8 @@ function saleLineMatchesFrozen(line: SaleLine, frozen: FrozenSaleAdd): boolean {
       manual_market_unit_usd: args.p_manual_market_unit_usd,
       manual_market_reason: args.p_manual_market_reason,
       browser_snapshot: args.p_browser_snapshot,
+      expected_preview_token: args.p_expected_preview_token,
+      expected_preview_cogs_usd: args.p_expected_preview_cogs_usd,
     })
   );
 }
@@ -290,6 +336,8 @@ function acquisitionStateMatchesFrozen(
     && (state.market_value_usd == null ? null : Number(state.market_value_usd))
       === args.p_market_value_usd
     && exactPOSValue(state.browser_snapshot?.browser) === exactPOSValue(args.p_browser_snapshot)
+    && exactPOSValue(comparableMedia(state.expected_attachments ?? []))
+      === exactPOSValue(comparableMedia(frozen.media))
   );
 }
 
@@ -325,6 +373,37 @@ function posRequestError(
   error: unknown,
 ): string {
   return translate("pos.requestFailed", { message: messageOf(error) });
+}
+
+function marketEvidenceSummary(
+  sku: InventorySKU,
+  translate: ReturnType<typeof useTranslation>["t"],
+): string {
+  const asOf = sku.market_as_of ? new Date(sku.market_as_of) : null;
+  const ageDays = asOf && Number.isFinite(asOf.getTime())
+    ? Math.max(0, Math.floor((Date.now() - asOf.getTime()) / 86_400_000))
+    : null;
+  const rawFlags = sku.market_evidence?.flags;
+  const flags = Array.isArray(rawFlags)
+    ? rawFlags.filter((flag): flag is string => typeof flag === "string")
+    : rawFlags && typeof rawFlags === "object"
+      ? Object.entries(rawFlags).flatMap(([flag, enabled]) => enabled === true ? [flag] : [])
+      : [];
+  const kind = typeof sku.market_evidence?.kind === "string"
+    ? sku.market_evidence.kind
+    : sku.market_source;
+  const evidenceStale = sku.market_evidence?.stale === true;
+  const freshness = ageDays == null
+    ? translate("pos.marketAgeUnknown")
+    : evidenceStale || ageDays > 30
+      ? translate("pos.marketStale", { days: ageDays })
+      : translate("pos.marketFresh", { days: ageDays });
+  return [
+    kind || translate("pos.marketUnknown"),
+    freshness,
+    sku.market_confidence || translate("pos.marketUnknown"),
+    flags.length > 0 ? translate("pos.marketFlags", { flags: flags.join(", ") }) : null,
+  ].filter(Boolean).join(" · ");
 }
 
 function isDefinitiveRPCFailure(error: unknown): boolean {
@@ -382,6 +461,9 @@ export default function POSView() {
   const [notice, setNotice] = useState<string | null>(null);
   const [saleQuantity, setSaleQuantity] = useState("1");
   const [saleAgreedPrice, setSaleAgreedPrice] = useState("");
+  const [salePreview, setSalePreview] = useState<SaleLinePreview | null>(null);
+  const [salePreviewLoading, setSalePreviewLoading] = useState(false);
+  const [salePreviewError, setSalePreviewError] = useState<string | null>(null);
   const [manualMarket, setManualMarket] = useState("");
   const [manualMarketReason, setManualMarketReason] = useState("");
   const [conditionRef, setConditionRef] = useState("");
@@ -397,10 +479,12 @@ export default function POSView() {
   const [pendingMissingMedia, setPendingMissingMedia] = useState<MediaKind[]>([]);
   const [durableRetryReady, setDurableRetryReady] = useState(false);
   const [linePriceDrafts, setLinePriceDrafts] = useState<Record<string, string>>({});
+  const [pendingLineChange, setPendingLineChange] = useState<PendingSaleLineChange | null>(null);
   const [finalizeReview, setFinalizeReview] = useState<FinalizeResponse | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
+  const cameraActionRef = useRef<HTMLButtonElement>(null);
   const guideRef = useRef<HTMLDivElement>(null);
   const matchPanelRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -411,14 +495,18 @@ export default function POSView() {
   const gateRef = useRef(new StableFrameGate());
   const requestGenerationRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
+  const salePreviewGenerationRef = useRef(0);
+  const salePreviewAbortRef = useRef<AbortController | null>(null);
   const recognitionStatusRef = useRef<RecognitionStatus | null>(null);
   const pendingAuditRef = useRef<PendingRecognitionAudit | null>(null);
+  const cameraPermissionMsRef = useRef(0);
   const manualSearchGenerationRef = useRef(0);
   const manualSearchAbortRef = useRef<AbortController | null>(null);
   const saleAddOperationRef = useRef<ExactRetryOperation | null>(null);
   const acquisitionAddOperationRef = useRef<ExactRetryOperation | null>(null);
   const ownerIDRef = useRef<string | null>(null);
   const lineRefs = useRef(new Map<string, HTMLDivElement>());
+  const lineChangeReviewRef = useRef<HTMLDivElement>(null);
   const initialSaleLegRef = useRef<InventoryLeg>(newSaleLeg);
   const submitRef = useRef<(capture: () => Promise<Blob>, crop?: CaptureMetadata, tappedAt?: number) => Promise<void>>(async () => {});
 
@@ -496,6 +584,7 @@ export default function POSView() {
         Number(line.agreed_unit_price_usd).toFixed(2),
       ]),
     ));
+    setPendingLineChange(null);
     setSessionLoaded(true);
     return state;
   }, []);
@@ -635,6 +724,21 @@ export default function POSView() {
     await verifyEvidenceBlob(readback.data, descriptor);
   }, [authenticatedMediaBucket, storageObjectMissing, t, verifyEvidenceBlob]);
 
+  const removeProvenOrphanMedia = useCallback(async (
+    frozen: FrozenAcquisitionAdd,
+  ) => {
+    if (!ownerIDRef.current) throw new Error(t("pos.ownerUnavailable"));
+    const bucket = await authenticatedMediaBucket(ownerIDRef.current);
+    for (const media of frozen.media) {
+      const orphan = await rpc<boolean>("pos_inventory_media_object_is_orphan", {
+        p_object_key: media.object_key,
+      });
+      if (!orphan) continue;
+      const removed = await bucket.remove([media.object_key]);
+      if (removed.error) throw removed.error;
+    }
+  }, [authenticatedMediaBucket, t]);
+
   const reconcilePendingSale = useCallback(async (
     retry: ExactRetryOperation,
     frozen: FrozenSaleAdd,
@@ -693,6 +797,26 @@ export default function POSView() {
       { p_operation_id: operationID },
     );
     if (!state) {
+      const missing: MediaKind[] = [];
+      let missingFailure: MissingFrozenMediaError | null = null;
+      for (const media of frozen.media) {
+        try {
+          await proveOrUploadFrozenMedia(
+            media,
+            ownerIDRef.current ?? "",
+            availableBlobs.get(media.object_key),
+          );
+        } catch (cause) {
+          if (!(cause instanceof MissingFrozenMediaError)) throw cause;
+          missing.push(cause.mediaKind);
+          missingFailure ??= cause;
+        }
+      }
+      if (missingFailure) {
+        setPendingMissingMedia(missing);
+        throw missingFailure;
+      }
+      setPendingMissingMedia([]);
       let addFailure: unknown = null;
       try {
         await rpc<number>("add_recognized_card_to_lot", frozen.rpc_args);
@@ -705,8 +829,10 @@ export default function POSView() {
       );
       if (!state) {
         if (addFailure && isDefinitiveRPCFailure(addFailure)) {
+          await removeProvenOrphanMedia(frozen);
           retry.clear(operationID);
           setPendingAcquisitionOperationID(null);
+          setPendingAcquisitionFrozen(null);
         }
         throw addFailure ?? new Error(t("pos.acquisitionLineMissing"));
       }
@@ -714,24 +840,12 @@ export default function POSView() {
     if (!acquisitionStateMatchesFrozen(state, frozen)) {
       throw new Error(t("pos.retryStateMismatch"));
     }
-    const missing: MediaKind[] = [];
-    let missingFailure: MissingFrozenMediaError | null = null;
     for (const media of frozen.media) {
-      try {
-        await proveOrUploadFrozenMedia(
-          media,
-          ownerIDRef.current ?? "",
-          availableBlobs.get(media.object_key),
-        );
-      } catch (cause) {
-        if (!(cause instanceof MissingFrozenMediaError)) throw cause;
-        missing.push(cause.mediaKind);
-        missingFailure ??= cause;
-      }
-    }
-    if (missingFailure) {
-      setPendingMissingMedia(missing);
-      throw missingFailure;
+      await proveOrUploadFrozenMedia(
+        media,
+        ownerIDRef.current ?? "",
+        availableBlobs.get(media.object_key),
+      );
     }
     setPendingMissingMedia([]);
     for (const media of frozen.media) {
@@ -749,33 +863,31 @@ export default function POSView() {
       } catch (cause) {
         registrationFailure = cause;
       }
-      const refreshedState = await rpc<AcquisitionOperationState | null>(
+      state = await rpc<AcquisitionOperationState | null>(
         "get_pos_acquisition_operation_state",
         { p_operation_id: operationID },
       );
-      let registered = refreshedState?.registered_media.find(
+      let registered = state?.registered_media.find(
         (candidateMedia) => candidateMedia.object_key === media.object_key,
       );
-      let reconciledState = refreshedState;
-      if (!registered && registrationFailure) {
+      if (!registered) {
         try {
+          if (!state) throw new Error(t("pos.acquisitionLineMissing"));
           await registerFrozenMedia(frozen, state.lot_line_id, media);
-        } catch (retryFailure) {
-          registrationFailure = retryFailure;
+        } catch (cause) {
+          registrationFailure = cause;
         }
-        reconciledState = await rpc<AcquisitionOperationState | null>(
+        state = await rpc<AcquisitionOperationState | null>(
           "get_pos_acquisition_operation_state",
           { p_operation_id: operationID },
         );
-        registered = reconciledState?.registered_media.find(
+        registered = state?.registered_media.find(
           (candidateMedia) => candidateMedia.object_key === media.object_key,
         );
       }
-      if (!registered) throw registrationFailure ?? new Error(t("pos.mediaRegistrationMissing"));
-      if (exactPOSValue(registered) !== exactPOSValue(media)) {
-        throw new Error(t("pos.evidenceMismatch"));
+      if (!registered || exactPOSValue(registered) !== exactPOSValue(media)) {
+        throw registrationFailure ?? new Error(t("pos.evidenceMismatch"));
       }
-      state = reconciledState;
     }
     state = await rpc<AcquisitionOperationState | null>(
       "get_pos_acquisition_operation_state",
@@ -796,7 +908,7 @@ export default function POSView() {
       name: frozen.display_name,
       lot: frozen.lot_id,
     }));
-  }, [proveOrUploadFrozenMedia, registerFrozenMedia, t]);
+  }, [proveOrUploadFrozenMedia, registerFrozenMedia, removeProvenOrphanMedia, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -913,6 +1025,7 @@ export default function POSView() {
 
   const startCamera = useCallback(async () => {
     let requestedStream: Promise<MediaStream> | null = null;
+    const permissionStarted = performance.now();
     try {
       setError(null);
       const inventoryLeg = modeRef.current === "sale"
@@ -932,7 +1045,12 @@ export default function POSView() {
           height: { ideal: 1080 },
         },
       });
-      const [stream] = await Promise.all([requestedStream, readiness]);
+      const permissionResult = requestedStream.then((stream) => ({
+        stream,
+        permissionMs: performance.now() - permissionStarted,
+      }));
+      const [{ stream, permissionMs }] = await Promise.all([permissionResult, readiness]);
+      cameraPermissionMsRef.current = permissionMs;
       stopCamera();
       streamRef.current = stream;
       if (!videoRef.current) throw new Error(t("pos.previewUnavailable"));
@@ -958,16 +1076,41 @@ export default function POSView() {
 
   const persistRecognitionAudit = useCallback(async (pending: PendingRecognitionAudit) => {
     setAuditState("saving");
+    const auditStartedAt = pending.auditStartedAt ?? performance.now();
+    pending.auditStartedAt = auditStartedAt;
     const recorded = await rpc<string>("record_card_recognition_audit", pending.args);
     if (recorded !== pending.requestID) {
       throw new Error(t("pos.auditUUIDMismatch"));
     }
-    const auditReadyAt = performance.now();
+    if (!pending.completionTiming) {
+      const auditReadyAt = performance.now();
+      pending.completionTiming = {
+        auditReadyMs: Math.round(
+          (auditReadyAt - auditStartedAt) * 1000,
+        ) / 1000,
+        totalTapToReadyMs: Math.round(
+          (auditReadyAt - (pending.tappedAt ?? pending.captureStarted)) * 1000,
+        ) / 1000,
+      };
+    }
+    const { auditReadyMs, totalTapToReadyMs } = pending.completionTiming;
+    const timingCompleted = await rpc<boolean>(
+      "complete_card_recognition_browser_timing",
+      {
+        p_request_id: pending.requestID,
+        p_audit_ready_ms: auditReadyMs,
+        p_total_tap_to_ready_ms: totalTapToReadyMs,
+      },
+    );
+    if (timingCompleted !== true) {
+      throw new Error(t("pos.auditTimingIncomplete"));
+    }
     pendingAuditRef.current = null;
     setAuditState("ready");
     setLatency((current) => current ? {
       ...current,
-      auditReadyMs: auditReadyAt - pending.responseAt,
+      auditReadyMs,
+      totalTapToReadyMs,
     } : current);
     setCameraMessageKey("pos.cameraConfirm");
   }, [t]);
@@ -1024,6 +1167,7 @@ export default function POSView() {
     );
     try {
       captureBytes = await capture();
+      const capturedAt = performance.now();
       if (!isCurrent()) return;
       const warmed = recognitionStatusRef.current;
       const warmScopeMatches = warmed
@@ -1067,21 +1211,26 @@ export default function POSView() {
       setCaptureBlob(captureBytes);
       setAuditState("saving");
       setLatency({
+        permissionMs: cameraPermissionMsRef.current,
+        captureMs: capturedAt - captureStarted,
         captureToResponseMs: responseAt - captureStarted,
         tapToResponseMs: tappedAt == null ? null : responseAt - tappedAt,
         responseToPaintMs: 0,
         auditReadyMs: null,
+        totalTapToReadyMs: null,
         serverTiming: response.serverTiming,
       });
       setCameraMessageKey("pos.cameraSaving");
       const paintedAt = await afterNextPaint();
       if (!isCurrent()) return;
       const browserTiming = {
-        browser_capture_to_response: Math.round((responseAt - captureStarted) * 1000) / 1000,
-        browser_response_to_paint: Math.round((paintedAt - responseAt) * 1000) / 1000,
+        browser_permission_ms: Math.round(cameraPermissionMsRef.current * 1000) / 1000,
+        browser_capture_ms: Math.round((capturedAt - captureStarted) * 1000) / 1000,
+        browser_capture_to_response_ms: Math.round((responseAt - captureStarted) * 1000) / 1000,
+        browser_response_to_paint_ms: Math.round((paintedAt - responseAt) * 1000) / 1000,
         ...(tappedAt == null
           ? {}
-          : { browser_tap_to_response: Math.round((responseAt - tappedAt) * 1000) / 1000 }),
+          : { browser_tap_to_response_ms: Math.round((responseAt - tappedAt) * 1000) / 1000 }),
         ...Object.fromEntries(
           Object.entries(response.serverTiming).map(([key, value]) => [`server_${key}`, value]),
         ),
@@ -1092,7 +1241,11 @@ export default function POSView() {
       } : current);
       const pending = {
         requestID: response.result.request_id,
+        captureStarted,
+        tappedAt: tappedAt ?? null,
         responseAt,
+        auditStartedAt: null,
+        completionTiming: null,
         args: {
           p_request_id: response.result.request_id,
           p_use_case: response.result.use_case,
@@ -1160,7 +1313,7 @@ export default function POSView() {
   useEffect(() => { submitRef.current = submitCapture; }, [submitCapture]);
 
   useEffect(() => {
-    if (!cameraReady) return;
+    if (!cameraReady || session?.status === "paused") return;
     const timer = window.setInterval(() => {
       if (inFlightRef.current || pendingResultRef.current) return;
       const video = videoRef.current;
@@ -1169,7 +1322,10 @@ export default function POSView() {
         const { crop, metadata } = measuredCrop();
         const sample = sampleVideoFrame(video, crop);
         const now = performance.now();
-        if (!gateRef.current.observe(sample, now)) return;
+        if (!gateRef.current.observe(sample, now)) {
+          if (!gateRef.current.needsRemoval()) setCameraMessageKey("pos.cameraWatching");
+          return;
+        }
         gateRef.current.markSubmitted(sample, now);
         void submitRef.current(() => captureVideoFrame(video, crop), metadata);
       } catch (cause) {
@@ -1177,7 +1333,7 @@ export default function POSView() {
       }
     }, AUTO_CAPTURE_SAMPLE_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [cameraReady, measuredCrop, t]);
+  }, [cameraReady, measuredCrop, session?.status, t]);
 
   const scanNow = useCallback(async () => {
     if (!cameraReady) {
@@ -1327,13 +1483,30 @@ export default function POSView() {
     setManualCandidates([]);
     setSaleSKUs([]);
     setSelectedSKU(null);
+    salePreviewGenerationRef.current += 1;
+    salePreviewAbortRef.current?.abort();
+    salePreviewAbortRef.current = null;
+    setSalePreview(null);
+    setSalePreviewLoading(false);
     setCaptureBlob(null);
     setEvidenceFiles({});
+    setAttachCapture(false);
     setLatency(null);
     setAuditState("idle");
     gateRef.current.reset();
-    setCameraMessageKey(cameraReady ? "pos.cameraWatching" : "pos.cameraOff");
+    setCameraMessageKey(cameraReady
+      ? gateRef.current.needsRemoval()
+        ? "pos.cameraRemoveCard"
+        : "pos.cameraWatching"
+      : "pos.cameraOff");
   }, [auditState, cameraReady]);
+
+  const focusCameraForNextCard = useCallback(() => {
+    requestAnimationFrame(() => {
+      previewRef.current?.scrollIntoView({ block: "start" });
+      cameraActionRef.current?.focus();
+    });
+  }, []);
 
   const changeMode = useCallback(async (nextMode: POSUseCase) => {
     if (nextMode === mode) return;
@@ -1384,6 +1557,10 @@ export default function POSView() {
     setCandidateConfirmed(false);
     setSaleSKUs([]);
     setSelectedSKU(null);
+    salePreviewGenerationRef.current += 1;
+    salePreviewAbortRef.current?.abort();
+    setSalePreview(null);
+    setSalePreviewLoading(false);
   }, [auditState, result]);
 
   const confirmSelectedCandidate = useCallback(async () => {
@@ -1415,6 +1592,14 @@ export default function POSView() {
         if (exact.length === 0) throw new Error(t("pos.inventoryNoLongerAvailable"));
         setSaleSKUs(exact);
         setSelectedSKU(null);
+      } else if (result) {
+        if (!captureBlob) throw new Error(t("pos.captureUnavailable"));
+        setAttachCapture(true);
+        setEvidenceFiles((current) => {
+          const next = { ...current };
+          delete next.front;
+          return next;
+        });
       }
       setCandidateConfirmed(true);
     } catch (cause) {
@@ -1422,7 +1607,7 @@ export default function POSView() {
     } finally {
       setBusy(false);
     }
-  }, [auditState, mode, result, selectedCandidate, selectionMethod, session, t]);
+  }, [auditState, captureBlob, mode, result, selectedCandidate, selectionMethod, session, t]);
 
   const searchManually = useCallback(async () => {
     const query = manualQuery.trim();
@@ -1539,6 +1724,8 @@ export default function POSView() {
         setManualMarket("");
         setManualMarketReason("");
         clearRecognition();
+        setNotice(t("pos.saleAddedNext", { name: frozen.display_name }));
+        focusCameraForNextCard();
       } catch (cause) {
         setError(posRequestError(t, cause));
       } finally {
@@ -1575,6 +1762,12 @@ export default function POSView() {
       setError(t("pos.unpricedMarketRequired"));
       return;
     }
+    if (!salePreview?.sufficient
+        || salePreview.preview_token == null
+        || salePreview.preview_cogs_usd == null) {
+      setError(salePreviewError || t("pos.quantityUnavailable"));
+      return;
+    }
     const browserSnapshot = selectionMethod === "manual"
       ? manualSelectionEvidence(selectedCandidate.card_uid)
       : {};
@@ -1599,6 +1792,8 @@ export default function POSView() {
         p_manual_market_unit_usd: manualMarketValue,
         p_manual_market_reason: manualMarketReason.trim() || null,
         p_browser_snapshot: browserSnapshot,
+        p_expected_preview_token: salePreview.preview_token,
+        p_expected_preview_cogs_usd: salePreview.preview_cogs_usd,
       },
     };
     try {
@@ -1617,34 +1812,98 @@ export default function POSView() {
       setManualMarket("");
       setManualMarketReason("");
       clearRecognition();
+      setNotice(t("pos.saleAddedNext", { name: selectedCandidate.regional_name }));
+      focusCameraForNextCard();
     } catch (cause) {
       setError(t("pos.unknownSaleAdd", { message: messageOf(cause) }));
     } finally {
       setBusy(false);
     }
-  }, [candidateConfirmed, clearRecognition, manualMarket, manualMarketReason, reconcilePendingSale, result, saleAgreedPrice, saleQuantity, selectedCandidate, selectedSKU, selectionMethod, session, t]);
+  }, [candidateConfirmed, clearRecognition, focusCameraForNextCard, manualMarket, manualMarketReason, reconcilePendingSale, result, saleAgreedPrice, salePreview, salePreviewError, saleQuantity, selectedCandidate, selectedSKU, selectionMethod, session, t]);
 
-  const updateSaleLine = useCallback(async (
+  const reviewSaleLineChange = useCallback(async (
     line: SaleLine,
     quantity: number,
     agreed: number,
   ) => {
-    if (!session || session.status !== "draft") return;
+    if (!session || session.status !== "draft") return null;
     setBusy(true);
+    setError(null);
+    try {
+      const preview = await rpc<SaleLinePreview>("preview_pos_sale_line", {
+        p_session_id: session.session_id,
+        p_inventory_leg: session.inventory_leg,
+        p_card_uid: line.identity.card_uid,
+        p_condition_standard: line.identity.condition_standard,
+        p_condition_code: line.identity.condition_code,
+        p_psa_grade: line.identity.psa_grade,
+        p_quantity: quantity,
+        p_replace_line_id: line.line_id,
+      });
+      if (!preview.sufficient || preview.preview_token == null
+          || preview.preview_cogs_usd == null
+          || preview.projected_session_cogs_usd == null) {
+        throw new Error(t("pos.quantityUnavailable"));
+      }
+      setPendingLineChange({
+        lineID: line.line_id,
+        quantity,
+        agreedUnitPriceUSD: agreed,
+        preview,
+      });
+      requestAnimationFrame(() => {
+        lineChangeReviewRef.current?.focus();
+        lineChangeReviewRef.current?.scrollIntoView({ block: "nearest" });
+      });
+      return preview;
+    } catch (cause) {
+      setError(posRequestError(t, cause));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }, [session, t]);
+
+  const applySaleLineChange = useCallback(async () => {
+    if (!session || session.status !== "draft" || !pendingLineChange) return;
+    const frozen = pendingLineChange;
+    const preview = frozen.preview;
+    if (!preview.preview_token || preview.preview_cogs_usd == null
+        || preview.projected_session_cogs_usd == null) return;
+    setBusy(true);
+    setError(null);
     try {
       await rpc<string>("update_pos_sale_line", {
-        p_line_id: line.line_id,
-        p_quantity: quantity,
-        p_agreed_unit_price_usd: agreed,
+        p_line_id: frozen.lineID,
+        p_quantity: frozen.quantity,
+        p_agreed_unit_price_usd: frozen.agreedUnitPriceUSD,
+        p_expected_preview_token: preview.preview_token,
+        p_expected_preview_cogs_usd: preview.preview_cogs_usd,
+        p_expected_session_cogs_usd: preview.projected_session_cogs_usd,
       });
       await loadSaleSession(session.session_id);
       setFinalizeReview(null);
     } catch (cause) {
+      setPendingLineChange(null);
+      const line = session.lines.find((candidateLine) => candidateLine.line_id === frozen.lineID);
+      if (line) {
+        const refreshed = await reviewSaleLineChange(
+          line,
+          frozen.quantity,
+          frozen.agreedUnitPriceUSD,
+        );
+        if (refreshed) {
+          setError(refreshed.preview_token === preview.preview_token
+            ? posRequestError(t, cause)
+            : t("pos.lineQuoteChanged"));
+        }
+        return;
+      }
       setError(posRequestError(t, cause));
     } finally {
       setBusy(false);
     }
-  }, [loadSaleSession, session, t]);
+  }, [loadSaleSession, pendingLineChange, reviewSaleLineChange, session, t]);
 
   const removeSaleLine = useCallback(async (lineID: string) => {
     if (!session || session.status !== "draft") return;
@@ -1670,8 +1929,8 @@ export default function POSView() {
       setError(t("pos.positiveAgreedPrice"));
       return;
     }
-    await updateSaleLine(line, line.quantity, agreed);
-  }, [linePriceDrafts, t, updateSaleLine]);
+    await reviewSaleLineChange(line, line.quantity, agreed);
+  }, [linePriceDrafts, reviewSaleLineChange, t]);
 
   const togglePause = useCallback(async () => {
     if (!session) return;
@@ -1693,7 +1952,46 @@ export default function POSView() {
   const linePricesDirty = Boolean(session?.lines.some(
     (line) => Number(linePriceDrafts[line.line_id]) !== Number(line.agreed_unit_price_usd),
   ));
-  const hasUnsavedSaleEdits = settingsDirty || linePricesDirty;
+  const hasUnsavedSaleEdits = settingsDirty || linePricesDirty || pendingLineChange != null;
+
+  useEffect(() => {
+    salePreviewGenerationRef.current += 1;
+    const generation = salePreviewGenerationRef.current;
+    salePreviewAbortRef.current?.abort();
+    salePreviewAbortRef.current = null;
+    setSalePreview(null);
+    setSalePreviewError(null);
+    const quantity = selectedSKU
+      ? strictIntegerInput(saleQuantity.trim(), 1, selectedSKU.available_qty)
+      : null;
+    if (!session || session.status !== "draft" || !selectedSKU
+        || !candidateConfirmed || quantity == null || settingsDirty) {
+      setSalePreviewLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    salePreviewAbortRef.current = controller;
+    setSalePreviewLoading(true);
+    void rpcAbortable<SaleLinePreview>("preview_pos_sale_line", {
+      p_session_id: session.session_id,
+      p_inventory_leg: session.inventory_leg,
+      p_card_uid: selectedSKU.card_uid,
+      p_condition_standard: selectedSKU.condition_standard,
+      p_condition_code: selectedSKU.condition_code,
+      p_psa_grade: selectedSKU.psa_grade,
+      p_quantity: quantity,
+      p_replace_line_id: null,
+    }, controller.signal).then((preview) => {
+      if (generation !== salePreviewGenerationRef.current || controller.signal.aborted) return;
+      setSalePreview(preview);
+    }).catch((cause) => {
+      if (generation !== salePreviewGenerationRef.current || controller.signal.aborted) return;
+      setSalePreviewError(posRequestError(t, cause));
+    }).finally(() => {
+      if (generation === salePreviewGenerationRef.current) setSalePreviewLoading(false);
+    });
+    return () => controller.abort();
+  }, [candidateConfirmed, saleQuantity, selectedSKU, session, settingsDirty, t]);
 
   const saveSessionSettings = useCallback(async () => {
     if (!session || !settingsDraft || session.status !== "draft") return;
@@ -1784,6 +2082,25 @@ export default function POSView() {
       setBusy(false);
     }
   }, [finalizeReview, hasUnsavedSaleEdits, loadSaleSession, session, t]);
+
+  const reverseSale = useCallback(async () => {
+    if (!session || session.status !== "finalized" || session.ledger?.status === "reversed") return;
+    if (!window.confirm(t("pos.reverseSaleConfirm"))) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await rpc<Record<string, unknown>>("reverse_pos_sale_session", {
+        p_session_id: session.session_id,
+        p_reversed_at: new Date().toISOString().slice(0, 10),
+      });
+      await loadSaleSession(session.session_id);
+      setNotice(t("pos.saleReversed"));
+    } catch (cause) {
+      setError(posRequestError(t, cause));
+    } finally {
+      setBusy(false);
+    }
+  }, [loadSaleSession, session, t]);
 
   const changeNewSaleLeg = useCallback(async (nextLeg: InventoryLeg) => {
     if (nextLeg === newSaleLeg) return;
@@ -1904,6 +2221,14 @@ export default function POSView() {
       setError(t("pos.captureUnavailable"));
       return;
     }
+    if (result && (!attachCapture || !captureBlob)) {
+      setError(t("pos.recognizedFrontRequired"));
+      return;
+    }
+    if (!result && (attachCapture || !evidenceFiles.front)) {
+      setError(t("pos.manualFrontRequired"));
+      return;
+    }
     const evidenceEntries = (["front", "back", "defect"] as const)
       .flatMap((kind) => evidenceFiles[kind] && !(kind === "front" && attachCapture)
         ? [{ kind, file: evidenceFiles[kind] as File }]
@@ -1951,10 +2276,13 @@ export default function POSView() {
         market_value_usd: market,
         attachments: media,
         latency: {
+          permission_ms: latency?.permissionMs ?? null,
+          capture_ms: latency?.captureMs ?? null,
           capture_to_response_ms: latency?.captureToResponseMs ?? null,
           tap_to_response_ms: latency?.tapToResponseMs ?? null,
           response_to_paint_ms: latency?.responseToPaintMs ?? null,
           audit_ready_ms: latency?.auditReadyMs ?? null,
+          total_tap_to_ready_ms: latency?.totalTapToReadyMs ?? null,
         },
       };
       const operationID = crypto.randomUUID();
@@ -1992,12 +2320,17 @@ export default function POSView() {
       setAttachCapture(false);
       setEvidenceFiles({});
       clearRecognition();
+      setNotice(t("pos.acquisitionAddedNext", {
+        name: selectedCandidate.regional_name,
+        lot: selectedLot,
+      }));
+      focusCameraForNextCard();
     } catch (cause) {
       setError(posRequestError(t, cause));
     } finally {
       setBusy(false);
     }
-  }, [acquisitionCost, acquisitionGrade, acquisitionMarket, acquisitionQuantity, attachCapture, authenticatedSession, candidateConfirmed, captureBlob, clearRecognition, conditionRef, conditions, describeAcquisitionEvidence, evidenceFiles, latency, lots, reconcilePendingAcquisition, result, selectedCandidate, selectedLot, selectionMethod, t]);
+  }, [acquisitionCost, acquisitionGrade, acquisitionMarket, acquisitionQuantity, attachCapture, authenticatedSession, candidateConfirmed, captureBlob, clearRecognition, conditionRef, conditions, describeAcquisitionEvidence, evidenceFiles, focusCameraForNextCard, latency, lots, reconcilePendingAcquisition, result, selectedCandidate, selectedLot, selectionMethod, t]);
 
   const saleGross = session?.lines.reduce(
     (total, line) => total + Number(line.agreed_unit_price_usd) * line.quantity,
@@ -2021,6 +2354,21 @@ export default function POSView() {
     (total, line) => total + Number(line.preview_cogs_usd),
     0,
   ) ?? 0;
+  const pendingChangedLines = pendingLineChange?.preview.affected_lines.filter((projected) => {
+    if (projected.line_id == null) return false;
+    const current = session?.lines.find((line) => line.line_id === projected.line_id);
+    return current != null && (
+      Number(current.preview_cogs_usd) !== Number(projected.preview_cogs_usd)
+      || current.preview_fifo_fingerprint !== projected.fifo_fingerprint
+    );
+  }) ?? [];
+  const pendingProjectedGross = pendingLineChange && session
+    ? session.lines.reduce((total, line) => total + (
+      line.line_id === pendingLineChange.lineID
+        ? pendingLineChange.agreedUnitPriceUSD * pendingLineChange.quantity
+        : Number(line.agreed_unit_price_usd) * line.quantity
+    ), 0)
+    : null;
   const selectedProposedPrice = (
     selectedSKU?.market_unit_usd != null && session
       ? proposedSalePrice(
@@ -2030,8 +2378,15 @@ export default function POSView() {
       )
       : null
   );
+  const selectedPreviewGross = salePreview?.sufficient && selectedSKU
+    ? (boundedDecimalInput(saleAgreedPrice.trim(), 0, 1_000_000_000)
+      ?? selectedProposedPrice ?? 0) * salePreview.requested_quantity
+    : null;
+  const selectedProjectedGross = selectedPreviewGross == null
+    ? null
+    : saleGross + selectedPreviewGross;
   const canRecognize = mode === "sale"
-    ? session?.status === "draft"
+    ? session?.status === "draft" && !settingsDirty
     : selectedLot !== null;
   const canManualSearch = canRecognize;
   const selectedAcquisitionLot = lots.find((lot) => lot.lot_id === selectedLot) ?? null;
@@ -2100,7 +2455,7 @@ export default function POSView() {
                     sha: media.sha256,
                   })}</p>
                   {missing && (
-                    <Label className="mt-2 flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-md border px-3">
+                    <Label className="mt-2 flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-md border px-3 focus-within:outline-none focus-within:ring-2 focus-within:ring-ring">
                       <Upload className="size-4" />{t("pos.reselectEvidence", { kind: media.media_kind })}
                       <input className="sr-only" type="file" accept="image/*" capture="environment" disabled={busy} onChange={(event) => void choosePendingEvidencePhoto(media, event)} />
                     </Label>
@@ -2127,8 +2482,8 @@ export default function POSView() {
               {busy && <div className="absolute inset-0 grid place-items-center bg-black/45 text-white"><Loader2 className="size-8 animate-spin" /></div>}
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <Button type="button" className="min-h-11" variant={cameraReady ? "outline" : "default"} disabled={busy || !canRecognize || Boolean(result)} onClick={() => void scanNow()}><Camera />{cameraReady ? t("pos.scanNow") : t("pos.startCamera")}</Button>
-              <Label aria-disabled={busy || !canRecognize || Boolean(result)} className={`flex min-h-11 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium ${busy || !canRecognize || result ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}><Upload className="size-4" />{t("pos.choosePhoto")}<input className="sr-only" type="file" accept="image/*" capture="environment" disabled={busy || !canRecognize || Boolean(result)} onChange={(event) => void choosePhoto(event)} /></Label>
+              <Button ref={cameraActionRef} type="button" className="min-h-11" variant={cameraReady ? "outline" : "default"} disabled={busy || !canRecognize || Boolean(result)} onClick={() => void scanNow()}><Camera />{cameraReady ? t("pos.scanNow") : t("pos.startCamera")}</Button>
+              <Label aria-disabled={busy || !canRecognize || Boolean(result)} className={`flex min-h-11 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium focus-within:outline-none focus-within:ring-2 focus-within:ring-ring ${busy || !canRecognize || result ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}><Upload className="size-4" />{t("pos.choosePhoto")}<input className="sr-only" type="file" accept="image/*" capture="environment" disabled={busy || !canRecognize || Boolean(result)} onChange={(event) => void choosePhoto(event)} /></Label>
             </div>
             {recognitionStatus && <p className="truncate text-xs text-muted-foreground" title={`${recognitionStatus.modelFingerprint} / ${recognitionStatus.catalogFingerprint}`}>{t("pos.recognizerReady", { generation: recognitionStatus.catalogGeneration?.slice(0, 8) ?? "legacy" })}</p>}
           </CardContent>
@@ -2170,7 +2525,7 @@ export default function POSView() {
                           <div><Label htmlFor="pos-rounding">{t("pos.rounding")}</Label><select id="pos-rounding" className="min-h-11 w-full rounded-md border bg-background px-2" value={settingsDraft.roundingMode} onChange={(event) => setSettingsDraft((current) => current ? patchPOSSessionSettings(current, { roundingMode: event.target.value }) : current)}><option value="nearest_cent">{t("pos.roundingNearestCent")}</option><option value="nearest_dollar">{t("pos.roundingNearestDollar")}</option><option value="down_dollar">{t("pos.roundingDownDollar")}</option><option value="up_dollar">{t("pos.roundingUpDollar")}</option></select></div>
                           <div><Label htmlFor="pos-sold-at">{t("pos.soldDate")}</Label><Input id="pos-sold-at" className="min-h-11" type="date" value={settingsDraft.soldAt} onChange={(event) => setSettingsDraft((current) => current ? patchPOSSessionSettings(current, { soldAt: event.target.value }) : current)} /></div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2"><div><Label htmlFor="pos-platform">{t("pos.platform")}</Label><Input id="pos-platform" className="min-h-11" value={settingsDraft.platformLabel} onChange={(event) => setSettingsDraft((current) => current ? patchPOSSessionSettings(current, { platformLabel: event.target.value }) : current)} /></div><div><Label htmlFor="pos-notes">{t("pos.notes")}</Label><Input id="pos-notes" className="min-h-11" value={settingsDraft.notes} onChange={(event) => setSettingsDraft((current) => current ? patchPOSSessionSettings(current, { notes: event.target.value }) : current)} /></div></div>
+                        <div className="grid grid-cols-2 gap-2"><div><Label htmlFor="pos-platform">{t("pos.platform")}</Label><Input id="pos-platform" className="min-h-11" maxLength={255} value={settingsDraft.platformLabel} onChange={(event) => setSettingsDraft((current) => current ? patchPOSSessionSettings(current, { platformLabel: event.target.value }) : current)} /></div><div><Label htmlFor="pos-notes">{t("pos.notes")}</Label><Input id="pos-notes" className="min-h-11" maxLength={1000} value={settingsDraft.notes} onChange={(event) => setSettingsDraft((current) => current ? patchPOSSessionSettings(current, { notes: event.target.value }) : current)} /></div></div>
                         <Button type="button" size="sm" className="min-h-11 w-full" disabled={busy || !settingsDirty} onClick={() => void saveSessionSettings()}>{settingsDirty ? t("pos.saveSettings") : t("pos.settingsSaved")}</Button>
                       </div>
                     )}
@@ -2191,27 +2546,46 @@ export default function POSView() {
                               <p className="truncate font-medium">{line.identity.regional_name}</p>
                               <p className="text-xs text-muted-foreground">{line.identity.set_code} {line.identity.card_number} · {line.identity.condition_code}{line.identity.psa_grade ? ` · PSA ${line.identity.psa_grade}` : ""}</p>
                             </div>
-                            <Button type="button" className="min-h-11 min-w-11" size="icon-sm" variant="ghost" aria-label={t("pos.removeLine")} disabled={busy || session.status !== "draft"} onClick={() => void removeSaleLine(line.line_id)}><Trash2 /></Button>
+                            <Button type="button" className="min-h-11 min-w-11" size="icon-sm" variant="ghost" aria-label={t("pos.removeLine")} disabled={busy || session.status !== "draft" || pendingLineChange != null} onClick={() => void removeSaleLine(line.line_id)}><Trash2 /></Button>
                           </div>
                           <div className="mt-2 grid grid-cols-[auto_1fr] items-center gap-2 text-sm">
                             <div className="flex items-center rounded-md border">
-                              <Button type="button" className="min-h-11 min-w-11" size="icon-sm" variant="ghost" aria-label={t("pos.decreaseQuantity")} disabled={busy || line.quantity <= 1 || session.status !== "draft" || linePricesDirty} onClick={() => void updateSaleLine(line, line.quantity - 1, line.agreed_unit_price_usd)}>-</Button>
+                              <Button type="button" className="min-h-11 min-w-11" size="icon-sm" variant="ghost" aria-label={t("pos.decreaseQuantity")} disabled={busy || line.quantity <= 1 || session.status !== "draft" || linePricesDirty || pendingLineChange != null} onClick={() => void reviewSaleLineChange(line, line.quantity - 1, line.agreed_unit_price_usd)}>-</Button>
                               <span className="w-8 text-center">{line.quantity}</span>
-                              <Button type="button" className="min-h-11 min-w-11" size="icon-sm" variant="ghost" aria-label={t("pos.increaseQuantity")} disabled={busy || line.quantity >= line.available_qty_at_add || session.status !== "draft" || linePricesDirty} onClick={() => void updateSaleLine(line, line.quantity + 1, line.agreed_unit_price_usd)}>+</Button>
+                              <Button type="button" className="min-h-11 min-w-11" size="icon-sm" variant="ghost" aria-label={t("pos.increaseQuantity")} disabled={busy || line.quantity >= line.available_qty_at_add || session.status !== "draft" || linePricesDirty || pendingLineChange != null} onClick={() => void reviewSaleLineChange(line, line.quantity + 1, line.agreed_unit_price_usd)}>+</Button>
                             </div>
-                            <div className="flex min-w-0 items-center justify-end gap-1"><span className="text-muted-foreground">$</span><Input aria-label={t("pos.agreedPriceFor", { name: line.identity.regional_name })} className="min-h-11 min-w-0 w-24 text-right" type="number" step="0.01" min="0.01" value={linePriceDrafts[line.line_id] ?? ""} disabled={busy || session.status !== "draft"} onChange={(event) => setLinePriceDrafts((current) => ({ ...current, [line.line_id]: event.target.value }))} /><Button type="button" className="min-h-11 shrink-0" size="sm" variant="outline" disabled={busy || session.status !== "draft" || Number(linePriceDrafts[line.line_id]) === Number(line.agreed_unit_price_usd)} onClick={() => void saveSaleLinePrice(line)}>{t("pos.save")}</Button></div>
+                            <div className="flex min-w-0 items-center justify-end gap-1"><span className="text-muted-foreground">$</span><Input aria-label={t("pos.agreedPriceFor", { name: line.identity.regional_name })} className="min-h-11 min-w-0 w-24 text-right" type="number" step="0.01" min="0.01" value={linePriceDrafts[line.line_id] ?? ""} disabled={busy || session.status !== "draft" || pendingLineChange != null} onChange={(event) => setLinePriceDrafts((current) => ({ ...current, [line.line_id]: event.target.value }))} /><Button type="button" className="min-h-11 shrink-0" size="sm" variant="outline" disabled={busy || session.status !== "draft" || pendingLineChange != null || Number(linePriceDrafts[line.line_id]) === Number(line.agreed_unit_price_usd)} onClick={() => void saveSaleLinePrice(line)}>{t("pos.reviewChange")}</Button></div>
                           </div>
-                          <p className="mt-2 text-xs text-muted-foreground">{t("pos.fifoPreview", { amount: Number(line.preview_cogs_usd).toFixed(2) })}</p>
+                          <p className="mt-2 text-xs text-muted-foreground">{t("pos.fifoPreview", { quantity: line.quantity, amount: Number(line.preview_cogs_usd).toFixed(2) })}</p>
                           {changedDetail && <p className="mt-1 text-xs font-medium text-amber-600">{t("pos.fifoLineChanged", { previous: Number(changedDetail.previous_preview_cogs_usd).toFixed(2), current: Number(changedDetail.preview_cogs_usd).toFixed(2) })}</p>}
                         </div>
                       );})}
                     </div>
+                    {pendingLineChange && pendingProjectedGross != null && pendingLineChange.preview.projected_session_cogs_usd != null && (
+                      <div ref={lineChangeReviewRef} tabIndex={-1} role="region" aria-label={t("pos.lineChangeReview")} className="space-y-3 rounded-lg border-2 border-primary/50 bg-primary/5 p-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                        <div>
+                          <p className="font-medium">{t("pos.lineChangeReview")}</p>
+                          <p className="text-sm text-muted-foreground">{t("pos.lineChangeReviewHelp")}</p>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-center text-sm">
+                          <div><p className="text-xs text-muted-foreground">{t("pos.targetCOGS")}</p><p className="font-semibold">${Number(pendingLineChange.preview.preview_cogs_usd).toFixed(2)}</p></div>
+                          <div><p className="text-xs text-muted-foreground">{t("pos.projectedCartCOGS")}</p><p className="font-semibold">${Number(pendingLineChange.preview.projected_session_cogs_usd).toFixed(2)}</p></div>
+                          <div><p className="text-xs text-muted-foreground">{t("pos.projectedMargin")}</p><p className="font-semibold">${(pendingProjectedGross - Number(pendingLineChange.preview.projected_session_cogs_usd)).toFixed(2)}</p></div>
+                        </div>
+                        {pendingChangedLines.length > 0 && <div className="space-y-1"><p className="text-sm font-medium">{t("pos.shiftedFIFO")}</p>{pendingChangedLines.map((projected) => {
+                          const current = session.lines.find((line) => line.line_id === projected.line_id);
+                          return <p key={projected.line_id} className="text-xs text-muted-foreground">{t("pos.shiftedFIFOLine", { name: current?.identity.regional_name ?? t("pos.unknownLine"), previous: Number(current?.preview_cogs_usd ?? 0).toFixed(2), current: Number(projected.preview_cogs_usd).toFixed(2) })}</p>;
+                        })}</div>}
+                        <div className="grid grid-cols-2 gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={busy} onClick={() => setPendingLineChange(null)}>{t("pos.keepEditing")}</Button><Button type="button" className="min-h-11" disabled={busy} onClick={() => void applySaleLineChange()}>{t("pos.applyQuotedChange")}</Button></div>
+                      </div>
+                    )}
                     <div className="grid grid-cols-3 gap-2 rounded-lg bg-muted p-3 text-center text-sm"><div><p className="text-xs text-muted-foreground">{t("pos.gross")}</p><p className="font-semibold">${saleGross.toFixed(2)}</p></div><div><p className="text-xs text-muted-foreground">{t("pos.cogs")}</p><p className="font-semibold">${saleCOGS.toFixed(2)}</p></div><div><p className="text-xs text-muted-foreground">{t("pos.margin")}</p><p className="font-semibold">${(saleGross - saleCOGS).toFixed(2)}</p></div></div>
                     {finalizeReview && <div role="status" className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">{finalizeReview.reason === "inventory_shortfall" ? t("pos.shortfallReview") : t("pos.fifoReview")}</div>}
                     {session.status === "draft" && (
                       <div className="grid grid-cols-1 gap-2 min-[390px]:grid-cols-[1fr_auto]"><Button type="button" className="min-h-11" disabled={busy || session.lines.length === 0 || hasUnsavedSaleEdits} onClick={() => void finalizeSale()}><Check />{finalizeReview ? t("pos.confirmFIFO") : t("pos.finalizeSale")}</Button><Button type="button" className="min-h-11" variant="outline" disabled={busy} onClick={() => void cancelSale()}>{t("pos.cancel")}</Button></div>
                     )}
-                    {session.finalization && <div className="rounded-lg bg-muted p-3 text-sm"><p className="font-medium">{t("pos.finalizedGross", { gross: Number(session.finalization.total_gross_usd).toFixed(2) })}</p><p className="text-muted-foreground">{t("pos.finalizedDetail", { count: session.finalization.line_count, cogs: Number(session.finalization.total_cogs_usd).toFixed(2) })}</p></div>}
+                    {session.finalization && <div className="rounded-lg bg-muted p-3 text-sm"><p className="font-medium">{t("pos.finalizedGross", { gross: Number(session.finalization.total_gross_usd).toFixed(2) })}</p><p className="text-muted-foreground">{t("pos.finalizedDetail", { count: session.finalization.line_count, cogs: Number(session.finalization.total_cogs_usd).toFixed(2) })}</p>{session.ledger?.status === "finalized" && <Button type="button" className="mt-3 min-h-11 w-full" variant="destructive" disabled={busy} onClick={() => void reverseSale()}><RotateCcw />{t("pos.reverseSale")}</Button>}</div>}
+                    {session.ledger?.status === "reversed" && <div role="status" className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm"><p className="font-medium">{t("pos.saleReversed")}</p><p className="text-muted-foreground">{t("pos.saleReversedDetail", { date: session.ledger.reversed_at?.slice(0, 10) ?? t("pos.timingUnavailable") })}</p></div>}
                   </>
                 )
               ) : (
@@ -2273,15 +2647,16 @@ export default function POSView() {
                   <div className="rounded-lg bg-muted p-3 text-sm"><p className="font-medium">{t("pos.confirmed", { name: selectedCandidate.regional_name })}</p>{englishIdentityName(selectedCandidate) && <p>{englishIdentityName(selectedCandidate)}</p>}<p className="text-xs text-muted-foreground">{identityDetails(selectedCandidate)}</p><p className="text-muted-foreground">{t("pos.saleSKUHelp")}</p></div>
                   <div className="space-y-2" data-testid="pos-sale-skus">
                     {saleSKUs.map((sku) => (
-                      <button key={`${sku.condition_standard}:${sku.condition_code}:${sku.psa_grade}`} type="button" className={`flex min-h-14 w-full items-center justify-between rounded-lg border p-3 text-left ${selectedSKU === sku ? "border-primary bg-primary/5 ring-1 ring-primary" : ""}`} disabled={Boolean(pendingSaleOperationID)} onClick={() => { setSelectedSKU(sku); setSaleAgreedPrice(""); setManualMarket(""); setManualMarketReason(""); }}>
+                      <button key={`${sku.condition_standard}:${sku.condition_code}:${sku.psa_grade}`} type="button" className={`flex min-h-14 w-full items-center justify-between rounded-lg border p-3 text-left ${selectedSKU === sku ? "border-primary bg-primary/5 ring-1 ring-primary" : ""}`} disabled={Boolean(pendingSaleOperationID) || settingsDirty} onClick={() => { setSelectedSKU(sku); setSaleAgreedPrice(""); setManualMarket(""); setManualMarketReason(""); }}>
                         <span><span className="block font-medium">{sku.condition_name}{sku.psa_grade ? ` · PSA ${sku.psa_grade}` : ""}</span><span className="text-xs text-muted-foreground">{t("pos.availableCost", { count: sku.available_qty, cost: Number(sku.avg_cost_unit_usd).toFixed(2) })}</span></span>
-                        <span className="max-w-[48%] text-right"><span className="block font-semibold">{sku.market_unit_usd == null ? t("pos.noMarket") : `$${Number(sku.market_unit_usd).toFixed(2)}`}</span>{sku.market_unit_usd != null && <span className="block text-xs font-normal text-muted-foreground">{t("pos.marketEvidence", { source: sku.market_source || t("pos.marketUnknown"), asOf: sku.market_as_of?.slice(0, 10) || t("pos.marketUnknown"), confidence: sku.market_confidence || t("pos.marketUnknown") })}</span>}</span>
+                        <span className="max-w-[48%] text-right"><span className="block font-semibold">{sku.market_unit_usd == null ? t("pos.noMarket") : `$${Number(sku.market_unit_usd).toFixed(2)}`}</span>{sku.market_unit_usd != null && <span className="block text-xs font-normal text-muted-foreground">{marketEvidenceSummary(sku, t)}</span>}</span>
                       </button>
                     ))}
                   </div>
                   {selectedSKU && <div className="grid grid-cols-2 gap-2"><div><Label htmlFor="pos-sale-qty">{t("pos.quantity")}</Label><Input id="pos-sale-qty" className="min-h-11" type="number" inputMode="numeric" min="1" max={selectedSKU.available_qty} step="1" value={saleQuantity} disabled={Boolean(pendingSaleOperationID)} onChange={(event) => setSaleQuantity(event.target.value)} /></div><div><Label htmlFor="pos-sale-price">{t("pos.agreedEach")}</Label><Input id="pos-sale-price" className="min-h-11" type="number" inputMode="decimal" min="0.01" max="1000000000" step="0.01" value={saleAgreedPrice} disabled={Boolean(pendingSaleOperationID)} placeholder={selectedProposedPrice == null ? t("pos.needsMarket") : t("pos.proposed", { amount: selectedProposedPrice.toFixed(2) })} onChange={(event) => setSaleAgreedPrice(event.target.value)} />{selectedProposedPrice != null && <p className="mt-1 text-xs text-muted-foreground">{t("pos.defaultProposal", { amount: selectedProposedPrice.toFixed(2), percentage: session?.sell_percentage ?? 0 })}</p>}</div></div>}
-                  {selectedSKU?.market_unit_usd == null && <div className="grid grid-cols-2 gap-2 rounded-lg border border-amber-500/40 p-3"><div><Label htmlFor="pos-manual-market">{t("pos.observedMarket")}</Label><Input id="pos-manual-market" className="min-h-11" type="number" inputMode="decimal" min="0.01" max="1000000000" step="0.01" value={manualMarket} disabled={Boolean(pendingSaleOperationID)} onChange={(event) => setManualMarket(event.target.value)} /></div><div><Label htmlFor="pos-manual-reason">{t("pos.sourceReason")}</Label><Input id="pos-manual-reason" className="min-h-11" value={manualMarketReason} disabled={Boolean(pendingSaleOperationID)} onChange={(event) => setManualMarketReason(event.target.value)} /></div></div>}
-                  {!pendingSaleOperationID && <Button type="button" className="min-h-11 w-full" disabled={busy || !durableRetryReady || !selectedSKU || !session || session.status !== "draft"} onClick={() => void addSaleLine()}><ShoppingBag />{t("pos.addSale")}</Button>}
+                  {selectedSKU && <div aria-live="polite" className="rounded-lg border bg-muted/40 p-3 text-sm">{settingsDirty ? t("pos.saveEditsBeforeFinalize") : salePreviewLoading ? t("pos.loadingSale") : salePreview?.sufficient && salePreview.preview_cogs_usd != null && salePreview.projected_session_cogs_usd != null ? <><p className="font-medium">{t("pos.fifoPreview", { quantity: salePreview.requested_quantity, amount: Number(salePreview.preview_cogs_usd).toFixed(2) })}</p><p className="text-muted-foreground">{t("pos.projectedCartCOGS")}: ${Number(salePreview.projected_session_cogs_usd).toFixed(2)}</p><p className="text-muted-foreground">{t("pos.projectedMargin")}: ${Number((selectedProjectedGross ?? 0) - salePreview.projected_session_cogs_usd).toFixed(2)}</p></> : <p className="text-amber-700">{salePreviewError || t("pos.quantityUnavailable")}</p>}</div>}
+                  {selectedSKU?.market_unit_usd == null && <div className="grid grid-cols-2 gap-2 rounded-lg border border-amber-500/40 p-3"><div><Label htmlFor="pos-manual-market">{t("pos.observedMarket")}</Label><Input id="pos-manual-market" className="min-h-11" type="number" inputMode="decimal" min="0.01" max="1000000000" step="0.01" value={manualMarket} disabled={Boolean(pendingSaleOperationID)} onChange={(event) => setManualMarket(event.target.value)} /></div><div><Label htmlFor="pos-manual-reason">{t("pos.sourceReason")}</Label><Input id="pos-manual-reason" className="min-h-11" maxLength={1000} value={manualMarketReason} disabled={Boolean(pendingSaleOperationID)} onChange={(event) => setManualMarketReason(event.target.value)} /></div></div>}
+                  {!pendingSaleOperationID && <Button type="button" className="min-h-11 w-full" disabled={busy || salePreviewLoading || !salePreview?.sufficient || !salePreview.preview_token || settingsDirty || !durableRetryReady || !selectedSKU || !session || session.status !== "draft"} onClick={() => void addSaleLine()}><ShoppingBag />{t("pos.addSale")}</Button>}
                   <Button type="button" variant="ghost" className="min-h-11 w-full" onClick={clearRecognition}>{t("pos.clearScan")}</Button>
                 </>
               )}
@@ -2289,9 +2664,10 @@ export default function POSView() {
                 <>
                   <div className="rounded-lg bg-muted p-3 text-sm"><p className="font-medium">{t("pos.confirmed", { name: selectedCandidate.regional_name })}</p>{englishIdentityName(selectedCandidate) && <p>{englishIdentityName(selectedCandidate)}</p>}<p className="text-xs text-muted-foreground">{identityDetails(selectedCandidate)}</p><p className="text-muted-foreground">{t("pos.acquisitionHelp")}</p></div>
                   <div><Label htmlFor="pos-condition">{t("pos.condition")}</Label><select id="pos-condition" className="min-h-11 w-full rounded-md border bg-background px-3" value={conditionRef} disabled={Boolean(pendingAcquisitionOperationID)} onChange={(event) => setConditionRef(event.target.value)}>{conditions.map((condition) => <option key={`${condition.standard}:${condition.code}`} value={`${condition.standard}\u0000${condition.code}`}>{condition.display_name} · {condition.standard}/{condition.code}</option>)}</select></div>
+                  {selectedAcquisitionLot && <div className="rounded-lg border bg-muted/40 p-3 text-sm"><p className="font-medium">{selectedAcquisitionLot.shop_label || t("pos.lotLabel", { id: selectedAcquisitionLot.lot_id })}</p><p className="text-muted-foreground">{t("pos.selectedLotEvidence", { date: selectedAcquisitionLot.acquired_at, leg: t(selectedAcquisitionLot.leg === "export" ? "pos.export" : "pos.import"), currency: selectedAcquisitionLot.orig_currency })}</p></div>}
                   <div className="grid grid-cols-2 gap-2"><div><Label htmlFor="pos-acq-grade">{t("pos.psaGrade")}</Label><Input id="pos-acq-grade" className="min-h-11" type="number" inputMode="numeric" min="0" max="10" step="1" value={acquisitionGrade} disabled={Boolean(pendingAcquisitionOperationID)} onChange={(event) => setAcquisitionGrade(event.target.value)} /></div><div><Label htmlFor="pos-acq-qty">{t("pos.quantity")}</Label><Input id="pos-acq-qty" className="min-h-11" type="number" inputMode="numeric" min="1" max="1000000" step="1" value={acquisitionQuantity} disabled={Boolean(pendingAcquisitionOperationID)} onChange={(event) => setAcquisitionQuantity(event.target.value)} /></div><div><Label htmlFor="pos-acq-cost">{t("pos.costEach", { currency: selectedAcquisitionLot?.orig_currency ?? "USD" })}</Label><Input id="pos-acq-cost" className="min-h-11" type="number" inputMode="decimal" min="0.01" max="1000000000" step="0.01" value={acquisitionCost} disabled={Boolean(pendingAcquisitionOperationID)} onChange={(event) => setAcquisitionCost(event.target.value)} />{acquisitionCostPreview && <p className="mt-1 text-xs text-muted-foreground">{t("pos.frozenCostConversion", { native: acquisitionCostPreview.native_amount, currency: acquisitionCostPreview.native_currency, usd: acquisitionCostPreview.price_usd.toFixed(6), rate: acquisitionCostPreview.fx_rate_to_usd })}</p>}</div><div><Label htmlFor="pos-acq-market">{t("pos.marketEach")}</Label><Input id="pos-acq-market" className="min-h-11" type="number" inputMode="decimal" min="0.01" max="1000000000" step="0.01" value={acquisitionMarket} disabled={Boolean(pendingAcquisitionOperationID)} onChange={(event) => setAcquisitionMarket(event.target.value)} /></div></div>
-                  {captureBlob && <Label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md border px-3"><input type="checkbox" checked={attachCapture} disabled={Boolean(pendingAcquisitionOperationID)} onChange={(event) => { const checked = event.target.checked; setAttachCapture(checked); if (checked) setEvidenceFiles((current) => { const next = { ...current }; delete next.front; return next; }); }} />{t("pos.useCaptureFront")}</Label>}
-                  <div className="grid grid-cols-1 gap-2 min-[390px]:grid-cols-3">{(["front", "back", "defect"] as const).map((kind) => <Label key={kind} className="flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-md border px-2 text-sm capitalize"><Upload className="size-4" />{kind === "front" ? t("pos.chooseFront") : t(kind === "back" ? "pos.backImage" : "pos.defectImage")}<input className="sr-only" type="file" accept="image/*" capture="environment" disabled={Boolean(pendingAcquisitionOperationID)} onChange={(event) => void chooseEvidencePhoto(kind, event)} /></Label>)}</div>
+                  {result && captureBlob && <div className="flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm"><Check className="size-4" />{t("pos.useCaptureFront")}</div>}
+                  <div className={`grid grid-cols-1 gap-2 ${result ? "min-[390px]:grid-cols-2" : "min-[390px]:grid-cols-3"}`}>{(["front", "back", "defect"] as const).filter((kind) => !result || kind !== "front").map((kind) => <Label key={kind} className="flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-md border px-2 text-sm capitalize focus-within:outline-none focus-within:ring-2 focus-within:ring-ring"><Upload className="size-4" />{kind === "front" ? t("pos.chooseFront") : t(kind === "back" ? "pos.backImage" : "pos.defectImage")}<input className="sr-only" type="file" accept="image/*" capture="environment" disabled={Boolean(pendingAcquisitionOperationID)} onChange={(event) => void chooseEvidencePhoto(kind, event)} /></Label>)}</div>
                   {(["front", "back", "defect"] as const).map((kind) => evidenceFiles[kind] && <p key={kind} className="text-xs text-muted-foreground">{t("pos.evidenceFile", {
                     kind: t(kind === "front" ? "pos.chooseFront" : kind === "back" ? "pos.backImage" : "pos.defectImage"),
                     name: evidenceFiles[kind]?.name ?? "",
@@ -2301,7 +2677,7 @@ export default function POSView() {
                   <Button type="button" variant="ghost" className="min-h-11 w-full" onClick={clearRecognition}>{t("pos.clearScan")}</Button>
                 </>
               )}
-              {latency && <div className="border-t pt-3 text-xs text-muted-foreground"><p>{t("pos.captureResponse", { milliseconds: latency.captureToResponseMs.toFixed(0) })}{latency.tapToResponseMs == null ? ` (${t("pos.automatic")})` : ` · ${t("pos.tapResponse", { milliseconds: latency.tapToResponseMs.toFixed(0) })}`}</p><p>{t("pos.responsePaint", { milliseconds: latency.responseToPaintMs.toFixed(0) })} · {latency.auditReadyMs == null ? `${t("pos.auditReady", { milliseconds: t("pos.pending") })}` : t("pos.auditReady", { milliseconds: `${latency.auditReadyMs.toFixed(0)} ms` })}</p><p>{t("pos.serverTiming", { timing: latency.serverTiming.total == null ? t("pos.timingUnavailable") : `${latency.serverTiming.total.toFixed(1)} ms` })}</p></div>}
+              {latency && <div className="border-t pt-3 text-xs text-muted-foreground"><p>{t("pos.permissionTiming", { milliseconds: latency.permissionMs.toFixed(0) })} · {t("pos.captureTiming", { milliseconds: latency.captureMs.toFixed(0) })}</p><p>{t("pos.captureResponse", { milliseconds: latency.captureToResponseMs.toFixed(0) })}{latency.tapToResponseMs == null ? ` (${t("pos.automatic")})` : ` · ${t("pos.tapResponse", { milliseconds: latency.tapToResponseMs.toFixed(0) })}`}</p><p>{t("pos.responsePaint", { milliseconds: latency.responseToPaintMs.toFixed(0) })} · {latency.auditReadyMs == null ? `${t("pos.auditReady", { milliseconds: t("pos.pending") })}` : t("pos.auditReady", { milliseconds: `${latency.auditReadyMs.toFixed(0)} ms` })}{latency.totalTapToReadyMs == null ? "" : ` · ${t("pos.totalTapReady", { milliseconds: latency.totalTapToReadyMs.toFixed(0) })}`}</p><p>{t("pos.serverTiming", { timing: latency.serverTiming.total == null ? t("pos.timingUnavailable") : `${latency.serverTiming.total.toFixed(1)} ms` })}</p></div>}
             </CardContent>
           </Card>
         </div>
