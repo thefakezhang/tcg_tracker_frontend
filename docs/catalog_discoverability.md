@@ -33,5 +33,6 @@ The authenticated `scripts/e2e/g8-g11-catalog-discoverability.mjs` acceptance fl
 It also intercepts the exact external-identifier request, proves the previous result remains visible, verifies the raw failure is absent, restores the route, and retries the same identifier successfully.
 
 The remediation component suite passed locally with 43 tests and no skips on 2026-08-06.
-The browser acceptance script was updated for the remediation but has not yet been run against a deployment containing this change.
-Deployment screenshots and the authenticated browser result therefore remain a rollout gate, not completed evidence.
+The authenticated production browser journey passed on 2026-08-13 at deployed frontend merge `496faf26` on 1440x960 desktop and 390x844 phone viewports.
+It verified all four Iono lookup forms, pointer, Enter, and Space activation, retained-result safe Retry after forced external-ID failures, and no-overflow layout.
+Credential-free retained evidence is bound by manifest SHA-256 `07dce2e40fe14ad64d4312b3211b55a40123acb41cd76c95ec37ed5cd0631c19`.

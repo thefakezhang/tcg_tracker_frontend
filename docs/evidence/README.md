@@ -26,4 +26,5 @@ The store-sighting form exposes an explicit Raw or PSA 1 through PSA 10 selector
 The interaction and recovery contract is documented in [`docs/catalog_discoverability.md`](../catalog_discoverability.md).
 Local component evidence covers pointer, Enter, and Space result activation plus retained-result recovery from an external-identifier lookup failure.
 The authenticated browser acceptance flow now covers the same behavior at 1440-pixel desktop and 390-pixel phone widths.
-That updated browser flow has not yet run against a deployment containing the remediation, so screenshots and deployed-browser passage remain pending rollout evidence.
+That browser flow passed against deployed frontend merge `496faf26` on 2026-08-13 at 1440x960 desktop and 390x844 phone viewports.
+Credential-free evidence is retained locally with manifest SHA-256 `07dce2e40fe14ad64d4312b3211b55a40123acb41cd76c95ec37ed5cd0631c19`.
