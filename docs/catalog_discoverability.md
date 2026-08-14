@@ -40,6 +40,9 @@ It intercepts opportunity-exposure RPCs with a mutation firewall and records the
 The manifest derives its allowed-mutation count from every observed non-read REST request that was not handled by the firewall and fails if that count is nonzero.
 The Card Index edit action is explicitly named and uses a 44x44 phone target while retaining its compact desktop size.
 
-The remediation component suite passed locally with 43 tests and no skips on 2026-08-06.
-The partial 2026-08-13 production run proved both exact-search surfaces and desktop recovery, but did not execute Card Index activation or phone recovery and exposed the undersized Card Index phone action.
-Deployment of the corrected action followed by a complete run of the new matrix remains the rollout gate.
+The final harness and component suite passed locally with 54 files and 280 tests, with no skips, followed by successful TypeScript validation.
+The authenticated 2026-08-13 production run passed the complete matrix at deployed frontend revision `61fca660c9c9831178f491c83e95ef500ab849b8`.
+It covered Card Browser and Card Index at 1440x960 desktop and 390x844 phone viewports, all four exact identities, pointer plus Enter plus Space activation, retained-result failure recovery, touch sizing, alert fit, and no-overflow checks.
+The pre-navigation firewall reconciled all 61 observed REST mutations to 61 blocked requests and zero allowed production mutations.
+The credential-free result manifest is bound by SHA-256 `3e0704864dc80dca4b7ac2001e3a1050e5a2025ab3d694b7ecf0a91aca177744`.
+Independent CUJ and operator-UX reviews passed with no remaining acceptance gate.
