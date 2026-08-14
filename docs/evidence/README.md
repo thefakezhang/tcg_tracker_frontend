@@ -27,4 +27,7 @@ The interaction and recovery contract is documented in [`docs/catalog_discoverab
 Local component evidence covers pointer, Enter, and Space result activation plus retained-result recovery from an external-identifier lookup failure.
 The authenticated production flow in `scripts/e2e/g8-g11-production-cdp.mjs` covers Card Browser and Card Index independently at 1440x960 desktop and 390x844 phone viewports.
 For each surface and viewport it records exact identity searches, pointer and keyboard activation, pre-Retry and post-Retry failure recovery, responsive checks, runtime viewport metadata, a runtime-observed deployed revision, mutation-firewall counts, and artifact SHA-256 digests.
-The partial 2026-08-13 run did not execute the full matrix, so deployment of the corrected Card Index action and a complete rerun remain pending evidence.
+The authenticated 2026-08-13 production run passed the full matrix at deployed frontend revision `61fca660c9c9831178f491c83e95ef500ab849b8`.
+Its firewall was installed before the first application navigation and reconciled 61 observed REST mutations to 61 blocked requests with zero allowed production mutations.
+The credential-free result manifest is bound by SHA-256 `3e0704864dc80dca4b7ac2001e3a1050e5a2025ab3d694b7ecf0a91aca177744`.
+Independent CUJ and operator-UX reviews passed with no remaining acceptance gate.
