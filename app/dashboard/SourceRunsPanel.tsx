@@ -119,8 +119,16 @@ function LoadIssueBanner({ issue, staleAt, retry }: { issue: SnapshotIssue; stal
   );
 }
 
-function HostCard({ host }: { host: SourceRunHost }) {
+function HostCard({ host, onToggle, toggling }: {
+  host: SourceRunHost;
+  // Enable/revoke via source_run_set_host_enabled - previously SQL-only, which
+  // left the whole run-request surface inert on a fresh host (enabled defaults
+  // false). Two-step confirm per the panel's explicit-confirmation rule.
+  onToggle: (host: SourceRunHost) => void;
+  toggling: boolean;
+}) {
   const { t } = useTranslation();
+  const [armed, setArmed] = useState(false);
   const lanes = ["http", "browser", "session"] as const;
   return (
     <article className="min-w-0 rounded-lg border p-3" data-testid={`run-host-${host.host_id}`}>
@@ -132,7 +140,28 @@ function HostCard({ host }: { host: SourceRunHost }) {
           </div>
           <p className="text-muted-foreground mt-1 truncate font-mono text-[10px]">{host.host_id}</p>
         </div>
-        <StatusPill state={host.status} label={t(`runs.hostStatus.${host.status}` as never)} />
+        <div className="flex shrink-0 items-center gap-2">
+          <StatusPill state={host.status} label={t(`runs.hostStatus.${host.status}` as never)} />
+          <Button
+            size="sm"
+            variant={host.enabled ? "outline" : "default"}
+            className="min-h-11 sm:min-h-8"
+            disabled={toggling}
+            onClick={() => {
+              if (!armed) {
+                setArmed(true);
+                window.setTimeout(() => setArmed(false), 4000);
+                return;
+              }
+              setArmed(false);
+              onToggle(host);
+            }}
+          >
+            {armed
+              ? t("runs.hostToggleConfirm")
+              : host.enabled ? t("runs.hostRevoke") : t("runs.hostEnable")}
+          </Button>
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1.5" aria-label={t("runs.capabilities")}>
@@ -350,6 +379,24 @@ export function SourceRunsPanel() {
     }
   };
 
+  const [togglingHostID, setTogglingHostID] = useState<string | null>(null);
+  const toggleHost = async (host: SourceRunHost) => {
+    setTogglingHostID(host.host_id);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.rpc("source_run_set_host_enabled", {
+        p_host_id: host.host_id,
+        p_enabled: !host.enabled,
+      });
+      if (error) setVerdict({ verdict: "error", reason: t("runs.hostToggleFailed") });
+    } catch {
+      setVerdict({ verdict: "error", reason: t("runs.hostToggleFailed") });
+    } finally {
+      setTogglingHostID(null);
+      void load();
+    }
+  };
+
   const cancelRun = async (run: SourceRun) => {
     setCancellingRunID(run.run_id);
     try {
@@ -396,7 +443,9 @@ export function SourceRunsPanel() {
           </div>
         ) : (
           <div className="grid min-w-0 gap-2 lg:grid-cols-2">
-            {snapshot.hosts.map((host) => <HostCard key={host.host_id} host={host} />)}
+            {snapshot.hosts.map((host) => (
+              <HostCard key={host.host_id} host={host} onToggle={(h) => void toggleHost(h)} toggling={togglingHostID === host.host_id} />
+            ))}
           </div>
         )}
       </div>

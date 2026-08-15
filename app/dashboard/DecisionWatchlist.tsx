@@ -156,17 +156,32 @@ export default function DecisionWatchlist() {
           <Input type="number" min={0} value={maxOwned} onChange={(e) => setMaxOwned(e.target.value)} placeholder="—" className="h-11 w-16 sm:h-8" />
         </label>
       </div>
+      {/* The price_below_exit rule has no backend evaluator; this IS the
+          evaluation: the view already joins at-watch vs current price, so a
+          watch has FIRED when the current price sits at or below the flagged
+          price. Until now nothing computed that - Watch was a bookmark. */}
+      {(() => {
+        const fired = displayRows.filter((r) =>
+          r.flagged_price != null && r.current_price != null &&
+          r.flagged_currency === r.current_currency && r.current_price <= r.flagged_price).length;
+        return fired > 0 ? (
+          <div role="status" className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-2 text-sm text-emerald-600 dark:text-emerald-400">
+            {t("decision.alertFiredCount", { n: fired })}
+          </div>
+        ) : null;
+      })()}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {displayRows.map((row) => {
         const comparable = row.flagged_price != null && row.current_price != null && row.flagged_currency === row.current_currency;
         const movement = comparable ? row.current_price! - row.flagged_price! : null;
+        const fired = comparable && row.current_price! <= row.flagged_price!;
         const sightings = row.store_sightings ?? [];
         const owned = ownedCounts.get(ownedInventoryKey({ game: "pokemon", cardId: row.card_id }));
         const marketRoi = cardData.get(String(row.card_id))?.roi ?? null;
         return (
           <article
             key={row.rule_id}
-            className="flex cursor-pointer gap-3 rounded-lg border bg-card p-3 transition-colors hover:border-primary/40 md:col-span-2 xl:col-span-1"
+            className={`flex cursor-pointer gap-3 rounded-lg border bg-card p-3 transition-colors hover:border-primary/40 md:col-span-2 xl:col-span-1${fired ? " ring-1 ring-emerald-500/50" : ""}`}
             role="button"
             tabIndex={0}
             onClick={() => void openCard(row.card_id, row.psa_grade)}
@@ -196,7 +211,7 @@ export default function DecisionWatchlist() {
               </div>
               <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                 <div><div className="text-[10px] uppercase text-muted-foreground">{t("decision.flagged")}</div><div className="font-medium">{price(row.flagged_price, row.flagged_currency)}</div><div className="text-[10px] text-muted-foreground">{new Date(row.decided_at).toLocaleDateString(language)}</div></div>
-                <div><div className="text-[10px] uppercase text-muted-foreground">{t("decision.now")}</div><div className="flex items-center gap-1 font-medium">{price(row.current_price, row.current_currency)}{movement != null && movement > 0 ? <ArrowUpRight className="size-3 text-emerald-500" /> : movement != null && movement < 0 ? <ArrowDownRight className="size-3 text-rose-500" /> : null}</div><div className="text-[10px] text-muted-foreground">{row.current_observed_on ? new Date(`${row.current_observed_on}T00:00:00`).toLocaleDateString(language) : "-"}</div></div>
+                <div><div className="text-[10px] uppercase text-muted-foreground">{t("decision.now")}</div><div className="flex items-center gap-1 font-medium">{price(row.current_price, row.current_currency)}{movement != null && movement > 0 ? <ArrowUpRight className="size-3 text-emerald-500" /> : movement != null && movement < 0 ? <ArrowDownRight className="size-3 text-rose-500" /> : null}{fired && <span className="rounded-full bg-emerald-500/15 px-1.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">{t("decision.alertFired")}</span>}</div><div className="text-[10px] text-muted-foreground">{row.current_observed_on ? new Date(`${row.current_observed_on}T00:00:00`).toLocaleDateString(language) : "-"}</div></div>
               </div>
               {row.reason ? <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{row.reason}</p> : null}
               {sightings.length > 0 ? (
