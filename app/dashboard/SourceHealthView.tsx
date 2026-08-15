@@ -19,6 +19,10 @@ import { DuplicateConflictsPanel } from "./DuplicateConflictsPanel";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
 import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNavigationContext";
+import { selectAll } from "@/lib/supabase/select-all";
+
+interface InversionRow { game: "pokemon" | "mtg"; card_id: number; source: string; inversion_ratio: number | null; }
+interface InversionGroup { game: "pokemon" | "mtg"; source: string; count: number; maxRatio: number; }
 
 type HealthRow = {
   run_date: string;
@@ -125,6 +129,10 @@ export default function SourceHealthView() {
   const [runDate, setRunDate] = useState<string | null>(null);
   const [computedAt, setComputedAt] = useState<string | null>(null);
   const [calibration, setCalibration] = useState<CalibrationRun | null>(null);
+  // buylist > ask on ONE source+card = a wrong-card-match suspect
+  // (price_inversion_suspects_v, 000280). Grouped client-side; the view is
+  // bounded by real inversions (~3.5k rows), paged with a total order.
+  const [inversions, setInversions] = useState<InversionGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -148,6 +156,25 @@ export default function SourceHealthView() {
     setLoading(false);
     const latestCalibration = (calibrationData?.[0] ?? null) as CalibrationRun | null;
     setCalibration(latestCalibration?.run_at ? latestCalibration : null);
+    // Inversion suspects load independently; a failure here must not blank the
+    // health board, so it degrades to an empty strip.
+    try {
+      const inv = await selectAll<InversionRow>(
+        () => supabase.from("price_inversion_suspects_v").select("game, card_id, source, inversion_ratio"),
+        ["game", "card_id", "source"],
+      );
+      const grouped = new Map<string, InversionGroup>();
+      for (const r of inv) {
+        const key = `${r.game}|${r.source}`;
+        const g = grouped.get(key) ?? { game: r.game, source: r.source, count: 0, maxRatio: 0 };
+        g.count += 1;
+        g.maxRatio = Math.max(g.maxRatio, Number(r.inversion_ratio ?? 0));
+        grouped.set(key, g);
+      }
+      setInversions([...grouped.values()].sort((a, b) => b.count - a.count));
+    } catch {
+      setInversions([]);
+    }
     if (qErr) {
       setError(qErr.message);
       return;
@@ -191,6 +218,12 @@ export default function SourceHealthView() {
     [prev, rows],
   );
 
+  const drillToInversions = useCallback((game: "pokemon" | "mtg", source: string) => {
+    openReviewQueue({ game, source });
+    setActiveBuylistId(null);
+    setActiveTripId(MATCH_REVIEW_SENTINEL);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const drillToQueue = useCallback((source: string) => {
     // Source-health candidate metrics are computed from pokemon_match_candidates,
     // so the corresponding blast-radius queue is always the Pokémon singles tab.
@@ -288,6 +321,26 @@ export default function SourceHealthView() {
       )}
 
       <p className="text-muted-foreground text-xs">{t("health.legend")}</p>
+
+      {inversions.length > 0 && (
+        <section className="rounded-md border p-4" aria-label={t("health.inversionsTitle")}>
+          <h3 className="text-sm font-medium">{t("health.inversionsTitle")}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">{t("health.inversionsHint")}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {inversions.map((g) => (
+              <button
+                key={`${g.game}|${g.source}`}
+                type="button"
+                onClick={() => drillToInversions(g.game, g.source)}
+                className="min-h-11 rounded-full border px-3 py-1 text-xs font-medium text-destructive hover:bg-muted"
+                title={t("health.inversionsChipTitle", { ratio: g.maxRatio.toFixed(1) })}
+              >
+                {g.source} · {g.game} · {g.count}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {calibration && (
         <section className="rounded-md border p-4" aria-label={t("health.calibrationTitle")}>
