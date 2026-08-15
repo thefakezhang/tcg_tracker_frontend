@@ -3,6 +3,11 @@ import { Pool } from "https://deno.land/x/postgres@v0.17.0/mod.ts";
 
 const GAMES = ["pokemon", "mtg"] as const;
 
+// Indicator sources: price guides and sold-comp trackers, not shops the
+// operator can transact with. Excluded from every summaries pass (same list
+// the decision journal uses for opportunity exposures). SQL fragment.
+const INDICATOR_LOCATIONS = "'collectr', 'cardladder', 'pricecharting'";
+
 serve(async () => {
   const pool = new Pool(Deno.env.get("SUPABASE_DB_URL")!, 1, true);
 
@@ -126,7 +131,14 @@ async function computeAndInsert(
       JOIN locations l ON l.location_id = ml.location_id
       LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
       WHERE
-        CASE
+        -- Indicator sources (price guides / sold-comp trackers, not shops you
+        -- can transact with) must not mint best-buy/best-sell pairs: a single
+        -- wrong-card estimate otherwise lands on BOTH sides of the pairing and
+        -- produces five-digit junk ROI at the top of the default browse sort.
+        -- Their prices stay visible as evidence (detail modal, market-evidence
+        -- callout); they just don't drive the actionable summary columns.
+        l.name NOT IN (${INDICATOR_LOCATIONS})
+        AND CASE
           WHEN '${psaMode}' = 'non-psa' THEN ml.psa_grade = 0
           ELSE ml.psa_grade > 0
         END
@@ -305,6 +317,8 @@ async function computeAndInsertSealed(
       JOIN currencies c ON c.code = ml.currency
       JOIN locations l ON l.location_id = ml.location_id
       LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
+      -- Same indicator exclusion as the singles pass (see comment there).
+      WHERE l.name NOT IN (${INDICATOR_LOCATIONS})
     ),
     buys AS (
       SELECT *,
@@ -487,7 +501,14 @@ async function insertBySourceCards(
       JOIN locations l ON l.location_id = ml.location_id
       LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
       WHERE
-        CASE
+        -- Indicator sources (price guides / sold-comp trackers, not shops you
+        -- can transact with) must not mint best-buy/best-sell pairs: a single
+        -- wrong-card estimate otherwise lands on BOTH sides of the pairing and
+        -- produces five-digit junk ROI at the top of the default browse sort.
+        -- Their prices stay visible as evidence (detail modal, market-evidence
+        -- callout); they just don't drive the actionable summary columns.
+        l.name NOT IN (${INDICATOR_LOCATIONS})
+        AND CASE
           WHEN '${psaMode}' = 'non-psa' THEN ml.psa_grade = 0
           ELSE ml.psa_grade > 0
         END
