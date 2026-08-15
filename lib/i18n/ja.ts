@@ -164,6 +164,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "health.asOf": "ソース健全性 - {date}",
   "health.computedAt": "スナップショット作成日時: {time}",
   "health.snapshotStale": "このスナップショットは{hours}時間前のものです。以下の値には、それ以降のソース更新は反映されていません。",
+  "health.staleBadge": "{n}ソースが停滞中",
+  "health.staleBadgeSnapshot": "ヘルスデータが{hours}時間前",
   "health.reload": "表示を再読み込み",
   "health.empty": "まだ集計がありません。ソース実行後に夜間ジョブが書き込みます。",
   "health.colSource": "ソース",

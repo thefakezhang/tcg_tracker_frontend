@@ -162,6 +162,8 @@ const en = {
   "health.asOf": "Source health - {date}",
   "health.computedAt": "Snapshot computed {time}",
   "health.snapshotStale": "This snapshot is {hours} hours old. The values below do not reflect newer source writes.",
+  "health.staleBadge": "{n} sources stale",
+  "health.staleBadgeSnapshot": "health data {hours}h old",
   "health.reload": "Reload view",
   "health.empty": "No health rollup yet. The nightly job writes this after the sources run.",
   "health.colSource": "Source",
