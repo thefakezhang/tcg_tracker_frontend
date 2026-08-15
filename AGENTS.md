@@ -379,6 +379,7 @@ Do not duplicate host eligibility in the client; the database snapshot is author
 The scheduler estate renders all 30 inventory entries, including managed, staged, legacy-direct, and retired processes, without inventing a manual control for scheduled-only work.
 - Render only modes present in each registry job's `modes` object.
 An absent mode is no button, not a disabled approximation, and the registry's `meaning` string must appear verbatim before confirmation.
+- Host enrollment is operator-controlled from the panel: each host card has an enable/revoke action (two-tap confirm) calling `source_run_set_host_enabled` - previously SQL-only, which left the run-request surface inert on a fresh host.
 - Manual controls follow the inventory's authoritative policy.
 Dangerous maintenance sends `p_confirm_dangerous=true` only after a second explicit confirmation, while session work queues normally and waits for live session readiness.
 - Keep host truth distinct: offline or incapable, awaiting an interactive session, host failure or release mismatch, eligible, claimed, running, and terminal states are different operator actions.
@@ -421,6 +422,8 @@ Non-goals: S3 does not calculate costs, annualized returns, raw-to-grade EV, or 
 Card Ladder, Collectr, and PriceCharting are excluded because they are indicator sources rather than inventory the operator can buy.
 - `DecisionActions` is the one Watch and optional Dismiss control used by Card Browser rows and every grade card in `GradeEvidencePanel`.
 There is no routine Pass action.
+- The `price_below_exit` watch is evaluated client-side on the watchlist: a watch has fired when the current price sits at or below the flagged price (fired count banner + per-card badge in `DecisionWatchlist`).
+There is still no push notification path; the watchlist is the alert surface.
 Watch sends the exact grade signal plus browser prices and ROI to `record_deal_decision`.
 Dismiss calls `dismiss_deal_opportunity` and requires a reason for the exceptional deliberate rejection.
 - Watch is one primitive, not a second client list.
