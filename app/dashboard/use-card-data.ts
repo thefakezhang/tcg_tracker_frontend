@@ -469,7 +469,7 @@ export function useCardData(options: {
 }): {
   data: CardRowData[];
   loading: boolean;
-  error: string | null;
+  error: Error | null;
   availableTiers: number[];
   totalCount: number;
   refetch: () => void;
@@ -500,7 +500,7 @@ export function useCardData(options: {
   } = options;
   const [data, setData] = useState<CardRowData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
   const [availableTiers, setAvailableTiers] = useState<number[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -563,7 +563,16 @@ export function useCardData(options: {
       const extTable = activeGame === "pokemon"
         ? "pokemon_external_identifiers"
         : "mtg_external_identifiers";
-      const extIds = await externalIdMatches(supabase, extTable, "card_id", s);
+      let extIds: number[];
+      try {
+        extIds = await externalIdMatches(supabase, extTable, "card_id", s);
+      } catch (lookupError) {
+        if (abort.signal.aborted) return;
+        setError(lookupError instanceof Error ? lookupError : new Error(String(lookupError)));
+        setLoading(false);
+        return;
+      }
+      if (abort.signal.aborted) return;
       const textCols = activeGame === "pokemon"
         ? ["regional_name", "english_name", "misc_info", "card_number", "set_code"]
         : ["regional_name", "misc_info", "foil_type", "language", "card_number", "set_code"];
@@ -634,9 +643,7 @@ export function useCardData(options: {
     if (abort.signal.aborted) return;
 
     if (queryError) {
-      setError(queryError.message);
-      setData([]);
-      setTotalCount(0);
+      setError(new Error(queryError.message));
       setLoading(false);
       return;
     }
@@ -656,7 +663,7 @@ export function useCardData(options: {
             ["card_id", "psa_grade", "model_version"],
             (chunk) => supabase
               .from("pokemon_grade_signals")
-              .select("card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, entry_at_default, net_at_default, annualized_at_default, exit_platform, raw_to_grade_ev_usd, relative_value_pct, flags")
+              .select("card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, entry_at_default, net_at_default, annualized_at_default, exit_platform, raw_to_grade_ev_usd, relative_value_pct, recent_volatility, slab_confidence, flags")
               .in("card_id", chunk),
           ),
           supabase.from("exit_cost_profiles").select("platform, fee_pct, fixed_fee, shipping_jpy, grading_cost_jpy, grading_days, margin_pct, floor_usd, updated_at").eq("platform", "ebay").maybeSingle(),
@@ -731,12 +738,12 @@ export function useCardData(options: {
       const res = await fetch("/api/aggregate-prices", { method: "POST" });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        setError(body?.error ?? `Refresh failed (${res.status})`);
+        setError(new Error(body?.error ?? `Refresh failed (${res.status})`));
         setLoading(false);
         return;
       }
     } catch (err) {
-      setError(String(err));
+      setError(err instanceof Error ? err : new Error(String(err)));
       setLoading(false);
       return;
     }

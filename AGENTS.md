@@ -87,6 +87,8 @@ app/
     CardBrowser.tsx       # Search filters + data table + modal trigger
     CardDetailModal.tsx   # Card detail dialog with buy/sell listing tables + add to buy list
     GradeEvidencePanel.tsx # Per-grade bands, comps, demand, flags, and event annotations
+    PriceEvidenceBadge.tsx # Independent semantic price evidence for image-curation candidates
+    ImageAutoAcceptView.tsx # Catalog calibration, controls, capped canaries, run audit, and rollback
     InventoryEconomics.tsx # Line-level direct, landed, sale, and profit drill-down under Finances
     owned-inventory.ts     # Batched catalog-level Owned N read model
     grade-signals.ts      # Typed S2 signal parser and conservative-exit helpers
@@ -161,6 +163,7 @@ Each context follows the same pattern:
 - Filters: game, PSA mode, name search, card number, set code, single selected tier.
 - Source availability is an exact server-side presence gate backed by `*_price_summaries_by_source_v`; source choices come from `card_browser_source_options_v` and keep buylist evidence separate from for-sale evidence.
 - A selected source changes the query target but not the meaning of the global best-price columns shown in the result rows.
+- External-identifier lookup failures use a typed safe error, keep the last successful page visible, and expose an accessible Retry action without rendering database details.
 - AbortController cancels stale requests. No client-side caching needed (queries are fast paginated reads).
 - The `aggregate-prices` edge function pre-computes summaries from raw listings into `pokemon_price_summaries` / `mtg_price_summaries`. Invoke it to refresh data.
 - Three caches still exist for `CardDetailModal` use:
@@ -198,6 +201,11 @@ Prices flow through two layers:
 
 Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (USD rate = 1).
 
+Raw Pokemon cards also carry independent market-source evidence from Collectr and TCGPlayer.
+`market-evidence.ts` owns the comparison contract, including the inclusive 20 percent discrepancy threshold, while `MarketEvidenceCallout.tsx` owns the compact and detail presentation.
+Collectr-only estimates remain visible as low-confidence leads, and query failures suppress comparison labels so an unanswered source cannot be mistaken for an empty one.
+See `docs/market_source_evidence.md` for the architecture and non-goals.
+
 ### i18n System
 
 - Translation keys defined in `lib/i18n/en.ts` (source of truth).
@@ -210,9 +218,38 @@ Conversion formula: `price * rateMap[fromCurrency] / rateMap[targetCurrency]` (U
 
 - `DataTable` in `data-table.tsx` wraps TanStack React Table.
 - Column definitions created by `createColumns(t, showSecond)` in `columns.tsx`.
-- Features: sorting (with nulls-last), pagination (50 rows/page), column visibility, row click handler.
+- Features: sorting (with nulls-last), pagination (50 rows/page), column visibility, and an optional actionable-row contract.
+- Actionable rows have a meaningful label, visible keyboard focus, and equivalent pointer, Enter, and Space activation.
+Nested interactive controls stop their own events so they do not activate the row.
 - `PriceCell` component handles currency conversion via `useCurrency()`.
 - **Optional row selection**: pass `rowSelection` / `onRowSelectionChange` / `getRowId`. All three are optional, so a view passing none is unaffected. Opt in by prepending the `selectColumn` export from `columns.tsx` (its checkbox stops click propagation, so ticking a row does not fire `onRowClick`).
+
+### Image curation price evidence
+
+- `confidence` on an image-curation candidate describes card or product identity only.
+- `price_evidence` independently records semantic price verification, OCR readability, and any configured banner score and threshold.
+- `PriceEvidenceBadge` renders that distinction for singles and sealed candidates, while `lib/image-curation-price-evidence.ts` limits bulk-action eligibility to evidence that mirrors the backend predicate.
+- The database remains authoritative and rejects every automatic approval path when semantic price evidence is absent or below its source-safe threshold.
+
+### Calibrated image auto-accept
+
+- `ImageAutoAcceptView.tsx` is registered under Catalog because it is a source-quality and catalog-operations workflow, not ordinary candidate curation.
+- `lib/image-autoaccept.ts` parses the authenticated status RPC and owns source readiness, remaining-review, and display calculations.
+- Calibration is independent for each source, product kind, and exact classifier fingerprint.
+The reviewer presents the frozen item crop, price crop, catalog match, amount, grade or condition, identity confidence, semantic method, and source link together before one complete-listing verdict is recorded.
+- `Correct latest label` reopens the source's newest current label and passes its label UUID as the append-only supersession guard.
+It never edits or deletes the original verdict.
+- The database, not the browser, enforces 381 included labels, zero failures, the 99 percent Wilson lower-bound gate, exact-fingerprint freshness, source and global controls, and all run caps.
+- Global enablement also requires a non-empty clean operator canary for the source's exact fingerprint.
+The scheduler and promotion RPC recheck this gate even when the global switch was already on for another source.
+- The UI exposes the global emergency stop, source enable or disable, a reasoned source-scoped canary that can run while the scheduler stays globally stopped, recent run results, and audited rollback.
+Enablement, canaries, rollback, and every non-pass label require an operator note.
+- Emergency stop and source disable are the exception to typed-note entry.
+When the field is blank, the UI supplies a stable automatic reason so shutdown stays one tap and the database event remains attributable.
+- Source cards use wrapping grids instead of tables, evidence collapses to one column on phones, and every action has at least a 44px target.
+The surface must never create page-level horizontal overflow.
+- Exact same-source repeat-memory auto-accept remains a separate conservative path and is not controlled by this generalized switch.
+- Backend architecture, activation, caps, scheduler behavior, and rollback are documented in `docs/image_curation_autoaccept.md` in the backend repository.
 
 ### Targeted price refresh (redesign R6)
 
@@ -295,6 +332,14 @@ It preserves the full signal row, source flags, displayed market inputs, and an 
 - `SalesTab.tsx` records one bulk total, one shared expense, optional item expenses, and one allocation method across mixed card and sealed holdings.
 - Source-fact sale groups use a global history key, while legacy groups remain game-scoped.
 - `owned-inventory.ts` batches quiet `Owned N` counts for the buying surfaces without exposing finance detail there.
+- `InventoryView.tsx` is the sole consignment mutation surface for Pokémon singles, MTG singles, and Pokémon sealed products.
+It is also the physical-count reconciliation surface for Pokémon singles.
+Reconciliation compares an observed count only with the current holding balance, records a shortage through `record_pokemon_inventory_shortage`, and never fabricates a sale or assumes a historical peak quantity was held at once.
+The mutation sends both the displayed ledger balance and observed count so the backend can reject a stale screen after a concurrent inventory change.
+- It groups the paged source lines from `inventory_theoretical_roi_v` at the exact holding identity and shows owned, consigned, and available quantities.
+- A reported consignment sale books all currently consigned copies through the exact source-line sales ledger path, while undo creates a confirmed full accounting reversal.
+- The ordinary single-holding sale dialog requires an explicit quantity and never defaults silently to one.
+- Card detail modals keep consignment status read-only so source-lot mutation has one predictable home.
 - `InventoryEconomics.tsx` owns the lifecycle and cost bridge under Finances.
 - Phone lot and sale surfaces default to card grids, right-side sheets use the full phone width, and global buttons, tabs, and sidebar controls keep 44px phone targets.
 - Architecture, goals, non-goals, local authentication guards, and browser acceptance are documented in `docs/lot_inventory_economics.md`.

@@ -1,13 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  clearSellLotDraft,
+  draftHasContent,
+  loadSellLotDraft,
+  saveSellLotDraft,
+} from "./sell-lot-draft";
 import { Undo2, ImageOff, ChevronUp, ChevronDown, ChevronsUpDown, Loader2, Pencil } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
 import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
 import { useLanguage } from "../LanguageContext";
-import { getCardDisplayName, cardMeta, cardVariant } from "../use-card-data";
+import { getCardDisplayName, cardMeta } from "../use-card-data";
 import {
   buildSaleLotRequestShape,
   explicitGrossMatches,
@@ -15,14 +21,17 @@ import {
   type SaleAllocationMethod,
   type SaleExpenseCategory,
 } from "./sale-lot-model";
+import { parseSaleQuantity } from "./sale-input";
 import ReceiptsDialog from "../Receipts";
+import TcgplayerImportDialog, { type TcgImportEntry } from "./TcgplayerImportDialog";
+import { type MatchableHolding } from "./tcgplayer-collection-match";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -109,13 +118,13 @@ const SALE_EXPENSE_CATEGORIES: SaleExpenseCategory[] = [
 ];
 
 
-export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
+export default function SalesTab({ tripId }: { tripId: number }) {
   const { t } = useTranslation();
   const { saving, save } = useSaving();
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [sel, setSel] = useState<Holding | null>(null);
-  const [qty, setQty] = useState("1");
+  const [qty, setQty] = useState("");
   const [currency, setCurrency] = useState("USD");
   const [proceeds, setProceeds] = useState("");
   const [fx, setFx] = useState("0.0067");
@@ -141,6 +150,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   // Lot sale: pick several holdings, enter one total.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lotOpen, setLotOpen] = useState(false);
+  const [tcgImportOpen, setTcgImportOpen] = useState(false);
   const [lotGross, setLotGross] = useState("");
   const [lotFees, setLotFees] = useState("0");
   const [lotCurrency, setLotCurrency] = useState("USD");
@@ -157,6 +167,10 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     useState<Record<string, SaleExpenseCategory>>({});
   const [lotExplicitGross, setLotExplicitGross] =
     useState<Record<string, string>>({});
+  // Draft persistence gate: stays false until any saved draft has been applied,
+  // so the persist effect below can't clobber the stored draft with empty
+  // mount-time state before it is restored.
+  const [draftRehydrated, setDraftRehydrated] = useState(false);
   const { rateFor } = useFxRate();
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   useEffect(() => {
@@ -265,6 +279,46 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
 
   useEffect(() => { fetchHoldings(); fetchSales(); fetchCustomers(); }, [fetchHoldings, fetchSales, fetchCustomers]);
 
+  // Restore an in-progress lot sale after an accidental refresh (once, on mount).
+  // Selections are holdingKey strings that re-resolve against holdings whenever
+  // they finish loading, so this does not need to wait for fetchHoldings.
+  useEffect(() => {
+    const draft = loadSellLotDraft(tripId);
+    if (draft) {
+      setSelected(new Set(draft.selected));
+      setLotQty(draft.lotQty ?? {});
+      setLotGross(draft.lotGross ?? "");
+      setLotFees(draft.lotFees ?? "0");
+      setLotCurrency(draft.lotCurrency ?? "USD");
+      setLotFx(draft.lotFx ?? "0.0067");
+      if (draft.lotDate) setLotDate(draft.lotDate);
+      setLotAllocationMethod(draft.lotAllocationMethod ?? "market_value");
+      setLotExpenseCategory(draft.lotExpenseCategory ?? "platform_fee");
+      setLotItemExpenses(draft.lotItemExpenses ?? {});
+      setLotItemExpenseCategories(draft.lotItemExpenseCategories ?? {});
+      setLotExplicitGross(draft.lotExplicitGross ?? {});
+      setLotCustomerId(draft.lotCustomerId ?? null);
+      setLotOpen(!!draft.lotOpen);
+    }
+    setDraftRehydrated(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripId]);
+
+  // Persist the lot-sale draft on every change once restored. Empty state clears
+  // it so a completed or abandoned lot does not linger.
+  useEffect(() => {
+    if (!draftRehydrated) return;
+    const draft = {
+      selected: [...selected],
+      lotQty, lotGross, lotFees, lotCurrency, lotFx, lotDate,
+      lotAllocationMethod, lotExpenseCategory,
+      lotItemExpenses, lotItemExpenseCategories, lotExplicitGross,
+      lotCustomerId, lotOpen, savedAt: Date.now(),
+    };
+    if (draftHasContent(draft)) saveSellLotDraft(tripId, draft);
+    else clearSellLotDraft(tripId);
+  }, [draftRehydrated, tripId, selected, lotQty, lotGross, lotFees, lotCurrency, lotFx, lotDate, lotAllocationMethod, lotExpenseCategory, lotItemExpenses, lotItemExpenseCategories, lotExplicitGross, lotCustomerId, lotOpen]);
+
   const customerName = useCallback(
     (id: number | null) => (id == null ? null : customers.find((c) => c.customer_id === id)?.name ?? null),
     [customers],
@@ -282,18 +336,22 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
 
   function openSale(h: Holding) {
     setSel(h);
-    setQty("1"); setProceeds(""); setFees("0"); setSaleCustomerId(null);
+    // Quantity is intentionally blank. A silent default of one made a
+    // multi-copy physical sale easy to under-record in the inventory ledger.
+    setQty(""); setProceeds(""); setFees("0"); setSaleCustomerId(null);
     setCurrency(h.leg === "export" ? "JPY" : "USD");
   }
 
   async function recordSale() {
     if (!sel) return;
+    const saleQuantity = parseSaleQuantity(qty, sel.qty_on_hand);
+    if (saleQuantity == null) return;
     const supabase = createClient();
     const isExport = sel.leg === "export";
     const native = isExport && currency.toUpperCase() !== "USD";
     const grossUsd = native ? Math.round(Number(proceeds) * Number(fx) * 100) / 100 : Number(proceeds);
     const common = {
-      p_quantity: Number(qty), p_gross_usd: native ? 0 : grossUsd, p_fees_usd: Number(fees) || 0,
+      p_quantity: saleQuantity, p_gross_usd: native ? 0 : grossUsd, p_fees_usd: Number(fees) || 0,
       p_sold_at: soldAt, p_leg: sel.leg,
       p_orig_currency: native ? currency.toUpperCase() : null,
       p_proceeds_orig: native ? Number(proceeds) : null,
@@ -483,8 +541,30 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
   const holdingKey = (h: Holding) =>
     `${h.game}-${h.card_id ?? h.product_id}-${h.condition_id ?? h.sealed_condition}-${h.psa_grade ?? h.variant_edition}-${h.leg}`;
   const selectedHoldings = holdings.filter((h) => selected.has(holdingKey(h)));
+  // Holdings in the shape the TCGplayer-CSV matcher needs (keyed by holdingKey).
+  const matchableHoldings: MatchableHolding[] = useMemo(
+    () => holdings.map((h) => ({
+      key: holdingKey(h),
+      card_id: h.card_id,
+      set_code: h.set_code,
+      card_number: h.card_number,
+      name: h.name,
+      englishName: h.englishName,
+      leg: h.leg,
+      qty_on_hand: h.qty_on_hand,
+    })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [holdings],
+  );
   const selectedLeg = selectedHoldings[0]?.leg ?? null;
   const label = (h: Holding) => getCardDisplayName({ regional_name: h.name, english_name: h.englishName }, language);
+  // The disambiguating identity for a holding: set code + card number (singles)
+  // or set + condition/edition (sealed). Two same-name printings are only told
+  // apart by this, so the sell dialogs must show it, not the name alone.
+  const holdingMeta = (h: Holding) =>
+    h.item_type === "sealed"
+      ? [h.set_code, [h.sealed_condition, h.variant_edition].filter(Boolean).join("/")].filter(Boolean).join(" · ")
+      : cardMeta(h.set_code, h.card_number, h.misc_info);
   const qtyOf = (h: Holding) => Math.max(1, Math.min(h.qty_on_hand, Math.floor(Number(lotQty[holdingKey(h)]) || h.qty_on_hand)));
 
   function setSort(col: "name" | "leg" | "qty" | "avg") {
@@ -638,6 +718,49 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
     const k = holdingKey(h);
     setSelected((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   }
+  // Stage a sell lot from a TCGplayer collection CSV: match rows to holdings,
+  // preselect them with the CSV quantities/prices, and open the lot dialog for
+  // review. It never records the sale directly - the operator confirms.
+  function importFromTcg(entries: TcgImportEntry[]) {
+    if (entries.length === 0) return;
+    const keys = new Set(entries.map((e) => e.holdingKey));
+    const q: Record<string, string> = {};
+    const explicitGross: Record<string, string> = {};
+    const itemExpense: Record<string, string> = {};
+    const itemCategory: Record<string, SaleExpenseCategory> = {};
+    const hasAllPrices = entries.every((e) => e.priceUsd != null && e.priceUsd > 0);
+    let grossSum = 0;
+    for (const e of entries) {
+      q[e.holdingKey] = String(e.qty);
+      itemExpense[e.holdingKey] = "";
+      itemCategory[e.holdingKey] = "shipping";
+      const lineGross = (e.priceUsd ?? 0) * e.qty;
+      explicitGross[e.holdingKey] = hasAllPrices ? lineGross.toFixed(2) : "";
+      grossSum += lineGross;
+    }
+    setSelected(keys);
+    setLotQty(q);
+    setLotItemExpenses(itemExpense);
+    setLotItemExpenseCategories(itemCategory);
+    setLotExplicitGross(explicitGross);
+    setLotExpenseCategory("platform_fee");
+    setLotFees("0");
+    setLotDate(new Date().toISOString().slice(0, 10));
+    setLotCustomerId(null);
+    // Determine currency from the imported holdings' leg (single leg -> that leg).
+    const legs = new Set(entries.map((e) => holdings.find((h) => holdingKey(h) === e.holdingKey)?.leg).filter(Boolean));
+    const oneLeg = legs.size === 1 ? [...legs][0] : null;
+    setLotCurrency(oneLeg === "export" ? "JPY" : "USD");
+    if (hasAllPrices) {
+      setLotAllocationMethod("explicit_prices");
+      setLotGross(grossSum.toFixed(2));
+    } else {
+      setLotAllocationMethod("market_value");
+      setLotGross("");
+    }
+    setLotOpen(true);
+  }
+
   function openLot() {
     const q: Record<string, string> = {};
     const itemExpense: Record<string, string> = {};
@@ -731,7 +854,13 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
       return res;
     });
     if (!ok) return;
+    // Reset the per-lot entry (keep currency/fx/date/method as session prefs) so
+    // the draft effect sees empty content and clears the stored draft.
     setLotOpen(false); setSelected(new Set());
+    setLotGross(""); setLotFees("0"); setLotQty({});
+    setLotItemExpenses({}); setLotItemExpenseCategories({}); setLotExplicitGross({});
+    setLotCustomerId(null);
+    clearSellLotDraft(tripId);
     await fetchHoldings(); await fetchSales();
   }
   const lotNative = selectedLeg === "export" && lotCurrency.toUpperCase() !== "USD";
@@ -756,6 +885,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           {selected.size > 0 && (
             <Button size="sm" onClick={openLot}>{t("trips.sellLot", { n: selected.size })}</Button>
           )}
+          <Button size="sm" variant="outline" onClick={() => setTcgImportOpen(true)}>{t("trips.tcgCsvImport")}</Button>
           <div className="flex items-center gap-1">
             <select value={sortCol ?? ""} onChange={(e) => setSortCol((e.target.value || null) as typeof sortCol)}
               className="min-h-11 rounded-md border bg-background px-2 text-xs sm:min-h-8" aria-label={t("trips.sortBy")}>
@@ -1089,10 +1219,23 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
 
       <Dialog open={!!sel} onOpenChange={(o) => !o && setSel(null)}>
         <DialogContent className="sm:max-w-sm">
-          <DialogHeader><DialogTitle>{sel?.name}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{sel?.name}</DialogTitle>
+            {sel && <DialogDescription>{[holdingMeta(sel), sel.psa_grade ? `PSA ${sel.psa_grade}` : null].filter(Boolean).join(" · ")}</DialogDescription>}
+          </DialogHeader>
           <FieldGroup>
-            <Field><Label>{t("trips.saleQty")}</Label>
-              <Input type="number" value={qty} onChange={(e) => setQty(e.target.value)} /></Field>
+            <Field><Label>{t("trips.saleQty")} · {t("trips.sellRemaining", { n: sel?.qty_on_hand ?? 0 })}</Label>
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={sel?.qty_on_hand}
+                step={1}
+                placeholder="1"
+                value={qty}
+                aria-invalid={(qty !== "" && parseSaleQuantity(qty, sel?.qty_on_hand ?? 0) == null) || undefined}
+                onChange={(e) => setQty(e.target.value)}
+              /></Field>
             {sel?.leg === "export" && (
               <Field><Label>{t("trips.saleCurrency")}</Label>
                 <Input value={currency} onChange={(e) => setCurrency(e.target.value)} /></Field>
@@ -1117,7 +1260,7 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
           </FieldGroup>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSel(null)}>{t("trips.cancel")}</Button>
-            <Button disabled={!proceeds || saving} onClick={recordSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.recordSale")}</Button>
+            <Button disabled={parseSaleQuantity(qty, sel?.qty_on_hand ?? 0) == null || !proceeds || saving} onClick={recordSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.recordSale")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1182,13 +1325,20 @@ export default function SalesTab({ tripId: _tripId }: { tripId: number }) {
         </DialogContent>
       </Dialog>
 
+      <TcgplayerImportDialog
+        open={tcgImportOpen}
+        onOpenChange={setTcgImportOpen}
+        holdings={matchableHoldings}
+        onImport={importFromTcg}
+      />
+
       <Dialog open={lotOpen} onOpenChange={(o) => !o && setLotOpen(false)}>
         <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-xl">
           <DialogHeader><DialogTitle>{t("trips.lotSaleTitle", { n: selectedHoldings.length })}</DialogTitle></DialogHeader>
           <div className="max-h-72 space-y-2 overflow-auto rounded-md border p-2 text-sm">
             {selectedHoldings.map((h) => (
               <div key={holdingKey(h)} className="space-y-2 rounded-md bg-muted/30 p-2">
-                <div className="truncate font-medium">{label(h)}{cardVariant(h.misc_info) ? ` · ${cardVariant(h.misc_info)}` : ""}{h.psa_grade ? ` · PSA ${h.psa_grade}` : ""}{h.item_type === "sealed" ? ` · ${h.sealed_condition}/${h.variant_edition}` : ""}</div>
+                <div className="truncate font-medium">{[label(h), holdingMeta(h), h.psa_grade ? `PSA ${h.psa_grade}` : null].filter(Boolean).join(" · ")}</div>
                 <div className={`grid gap-2 ${lotAllocationMethod === "explicit_prices" ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-1 sm:grid-cols-3"}`}>
                   <label className="space-y-1 text-xs">
                     <span className="text-muted-foreground">{t("trips.saleQty")} / {h.qty_on_hand}</span>

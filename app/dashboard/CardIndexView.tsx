@@ -163,13 +163,15 @@ export default function CardIndexView() {
   const { t } = useTranslation();
   const [catalog, setCatalog] = useState<Catalog>("pokemon_sealed");
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Library className="size-5 text-muted-foreground" />
-        <h1 className="text-lg font-semibold">{t("catalog.index")}</h1>
-        <div className="ml-2 flex gap-1">
+    <div className="min-w-0 space-y-4">
+      <div data-testid="catalog-index-header" className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="flex items-center gap-2">
+          <Library className="size-5 text-muted-foreground" />
+          <h1 className="text-lg font-semibold">{t("catalog.index")}</h1>
+        </div>
+        <div data-testid="catalog-index-selector" className="grid w-full grid-cols-1 gap-1 sm:ml-2 sm:flex sm:w-auto">
           {(["pokemon_sealed", "pokemon", "mtg"] as const).map((c) => (
-            <Button key={c} size="sm" variant={catalog === c ? "default" : "outline"} onClick={() => setCatalog(c)}>
+            <Button key={c} size="sm" className="w-full sm:w-auto" variant={catalog === c ? "default" : "outline"} onClick={() => setCatalog(c)}>
               {t(`game.${c}` as "game.pokemon_sealed")}
             </Button>
           ))}
@@ -210,7 +212,7 @@ function SealedCardIndex() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="flex items-center gap-2">
           {!isLoading && (
             <span className="text-sm text-muted-foreground">
@@ -218,17 +220,17 @@ function SealedCardIndex() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative w-72">
+        <div className="grid min-w-0 w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:items-center">
+          <div className="relative min-w-0 w-full sm:w-72">
             <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              className="pl-8"
+              className="h-11 pl-8 sm:h-8"
               placeholder={t("cardIndex.search")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <Button onClick={() => setCreating(true)}>
+          <Button className="h-11 w-full sm:h-8 sm:w-auto" onClick={() => setCreating(true)}>
             <Plus className="size-4" /> {t("cardIndex.newProduct")}
           </Button>
         </div>
@@ -253,9 +255,9 @@ function SealedCardIndex() {
       ) : products.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("cardIndex.empty")}</p>
       ) : (
-        <div className="overflow-x-auto rounded-md border">
+        <div data-testid="sealed-index-results" className="overflow-hidden rounded-md border">
           <table className="w-full table-fixed text-sm">
-            <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+            <thead className="hidden border-b bg-muted/40 text-left text-xs text-muted-foreground sm:table-header-group">
               <tr>
                 <th className="w-[42%] px-3 py-2 font-medium">{t("cardIndex.colCard")}</th>
                 <th className="w-[16%] px-3 py-2 font-medium">{t("cardIndex.colVariant")}</th>
@@ -263,10 +265,10 @@ function SealedCardIndex() {
                 <th className="w-[12%] px-3 py-2 font-medium">{t("cardIndex.colUid")}</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="block sm:table-row-group">
               {products.map((p) => (
-                <tr key={p.product_uid} className="border-b last:border-0">
-                  <td className="px-3 py-2">
+                <tr key={p.product_uid} className="block border-b p-3 last:border-0 sm:table-row sm:p-0">
+                  <td className="block p-0 pb-2 sm:table-cell sm:px-3 sm:py-2">
                     <div className="flex items-center gap-3">
                       {p.image_url ? (
                         <ZoomableImage src={p.image_url} className="h-10 w-7 rounded border object-cover" />
@@ -290,7 +292,7 @@ function SealedCardIndex() {
                       </div>
                     </div>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="block p-0 py-1 sm:table-cell sm:px-3 sm:py-2">
                     <div className="flex flex-wrap items-center gap-1">
                       {p.sealed_condition !== "standard" && (
                         <Badge variant="outline" className="border-amber-500/50 text-amber-600">
@@ -306,12 +308,12 @@ function SealedCardIndex() {
                       {p.sealed_condition === "standard" &&
                         p.variant_edition === "standard" &&
                         (!p.misc_info || p.misc_info === "UNKNOWN") && (
-                          <span className="text-xs text-muted-foreground">—</span>
+                          <span className="hidden text-xs text-muted-foreground sm:inline">-</span>
                         )}
                     </div>
                   </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-wrap gap-1">
+                  <td className="block min-w-0 p-0 py-1 sm:table-cell sm:px-3 sm:py-2">
+                    <div className="flex min-w-0 flex-wrap gap-1">
                       {p.links.length === 0 ? (
                         <span className="text-xs text-muted-foreground">
                           {t("cardIndex.noLinks")}
@@ -342,7 +344,7 @@ function SealedCardIndex() {
                       )}
                     </div>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="mt-2 block border-t p-0 pt-2 sm:mt-0 sm:table-cell sm:border-0 sm:px-3 sm:py-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-mono text-xs text-muted-foreground">
                         {p.product_uid.slice(0, 8)}

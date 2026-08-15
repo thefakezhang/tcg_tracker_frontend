@@ -8,11 +8,13 @@ import { conditionLabel, editionLabel, productTypeLabel } from "./use-sealed-dat
 import { useCurrency } from "./CurrencyContext";
 import { type Language } from "./LanguageContext";
 import { useExitBasis } from "./ExitBasisContext";
-import { exitValue } from "./grade-signals";
+import { exitValue, slabConfidenceRank, slabConfidenceClasses } from "./grade-signals";
 import { useTranslation } from "@/lib/i18n";
 import { DecisionActions } from "./DecisionActions";
 import { OwnedCountLine, ObservedLine } from "./OwnedCountLine";
 import { UidChip } from "./UidChip";
+import { MarketEvidenceBadge } from "./MarketEvidenceCallout";
+import type { MarketEvidence } from "./market-evidence";
 
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
   const { displayCurrency, convertPrice } = useCurrency();
@@ -81,6 +83,31 @@ export function ConservativeExitCell({ row }: { row: CardRowData }) {
       <div className="text-[10px] capitalize text-muted-foreground">
         {signal.tier?.replaceAll("_", " ") ?? t("evidence.unknownSource")}{flags.length ? ` · ${flags.join(", ")}` : ""}
       </div>
+    </div>
+  );
+}
+
+// #3 buy-confidence: the quick read (color-coded grade) plus the reasons behind
+// it (volatility / trend / evidence / pop) so the operator sees why in one line.
+export function SlabConfidenceCell({ row }: { row: CardRowData }) {
+  const { t } = useTranslation();
+  const signal = row.signal;
+  const level = signal?.slabConfidence ?? null;
+  if (!signal || !level) return <span className="text-muted-foreground">-</span>;
+  const label = level === "high" ? t("evidence.confHigh") : level === "medium" ? t("evidence.confMedium") : t("evidence.confLow");
+  const reasons = [
+    signal.flags.high_volatility ? t("evidence.volatileShort") : null,
+    signal.flags.downtrend ? t("evidence.downtrendShort") : null,
+    signal.flags.thin_evidence ? t("evidence.thinShort") : null,
+    signal.flags.high_pop_supply ? t("evidence.deepPopShort") : null,
+  ].filter(Boolean);
+  return (
+    <div className="min-w-24">
+      <Badge variant="outline" className={slabConfidenceClasses(level)}>{label}</Badge>
+      {signal.recentVolatility != null && (
+        <div className="mt-0.5 text-[10px] text-muted-foreground">{t("evidence.recentVolatility")}: {Math.round(signal.recentVolatility * 100)}%</div>
+      )}
+      {reasons.length > 0 && <div className="text-[10px] text-muted-foreground">{reasons.join(", ")}</div>}
     </div>
   );
 }
@@ -174,7 +201,13 @@ export const selectColumn: ColumnDef<CardRowData> = {
   ),
 };
 
-export function createColumns(t: TranslateFn, language: Language = "en", availableOnly = false): ColumnDef<CardRowData>[] {
+export function createColumns(
+  t: TranslateFn,
+  language: Language = "en",
+  availableOnly = false,
+  tcgMarket?: Map<number, number>,
+  marketEvidence?: Map<number, MarketEvidence>,
+): ColumnDef<CardRowData>[] {
   return [
     {
       id: "regional_name",
@@ -260,12 +293,45 @@ export function createColumns(t: TranslateFn, language: Language = "en", availab
       meta: { className: "hidden xl:table-cell" },
     },
     {
+      // #2: per-card tcgplayer market value from the pokemon_tcgplayer_market
+      // view (looked up in CardBrowser and passed in via the map).
+      id: "tcg_market",
+      accessorFn: (row) => tcgMarket?.get(Number(row.card.card_id)) ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("cardBrowser.tcgMarket")} />,
+      cell: ({ getValue, row }) => {
+        const v = getValue() as number | undefined;
+        const evidence = Number(row.original.psaGrade ?? 0) === 0
+          ? marketEvidence?.get(Number(row.original.card.card_id))
+          : undefined;
+        return (
+          <div className="space-y-1">
+            <div>{v == null ? "\u2014" : v >= 100 ? `$${Math.round(v).toLocaleString()}` : `$${v.toFixed(2)}`}</div>
+            <MarketEvidenceBadge evidence={evidence} />
+          </div>
+        );
+      },
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+      meta: { className: "hidden lg:table-cell" },
+    },
+    {
       id: "conservativeExit",
       accessorFn: (row) => row.signal?.bandP25 ?? undefined,
       header: ({ column }) => <SortableHeader column={column} label={t("column.conservativeExit")} />,
       cell: ({ row }) => <ConservativeExitCell row={row.original} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
+    },
+    {
+      // #3: composite buy-confidence grade (recent-sales volatility + trend +
+      // evidence depth). Sorts by rank so "high" leads a descending sort.
+      id: "buyConfidence",
+      accessorFn: (row) => slabConfidenceRank(row.signal?.slabConfidence) ?? undefined,
+      header: ({ column }) => <SortableHeader column={column} label={t("column.buyConfidence")} />,
+      cell: ({ row }) => <SlabConfidenceCell row={row.original} />,
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+      meta: { className: "hidden lg:table-cell" },
     },
     {
       id: "annualized",

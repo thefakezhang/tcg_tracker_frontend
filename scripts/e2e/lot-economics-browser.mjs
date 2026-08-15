@@ -97,6 +97,91 @@ async function waitForHydration(page) {
   await page.waitForTimeout(1_000);
 }
 
+async function saveConsignment(sheet, page, quantity) {
+  const input = sheet.locator('input[aria-label^="On consignment for lot"]');
+  await input.waitFor({ state: "visible" });
+  await input.fill(String(quantity));
+  const responsePromise = page.waitForResponse(
+    (response) => response.url().includes("/rest/v1/rpc/set_line_consignment"),
+  );
+  await sheet.getByRole("button", { name: "Save", exact: true }).click();
+  const response = await responsePromise;
+  assert(
+    response.ok(),
+    `set_line_consignment HTTP ${response.status()}: ${await response.text()}`,
+  );
+}
+
+async function verifyInventoryConsignment(page) {
+  await page.getByRole("button", { name: "Inventory", exact: true }).click();
+  await page.getByRole("heading", { name: "Inventory", exact: true }).waitFor();
+
+  const search = page.getByPlaceholder("Search inventory…");
+  await search.fill("Lot E2E Pikachu");
+  await page.getByText("1 cards on hand", { exact: true }).waitFor();
+  await page.getByText("0 consigned", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Manage", exact: true }).click();
+
+  let sheet = page
+    .locator('[data-slot="sheet-content"]')
+    .filter({ hasText: "Manage consignment" })
+    .last();
+  await sheet.waitFor({ state: "visible" });
+  await saveConsignment(sheet, page, 1);
+  await page.waitForFunction(() =>
+    document.querySelector('[aria-label="Inventory summary"]')
+      ?.textContent?.includes("Consigned1"),
+  );
+  await page.screenshot({
+    path: `${artifactRoot}/desktop-consignment-sheet.png`,
+    fullPage: true,
+  });
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("tab", { name: "Grid", exact: true }).click();
+  const pikachuCard = page.getByRole("button", {
+    name: "Manage consignment for Lot E2E Pikachu",
+    exact: true,
+  });
+  await assertTapTarget(pikachuCard, "mobile consignment inventory card");
+  await pikachuCard.click();
+  sheet = page
+    .locator('[data-slot="sheet-content"]')
+    .filter({ hasText: "Manage consignment" })
+    .last();
+  const phoneInput = sheet.locator('input[aria-label^="On consignment for lot"]');
+  await assertTapTarget(phoneInput, "mobile consignment quantity input");
+  await assertTapTarget(
+    sheet.getByRole("button", { name: "Save", exact: true }),
+    "mobile consignment save",
+  );
+  await assertNoPageOverflow(page, "mobile consignment sheet");
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+
+  await search.fill("Lot E2E Booster Box");
+  await page.getByRole("button", {
+    name: "Manage consignment for Lot E2E Booster Box",
+    exact: true,
+  }).click();
+  sheet = page
+    .locator('[data-slot="sheet-content"]')
+    .filter({ hasText: "Manage consignment" })
+    .last();
+  await saveConsignment(sheet, page, 1);
+  await assertNoPageOverflow(page, "mobile sealed consignment sheet");
+  await page.screenshot({
+    path: `${artifactRoot}/phone-consignment-sheet.png`,
+  });
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: tripName, exact: true }).click();
+  await page
+    .getByRole("heading", { name: tripName, exact: true, level: 2 })
+    .waitFor();
+}
+
 async function createAndSellLot(page) {
   await page.goto(`${appUrl}/dashboard`, {
     waitUntil: "domcontentloaded",
@@ -208,6 +293,8 @@ async function createAndSellLot(page) {
     .waitFor();
   await page.getByText("PSA 10", { exact: true }).waitFor();
   ensureNoDialogs("lot finalization");
+
+  await verifyInventoryConsignment(page);
 
   await page.getByRole("tab", { name: "Sales", exact: true }).click();
   const checkboxes = page.getByRole("checkbox", {

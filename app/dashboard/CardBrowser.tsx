@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RowSelectionState } from "@tanstack/react-table";
-import { ChevronDown, CircleAlert, Hash, Layers, RefreshCw } from "lucide-react";
+import { ChevronDown, CircleAlert, Hash, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -27,6 +27,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
 import { useAvailableCardSources, useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
+import { createClient } from "@/lib/supabase/client";
 import { RefreshPricesAction } from "./RefreshPricesAction";
 import { RefreshInFlightStrip } from "./RefreshInFlightStrip";
 import { useLanguage } from "./LanguageContext";
@@ -58,6 +59,15 @@ import {
 } from "./owned-inventory";
 import { OwnedCountLine, ObservedLine } from "./OwnedCountLine";
 import { useCardObservations } from "./card-observations";
+import { QueryError } from "./use-query";
+import { activateOnEnterOrSpace } from "@/lib/keyboard-activation";
+import { MarketEvidenceBadge } from "./MarketEvidenceCallout";
+import {
+  buildMarketEvidenceMaps,
+  buildTcgMarketMap,
+  type MarketEvidence,
+  type MarketPriceRow,
+} from "./market-evidence";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -74,6 +84,12 @@ const POKEMON_RARITIES = [
 // Sentinel for the "Promos" entry in the rarity dropdown — selects the
 // cross-cutting promo filter (set_code/rarity) rather than a single rarity value.
 const PROMOS_OPTION = "__promos__";
+
+// Compact USD for the tcgplayer market value: whole dollars once it's meaningful,
+// cents for the sub-$100 long tail.
+function fmtUsd(n: number): string {
+  return n >= 100 ? `$${Math.round(n).toLocaleString()}` : `$${n.toFixed(2)}`;
+}
 
 export default function CardBrowser() {
   const { t } = useTranslation();
@@ -112,12 +128,18 @@ export default function CardBrowser() {
   const [minSellPrice, setMinSellPrice] = useState<string>("");
   const [roiFloor, setRoiFloor] = useState<string>("");
   const [roiCeiling, setRoiCeiling] = useState<string>("");
+  const [showFilters, setShowFilters] = useState(false); // mobile: advanced filters collapsed behind a toggle
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [sortColumn, setSortColumn] = useState("roi");
   const [sortAsc, setSortAsc] = useState(false);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
   const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
+  // #2 (show feedback): a per-card tcgplayer market value (USD), fetched for the
+  // loaded page from the pokemon_tcgplayer_market view, so the browse can show
+  // it prominently on mobile and sum it across a multi-selection.
+  const [tcgMarket, setTcgMarket] = useState<Map<number, number>>(() => new Map());
+  const [marketEvidence, setMarketEvidence] = useState<Map<number, MarketEvidence>>(() => new Map());
   const [weakEvidenceOnly, setWeakEvidenceOnly] = useState(false);
   // Tally the copies you can actually sell: owned minus consignment.
   const [availableOnly, setAvailableOnly] = useState(false);
@@ -209,6 +231,61 @@ export default function CardBrowser() {
     return [...ids];
   }, [data, rowSelection, selectionEnabled]);
 
+  // Load TCGPlayer and Collectr raw-market values for the cards currently on
+  // screen. Evidence is classified only when both queries succeed, so a source
+  // outage can never appear as a real Collectr-only card.
+  useEffect(() => {
+    setTcgMarket(new Map());
+    setMarketEvidence(new Map());
+    if (activeGame !== "pokemon") return;
+    const ids = [...new Set(data.map((r) => Number(r.card.card_id)).filter((n) => Number.isFinite(n)))];
+    if (ids.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const supabase = createClient();
+      const [tcgplayer, collectr] = await Promise.all([
+        supabase
+          .from("pokemon_tcgplayer_market")
+          .select("card_id, market_usd")
+          .in("card_id", ids),
+        supabase
+          .from("pokemon_market_listings")
+          .select("card_id, price, locations!inner(name)")
+          .in("card_id", ids)
+          .eq("price_type", "Sell")
+          .eq("psa_grade", 0)
+          .eq("currency", "USD")
+          .eq("locations.name", "collectr"),
+      ]);
+      if (cancelled) return;
+
+      if (!tcgplayer.error) {
+        setTcgMarket(buildTcgMarketMap((tcgplayer.data ?? []) as MarketPriceRow[]));
+      }
+      if (!tcgplayer.error && !collectr.error) {
+        const maps = buildMarketEvidenceMaps(
+          ids,
+          (tcgplayer.data ?? []) as MarketPriceRow[],
+          (collectr.data ?? []) as MarketPriceRow[],
+        );
+        setMarketEvidence(maps.evidence);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [data, activeGame]);
+
+  // Collective tcgplayer market value over the current selection (the "list on
+  // tcgplayer" the operator used to build by hand). priced < count when some
+  // selected cards have no tcgplayer market on file.
+  const selectedMarket = useMemo(() => {
+    let total = 0, priced = 0;
+    for (const id of selectedCardIds) {
+      const v = tcgMarket.get(id);
+      if (v != null) { total += v; priced++; }
+    }
+    return { total, priced };
+  }, [selectedCardIds, tcgMarket]);
+
   // Reset filters on game change
   useEffect(() => {
     setSearch("");
@@ -276,6 +353,15 @@ export default function CardBrowser() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
+  const cardDetailLabel = (row: CardRowData) => {
+    const identity = [
+      getCardDisplayName(row.card, language),
+      row.card.set_code !== "UNKNOWN" ? row.card.set_code : null,
+      row.card.card_number !== "UNKNOWN" ? row.card.card_number : null,
+    ].filter(Boolean).join(" ");
+    return t("cardBrowser.openDetails", { card: identity });
+  };
+
   const columnVisibility = {
     psa_grade: psaMode === "psa",
   };
@@ -296,18 +382,25 @@ export default function CardBrowser() {
   return (
     <div className="space-y-4">
       {activeGame === "pokemon" && surfaceTabs}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 [&_input]:h-11 sm:[&_input]:h-8">
-        <Input
-          type="text"
-          placeholder={t("cardBrowser.namePlaceholder")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="col-span-2"
-        />
+      {/* Sticky search: the primary lookup stays pinned at the top on mobile
+          instead of scrolling away behind a long result list (show feedback). */}
+      <div className="sticky top-0 z-20 space-y-2 bg-background pb-2 pt-1">
+      <div data-testid="browser-search-grid" className="grid grid-cols-1 gap-3 sm:grid-cols-4 sm:gap-2 [&_input]:h-11 sm:[&_input]:h-8">
+        <label className="space-y-1 sm:col-span-2">
+          <span className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardBrowser.nameLabel")}</span>
+          <Input
+            type="text"
+            placeholder={t("cardBrowser.namePlaceholder")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
         {/* Split card number: numeric numerator + a sticky suffix, joined by a
             static "/" you never type. Editing one part is one tap, not a caret
             hunt inside "123/078", and the numerator gets a numeric keypad. */}
-        <div className="flex items-center gap-1">
+        <fieldset className="space-y-1">
+          <legend className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardBrowser.cardNumberLabel")}</legend>
+          <div className="flex items-center gap-1">
           <Input
             type="text"
             inputMode="numeric"
@@ -326,15 +419,30 @@ export default function CardBrowser() {
             onChange={(e) => setCardNumberPart("denom", e.target.value)}
             className="min-w-0 flex-1"
           />
-        </div>
-        <Input
-          type="text"
-          placeholder={t("cardBrowser.setCodePlaceholder")}
-          value={searchSetCode}
-          onChange={(e) => setSearchSetCode(e.target.value)}
-        />
+          </div>
+        </fieldset>
+        <label className="space-y-1">
+          <span className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardBrowser.setCodeLabel")}</span>
+          <Input
+            type="text"
+            placeholder={t("cardBrowser.setCodePlaceholder")}
+            value={searchSetCode}
+            onChange={(e) => setSearchSetCode(e.target.value)}
+          />
+        </label>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Mobile-only toggle so the advanced filters don't bury the search bar. */}
+      <Button
+        type="button"
+        variant="outline"
+        className="h-11 w-full justify-center sm:hidden"
+        onClick={() => setShowFilters((v) => !v)}
+      >
+        {t("cardBrowser.filters")}
+        <ChevronDown className={`ml-1 size-4 transition-transform ${showFilters ? "rotate-180" : ""}`} />
+      </Button>
+      </div>
+      <div className={`flex-wrap items-center gap-2 ${showFilters ? "flex" : "hidden"} sm:flex`}>
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -432,36 +540,43 @@ export default function CardBrowser() {
         >
           {t("inventory.excludeConsigned")}
         </Button>
-        {/* Phone: 2-up rows via a min width, so these wrap instead of being
-            squeezed into unusable slivers by the buttons sharing this row. */}
-        <Input
-          type="number"
-          placeholder={t("cardBrowser.minBuyPrice")}
-          value={minBuyPrice}
-          onChange={(e) => setMinBuyPrice(e.target.value)}
-          className="h-11 min-w-[calc(50%-0.25rem)] flex-1 sm:h-8 sm:min-w-0"
-        />
-        <Input
-          type="number"
-          placeholder={t("cardBrowser.minSellPrice")}
-          value={minSellPrice}
-          onChange={(e) => setMinSellPrice(e.target.value)}
-          className="h-11 min-w-[calc(50%-0.25rem)] flex-1 sm:h-8 sm:min-w-0"
-        />
-        <Input
-          type="number"
-          placeholder={t("cardBrowser.roiFloor")}
-          value={roiFloor}
-          onChange={(e) => setRoiFloor(e.target.value)}
-          className="h-11 min-w-[calc(50%-0.25rem)] flex-1 sm:h-8 sm:min-w-0"
-        />
-        <Input
-          type="number"
-          placeholder={t("cardBrowser.roiCeiling")}
-          value={roiCeiling}
-          onChange={(e) => setRoiCeiling(e.target.value)}
-          className="h-11 min-w-[calc(50%-0.25rem)] flex-1 sm:h-8 sm:min-w-0"
-        />
+        <div
+          data-testid="browser-price-filters"
+          className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:w-auto xl:flex-1 xl:grid-cols-4"
+        >
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.minBuyPrice")}
+            aria-label={t("cardBrowser.minBuyPrice")}
+            value={minBuyPrice}
+            onChange={(e) => setMinBuyPrice(e.target.value)}
+            className="h-11 w-full min-w-0 sm:h-8"
+          />
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.minSellPrice")}
+            aria-label={t("cardBrowser.minSellPrice")}
+            value={minSellPrice}
+            onChange={(e) => setMinSellPrice(e.target.value)}
+            className="h-11 w-full min-w-0 sm:h-8"
+          />
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.roiFloor")}
+            aria-label={t("cardBrowser.roiFloor")}
+            value={roiFloor}
+            onChange={(e) => setRoiFloor(e.target.value)}
+            className="h-11 w-full min-w-0 sm:h-8"
+          />
+          <Input
+            type="number"
+            placeholder={t("cardBrowser.roiCeiling")}
+            aria-label={t("cardBrowser.roiCeiling")}
+            value={roiCeiling}
+            onChange={(e) => setRoiCeiling(e.target.value)}
+            className="h-11 w-full min-w-0 sm:h-8"
+          />
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Tabs
@@ -482,6 +597,8 @@ export default function CardBrowser() {
                 size="icon"
                 disabled={loading}
                 className="size-11 shrink-0 sm:size-8"
+                aria-label={t("refresh.confirm")}
+                title={t("refresh.confirm")}
               />
             }
           >
@@ -565,7 +682,7 @@ export default function CardBrowser() {
       </div>
 
       {error && (
-        <p className="text-destructive text-sm">{t("cardBrowser.error", { message: error })}</p>
+        <QueryError error={error} onRetry={refetch} />
       )}
 
       {/* Multi-select refresh (redesign R6). The action hides itself when none of
@@ -574,24 +691,36 @@ export default function CardBrowser() {
       {selectionEnabled && <RefreshInFlightStrip />}
 
       {selectionEnabled && selectedCardIds.length > 0 && (
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="text-muted-foreground text-xs">
             {t("cardBrowser.selectedCount", { count: selectedCardIds.length })}
           </span>
+          {selectedMarket.priced > 0 && (
+            <span className="text-xs font-medium">
+              {t("cardBrowser.selectionMarketTotal", { total: fmtUsd(selectedMarket.total) })}
+              {selectedMarket.priced < selectedCardIds.length && (
+                <span className="text-muted-foreground font-normal">
+                  {" "}
+                  {t("cardBrowser.selectionMarketPriced", { priced: selectedMarket.priced, count: selectedCardIds.length })}
+                </span>
+              )}
+            </span>
+          )}
           <RefreshPricesAction cardIds={selectedCardIds} />
         </div>
       )}
 
-      <DataTable
+      {(!error || visibleData.length > 0) && <DataTable
         columns={activeGame === "mtg"
           ? createMtgColumns(t, language, availableOnly)
-          : [selectColumn, ...createColumns(t, language, availableOnly)]}
+          : [selectColumn, ...createColumns(t, language, availableOnly, tcgMarket, marketEvidence)]}
         data={visibleData}
         loading={loading}
         sorting={sorting}
         onSortingChange={handleSortingChange}
         columnVisibility={columnVisibility}
         onRowClick={setSelectedCard}
+        getRowAriaLabel={cardDetailLabel}
         viewMode={viewMode}
         getRowId={(row) => row.key}
         rowSelection={selectionEnabled ? rowSelection : undefined}
@@ -613,15 +742,34 @@ export default function CardBrowser() {
               row.card.card_number && row.card.card_number !== "UNKNOWN"
                 ? row.card.card_number
                 : null;
+            const setCode =
+              row.card.set_code && row.card.set_code !== "UNKNOWN"
+                ? row.card.set_code
+                : null;
+            const compactIdentity = cardNumber && setCode
+              ? setCode.endsWith("-P") && !cardNumber.includes("/")
+                ? `${cardNumber}/${setCode}`
+                : `${setCode} · ${cardNumber}`
+              : cardNumber ?? setCode;
             const buyEntry = row.prices.highestBuy;
             const sellEntry = row.prices.lowestSell;
             const conservativeExit = exitValue(row.signal, exitPercentile);
+            const rawMarketEvidence = Number(row.psaGrade ?? 0) === 0
+              ? marketEvidence.get(Number(row.card.card_id))
+              : undefined;
 
             return (
               <Card
                 size="sm"
-                className="h-full cursor-pointer gap-0 !py-0 transition-colors hover:bg-accent/50"
+                className="h-full cursor-pointer gap-0 !py-0 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+                role="button"
+                tabIndex={0}
+                aria-label={cardDetailLabel(row)}
                 onClick={() => setSelectedCard(row)}
+                onKeyDown={(event) => activateOnEnterOrSpace(
+                  event,
+                  () => setSelectedCard(row),
+                )}
               >
                 {row.card.image_url ? (
                   <img
@@ -638,16 +786,12 @@ export default function CardBrowser() {
                 <CardHeader className="pt-1">
                   <CardAction>
                     <div className="flex flex-col items-end gap-1">
-                      {cardNumber && (
+                      {compactIdentity && (
                         <Badge variant="secondary" className="h-auto px-1.5 py-px">
                           <Hash className="size-3" />
-                          {cardNumber}
+                          {compactIdentity}
                         </Badge>
                       )}
-                      <Badge variant="secondary" className="h-auto px-1.5 py-px">
-                        <Layers className="size-3" />
-                        {row.card.set_code}
-                      </Badge>
                     </div>
                   </CardAction>
                   <CardTitle className="truncate text-lg">{getCardDisplayName(row.card, language)}</CardTitle>
@@ -675,6 +819,20 @@ export default function CardBrowser() {
                     <span className="text-muted-foreground">{t("column.roi")}</span>
                     <span>{row.roi !== null ? `${Math.round(row.roi * 100) / 100}%` : "\u2014"}</span>
                   </div>
+                  {activeGame === "pokemon" && tcgMarket.get(Number(row.card.card_id)) != null && (
+                    <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
+                      <span className="text-muted-foreground">{t("cardBrowser.tcgMarket")}</span>
+                      <span className="font-medium">{fmtUsd(tcgMarket.get(Number(row.card.card_id))!)}</span>
+                    </div>
+                  )}
+                  {activeGame === "pokemon" && (
+                    rawMarketEvidence?.status === "collectr_only"
+                    || rawMarketEvidence?.status === "discrepant"
+                  ) && (
+                    <div className="flex w-full justify-end border-t border-foreground/10 pt-2">
+                      <MarketEvidenceBadge evidence={rawMarketEvidence} />
+                    </div>
+                  )}
                   {activeGame === "pokemon" && (
                     <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
                       <span className="text-muted-foreground">P{exitPercentile} {t("column.conservativeExit")}</span>
@@ -690,7 +848,7 @@ export default function CardBrowser() {
               </Card>
             );
           }}
-      />
+      />}
 
       <CardDetailModal
         card={selectedCard}

@@ -67,11 +67,13 @@ import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
 import { RefreshPricesAction } from "./RefreshPricesAction";
 import { UidChip } from "./UidChip";
-import { useOwnedInventoryVersion, bumpOwnedInventory } from "./owned-inventory";
+import { useOwnedInventoryVersion } from "./owned-inventory";
 import GradeEvidencePanel from "./GradeEvidencePanel";
 import { decisionSnapshot } from "./DecisionActions";
 import { detailOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
 import { formatRoiPct, roiToneClass } from "./theoretical-roi";
+import { MarketEvidenceCallout } from "./MarketEvidenceCallout";
+import { compareMarketEstimates, type MarketEvidence } from "./market-evidence";
 
 const BUYLIST_ENTRY_TABLE: Record<Game, string> = {
   pokemon: "pokemon_buylist_entries",
@@ -206,6 +208,8 @@ export default function CardDetailModal({
   const { buylists, addToBuylist } = useBuyList();
   const [addedTo, setAddedTo] = useState<string | null>(null);
   const [rawListings, setRawListings] = useState<MarketListing[]>([]);
+  const [detailTcgMarketUsd, setDetailTcgMarketUsd] = useState<number | null>(null);
+  const [marketEvidenceCardId, setMarketEvidenceCardId] = useState<number | null>(null);
   const [heldRows, setHeldRows] = useState<HeldRow[]>([]);
   const [sourceRows, setSourceRows] = useState<SourceRow[]>([]);
   const [observationRows, setObservationRows] = useState<ObservationRow[]>([]);
@@ -295,10 +299,12 @@ export default function CardDetailModal({
 
     let cancelled = false;
     setLoading(true);
+    setDetailTcgMarketUsd(null);
+    setMarketEvidenceCardId(null);
 
     async function fetchListings() {
       const supabase = createClient();
-      const [{ data: raw }, rates, locations, conditionsData, held, ownedCounts, srcLots, obs, purch, roi] =
+      const [{ data: raw, error: rawError }, rates, locations, conditionsData, held, ownedCounts, srcLots, obs, purch, roi, tcgplayer] =
         await Promise.all([
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
@@ -353,6 +359,13 @@ export default function CardDetailModal({
             .select("lot_line_id, qty_on_hand, on_hand_cost_usd, exit_unit_usd, net_pct, exit_net_usd, theoretical_profit_usd, theoretical_roi_pct, days_held, below_cost, priced")
             .eq("game", activeGame)
             .eq("card_id", card!.card.card_id),
+          activeGame === "pokemon"
+            ? supabase
+                .from("pokemon_tcgplayer_market")
+                .select("market_usd")
+                .eq("card_id", card!.card.card_id)
+                .maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
         ]);
 
       if (cancelled) return;
@@ -374,6 +387,13 @@ export default function CardDetailModal({
       );
 
       setRawListings(listings);
+      const tcgValue = Number((tcgplayer.data as { market_usd?: number | string } | null)?.market_usd);
+      setDetailTcgMarketUsd(Number.isFinite(tcgValue) && tcgValue > 0 ? tcgValue : null);
+      setMarketEvidenceCardId(
+        activeGame === "pokemon" && !rawError && !tcgplayer.error
+          ? Number(card!.card.card_id)
+          : null,
+      );
       setHeldRows((held.data as HeldRow[] | null) ?? []);
       const roiByLineId = new Map<number, { exit_gross_usd: number | null; exit_net_usd: number | null; net_pct: number | null; theoretical_roi_pct: number | null; below_cost: boolean | null; priced: boolean }>();
       for (const r of ((roi.data as Record<string, unknown>[] | null) ?? [])) {
@@ -391,6 +411,7 @@ export default function CardDetailModal({
         (((srcLots.data as Record<string, unknown>[] | null) ?? []).map((r) => {
           const lot = r.acquisition_lots as { shop_label: string | null; acquired_at: string | null; leg: string; trips: { name: string | null } | null } | null;
           const qty = Number(r.quantity) || 1;
+          const qtyOnHand = Number(r.qty_remaining) || 0;
           const hit = roiByLineId.get(Number(r.line_id));
           return {
             lineId: Number(r.line_id),
@@ -398,9 +419,9 @@ export default function CardDetailModal({
             acquiredAt: lot?.acquired_at ?? null,
             leg: lot?.leg ?? "",
             tripName: lot?.trips?.name ?? null,
-            qtyOnHand: Number(r.qty_remaining) || 0,
+            qtyOnHand,
             unitCostUsd: Number(r.allocated_cost_usd) / qty,
-            consigned: Number(r.consigned_qty) || 0,
+            consigned: Math.max(0, Math.min(Number(r.consigned_qty) || 0, qtyOnHand)),
             exitGrossUsd: hit?.priced ? hit.exit_gross_usd : null,
             exitNetUsd: hit?.priced ? hit.exit_net_usd : null,
             netPct: hit?.priced ? hit.net_pct : null,
@@ -510,6 +531,27 @@ export default function CardDetailModal({
     };
   }, [rawListings, rateMap, locationMap, conditionsMap, selectedTiers]);
 
+  const rawMarketEvidence = useMemo<MarketEvidence | null>(() => {
+    if (
+      activeGame !== "pokemon"
+      || !card
+      || marketEvidenceCardId !== Number(card.card.card_id)
+    ) return null;
+    let collectrUsd: number | null = null;
+    for (const listing of rawListings) {
+      if (
+        listing.price_type !== "Sell"
+        || Number(listing.psa_grade) !== 0
+        || listing.currency !== "USD"
+        || locationMap.get(listing.location_id)?.name.toLowerCase() !== "collectr"
+      ) continue;
+      const value = Number(listing.price);
+      if (!Number.isFinite(value) || value <= 0) continue;
+      if (collectrUsd == null || value < collectrUsd) collectrUsd = value;
+    }
+    return compareMarketEstimates(collectrUsd, detailTcgMarketUsd);
+  }, [activeGame, card, detailTcgMarketUsd, locationMap, marketEvidenceCardId, rawListings]);
+
   // H1: "how many do I already have" - the on-hand total plus a
   // per-condition/grade breakdown. Rendered always: in-shop, an explicit
   // "none owned" beats silence.
@@ -535,17 +577,6 @@ export default function CardDetailModal({
       .join(" · ");
     return { total, breakdown };
   }, [heldRows, conditionsMap, t]);
-
-  // Mark how many of a source line's copies are on consignment (out with a 3rd
-  // party to sell). Bumping the owned store refetches this modal + the browser.
-  async function setConsignment(lineId: number, qty: number) {
-    await createClient().rpc("set_line_consignment", {
-      p_game: activeGame,
-      p_lot_line_id: lineId,
-      p_consigned_qty: Math.max(0, Math.floor(qty) || 0),
-    });
-    bumpOwnedInventory();
-  }
 
   if (!card) return null;
 
@@ -694,6 +725,7 @@ export default function CardDetailModal({
             </div>
 
             <TabsContent value="non-psa">
+              <MarketEvidenceCallout evidence={rawMarketEvidence} />
               <ListingTables
                 buy={buyNonPsa}
                 sell={sellNonPsa}
@@ -749,19 +781,12 @@ export default function CardDetailModal({
                         {formatRoiPct(s.roiPct)}
                       </span>
                     )}
-                    <label className="flex items-center gap-1 text-violet-500/90" title={t("inventory.consignQty")}>
-                      {t("inventory.consigned")}
-                      <input
-                        type="number"
-                        min={0}
-                        max={s.qtyOnHand}
-                        defaultValue={s.consigned}
-                        key={`${s.lineId}-${s.consigned}`}
-                        aria-label={t("inventory.consignQty")}
-                        className="w-10 rounded border bg-background px-1 py-0.5 text-[11px]"
-                        onBlur={(e) => { const v = Number(e.target.value); if (v !== s.consigned) void setConsignment(s.lineId, v); }}
-                      />
-                    </label>
+                    {s.consigned > 0 && (
+                      <span className="text-violet-500/90" title={t("inventory.manageConsignmentInInventory")}>
+                        {t("inventory.consignedN", { n: s.consigned })}
+                        {" · "}{t("inventory.availableN", { n: s.qtyOnHand - s.consigned })}
+                      </span>
+                    )}
                   </span>
                 </div>
               ))}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Search, ImageOff, Pencil, Plus, Trash2, GitMerge } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
@@ -44,9 +44,34 @@ interface CardLink {
   listing_url?: string | null;
   listing_only?: boolean;
 }
-interface IndexCard {
+
+export function CardIndexMutationError({ message }: { message: string | null }) {
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (message) errorRef.current?.focus({ preventScroll: true });
+  }, [message]);
+
+  if (!message) return null;
+
+  return (
+    <div
+      ref={errorRef}
+      role="alert"
+      aria-live="assertive"
+      aria-atomic="true"
+      tabIndex={-1}
+      data-testid="card-index-mutation-error"
+      className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+    >
+      {message}
+    </div>
+  );
+}
+export interface IndexCard {
   card_id: number;
   card_uid: string;
+  english_name_version: number;
   regional_name: string;
   english_name: string | null;
   set_code: string;
@@ -57,7 +82,16 @@ interface IndexCard {
   links: CardLink[];
 }
 
-const COLS = "card_id, card_uid, regional_name, english_name, set_code, card_number, language, misc_info, image_url";
+export function pokemonEditActionLabel(
+  card: Pick<IndexCard, "regional_name" | "card_number">,
+  editLabel: string,
+) {
+  return `${editLabel} ${card.regional_name} ${card.card_number}`;
+}
+
+export const pokemonEditActionClassName = "size-11 shrink-0 sm:size-7";
+
+const COLS = "card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, image_url";
 const PLATFORMS = pokemonSinglePlatforms;
 const PLATFORM_SHORT: Record<string, string> = { tcgplayer: "TCG", snkrdunk: "SNKR", pricecharting: "PC", collectr: "COLL", cardladder: "CL", cardkingdom: "CK", shinsoku: "SHIN", surugaya: "SRG", expedition_gaming: "EXP", tcgplayer_SKU: "SKU" };
 const PLATFORM_HINT_KEYS: Record<string, TranslationKey> = {
@@ -78,7 +112,7 @@ const selectClass = "h-9 rounded-md border bg-transparent px-2 text-sm focus:out
 // with PLATFORMS/PLATFORM_SHORT above so the filter list can't drift.
 const FILTERABLE_PLATFORMS = pokemonSingleFilterPlatforms;
 
-async function fetchIndex(
+export async function fetchIndex(
   search: string,
   limit: number,
   platforms: string[],
@@ -118,7 +152,8 @@ async function fetchIndex(
   let cq = supabase.from("pokemon_card_definitions").select(`card_id${gateSelect}`, { count: "exact", head: true });
   if (s) for (const f of orFilters) cq = cq.or(f);
   cq = applyGate(cq);
-  const { count: total } = await cq;
+  const { count: total, error: countError } = await cq;
+  if (countError) throw countError;
   let q = supabase.from("pokemon_card_definitions").select(`${COLS}${gateSelect}`).order("regional_name").limit(limit);
   if (s) for (const f of orFilters) q = q.or(f);
   q = applyGate(q);
@@ -212,8 +247,8 @@ export default function PokemonCardIndex() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<"cards" | "matches">("cards");
   return (
-    <div className="space-y-4">
-      <div className="flex gap-1">
+    <div className="min-w-0 space-y-4">
+      <div className="flex flex-wrap gap-1">
         <Button size="sm" variant={tab === "cards" ? "default" : "outline"} onClick={() => setTab("cards")}>
           {t("cardIndex.tabCards")}
         </Button>
@@ -252,8 +287,8 @@ function CardsTab() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
+    <div className="min-w-0 space-y-4">
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         {/* Reserve the count's row even while loading so the search group stays
             put - previously the count was `{!isLoading && ...}`, so with
             justify-between the search snapped from left to right when the count
@@ -262,12 +297,15 @@ function CardsTab() {
           {!isLoading &&
             t("cardIndex.countOf").replace("{shown}", String(cards.length)).replace("{total}", String(total))}
         </span>
-        <div className="flex items-center gap-2">
-          <div className="relative w-72">
-            <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input className="pl-8" placeholder={t("cardIndex.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
-          <Button onClick={() => setCreating(true)}>
+        <div className="grid min-w-0 w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:items-end">
+          <label className="min-w-0 w-full space-y-1 sm:w-auto">
+            <span className="text-xs font-medium text-muted-foreground sm:sr-only">{t("cardIndex.searchLabel")}</span>
+            <span className="relative block min-w-0 w-full sm:w-72">
+              <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input className="h-11 pl-8 sm:h-8" placeholder={t("cardIndex.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
+            </span>
+          </label>
+          <Button className="h-11 w-full sm:h-8 sm:w-auto" onClick={() => setCreating(true)}>
             <Plus className="size-4" /> {t("cardIndex.newCard")}
           </Button>
         </div>
@@ -285,16 +323,15 @@ function CardsTab() {
       </div>
       <p className="text-xs text-muted-foreground">{t("cardIndex.hintPokemon")}</p>
 
-      {error ? (
-        <QueryError onRetry={retry} />
-      ) : isLoading ? (
+      {error && <QueryError error={error} onRetry={retry} />}
+      {isLoading && !data ? (
         <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
       ) : cards.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t("cardIndex.empty")}</p>
+        !error && <p className="text-sm text-muted-foreground">{t("cardIndex.empty")}</p>
       ) : (
-        <div className="overflow-x-auto rounded-md border">
+        <div data-testid="pokemon-index-results" className="overflow-hidden rounded-md border">
           <table className="w-full table-fixed text-sm">
-            <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+            <thead className="hidden border-b bg-muted/40 text-left text-xs text-muted-foreground sm:table-header-group">
               <tr>
                 <th className="w-[44%] px-3 py-2 font-medium">{t("cardIndex.colCard")}</th>
                 <th className="w-[14%] px-3 py-2 font-medium">{t("cardIndex.colVariant")}</th>
@@ -302,10 +339,10 @@ function CardsTab() {
                 <th className="w-[12%] px-3 py-2 font-medium">{t("cardIndex.colUid")}</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="block sm:table-row-group">
               {cards.map((c) => (
-                <tr key={c.card_uid} className="border-b last:border-0">
-                  <td className="px-3 py-2">
+                <tr key={c.card_uid} className="block border-b p-3 last:border-0 sm:table-row sm:p-0">
+                  <td className="block p-0 pb-2 sm:table-cell sm:px-3 sm:py-2">
                     <div className="flex items-center gap-3">
                       {c.image_url ? (
                         <ZoomableImage src={c.image_url} className="h-10 w-7 rounded border object-cover" />
@@ -324,15 +361,15 @@ function CardsTab() {
                       </div>
                     </div>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="block p-0 py-1 sm:table-cell sm:px-3 sm:py-2">
                     {c.misc_info && c.misc_info !== "UNKNOWN" ? (
                       <Badge variant="outline">{c.misc_info}</Badge>
                     ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
+                      <span className="hidden text-xs text-muted-foreground sm:inline">-</span>
                     )}
                   </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-wrap gap-1">
+                  <td className="block min-w-0 p-0 py-1 sm:table-cell sm:px-3 sm:py-2">
+                    <div className="flex min-w-0 flex-wrap gap-1">
                       {c.links.length === 0 ? (
                         <span className="text-xs text-muted-foreground">{t("cardIndex.noLinks")}</span>
                       ) : (
@@ -352,10 +389,17 @@ function CardsTab() {
                       )}
                     </div>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="mt-2 block border-t p-0 pt-2 sm:mt-0 sm:table-cell sm:border-0 sm:px-3 sm:py-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-mono text-xs text-muted-foreground">{c.card_uid.slice(0, 8)}</span>
-                      <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={() => setEditing(c)} title={t("cardIndex.edit")}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={pokemonEditActionClassName}
+                        onClick={() => setEditing(c)}
+                        aria-label={pokemonEditActionLabel(c, t("cardIndex.edit"))}
+                        title={t("cardIndex.edit")}
+                      >
                         <Pencil className="size-3.5" />
                       </Button>
                     </div>
@@ -367,7 +411,7 @@ function CardsTab() {
         </div>
       )}
 
-      {!isLoading && cards.length < total && (
+      {!isLoading && !error && cards.length < total && (
         <div className="flex justify-center">
           <Button variant="outline" size="sm" onClick={() => setLimit((n) => n + CATALOG_PAGE)}>
             {t("cardIndex.loadMore").replace("{n}", String(Math.min(CATALOG_PAGE, total - cards.length)))}
@@ -381,6 +425,25 @@ function CardsTab() {
 }
 
 const BLANK = { regional_name: "", english_name: "", set_code: "", card_number: "", language: "jp", misc_info: "", image_url: "" };
+
+export function pokemonEditRPCArgs(
+  cardID: number,
+  expectedVersion: number,
+  form: typeof BLANK,
+  imageURL: string,
+) {
+  return {
+    p_card_id: cardID,
+    p_expected_version: expectedVersion,
+    p_regional_name: form.regional_name,
+    p_english_name: form.english_name,
+    p_set_code: form.set_code,
+    p_card_number: form.card_number,
+    p_language: form.language,
+    p_misc_info: form.misc_info,
+    p_image_url: imageURL,
+  };
+}
 
 // Create OR edit a singles card_def + manage its platform links. All writes go
 // through the SECURITY DEFINER RPCs (000116).
@@ -466,7 +529,7 @@ function PokemonCardModal({
       const supabase = createClient();
       const { data } = await supabase
         .from("pokemon_card_definitions")
-        .select("card_id, card_uid, regional_name, english_name, set_code, card_number, language, misc_info, image_url")
+        .select("card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, image_url")
         .or(`regional_name.ilike.%${q}%,english_name.ilike.%${q}%`)
         .neq("card_uid", card.card_uid)
         .limit(8);
@@ -481,8 +544,9 @@ function PokemonCardModal({
     setBusy(true);
     setError(null);
     const supabase = createClient();
-    let rpcError;
+    let rpcError: { message: string } | null = null;
     let cardIdForUpload: number | null = null;
+    let expectedEditVersion = card?.english_name_version ?? 0;
     if (isCreate) {
       // Every staged link, plus a not-yet-added one still in the input row.
       const staged = [...newLinks, ...(linkId.trim() ? [{ platform: linkPlatform, id: linkId.trim() }] : [])];
@@ -505,11 +569,16 @@ function PokemonCardModal({
         }
       }
     } else if (card) {
-      ({ error: rpcError } = await supabase.rpc("card_index_edit_pokemon_card", {
-        p_card_id: card.card_id, p_regional_name: form.regional_name, p_english_name: form.english_name,
-        p_set_code: form.set_code, p_card_number: form.card_number, p_language: form.language, p_misc_info: form.misc_info,
-        p_image_url: form.image_url.trim(),
-      }));
+      const editResult = await supabase.rpc("card_index_edit_pokemon_card", {
+        ...pokemonEditRPCArgs(card.card_id, expectedEditVersion, form, form.image_url.trim()),
+      });
+      rpcError = editResult.error;
+      const report = editResult.data as { status?: string; version?: number } | null;
+      if (!rpcError && report?.status === "version_conflict") {
+        rpcError = { message: t("cardIndex.versionConflict") };
+      } else if (!rpcError && typeof report?.version === "number") {
+        expectedEditVersion = report.version;
+      }
       cardIdForUpload = card.card_id;
     }
     if (rpcError) { setBusy(false); setError(rpcError.message); return; }
@@ -519,12 +588,25 @@ function PokemonCardModal({
     if (uploadFile && cardIdForUpload != null) {
       const up = await uploadCardImage({ game: "pokemon", id: cardIdForUpload, file: uploadFile });
       if ("error" in up) { setBusy(false); setError(`Upload: ${up.error}`); return; }
-      const { error: setImgErr } = await supabase.rpc("card_index_edit_pokemon_card", {
-        p_card_id: cardIdForUpload, p_regional_name: form.regional_name, p_english_name: form.english_name,
-        p_set_code: form.set_code, p_card_number: form.card_number, p_language: form.language,
-        p_misc_info: form.misc_info, p_image_url: up.url,
+      if (isCreate) {
+        const versionResult = await supabase
+          .from("pokemon_card_definitions")
+          .select("english_name_version")
+          .eq("card_id", cardIdForUpload)
+          .single();
+        if (versionResult.error) { setBusy(false); setError(versionResult.error.message); return; }
+        expectedEditVersion = Number(versionResult.data?.english_name_version ?? 0);
+      }
+      const imageResult = await supabase.rpc("card_index_edit_pokemon_card", {
+        ...pokemonEditRPCArgs(cardIdForUpload, expectedEditVersion, form, up.url),
       });
-      if (setImgErr) { setBusy(false); setError(`Set image_url: ${setImgErr.message}`); return; }
+      if (imageResult.error) { setBusy(false); setError(`Set image_url: ${imageResult.error.message}`); return; }
+      const imageReport = imageResult.data as { status?: string } | null;
+      if (imageReport?.status === "version_conflict") {
+        setBusy(false);
+        setError(t("cardIndex.versionConflict"));
+        return;
+      }
     }
 
     setBusy(false);
@@ -627,17 +709,18 @@ function PokemonCardModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <DialogHeader>
           <DialogTitle>{isCreate ? t("cardIndex.createTitlePokemon") : t("cardIndex.editTitlePokemon")}</DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2 space-y-1">
+        <div className="min-h-0 space-y-4 overflow-y-auto px-1 [&_input]:h-11 [&_select]:h-11 sm:[&_input]:h-8 sm:[&_select]:h-9">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-1 sm:col-span-2">
             <Label>{t("cardIndex.fName")}</Label>
             <Input value={form.regional_name} onChange={(e) => set("regional_name", e.target.value)} />
           </div>
-          <div className="col-span-2 space-y-1">
+          <div className="space-y-1 sm:col-span-2">
             <Label>{t("cardIndex.fEnglish")}</Label>
             <Input value={form.english_name} onChange={(e) => set("english_name", e.target.value)} />
           </div>
@@ -661,7 +744,7 @@ function PokemonCardModal({
               held in memory until Save; on save the RPC returns a card_id
               and we upload to {game}/{card_uid}/user_{ts}.{ext} in Supabase
               Storage, then set image_url to the resulting public URL. */}
-          <div className="col-span-2 space-y-1">
+          <div className="space-y-1 sm:col-span-2">
             <Label>{t("cardIndex.fImageUrl")}</Label>
             <div className="flex items-center gap-2">
               <Input
@@ -703,7 +786,15 @@ function PokemonCardModal({
                 <div key={l.platform_name} className="flex items-center gap-2 text-sm">
                   <span className="w-24 shrink-0 text-xs text-muted-foreground">{PLATFORM_SHORT[l.platform_name] ?? l.platform_name}</span>
                   <span className="flex-1 truncate font-mono text-xs">{l.external_reference_id}</span>
-                  <Button variant="ghost" size="icon" className="size-7" disabled={busy} onClick={() => removeLink(l.platform_name)}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    disabled={busy}
+                    onClick={() => removeLink(l.platform_name)}
+                    aria-label={`${t("cardIndex.removeLink")}: ${PLATFORM_SHORT[l.platform_name] ?? l.platform_name}`}
+                    title={`${t("cardIndex.removeLink")}: ${PLATFORM_SHORT[l.platform_name] ?? l.platform_name}`}
+                  >
                     <Trash2 className="size-3.5" />
                   </Button>
                 </div>
@@ -718,8 +809,15 @@ function PokemonCardModal({
                 <div key={l.platform + l.id + i} className="flex items-center gap-2 text-sm">
                   <span className="w-24 shrink-0 text-xs text-muted-foreground">{PLATFORM_SHORT[l.platform] ?? l.platform}</span>
                   <span className="flex-1 truncate font-mono text-xs">{l.id}</span>
-                  <Button variant="ghost" size="icon" className="size-7" disabled={busy}
-                    onClick={() => setNewLinks((p) => p.filter((_, j) => j !== i))}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    disabled={busy}
+                    onClick={() => setNewLinks((p) => p.filter((_, j) => j !== i))}
+                    aria-label={`${t("cardIndex.removeLink")}: ${PLATFORM_SHORT[l.platform] ?? l.platform}`}
+                    title={`${t("cardIndex.removeLink")}: ${PLATFORM_SHORT[l.platform] ?? l.platform}`}
+                  >
                     <Trash2 className="size-3.5" />
                   </Button>
                 </div>
@@ -880,14 +978,16 @@ function PokemonCardModal({
             </div>
           </div>
         )}
-
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>{t("common.cancel")}</Button>
-          <Button onClick={save} disabled={busy || !form.regional_name.trim()}>
-            {busy ? t("common.saving") : isCreate ? t("cardIndex.create") : t("common.save")}
-          </Button>
-        </DialogFooter>
+        </div>
+        <div className="sticky bottom-0 z-10 space-y-2 bg-background pt-2">
+          <CardIndexMutationError message={error} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>{t("common.cancel")}</Button>
+            <Button onClick={save} disabled={busy || !form.regional_name.trim()}>
+              {busy ? t("common.saving") : isCreate ? t("cardIndex.create") : t("common.save")}
+            </Button>
+          </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );

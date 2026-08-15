@@ -208,12 +208,11 @@ function MtgCardsTab() {
       </div>
       <p className="text-xs text-muted-foreground">{t("cardIndex.hintMtg")}</p>
 
-      {error ? (
-        <QueryError onRetry={retry} />
-      ) : isLoading ? (
+      {error && <QueryError error={error} onRetry={retry} />}
+      {isLoading && !data ? (
         <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
       ) : cards.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t("cardIndex.empty")}</p>
+        !error && <p className="text-sm text-muted-foreground">{t("cardIndex.empty")}</p>
       ) : (
         <div className="overflow-x-auto rounded-md border">
           <table className="w-full table-fixed text-sm">
@@ -296,7 +295,7 @@ function MtgCardsTab() {
         </div>
       )}
 
-      {!isLoading && cards.length < total && (
+      {!isLoading && !error && cards.length < total && (
         <div className="flex justify-center">
           <Button variant="outline" size="sm" onClick={() => setLimit((n) => n + CATALOG_PAGE)}>
             {t("cardIndex.loadMore").replace("{n}", String(Math.min(CATALOG_PAGE, total - cards.length)))}
@@ -522,7 +521,15 @@ function MtgCardModal({
                 <div key={l.platform_name} className="flex items-center gap-2 text-sm">
                   <span className="w-24 shrink-0 text-xs text-muted-foreground">{PLATFORM_SHORT[l.platform_name] ?? l.platform_name}</span>
                   <span className="flex-1 truncate font-mono text-xs">{l.external_reference_id}</span>
-                  <Button variant="ghost" size="icon" className="size-7" disabled={busy} onClick={() => removeLink(l.platform_name)}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    disabled={busy}
+                    onClick={() => removeLink(l.platform_name)}
+                    aria-label={`${t("cardIndex.removeLink")}: ${PLATFORM_SHORT[l.platform_name] ?? l.platform_name}`}
+                    title={`${t("cardIndex.removeLink")}: ${PLATFORM_SHORT[l.platform_name] ?? l.platform_name}`}
+                  >
                     <Trash2 className="size-3.5" />
                   </Button>
                 </div>

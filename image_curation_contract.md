@@ -1,219 +1,211 @@
-# Image Curation — Frontend Contract
+# Image Curation - Frontend Contract
 
-This is the backend ↔ frontend contract for the **image-buylist curation** UI. It
-is the source of truth for what the dashboard can read, write, and call.
+This document is the backend-to-frontend contract for the image-buylist curation dashboard.
+It is the source of truth for what the dashboard reads, edits, and invokes for singles and sealed candidates.
 
-The whole interface is **live on the Supabase project now**, against an **empty
-schema**: every table, policy, and RPC below already exists, returns correct
-empty results today, and starts producing real data once the backend pipeline
-loads candidate rows. You can build the entire UI against it before any data
-exists. Nothing here requires a Go service — it's all Supabase (PostgREST + RPC).
+The baseline candidate contract comes from migrations `000051`, `000062` through `000064`, `000066`, and `000067`.
+The current feedback increment comes from `000226_image_curation_feedback`, `000227_image_curation_geometry`, and `000228_image_curation_repeat_memory`.
+Migration `000225` is unrelated to image curation and must not be reused by this feature.
+Deployments must apply migrations `000226` through `000228` before enabling the batch, geometry-correction, or repeat-memory paths described here.
 
-Backend migrations: `000051` (candidate tables), `000062–000064` (RLS/auth),
-`000066` (buyer locations), `000067` (curation RPCs).
+## 1. User outcome
 
----
+A JP card shop publishes a buylist image with cards or sealed products and yen prices.
+The backend segments the source image, reads each price, proposes an identity, and writes one candidate per detected cell.
+The dashboard lets an authenticated curator confirm or correct that proposal and then approve, reject, or send the candidate to `needs_review`.
+Approval creates or updates a real buy listing while preserving the candidate as durable evidence.
 
-## 0. What this feature is
+The two candidate kinds share one interaction model:
 
-A buyer (JP card shop) tweets a grid screenshot of cards they're buying at listed
-yen prices. The backend segments each cell, OCRs the price, and tries to match the
-card, writing one **candidate** row per cell. A human **curator** reviews the
-queue in this UI: confirm/fix the match, then **approve** (→ becomes a real buy
-listing) or **reject**. Approved crops also feed the image matcher later (backend
-job, not your concern).
+- Singles use `pokemon_image_buylist_candidates` and promote into `pokemon_market_listings`.
+- Sealed products use `pokemon_sealed_image_buylist_candidates` and promote into `pokemon_sealed_market_listings`.
 
-Two product kinds, same shape:
-- **Singles** → `pokemon_image_buylist_candidates` → promotes to `pokemon_market_listings`
-- **Sealed** → `pokemon_sealed_image_buylist_candidates` → promotes to `pokemon_sealed_market_listings`
+## 2. Authentication and errors
 
-Both are in scope for v1.
+Every read and mutation runs as the Supabase `authenticated` role.
+The database rejects anonymous curation access and direct writes to protected status or promotion-link columns.
+Status transitions and promotion must use the RPCs in this document.
 
----
+The dashboard classifies query failures before choosing a recovery action.
+A `401`, `PGRST301`, or expired-token/session error offers a real `/login` link.
+A `403` or permission error explains that access is denied and does not offer a futile retry.
+Other read failures retain the ordinary retry action.
 
-## 1. Auth & access model
+## 3. Reading the queues
 
-- The app is **login-gated** (it already is). Every request runs as the
-  `authenticated` role; `anon` has **no access to anything** (revoked).
-- All curation tables have RLS with permissive `USING(true)` for `authenticated`
-  — **any logged-in user is a curator** (no per-user ownership in v1).
-- **You may NOT write `status` or `promoted_listing_id` directly** — those columns
-  are revoked. All status changes and promotion go through the RPCs in §4. The
-  DB rejects a direct `.update({ status })`.
+The dashboard reads candidates through PostgREST, filters to `pending` or `needs_review`, orders by confidence descending, and groups visible candidates by confidence band.
+Matched catalog records are fetched by their candidate IDs and joined in the client.
+Search corrections use the shared smart card or product search filters rather than a curation-specific identity matcher.
 
----
+The shared candidate fields used by the current UI are:
 
-## 2. Reading the queue
-
-Read candidates directly via PostgREST, filter by `status`, order by `created_at`,
-paginate. Embed the matched card via the FK.
-
-```ts
-// Singles queue, pending first, with the matched card joined in
-const { data, error } = await supabase
-  .from("pokemon_image_buylist_candidates")
-  .select(`
-    candidate_id, cell_image_url, ocr_price_jpy, price_increased,
-    candidate_card_id, match_method, confidence,
-    match_score_features, match_score_embedding, match_score_text,
-    card_grading, variant_attrs, variant_source,
-    ocr_text, ocr_overlay_text, ocr_cell_label_text,
-    source_author_handle, source_tweet_url, source_tweet_text, source_tweet_date,
-    status, curator_notes, promoted_listing_id, created_at,
-    pokemon_card_definitions:candidate_card_id (
-      card_id, regional_name, english_name, set_code, card_number, image_url
-    )
-  `)
-  .eq("status", "pending")
-  .order("created_at", { ascending: true })
-  .range(0, 49);
-```
-
-Sealed is identical with `pokemon_sealed_image_buylist_candidates`, embedding
-`pokemon_sealed_products:candidate_product_id ( product_id, name, english_name, set_code, variant_edition, product_type, image_url )`,
-and `candidate_product_id` / `sealed_condition` / `promoted_sealed_listing_id`
-instead of the singles card columns.
-
-**Images**: `cell_image_url` and `source_image_url` are public Cloudflare R2 URLs
-— use directly in `<img src>`. The matched card's stock image is
-`pokemon_card_definitions.image_url` (also public).
-
-### Column reference (singles candidate)
-
-| Column | Meaning |
+| Field | Contract |
 |---|---|
-| `candidate_id` (bigint, PK) | row id; pass to every RPC |
-| `cell_image_url` | the cropped card image to show |
-| `source_image_url`, `source_grid_bbox` (jsonb) | full tweet image + this cell's box |
-| `ocr_price_jpy` (bigint) | OCR'd buy price in yen |
-| `price_increased` (bool) | buyer flagged a price bump |
-| `candidate_card_id` (int, FK) | best-guess matched card (nullable) |
-| `match_method` | `features` \| `embedding` \| `name_text` \| `set_code` \| `hybrid` |
-| `match_score_features/embedding/text` (real) | per-signal scores (nullable) |
-| `confidence` (real) | overall match confidence 0–1 |
-| `card_grading` | `raw` \| `psa_10` \| null |
-| `variant_attrs` (jsonb), `variant_source` | variant info + where it came from |
-| `ocr_text`, `ocr_overlay_text`, `ocr_cell_label_text` | raw OCR debug text |
-| `source_author_handle` | canonical buyer id (maps to a location) |
-| `source_tweet_url`, `source_tweet_text`, `source_tweet_date` | provenance |
-| `status` | `pending` \| `needs_review` \| `approved` \| `rejected` (read-only here) |
-| `curator_notes` | free text (editable) |
-| `promoted_listing_id` (int) | set after approval (read-only here) |
+| `candidate_id` | Stable bigint passed to every action RPC |
+| `status` | Queue state; the current UI reads `pending` and `needs_review` |
+| `cell_image_url` | Detector-produced cell preview |
+| `source_image_url` | Full renderable source image used by geometry correction |
+| `source_grid_bbox` | Immutable detector-original geometry |
+| `effective_source_grid_bbox` | Current geometry used for previews, hashes, and learning |
+| `source_image_width`, `source_image_height` | Paired natural source dimensions, both null or both positive |
+| `active_geometry_correction_id` | Active append-only correction evidence, or null |
+| `ocr_price_jpy` | Proposed buy price in yen |
+| `confidence` | Overall match confidence from zero to one |
+| `match_method` | Matcher path used for the proposal |
+| `match_score_features`, `match_score_embedding`, `match_score_text` | Optional per-signal evidence |
+| `variant_attrs`, `variant_source` | Variant evidence and provenance |
+| `curator_notes` | Optional curator explanation |
+| `source_author_handle`, `source_tweet_url`, `source_tweet_date` | Buyer and source provenance |
 
-Sealed differs: `candidate_product_id` (FK → products), `sealed_condition`
-(`shrink` \| `no_shrink` \| `standard`), `promoted_sealed_listing_id`.
+Singles additionally read `candidate_card_id` and `card_grading`.
+Sealed candidates additionally read `candidate_product_id` and `sealed_condition`.
 
----
-
-## 3. Editing a candidate before deciding
-
-A curator can correct the match/metadata in place. You may **only** update these
-columns (others, incl. `status`, are revoked):
-
-- **Singles**: `candidate_card_id`, `card_grading`, `variant_attrs`, `curator_notes`
-- **Sealed**: `candidate_product_id`, `sealed_condition`, `variant_attrs`, `curator_notes`
+The geometry JSON shape is:
 
 ```ts
-await supabase
-  .from("pokemon_image_buylist_candidates")
-  .update({ candidate_card_id: 12345, card_grading: "psa_10" })
-  .eq("candidate_id", id);
+interface ImageBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+interface ImageGeometry {
+  card: ImageBox;
+  price: ImageBox | null;
+}
 ```
 
-You can also pass corrections inline to the promote RPC (§4) instead of a separate
-update — either works; the RPC's params win.
+Legacy detector rows may store a single `ImageBox` in `source_grid_bbox`.
+The frontend treats that legacy box as the card box with no price box.
+The render baseline is `effective_source_grid_bbox` when present and otherwise `source_grid_bbox`.
 
-A curator may **delete** a candidate (e.g. junk rows): `.delete()` is allowed.
+## 4. Match and metadata correction
 
----
+The correction panel keeps edits locally until the curator chooses an action.
+Singles may override card identity, grading, price, notes, and geometry in the promotion request.
+Sealed candidates may override product identity, sealed condition, price, notes, and geometry in the promotion request.
+The RPC values win over the stored candidate values.
 
-## 4. Actions (RPCs) — the only way to change status / promote
+No-match candidates cannot be approved.
+The curator must choose a valid existing catalog record or reject the candidate.
+Creating a new catalog identity from this queue is outside this contract.
 
-Call via `supabase.rpc(name, params)`. All are `authenticated`-executable. They
-enforce the state machine and return a clear error message on a bad transition.
+## 5. Geometry correction
 
-### State machine
+Singles and sealed use the same `ImageGeometryEditor` component.
+The editor renders the full `http` or `https` source image and measures its natural width and height on load.
+Blue marks the card boundary and amber marks the optional price boundary.
+The image overlays are visual only and contain noninteractive corner markers.
+Each Card and Price box has an external two-column resize-control group so shallow overlays cannot make north and south hit targets overlap.
+Every move and resize control has a minimum 44 by 44 CSS pixel target and remains usable without horizontal page overflow at a 390px viewport.
+
+Dragging a move control preserves the box width and height.
+Dragging `NW`, `NE`, `SW`, or `SE` changes only the two boundaries named by that corner.
+Pointer capture keeps mouse and touch gestures active after the pointer leaves the control.
+Arrow keys move or resize by 4 natural-image pixels, Shift changes the step to 10, and Alt changes the step to 1.
+Every control has an accessible Card or Price label and an explicit corner label.
+
+Reset restores the immutable detector geometry.
+Remove Price sets the effective price box to null.
+Add Price creates a bounded box in the lower part of the source image.
+The frontend and database clamp geometry to the natural image dimensions and reject degenerate boxes.
+
+The frontend submits a geometry correction only when the source is renderable, both natural dimensions are known, and the effective geometry differs from the baseline.
+An untouched approval uses the ordinary promotion RPC and creates no false geometry evidence.
+A changed approval uses the matching correction-and-promotion RPC atomically.
+
+### Singles geometry RPC
+
+`correct_and_promote_image_buylist_candidate` accepts:
+
+| Parameter | Type |
+|---|---|
+| `p_candidate_id` | bigint |
+| `p_card_id` | integer |
+| `p_card_grading` | text |
+| `p_price_jpy` | bigint |
+| `p_curator_notes` | text |
+| `p_effective_geometry` | jsonb `ImageGeometry` |
+| `p_natural_width` | positive integer |
+| `p_natural_height` | positive integer |
+
+### Sealed geometry RPC
+
+`correct_and_promote_sealed_image_buylist_candidate` accepts the same geometry and dimension parameters with `p_product_id` and `p_sealed_condition` in place of the singles identity fields.
+
+Each correction RPC validates the authenticated curator subject, renderable source URL, natural dimensions, and bounded geometry.
+It appends immutable correction evidence, updates only the effective geometry linkage, promotes the candidate, and returns `candidate_id`, `listing_id`, `correction_id`, and normalized `effective_geometry`.
+
+## 6. Ordinary actions
+
+| Candidate kind | RPC | Required parameters | Result |
+|---|---|---|---|
+| Singles | `promote_image_buylist_candidate` | `p_candidate_id`; optional `p_card_id`, `p_card_grading`, `p_price_jpy`, `p_curator_notes` | listing bigint |
+| Singles | `reject_image_buylist_candidate` | `p_candidate_id`, optional `p_curator_notes` | void |
+| Singles | `mark_image_buylist_candidate_needs_review` | `p_candidate_id`, optional `p_curator_notes` | void |
+| Sealed | `promote_sealed_image_buylist_candidate` | `p_candidate_id`; optional `p_product_id`, `p_sealed_condition`, `p_price_jpy`, `p_curator_notes` | listing bigint |
+| Sealed | `reject_sealed_image_buylist_candidate` | `p_candidate_id`, optional `p_curator_notes` | void |
+| Sealed | `mark_sealed_image_buylist_candidate_needs_review` | `p_candidate_id`, optional `p_curator_notes` | void |
+
+The promotable state machine is:
+
+```text
+pending      -> approved | rejected | needs_review
+needs_review -> approved | rejected
 ```
-pending      → approved | rejected | needs_review
-needs_review → approved | rejected
-approved / rejected are terminal (no further actions)
+
+Approved, auto-approved, and rejected decisions are not actionable from the active queue.
+
+## 7. Bounded batch approval
+
+Singles use `batch_promote_image_buylist_candidates` and sealed candidates use `batch_promote_sealed_image_buylist_candidates`.
+Each RPC accepts one `p_decisions` JSON array containing between 1 and 200 unique candidate decisions.
+The current dashboard submits matched, unchanged candidates from one confidence band in one request and refreshes once.
+Candidates with edited geometry use their correction RPC individually because their audit payload includes geometry and natural dimensions.
+
+Each decision runs in its own database savepoint.
+A failed decision rolls back only that row while successful siblings remain committed.
+Malformed envelopes or duplicate candidate IDs reject the request before decisions execute.
+
+The response contract is:
+
+```json
+{
+  "mode": "per_row_savepoint",
+  "summary": { "requested": 3, "succeeded": 2, "failed": 1 },
+  "results": [
+    { "candidate_id": 10, "success": true, "listing_id": 100 },
+    {
+      "candidate_id": 11,
+      "success": false,
+      "error_code": "22023",
+      "error_message": "candidate is not promotable"
+    }
+  ]
+}
 ```
 
-### Singles
+The dashboard shows the aggregate result and keeps each failed candidate visible with its readable error.
+Unknown thrown values and Supabase error objects must be normalized so the UI never renders `[object Object]`.
 
-| RPC | Params | Returns |
-|---|---|---|
-| `promote_image_buylist_candidate` | `p_candidate_id bigint`, `p_card_id int = null`, `p_card_grading text = null`, `p_price_jpy bigint = null` | `bigint` (new `listing_id`) |
-| `reject_image_buylist_candidate` | `p_candidate_id bigint`, `p_curator_notes text = null` | void |
-| `mark_image_buylist_candidate_needs_review` | `p_candidate_id bigint`, `p_curator_notes text = null` | void |
+## 8. Approval side effects
 
-```ts
-// Approve → creates the buy listing and marks the candidate approved
-const { data: listingId, error } = await supabase.rpc(
-  "promote_image_buylist_candidate",
-  { p_candidate_id: id, p_card_id: confirmedCardId, p_card_grading: "raw" }
-);
+Promotion resolves the buyer location from `source_author_handle`.
+It creates or updates a Buy listing in JPY with the candidate price and source tweet URL.
+It records the selected singles grading or sealed condition, marks the candidate approved, stores the promoted listing ID, and returns that listing ID.
+The entire promotion runs in one database transaction.
 
-await supabase.rpc("reject_image_buylist_candidate", {
-  p_candidate_id: id, p_curator_notes: "blurry / unreadable",
-});
-```
+Geometry-corrected approval additionally preserves the detector-original geometry, corrected effective geometry, natural dimensions, curator subject, source context, and previous-correction linkage in append-only evidence.
+Backend active learning uses the effective card crop rather than the full sheet or price banner.
+Migration `000228` may auto-approve only strict same-source repeats of a human-confirmed exemplar and records separate append-only repeat evidence.
+Repeat-memory evaluation and undo are backend/operator workflows and are not dashboard actions in this increment.
 
-`p_*` overrides are optional — omit to use the candidate's stored values. The
-only hard requirement: **promote needs a card** (`p_card_id` or the candidate's
-`candidate_card_id`). If there's no match, **reject** — there is no
-create-a-new-card path in v1.
+## 9. UI requirements and non-goals
 
-### Sealed (same semantics)
-
-| RPC | Params | Returns |
-|---|---|---|
-| `promote_sealed_image_buylist_candidate` | `p_candidate_id bigint`, `p_product_id bigint = null`, `p_sealed_condition text = null`, `p_price_jpy bigint = null` | `bigint` (new `listing_id`) |
-| `reject_sealed_image_buylist_candidate` | `p_candidate_id bigint`, `p_curator_notes text = null` | void |
-| `mark_sealed_image_buylist_candidate_needs_review` | `p_candidate_id bigint`, `p_curator_notes text = null` | void |
-
-### Errors
-RPCs `RAISE` (surfaced as `error.message`) on: candidate not found; not in a
-promotable/valid state for the action; promote with no `card_id`/`product_id`;
-or no location mapped for the buyer handle. Show `error.message` to the curator.
-
----
-
-## 5. What "approve" actually does (side effects)
-
-`promote_*` runs server-side, atomically:
-1. Resolves the buyer's **location** from `source_author_handle`.
-2. Builds a **Buy / JPY** market-listing row: `price = ocr_price_jpy` (or
-   `p_price_jpy`), `listing_url = source_tweet_url`; for singles, condition is
-   `N/A` with `psa_grade = 0` for `raw` / `10` for `psa_10`; for sealed,
-   `sealed_condition` from the candidate, edition `standard`.
-3. Upserts it (re-approving the same buyer+card updates the price), returns
-   `listing_id`.
-4. Sets the candidate `status = 'approved'` and `promoted_listing_id`.
-
-You don't need to write any of that — just call the RPC and use the returned
-`listing_id` / refresh the row.
-
----
-
-## 6. Suggested UI states
-
-- **Queue tabs**: `pending`, `needs_review`, (read-only) `approved`, `rejected`.
-  Counts via PostgREST `count`.
-- **Card**: cell image, OCR price (¥), matched-card panel (image + name + set +
-  number) with confidence + per-signal scores, variant chips from `variant_attrs`.
-- **Actions**: Approve (+ optional grading/price override), Reject (+ notes),
-  Needs review (+ notes), Edit match (search `pokemon_card_definitions` by
-  name/number/set — it's readable), Delete.
-- Show `price_increased` and `source_tweet_url` (link out to the tweet).
-
----
-
-## 7. v1 scope (decided)
-
-- All status changes go through RPCs (no direct status writes).
-- Any authenticated user may curate (no per-user ownership).
-- No-match → **reject only** (no create-card UI).
-- **Singles and sealed both in v1.**
-- Image *editing* is out of scope — curators approve/reject the crops the backend
-  produced; the catalog/image feedback loop is a backend job.
+- Keep `pending` and `needs_review` queue tabs, buyer filtering, confidence grouping, and keyboard navigation.
+- Keep source links, OCR evidence, identity search, grading or condition controls, notes, and per-row readable failures.
+- Keep all primary phone controls at least 44 CSS pixels in both dimensions.
+- Do not add direct status writes, direct promotion-link writes, or a per-source matcher.
+- Do not create catalog identities from the curation queue.
+- Do not expose repeat-memory threshold tuning or rollback as curator controls.
