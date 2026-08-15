@@ -35,7 +35,7 @@ import {
 // card) and promotes / rejects them via the SECURITY DEFINER RPCs (the browser
 // can't write status directly — see project_image_curation_contract). v1 is
 // singles only (pokemon_image_buylist_candidates); sealed is a follow-up.
-type Status = "needs_review" | "pending";
+type Status = "needs_review" | "pending" | "auto_approved";
 
 // Confidence bands power the section grouping, the batch-approve target, and
 // the keyboard-nav flat order. Kept in a fixed high→low sequence so a
@@ -137,6 +137,12 @@ export default function CurationView() {
   const [batchResult, setBatchResult] = useState<CurationAcceptResult | null>(null);
   const [selectedBuyer, setSelectedBuyer] = useState<string | null>(null); // null = all buyers
   const [visibleLimit, setVisibleLimit] = useState(PAGE_SIZE); // "Load more" raises this
+  // The one-step undo (u): remembers the last promote/reject and reverses it
+  // through the G4 compensation RPC - a full reversal (listing projection +
+  // feedback state), never a bare status write, and result-aware because the
+  // RPC can honestly answer `conflicted` when a later writer moved the row.
+  const [lastDecision, setLastDecision] = useState<{ id: number; label: string } | null>(null);
+  const [undoState, setUndoState] = useState<{ running: boolean; outcome?: string; detail?: string } | null>(null);
 
   const fetchCandidates = useCallback(async (st: Status, limit: number): Promise<QueueData> => {
     const supabase = createClient();
@@ -243,12 +249,17 @@ export default function CurationView() {
   async function act(fn: () => PromiseLike<{ error: unknown }>) {
     const ok = await save(async () => { const { error } = await fn(); if (error) throw error; });
     if (ok) retry();
+    return ok;
   }
-  const approve = useCallback((c: Candidate, o?: {
+  const rememberDecision = useCallback((c: Candidate) => {
+    setUndoState(null);
+    setLastDecision({ id: c.candidate_id, label: c.card?.english_name ?? c.card?.regional_name ?? c.ocr_cell_label_text ?? `#${c.candidate_id}` });
+  }, []);
+  const approve = useCallback(async (c: Candidate, o?: {
     cardId?: number; grading?: string | null; priceJpy?: number | null; notes?: string | null;
     geometry?: ImageGeometry; naturalWidth?: number; naturalHeight?: number;
-  }) =>
-    act(() => o?.geometry && o.naturalWidth && o.naturalHeight
+  }) => {
+    if (await act(() => o?.geometry && o.naturalWidth && o.naturalHeight
       ? supabase.rpc("correct_and_promote_image_buylist_candidate", {
         p_candidate_id: c.candidate_id,
         p_card_id: o.cardId ?? c.candidate_card_id,
@@ -263,19 +274,43 @@ export default function CurationView() {
         p_candidate_id: c.candidate_id,
         p_card_id: o?.cardId ?? null, p_card_grading: o?.grading ?? null,
         p_price_jpy: o?.priceJpy ?? null, p_curator_notes: o?.notes ?? null,
-      })),
+      }))) rememberDecision(c);
+  },
   // supabase + save + retry are stable within a render pass; act closes over
   // them from the enclosing scope.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  []);
-  const reject = useCallback((c: Candidate, notes?: string | null) =>
-    act(() => supabase.rpc("reject_image_buylist_candidate", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null })),
+  [rememberDecision]);
+  const reject = useCallback(async (c: Candidate, notes?: string | null) => {
+    if (await act(() => supabase.rpc("reject_image_buylist_candidate", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null }))) rememberDecision(c);
+  },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  []);
+  [rememberDecision]);
   const sendBack = useCallback((c: Candidate, notes?: string | null) =>
-    act(() => supabase.rpc("mark_image_buylist_candidate_needs_review", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null })),
+    // No rememberDecision: a send-back has no durable effect to compensate -
+    // it is reversed by simply acting on the candidate again.
+    void act(() => supabase.rpc("mark_image_buylist_candidate_needs_review", { p_candidate_id: c.candidate_id, p_curator_notes: notes ?? null })),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   []);
+
+  // Reverse a decision through G4 compensation. Idempotent by request_id;
+  // surfaces `conflicted`/`failed` honestly instead of assuming success.
+  const undoDecision = useCallback(async (candidateId: number) => {
+    setUndoState({ running: true });
+    const { data, error } = await supabase.rpc("compensate_image_curation_decision", {
+      p_candidate_id: candidateId, p_request_id: crypto.randomUUID(),
+    });
+    if (error) {
+      setUndoState({ running: false, outcome: "failed", detail: (error as { message?: string }).message ?? "" });
+      return;
+    }
+    const res = (data ?? {}) as { outcome?: string; detail?: string };
+    const outcome = res.outcome ?? "completed";
+    setUndoState({ running: false, outcome, detail: res.detail });
+    setLastDecision(null);
+    if (outcome === "completed") retry();
+  // supabase/retry are stable within a render pass.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // G6: accept matched pending candidates in one idempotent server-side call.
   // The RPC enumerates the whole snapshot (candidate_id <= high_water) server-
@@ -329,20 +364,23 @@ export default function CurationView() {
       } else if (e.key === "k" || e.key === "ArrowUp") {
         e.preventDefault();
         setSelectedIdx((i) => Math.max(0, i - 1));
-      } else if (e.key === "y" && cur?.candidate_card_id) {
+      } else if (e.key === "y" && cur?.candidate_card_id && status !== "auto_approved") {
         e.preventDefault();
-        approve(cur);
-      } else if (e.key === "n" && cur) {
+        void approve(cur);
+      } else if (e.key === "n" && cur && status !== "auto_approved") {
         e.preventDefault();
-        reject(cur);
+        void reject(cur);
       } else if (e.key === "d" && cur && status === "pending") {
         e.preventDefault();
         sendBack(cur);
+      } else if (e.key === "u" && lastDecision && !undoState?.running) {
+        e.preventDefault();
+        void undoDecision(lastDecision.id);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [flat, selectedIdx, status, approve, reject, sendBack]);
+  }, [flat, selectedIdx, status, approve, reject, sendBack, lastDecision, undoState, undoDecision]);
 
   // Scroll the selected card into view whenever the selection index changes.
   useEffect(() => {
@@ -367,6 +405,7 @@ export default function CurationView() {
           <TabsList className="min-h-11 sm:min-h-11">
             <TabsTrigger className="min-h-11 sm:min-h-11" value="needs_review">{t("curation.needsReview")}</TabsTrigger>
             <TabsTrigger className="min-h-11 sm:min-h-11" value="pending">{t("curation.pending")}</TabsTrigger>
+            <TabsTrigger className="min-h-11 sm:min-h-11" value="auto_approved">{t("curation.autoApproved")}</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -391,7 +430,28 @@ export default function CurationView() {
             <span>{t("curation.kbdDefer")}</span>
           </span>
         )}
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">u</kbd>
+          <span>{t("curation.kbdUndo")}</span>
+        </span>
       </div>
+
+      {/* One-step undo + honest outcome. The compensation RPC can answer
+          `conflicted` (a later writer moved the projection) or fail - both are
+          shown rather than pretending the undo happened. */}
+      {(lastDecision || undoState?.outcome) && (
+        <div role="status" className="flex flex-wrap items-center gap-2 text-xs">
+          {lastDecision && (
+            <Button size="sm" variant="outline" className="min-h-11 sm:min-h-11" disabled={saving || undoState?.running}
+              onClick={() => void undoDecision(lastDecision.id)}>
+              {undoState?.running ? t("curation.undoRunning") : t("curation.undoLast", { name: lastDecision.label })}
+            </Button>
+          )}
+          {undoState?.outcome === "completed" && <span className="text-emerald-600 dark:text-emerald-400">{t("curation.undone")}</span>}
+          {undoState?.outcome === "conflicted" && <span className="text-amber-600 dark:text-amber-400">{t("curation.undoConflicted")}</span>}
+          {undoState?.outcome === "failed" && <span className="text-destructive">{t("curation.undoFailed", { detail: undoState.detail ?? "" })}</span>}
+        </div>
+      )}
 
       {/* G5 queue truth + G6 whole-queue Accept All. Counts come from the
           snapshot RPC (the whole queue, not the loaded slice), so a queue
@@ -403,7 +463,7 @@ export default function CurationView() {
             {t("curation.queueTotal", { total: stats.total, matched: stats.matched })}
             {!loadedAll && <> · {t("curation.showingOf", { shown: allCandidates.length, total: stats.total })}</>}
           </span>
-          {matchedInView > 0 && (
+          {matchedInView > 0 && status !== "auto_approved" && (
             <Button size="sm" className="min-h-11 sm:min-h-11" disabled={saving || batchRunning} onClick={() => runBatchAccept(null)}>
               <Check className="size-3 mr-1" />
               {batchRunning ? t("curation.acceptAllProgress") : t("curation.acceptAll", { n: matchedInView })}
@@ -487,7 +547,7 @@ export default function CurationView() {
               <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold ${BAND_CLASS[band]}`}>
                 {t(`curation.band.${band}` as never)} · {list.length}
               </span>
-              {band === "high" && matched.length > 0 && (
+              {band === "high" && matched.length > 0 && status !== "auto_approved" && (
                 <Button size="sm" variant="outline" className="min-h-11 sm:min-h-11" disabled={saving || batchRunning} onClick={() => runBatchAccept([SQL_BAND[band]])}>
                   <Check className="size-3 mr-1" />
                   {batchRunning ? t("curation.approveAllProgress") : t("curation.approveAllHigh", { n: matched.length })}
@@ -510,6 +570,7 @@ export default function CurationView() {
                     onApprove={approve}
                     onReject={reject}
                     onSendBack={sendBack}
+                    onUndo={(cand) => void undoDecision(cand.candidate_id)}
                   />
                 );
               })}
@@ -536,7 +597,7 @@ export default function CurationView() {
 
 interface SearchHit { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string | null; misc_info: string | null; image_url: string | null; }
 
-export function CurationCandidateCard({ c, idx, status, language, saving, selected, onSelect, onApprove, onReject, onSendBack }: {
+export function CurationCandidateCard({ c, idx, status, language, saving, selected, onSelect, onApprove, onReject, onSendBack, onUndo }: {
   c: Candidate; idx: number; status: Status; language: "en" | "ja"; saving: boolean;
   selected: boolean; onSelect: () => void;
   onApprove: (c: Candidate, o?: {
@@ -544,6 +605,10 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
     geometry?: ImageGeometry; naturalWidth?: number; naturalHeight?: number;
   }) => void;
   onReject: (c: Candidate, notes?: string | null) => void; onSendBack: (c: Candidate, notes?: string | null) => void;
+  // Spot-check reversal for the auto_approved tab: routed through the G4
+  // compensation RPC, so it undoes the listing projection and feedback state,
+  // never a bare status write. Absent -> the card offers no reversal.
+  onUndo?: (c: Candidate) => void;
 }) {
   const { t } = useTranslation();
   const [correcting, setCorrecting] = useState(false);
@@ -828,25 +893,43 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* the three curator decisions: it's right · it's wrong (fix or reject) · later */}
-          <Button
-            size="sm"
-            className="min-h-11 sm:min-h-11"
-            disabled={saving || !hasMatch || (geometryEdited && !geometryDirty)}
-            onClick={() => geometryEdited ? doApprove() : onApprove(c, { notes: notesArg() })}
-          >
-            <Check className="size-4 mr-1" />{t("curation.markCorrect")}
-          </Button>
-          <Button size="sm" variant={correcting ? "secondary" : "outline"} className="min-h-11 sm:min-h-11" disabled={saving} onClick={() => setCorrecting((v) => !v)}>
-            <Pencil className="size-4 mr-1" />{t("curation.correctMatch")}
-          </Button>
-          <Button size="sm" variant="ghost" className="min-h-11 sm:min-h-11" onClick={() => setShowDetails((v) => !v)}>
-            {showDetails ? t("curation.hideDetails") : t("curation.showDetails")}
-          </Button>
-          {status === "pending" && (
-            <Button size="sm" variant="ghost" className="min-h-11 sm:ml-auto sm:min-h-11" disabled={saving} onClick={() => onSendBack(c, notesArg())}>
-              <Clock className="size-4 mr-1" />{t("curation.deferLater")}
-            </Button>
+          {status === "auto_approved" ? (
+            <>
+              {/* Spot-check: the only decision on a promoted row is a full
+                  reversal (G4 compensation) - the queue actions would either
+                  double-promote or leave the price effect standing. */}
+              {onUndo && (
+                <Button size="sm" variant="outline" className="min-h-11 sm:min-h-11" disabled={saving} onClick={() => onUndo(c)}>
+                  <X className="size-4 mr-1" />{t("curation.reverse")}
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" className="min-h-11 sm:min-h-11" onClick={() => setShowDetails((v) => !v)}>
+                {showDetails ? t("curation.hideDetails") : t("curation.showDetails")}
+              </Button>
+            </>
+          ) : (
+            <>
+              {/* the three curator decisions: it's right · it's wrong (fix or reject) · later */}
+              <Button
+                size="sm"
+                className="min-h-11 sm:min-h-11"
+                disabled={saving || !hasMatch || (geometryEdited && !geometryDirty)}
+                onClick={() => geometryEdited ? doApprove() : onApprove(c, { notes: notesArg() })}
+              >
+                <Check className="size-4 mr-1" />{t("curation.markCorrect")}
+              </Button>
+              <Button size="sm" variant={correcting ? "secondary" : "outline"} className="min-h-11 sm:min-h-11" disabled={saving} onClick={() => setCorrecting((v) => !v)}>
+                <Pencil className="size-4 mr-1" />{t("curation.correctMatch")}
+              </Button>
+              <Button size="sm" variant="ghost" className="min-h-11 sm:min-h-11" onClick={() => setShowDetails((v) => !v)}>
+                {showDetails ? t("curation.hideDetails") : t("curation.showDetails")}
+              </Button>
+              {status === "pending" && (
+                <Button size="sm" variant="ghost" className="min-h-11 sm:ml-auto sm:min-h-11" disabled={saving} onClick={() => onSendBack(c, notesArg())}>
+                  <Clock className="size-4 mr-1" />{t("curation.deferLater")}
+                </Button>
+              )}
+            </>
           )}
           {saving && <Loader2 className="size-4 animate-spin" />}
         </div>
