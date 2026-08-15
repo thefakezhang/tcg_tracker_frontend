@@ -25,9 +25,27 @@ const SNAPSHOT_STALE_HOURS = 30;
 const SOURCE_HEALTH_SENTINEL = -12;
 const RECHECK_MS = 10 * 60 * 1000;
 
-interface HealthRow {
+export interface HealthRow {
+  source: string;
+  run_date: string;
   freshness_p50_hours: number | null;
   computed_at: string;
+}
+
+// Pure scoping: the table keeps one row per source PER SNAPSHOT (the board is
+// "today vs yesterday"), so the badge must count within the newest run_date
+// only, one row per source - counting raw rows multiplies the stale count by
+// however much history the fetch returned. Exported for the unit test.
+export function staleSourceCount(rows: HealthRow[], badHours: number): number {
+  if (!rows.length) return 0;
+  const newestRun = rows.reduce((acc, r) => (r.run_date > acc ? r.run_date : acc), rows[0].run_date);
+  const latest = new Map<string, HealthRow>();
+  for (const r of rows) if (r.run_date === newestRun && !latest.has(r.source)) latest.set(r.source, r);
+  return [...latest.values()].filter((r) => r.freshness_p50_hours != null && r.freshness_p50_hours >= badHours).length;
+}
+
+export function newestComputedAt(rows: HealthRow[]): string | null {
+  return rows.reduce<string | null>((acc, r) => (acc == null || r.computed_at > acc ? r.computed_at : acc), null);
 }
 
 export default function SourceStalenessBadge() {
@@ -38,16 +56,18 @@ export default function SourceStalenessBadge() {
 
   const check = useCallback(async () => {
     const supabase = createClient();
+    // The table keeps one row per source PER SNAPSHOT (the board shows today
+    // vs yesterday), so scope to the newest run_date and one row per source -
+    // counting raw rows multiplies the stale count by the snapshot history.
     const { data, error } = await supabase
       .from("source_health")
-      .select("freshness_p50_hours, computed_at");
-    if (error || !data) return; // no false signal either way; the board stays authoritative
+      .select("source, run_date, freshness_p50_hours, computed_at")
+      .order("run_date", { ascending: false })
+      .limit(400);
+    if (error || !data?.length) return; // no false signal either way; the board stays authoritative
     const rows = data as HealthRow[];
-    setStaleCount(rows.filter((r) => r.freshness_p50_hours != null && r.freshness_p50_hours >= STALE_BAD_HOURS).length);
-    const newest = rows.reduce<string | null>(
-      (acc, r) => (acc == null || r.computed_at > acc ? r.computed_at : acc),
-      null,
-    );
+    setStaleCount(staleSourceCount(rows, STALE_BAD_HOURS));
+    const newest = newestComputedAt(rows);
     setSnapshotAgeHours(newest == null ? null : (Date.now() - new Date(newest).getTime()) / 3600000);
   }, []);
 
@@ -73,7 +93,8 @@ export default function SourceStalenessBadge() {
       title={label}
     >
       <AlertTriangle className="size-4" />
-      <span className="tabular-nums">{staleCount > 0 ? staleCount : `${Math.floor(snapshotAgeHours ?? 0)}h`}</span>
+      {/* Compact count where the full label doesn't fit; never both. */}
+      <span className="tabular-nums md:hidden">{staleCount > 0 ? staleCount : `${Math.floor(snapshotAgeHours ?? 0)}h`}</span>
       <span className="hidden md:inline">{label}</span>
     </Button>
   );

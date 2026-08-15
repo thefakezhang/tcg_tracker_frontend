@@ -358,6 +358,14 @@ When a platform has a stable public search route, the modal links directly to a 
 The server RPC validates the pending candidate, proposed target, displayed collision owner, platform, and external id before it moves that one link and confirms the candidate.
 It never merges the two singles definitions, since they can represent distinct sets or variants.
 
+### Image curation review surface
+
+- `CurationView.tsx` / `SealedCurationView.tsx` review image-buylist candidates with keyboard-first flow (`j/k` navigate, `y` approve, `n` reject, `d` defer, `u` undo).
+- Undo reverses the last promote/reject through the G4 compensation RPCs (`compensate_image_curation_decision` / sealed twin) with a client request id, and surfaces the RPC's honest `completed` / `conflicted` / `failed` outcome instead of assuming success.
+A send-back records no undo state because it has no durable effect to compensate.
+- The `auto_approved` tab is the spot-check surface for rows the calibrated auto-accept promoted: read-only except a Reverse action routed through the same compensation RPC.
+Batch-accept controls are suppressed there (the batch RPC only accepts pending/needs_review).
+
 ### Source-health drill-down (D4)
 
 - `SourceStalenessBadge.tsx` is the push half of source health: a header chip that appears only when any source's `freshness_p50_hours` crosses the board's own "bad" threshold (72h) or the snapshot itself is older than 30h, and navigates to the Source health view.
