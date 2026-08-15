@@ -67,7 +67,8 @@ import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
 import { RefreshPricesAction } from "./RefreshPricesAction";
 import { UidChip } from "./UidChip";
-import { useOwnedInventoryVersion } from "./owned-inventory";
+import { useOwnedInventoryVersion, bumpOwnedInventory } from "./owned-inventory";
+import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
 import GradeEvidencePanel from "./GradeEvidencePanel";
 import { decisionSnapshot } from "./DecisionActions";
 import { detailOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
@@ -215,6 +216,24 @@ export default function CardDetailModal({
   const [observationRows, setObservationRows] = useState<ObservationRow[]>([]);
   const [purchaseRows, setPurchaseRows] = useState<PurchaseRow[]>([]);
   const [incomingQty, setIncomingQty] = useState(0);
+  // Per-line quick sale (record_line_sale): the same lot lines this panel
+  // already renders. Pinned to the exact line so COGS comes from that line's
+  // own landed basis - no trip-tab detour for a single-card sale.
+  const [sellLineId, setSellLineId] = useState<number | null>(null);
+  const [sellQty, setSellQty] = useState("1");
+  const [sellCcy, setSellCcy] = useState("USD");
+  const [sellProceeds, setSellProceeds] = useState("");
+  const [sellFx, setSellFx] = useState("1");
+  const [sellDate, setSellDate] = useState(() => {
+    // Local calendar date, not UTC - toISOString() is yesterday in JST evenings.
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
+  const [sellPlatform, setSellPlatform] = useState("");
+  const [sellBusy, setSellBusy] = useState(false);
+  const [sellError, setSellError] = useState<string | null>(null);
+  const [sellDone, setSellDone] = useState<{ marginUsd: number } | null>(null);
+  const { rateFor } = useFxRate();
   const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
   const [locationMap, setLocationMap] = useState<Map<number, LocationInfo>>(
     new Map()
@@ -751,6 +770,58 @@ export default function CardDetailModal({
             prices: in a shop the prices are what you opened the card for, and
             this is reference you scroll to. */}
         {sourceRows.length > 0 && (() => {
+          const openSell = (s: SourceRow) => {
+            setSellError(null);
+            setSellDone(null);
+            setSellLineId((cur) => (cur === s.lineId ? null : s.lineId));
+            setSellQty("1");
+            // Import-leg inventory sells in the US (USD); export-leg in Japan (JPY).
+            const ccy = s.leg === "export" ? "JPY" : "USD";
+            setSellCcy(ccy);
+            const r = rateFor(ccy);
+            setSellFx(r != null ? fmtRate(r) : "1");
+            setSellProceeds("");
+            setSellPlatform("");
+            const now = new Date();
+            setSellDate(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`);
+          };
+          const submitLineSale = async (s: SourceRow) => {
+            const qty = Math.floor(Number(sellQty));
+            const proceeds = Number(sellProceeds);
+            const fx = Number(sellFx) || 1;
+            const available = s.qtyOnHand - s.consigned;
+            if (!Number.isFinite(qty) || qty < 1 || qty > available) {
+              setSellError(t("inventory.sellQtyInvalid", { max: available }));
+              return;
+            }
+            if (!Number.isFinite(proceeds) || proceeds <= 0) {
+              setSellError(t("inventory.sellPriceInvalid"));
+              return;
+            }
+            setSellBusy(true);
+            setSellError(null);
+            const { data, error } = await createClient().rpc("record_line_sale", {
+              p_game: activeGame,
+              p_lot_line_id: s.lineId,
+              p_quantity: qty,
+              p_gross_usd: Number((proceeds * fx).toFixed(2)),
+              p_fees_usd: 0,
+              p_sold_at: sellDate,
+              p_orig_currency: sellCcy,
+              p_proceeds_orig: proceeds,
+              p_fx_rate: fx,
+              p_platform_label: sellPlatform.trim() || null,
+            });
+            setSellBusy(false);
+            if (error) {
+              setSellError(error.message);
+              return;
+            }
+            const row = (Array.isArray(data) ? data[0] : data) as { margin_usd?: number } | null;
+            setSellDone({ marginUsd: Number(row?.margin_usd ?? 0) });
+            setSellLineId(null);
+            bumpOwnedInventory(); // ownedVersion dependency refetches this panel
+          };
           const onHand = sourceRows.reduce((s, r) => s + r.qtyOnHand, 0);
           const basis = sourceRows.reduce((s, r) => s + r.qtyOnHand * r.unitCostUsd, 0);
           const avg = onHand > 0 ? basis / onHand : 0;
@@ -769,27 +840,77 @@ export default function CardDetailModal({
             <div className="mt-1 space-y-0.5 rounded-md border bg-muted/30 p-2 text-[11px]">
               <div className="font-medium text-muted-foreground">{t("inventory.ownedFrom")}</div>
               {sourceRows.map((s) => (
-                <div key={s.lineId} className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-muted-foreground">
-                    {s.shopLabel || s.acquiredAt || t("inventory.lot")}
-                    {s.leg ? ` · ${s.leg}` : ""}{s.tripName ? ` · ${s.tripName}` : ""}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-1.5 tabular-nums">
-                    <span>{s.qtyOnHand}× · ${s.unitCostUsd.toFixed(2)}/ea</span>
-                    {s.roiPct != null && (
-                      <span className={roiToneClass(s.roiPct)} title={t("roi.theoretical")}>
-                        {formatRoiPct(s.roiPct)}
-                      </span>
-                    )}
-                    {s.consigned > 0 && (
-                      <span className="text-violet-500/90" title={t("inventory.manageConsignmentInInventory")}>
-                        {t("inventory.consignedN", { n: s.consigned })}
-                        {" · "}{t("inventory.availableN", { n: s.qtyOnHand - s.consigned })}
-                      </span>
-                    )}
-                  </span>
+                <div key={s.lineId} className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate text-muted-foreground">
+                      {s.shopLabel || s.acquiredAt || t("inventory.lot")}
+                      {s.leg ? ` · ${s.leg}` : ""}{s.tripName ? ` · ${s.tripName}` : ""}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1.5 tabular-nums">
+                      <span>{s.qtyOnHand}× · ${s.unitCostUsd.toFixed(2)}/ea</span>
+                      {s.roiPct != null && (
+                        <span className={roiToneClass(s.roiPct)} title={t("roi.theoretical")}>
+                          {formatRoiPct(s.roiPct)}
+                        </span>
+                      )}
+                      {s.consigned > 0 && (
+                        <span className="text-violet-500/90" title={t("inventory.manageConsignmentInInventory")}>
+                          {t("inventory.consignedN", { n: s.consigned })}
+                          {" · "}{t("inventory.availableN", { n: s.qtyOnHand - s.consigned })}
+                        </span>
+                      )}
+                      {s.qtyOnHand - s.consigned > 0 && (
+                        <Button size="sm" variant={sellLineId === s.lineId ? "secondary" : "outline"}
+                          className="h-6 min-h-11 px-2 text-[11px] sm:min-h-6" disabled={sellBusy}
+                          onClick={() => openSell(s)}>
+                          {t("inventory.sellLine")}
+                        </Button>
+                      )}
+                    </span>
+                  </div>
+                  {sellLineId === s.lineId && (
+                    <div className="flex flex-wrap items-center gap-1.5 rounded border bg-background/60 p-1.5">
+                      <Input type="number" inputMode="numeric" value={sellQty} onChange={(e) => setSellQty(e.target.value)}
+                        aria-label={t("trips.qty")} title={t("trips.qty")}
+                        className="h-11 w-14 min-w-0 sm:h-7" min={1} max={s.qtyOnHand - s.consigned} />
+                      <Input type="number" inputMode="decimal" value={sellProceeds} onChange={(e) => setSellProceeds(e.target.value)}
+                        placeholder={t("inventory.sellProceeds")} aria-label={t("inventory.sellProceeds")}
+                        className="h-11 w-24 min-w-0 flex-1 sm:h-7 sm:flex-none" />
+                      <select value={sellCcy} aria-label={t("trips.saleCurrency")}
+                        className="h-11 rounded-md border bg-background px-1.5 sm:h-7"
+                        onChange={(e) => {
+                          const ccy = e.target.value;
+                          setSellCcy(ccy);
+                          const r = rateFor(ccy);
+                          if (r != null) setSellFx(fmtRate(r));
+                        }}>
+                        <option value="USD">USD</option>
+                        <option value="JPY">JPY</option>
+                      </select>
+                      {sellCcy !== "USD" && (
+                        <Input type="number" inputMode="decimal" value={sellFx} onChange={(e) => setSellFx(e.target.value)}
+                          aria-label={t("trips.fxRate")} title={t("trips.fxRate")}
+                          className="h-11 w-24 min-w-0 sm:h-7" />
+                      )}
+                      <Input type="date" value={sellDate} onChange={(e) => setSellDate(e.target.value)}
+                        aria-label={t("inventory.sellDate")} className="h-11 w-32 min-w-0 sm:h-7" />
+                      <Input value={sellPlatform} onChange={(e) => setSellPlatform(e.target.value)}
+                        placeholder={t("inventory.sellPlatform")} aria-label={t("inventory.sellPlatform")}
+                        className="h-11 w-24 min-w-0 flex-1 sm:h-7 sm:flex-none" />
+                      <Button size="sm" className="h-11 px-2 text-[11px] sm:h-7" disabled={sellBusy}
+                        onClick={() => void submitLineSale(s)}>
+                        {sellBusy ? t("inventory.sellRecording") : t("inventory.sellConfirm")}
+                      </Button>
+                      {sellError && <span role="alert" className="w-full text-destructive">{sellError}</span>}
+                    </div>
+                  )}
                 </div>
               ))}
+              {sellDone && (
+                <div role="status" className="text-emerald-600 dark:text-emerald-400">
+                  {t("inventory.sellDone", { margin: sellDone.marginUsd.toFixed(2) })}
+                </div>
+              )}
               <div className="flex items-baseline justify-between gap-2 border-t pt-0.5 font-medium">
                 <span>{t("inventory.avgLanded")}</span>
                 <span className="tabular-nums">${avg.toFixed(2)}/ea</span>
