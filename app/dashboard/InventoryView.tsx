@@ -187,9 +187,9 @@ export default function InventoryView() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-3">
         <h2 className="text-lg font-semibold">{t("inventory.title")}</h2>
-        <div className="ml-auto flex items-end gap-2">
+        <div className="ml-auto flex min-w-0 flex-wrap items-end gap-2">
           <Tabs value={viewMode} onValueChange={(v) => setViewMode(String(v) as "list" | "grid")}>
-            <TabsList>
+            <TabsList className="h-11 sm:h-8">
               <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
               <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
             </TabsList>
@@ -197,14 +197,14 @@ export default function InventoryView() {
           <div>
             <Label className="text-xs">{t("inventory.leg")}</Label>
             <select value={leg} onChange={(e) => setLeg(e.target.value as typeof leg)}
-              className="h-9 w-28 rounded-md border bg-background px-2 text-sm">
+              className="h-11 w-28 rounded-md border bg-background px-2 text-sm sm:h-8">
               <option value="all">{t("inventory.allLegs")}</option>
               <option value="import">{t("trips.legImport")}</option>
               <option value="export">{t("trips.legExport")}</option>
             </select>
           </div>
           <Input placeholder={t("inventory.search")} value={search}
-            onChange={(e) => setSearch(e.target.value)} className="h-9 w-56" />
+            onChange={(e) => setSearch(e.target.value)} className="min-h-11 w-full sm:min-h-8 sm:w-56" />
         </div>
       </div>
 

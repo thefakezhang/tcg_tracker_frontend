@@ -107,9 +107,9 @@ export default function SalesView() {
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">{t("sales.allTitle")}</h1>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
         <Input value={search} onChange={(e) => setSearch(e.target.value)}
-          placeholder={t("sales.searchPlaceholder")} className="h-9 w-56" />
+          placeholder={t("sales.searchPlaceholder")} className="min-h-11 w-full sm:min-h-8 sm:w-56" />
         <Tabs value={leg} onValueChange={(v) => setLeg(String(v) as "all" | "import" | "export")}>
           <TabsList>
             <TabsTrigger value="all">{t("sales.legAll")}</TabsTrigger>

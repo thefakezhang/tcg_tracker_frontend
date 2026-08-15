@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import EventsCalendarView from "./EventsCalendarView";
 
@@ -70,6 +70,18 @@ vi.mock("./use-query", () => ({
   },
   QueryError: () => null,
 }));
+
+// The view filters "upcoming" by the real clock and defaults the calendar to
+// the current month, so the July fixtures silently age out of view once the
+// real month rolls past them. Pin Date (and only Date - waitFor needs real
+// timers) so the fixtures stay in frame forever.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-07-20T12:00:00Z"));
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 afterEach(() => {
   cleanup();

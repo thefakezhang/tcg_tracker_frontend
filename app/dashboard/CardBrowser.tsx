@@ -432,33 +432,35 @@ export default function CardBrowser() {
         >
           {t("inventory.excludeConsigned")}
         </Button>
+        {/* Phone: 2-up rows via a min width, so these wrap instead of being
+            squeezed into unusable slivers by the buttons sharing this row. */}
         <Input
           type="number"
           placeholder={t("cardBrowser.minBuyPrice")}
           value={minBuyPrice}
           onChange={(e) => setMinBuyPrice(e.target.value)}
-          className="h-11 min-w-0 flex-1 sm:h-8"
+          className="h-11 min-w-[calc(50%-0.25rem)] flex-1 sm:h-8 sm:min-w-0"
         />
         <Input
           type="number"
           placeholder={t("cardBrowser.minSellPrice")}
           value={minSellPrice}
           onChange={(e) => setMinSellPrice(e.target.value)}
-          className="h-11 min-w-0 flex-1 sm:h-8"
+          className="h-11 min-w-[calc(50%-0.25rem)] flex-1 sm:h-8 sm:min-w-0"
         />
         <Input
           type="number"
           placeholder={t("cardBrowser.roiFloor")}
           value={roiFloor}
           onChange={(e) => setRoiFloor(e.target.value)}
-          className="h-11 min-w-0 flex-1 sm:h-8"
+          className="h-11 min-w-[calc(50%-0.25rem)] flex-1 sm:h-8 sm:min-w-0"
         />
         <Input
           type="number"
           placeholder={t("cardBrowser.roiCeiling")}
           value={roiCeiling}
           onChange={(e) => setRoiCeiling(e.target.value)}
-          className="h-11 min-w-0 flex-1 sm:h-8"
+          className="h-11 min-w-[calc(50%-0.25rem)] flex-1 sm:h-8 sm:min-w-0"
         />
       </div>
       <div className="flex flex-wrap items-center gap-2">
