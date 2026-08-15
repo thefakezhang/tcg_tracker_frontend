@@ -73,61 +73,166 @@ A trading card game price tracking dashboard. Users browse Pokémon and MTG card
 
 ## Directory Structure
 
+`*.test.ts` / `*.test.tsx` files sit next to the code under test and are omitted from the tree.
+
 ```
 app/
   layout.tsx              # Root layout (dark theme, Geist font)
   page.tsx                # Redirects to /login
   globals.css             # Tailwind theme (oklch colors)
-  auth/callback/route.ts  # Google OAuth callback
+  login/page.tsx          # Login page (Google OAuth sign-in via Supabase)
+  auth/
+    callback/route.ts     # Google OAuth callback
+    e2e/route.ts          # Local-only guarded browser-auth seam for E2E runs (lib/e2e-auth-guard.ts)
+  api/
+    aggregate-prices/route.ts # Authenticated proxy that invokes the aggregate-prices edge function
+    build-revision/route.ts   # Reports the deployed git commit SHA (used by E2E revision checks)
+    proxy-image/route.ts      # Same-origin proxy for external card images (PDF export needs canvas-safe images)
   dashboard/
     layout.tsx            # Auth guard, renders DashboardShell
-    page.tsx              # Conditionally renders CardBrowser or BuyListView
+    page.tsx              # Main-pane router, first match wins: views-registry sentinel -> TripDashboard (positive trip id) -> BuyListView -> SealedBrowser (pokemon_sealed) -> CardBrowser
     DashboardShell.tsx    # Context providers + sidebar + header
+    views.tsx             # Single source of truth for top-level views (sentinel -> group/icon/label/component)
     AppSidebar.tsx        # Navigation, game picker, buy lists, user settings menu
+    AccountMenuContent.tsx # Sidebar account dropdown: language, display currency, sign out
+    AccountRegisterModal.tsx # GL account register dialog (get_account_register RPC)
+    AccountingRollupView.tsx # Monthly accounting rollup table (accounting_rollup_v) with CSV export
+    AddToLotPopover.tsx   # Popover that adds a browsed card to an open acquisition lot
+    BalanceSheetCard.tsx  # Business-wide balance sheet card (get_balance_sheet RPC)
+    BuyListContext.tsx    # Buy list state + CRUD operations (fetch, create, delete, add/remove entries)
+    BuyListView.tsx       # Buy list card view (merges pokemon + mtg + sealed entries, list/grid with compact toggle)
     CardBrowser.tsx       # Search filters + data table + modal trigger
     CardDetailModal.tsx   # Card detail dialog with buy/sell listing tables + add to buy list
-    GradeEvidencePanel.tsx # Per-grade bands, comps, demand, flags, and event annotations
-    PriceEvidenceBadge.tsx # Independent semantic price evidence for image-curation candidates
-    ImageAutoAcceptView.tsx # Catalog calibration, controls, capped canaries, run audit, and rollback
-    InventoryEconomics.tsx # Line-level direct, landed, sale, and profit drill-down under Finances
-    owned-inventory.ts     # Batched catalog-level Owned N read model
-    grade-signals.ts      # Typed S2 signal parser and conservative-exit helpers
-    ExitBasisContext.tsx  # Persisted P10/P25/P50 conservative-exit setting
+    CardIndexCreateModal.tsx # Card Index new-card dialog (staged platform links, deferred image upload)
+    CardIndexEditModal.tsx # Card Index edit dialog (identity fields, platform links, merge)
+    CardIndexView.tsx     # Card Index catalog surface with Pokemon / MTG / sealed tabs
+    CurationView.tsx      # Image-buylist candidate review for singles (keyboard-first)
+    CurrencyContext.tsx   # Display currency (none/USD/JPY), localStorage persisted
+    CustomersView.tsx     # Customer CRM: customers plus exact wishlist and criteria wants
     DecisionActions.tsx   # Shared Watch/Dismiss controls and immutable snapshot builder
-    opportunity-exposures.ts # Automatic actual-listing exposure payloads and RPC writer
     DecisionWatchlist.tsx # Active watch rules with at-watch/current prices and history-preserving Unwatch
+    DuplicateConflictsPanel.tsx # Listing duplicate-conflict drill-down (listing_duplicate_conflicts)
+    EventsCalendarView.tsx # Market events month calendar and manual event workflow (S6)
+    ExitBasisContext.tsx  # Persisted P10/P25/P50 conservative-exit setting
+    ExitCostSettings.tsx  # Exit-cost profile editor (exit_cost_profiles) under Finances
+    ExportBuyListModal.tsx # Buy list PDF export (jsPDF; canvas-rendered text for CJK fonts)
+    FinancesView.tsx      # Finances view: overview (balance sheet, rollup, GL journal), economics, exit costs
+    FreshnessChip.tsx     # Colored staleness dot for a listing's last_updated, with age tooltip
+    GameContext.tsx       # Active game (pokemon/mtg/pokemon_sealed) + PSA mode
+    GradeEvidencePanel.tsx # Per-grade bands, comps, demand, flags, and event annotations
+    HeaderContext.tsx     # Dynamic header actions slot
+    ImageAutoAcceptView.tsx # Catalog calibration, controls, capped canaries, run audit, and rollback
+    ImageGeometryEditor.tsx # Drag-handle editor for a candidate's card/price crop boxes
+    InventoryConsignmentSheet.tsx # Sheet for a holding's consignment state and consignment-sale booking
+    InventoryEconomics.tsx # Line-level direct, landed, sale, and profit drill-down under Finances
+    InventoryView.tsx     # On-hand inventory browser; consignment mutation and count-reconciliation surface
+    JournalEntryDialog.tsx # Manual GL journal entry dialog (gl_post_entry RPC)
+    LanguageContext.tsx   # Language state (en/ja), localStorage persisted
+    LotPickerContext.tsx  # Open (draft) acquisition lots, so browse surfaces can add cards straight into a lot
+    MarketEvidenceCallout.tsx # Compact and detail presentation of Collectr/TCGPlayer market evidence
+    MatchReviewView.tsx   # Match review queue for pending external-identifier candidates
+    MtgAliasesTab.tsx     # MTG text-variance alias manager (mtg_card_aliases)
+    MtgCardIndex.tsx      # MTG catalog tab of the Card Index
+    OwnedCountLine.tsx    # One-line owned/incoming signal on browse tiles and rows
+    PokemonCardIndex.tsx  # Pokemon catalog tab of the Card Index (create/edit/merge/link attach)
+    PokemonMatchesTab.tsx # Pokemon match-memory manager (pokemon_card_matches)
+    PriceEvidenceBadge.tsx # Independent semantic price evidence for image-curation candidates
     PurchasePlannerView.tsx # Pre-order card plan, customer assignments, backups, coverage, and readiness review
-    BuyListContext.tsx     # Buy list state + CRUD operations (fetch, create, delete, add/remove entries)
-    BuyListView.tsx       # Buy list card view (merges pokemon + mtg entries, list/grid with compact toggle)
-    data-table.tsx        # Generic TanStack React Table wrapper
-    columns.tsx           # Column definitions + PriceCell component
-    use-card-data.ts      # Data fetching hook (paginated queries against pre-computed summary tables)
-    use-sealed-data.ts    # Sealed-product data hook + product→CardRowData adapter (parallel to use-card-data)
+    ReachOutView.tsx      # Customers who want cards currently in stock (customer_reachout_v)
+    Receipts.tsx          # Generic receipt-photo gallery for any owning entity (polymorphic receipts table)
+    RefreshInFlightStrip.tsx # Per-source counts of outstanding refresh_requests (polling)
+    RefreshPricesAction.tsx # On-demand targeted price refresh button (request_card_refresh RPC)
+    ReviewQueueNavigationContext.tsx # One-shot {game, source} navigation target for the match review queue
+    SalesView.tsx         # All-sales history over sales_ledger_v with expandable groups and receipts
     SealedBrowser.tsx     # Sealed tab browser (condition/edition/region dropdowns; no PSA/tier)
+    SealedCurationView.tsx # Sealed twin of CurationView
     SealedDetailModal.tsx # Sealed product detail dialog (raw sealed listings + add to buy list)
-    GameContext.tsx        # Active game (pokemon/mtg/pokemon_sealed) + PSA mode
-    HeaderContext.tsx      # Dynamic header actions slot
-    LanguageContext.tsx    # Language state (en/ja), localStorage persisted
-    CurrencyContext.tsx    # Display currency (none/USD/JPY), localStorage persisted
+    ShoppingListView.tsx  # Pre-trip shopping list (customer_shopping_list_v)
+    SourceHealthView.tsx  # Source health board, calibration summary, and run-control drill-down
+    SourceRunsPanel.tsx   # Operator whole-source run control (source_run_control_snapshot RPC)
+    SourceStalenessBadge.tsx # Header chip shown only when a source crosses the staleness threshold
+    StoreSightingForm.tsx # Records an in-store sighting (record_deal_store_sighting RPC)
+    TheoreticalRoiSummary.tsx # Shared mark-to-market rollup strip (leg strip, lot header, filtered totals)
+    TripContext.tsx       # Trips state + activeTripId (0 = overview, negatives = standalone views, positive = a trip)
+    TripDashboard.tsx     # Per-trip workspace: export/import/watchlist/sales/expenses/pnl/reachout tabs
+    TripsOverview.tsx     # All-trips table (trips_overview_v)
+    UidChip.tsx           # 8-hex uid prefix chip; one click copies the full uid
+    UpcomingEventsStrip.tsx # Next two events within 90 days, in the dashboard header
+    card-observations.ts  # Aggregated own store sightings per card (trip_observations_v)
+    columns.tsx           # Column definitions + PriceCell component
+    data-table.tsx        # Generic TanStack React Table wrapper
+    deal-economics.ts     # Exit-cost profiles applied to grade signals (net-proceeds math)
+    grade-signals.ts      # Typed S2 signal parser and conservative-exit helpers
+    inventory-consignment.ts # Pure consignment count and mutation-argument helpers
+    inventory-economics.ts # Types and rollup math for the lifecycle economics rows
+    inventory-reconciliation.ts # Pure input validation for physical-count reconciliation
+    market-events.ts      # Event types, calendar helpers, tones, and the exact scope key
+    market-evidence.ts    # Market-source evidence comparison contract (20 percent threshold)
+    opportunity-exposures.ts # Automatic actual-listing exposure payloads and RPC writer
+    owned-inventory.ts    # Batched catalog-level Owned N read model
+    source-availability.ts # Source filter options and per-source summary table selection
+    source-run-control.ts # Run-control snapshot types and pure readiness/duration helpers
+    theoretical-roi.ts    # Mark-to-market ROI read model (inventory_theoretical_roi_v)
+    trip/                 # Per-trip workspace pieces
+      CollectrImportDialog.tsx # Imports a Collectr CSV export into a draft lot
+      ConsignmentControl.tsx # Per-lot-line consignment set/clear control
+      ExpensesTab.tsx     # Trip expense CRUD; also the global Expenses view (tripId = null)
+      ExportTab.tsx       # Export leg (LotManager with leg='export')
+      FullyLoadedCostLabel.tsx # Tooltip-explained "fully loaded cost" label
+      ImportTab.tsx       # Import leg (LotManager with leg='import')
+      LotManager.tsx      # Draft acquisition lots: singles, sealed lines, typed costs, finalize
+      LotReceipts.tsx     # Receipt photos attached to an acquisition lot (private bucket)
+      PnlTab.tsx          # Per-trip P&L by leg (get_trip_pnl RPC)
+      SalesTab.tsx        # Records bulk sale lots (shared/item expenses, allocation method) + history
+      TcgplayerImportDialog.tsx # Stages a sell lot from a TCGplayer collection CSV
+      TripReachoutTab.tsx # Customers matching this trip's purchases (customer_trip_match_v)
+      TripWatchlistTab.tsx # Trip-scoped deal watchlist (trip_deal_watchlist_v)
+      collectr-match.ts   # Pure Collectr CSV row -> catalog card resolution
+      lot-line-model.ts   # Lot line row types shared by the lot surfaces
+      sale-input.ts       # Sale quantity input parsing
+      sale-lot-model.ts   # Sale allocation methods, expense categories, and draft types
+      sell-lot-draft.ts   # localStorage draft persistence for the multi-card sell flow
+      tcgplayer-collection-csv.ts # Fuzzy header parsing of TCGplayer collection CSVs
+      tcgplayer-collection-match.ts # Pure matcher from CSV rows to held inventory
+    use-card-data.ts      # Data fetching hook (paginated queries against pre-computed summary tables)
+    use-query.tsx         # Thin SWR wrapper for Supabase reads (cache by key)
+    use-sealed-data.ts    # Sealed-product data hook + product -> CardRowData adapter (parallel to use-card-data)
 components/ui/            # shadcn/ui primitives (do not edit directly unless customizing)
 lib/
   utils.ts                # cn() utility (clsx + tailwind-merge)
-  purchase-planning.ts    # Planner read-model types, demand ordering, and summary calculations
   card-search.ts          # Shared search-term semantics for every curator card search
                           # (Card Index catalogs, curation override picker, match-review
                           # dialog): name/set/number text, card uid (full or the displayed
                           # 8-hex prefix), and exact platform external id all resolve.
+  e2e-auth-guard.ts       # Guard predicate for the local-only E2E auth seam (loopback + strong secret)
   i18n/
     index.ts              # useTranslation() hook, t() function, TranslationKey type
     en.ts                 # English translations (source of truth for keys)
     ja.ts                 # Japanese translations (must match en.ts keys exactly)
+  image-autoaccept.ts     # Parses the auto-accept status RPC; readiness and display calculations
+  image-curation-batch.ts # Typed parser for batch-accept RPC results (per-row savepoints)
+  image-curation-geometry.ts # Crop-box geometry types and edit math
+  image-curation-price-evidence.ts # Price-evidence types + bulk-action eligibility predicate
+  keyboard-activation.ts  # Enter/Space activation helper for actionable rows
+  money.ts                # Shared USD formatting and native -> USD conversion helpers
+  mutation-error.ts       # Normalizes Supabase or thrown mutation errors into readable text
+  platform-url.ts         # Canonical platform item URLs, copied-URL parsing, platform inference, search links
+  purchase-planning.ts    # Planner read-model types, demand ordering, and summary calculations
+  source-labels.ts        # Source key -> human-readable label map
   supabase/
-    client.ts             # Browser-side Supabase client
+    client.ts             # Browser-side Supabase client (per-request timeout ceiling)
     server.ts             # Server-side Supabase client (cookie-based)
     middleware.ts          # Session refresh middleware
+    select-all.ts         # Paged reads that survive the PostgREST row cap (selectAll / selectAllByIds)
+  upload-card-image.ts    # Deferred-until-save card image upload to Supabase Storage
+  use-fx-rate.ts          # Live FX default from the exchange_rates table (rate to USD)
+  use-saving.ts           # Standard saving flag + error surfacing for mutations
 hooks/
-  use-mobile.ts           # useIsMobile() — 768px breakpoint
+  use-mobile.ts           # useIsMobile() - 768px breakpoint
 middleware.ts             # Next.js middleware entry (delegates to supabase/middleware)
+scripts/
+  check.sh                # tsc --noEmit + next build
+  e2e/                    # Browser acceptance scripts (shared Docker + browser lock, guarded auth)
 supabase/
   config.toml             # Local Supabase dev config
   functions/
@@ -147,9 +252,12 @@ LanguageProvider
     ExitBasisProvider
       GameProvider
         BuyListProvider
-          HeaderProvider
-            SidebarProvider
-              AppSidebar + SidebarInset (header + main)
+          TripProvider
+            ReviewQueueNavigationProvider
+              LotPickerProvider
+                HeaderProvider
+                  SidebarProvider
+                    AppSidebar + SidebarInset (header + main)
 ```
 
 Each context follows the same pattern:
@@ -448,6 +556,8 @@ own data hook and modal, because sealed products differ structurally from cards:
 
 ## Database Schema (from Supabase)
 
+The authoritative schema is `docs/schema.md` in the backend repository; this table lists only what the frontend touches, with key columns or a one-line purpose.
+
 | Table | Key Columns |
 |-------|-------------|
 | `pokemon_card_definitions` | card_id, regional_name, english_name, set_code, card_number, misc_info, image_url |
@@ -472,6 +582,28 @@ own data hook and modal, because sealed products differ structurally from cards:
 | `purchase_plan_lines` | exact card or sealed product, grade, planned quantity, source snapshot, original price, and landed cost |
 | `purchase_plan_allocations` | primary or ranked backup customer, demand origin, quantity, price expectation, and lifecycle status |
 | `purchase_plan_lines_v` / `purchase_plan_coverage_v` | card-oriented allocation ledger and customer-oriented demand coverage ledger |
+| `trips` | trip_id (PK), name, status, started_at, ended_at, notes |
+| `trip_expenses` | trip-level overhead expenses (flights, lodging, food); spread analytically by `trip_overhead_alloc_v` |
+| `acquisition_lots` | lot_id (PK), trip_id, leg (import/export), acquired_at, shop_label, frozen FX totals, purchase_plan_id |
+| `acquisition_costs` / `acquisition_cost_allocations` / `acquisition_lot_finalizations` | typed lot expenses, their exact-cent allocation to lines, and one immutable finalization snapshot per lot |
+| `pokemon_lot_lines` / `mtg_lot_lines` / `pokemon_sealed_lot_lines` | per-game lot lines: catalog identity, quantity, allocated cost, qty_remaining, consigned_qty |
+| `sale_lots` / `sale_lot_items` / `sale_expenses` | immutable bulk-sale source facts, per-item allocated proceeds/COGS/profit, and shared or item-specific selling costs |
+| `deal_decisions` / `alert_rules` | immutable Watch/Bought decision journal plus the single active-card watch primitive (written via RPCs) |
+| `deal_store_sightings` | operator-verified in-store sightings (written via `record_deal_store_sighting`) |
+| `deal_opportunity_exposures` | deduplicated first-view evidence for actual purchasable listings (written via `record_deal_opportunity_exposures`) |
+| `market_events` | event labels: dates, kind, scope, title, note, source URL, confirmed/rumored |
+| `refresh_requests` | targeted-refresh queue; `RefreshInFlightStrip` polls pending/running rows |
+| `source_run_*` (jobs, execution_jobs, scheduled_jobs, task_inventory, requests, operators, hosts) | whole-source run-control estate; the frontend reads it only through the redacted `source_run_control_snapshot` RPC |
+| `customers` | customer registry behind the CRM, wishlist, and sale attribution surfaces |
+| `source_health` | one materialized daily row per (run_date, source): listing count, match coverage, freshness |
+| `owned_inventory_counts_v` (view) | qty_owned / qty_incoming / qty_consigned / qty_available plus cost basis, per catalog identity |
+| `inventory_holdings_v` (view) | current on-hand holdings at exact identity with allocated cost |
+| `inventory_economics_v` (view) | line-level lifecycle economics (direct, landed, sale, profit) for Finances |
+| `inventory_theoretical_roi_v` (view) | mark-to-market ROI per finalized lot line, valued at the leg's exit market |
+| `active_deal_watchlist_v` (view) | active watch rules joined to the latest D1 price event |
+| `trip_deal_watchlist_v` (view) | trip-scoped watchlist with each observed card's arbitrage figures |
+| `card_browser_source_options_v` (view) | source and side combinations that currently have summary evidence |
+| `sales_ledger_v` (view) | resolved sale rows (identity, name, proceeds, expenses, profit) behind all sales history |
 
 Sealed enums: `sealed_condition_enum` (shrink/no_shrink/standard), `sealed_edition_enum` (1ed/unlimited/standard).
 
@@ -496,7 +628,7 @@ The listings tables have a foreign key to `currencies` — queries join via `cur
 3. If it touches price display, integrate with `CurrencyContext.convertPrice()`.
 4. If it adds a new Supabase table/column, document it in the Database Schema section above.
 5. Run `npm run build` to verify no type or build errors.
-6. **Update this CLAUDE.md** with any architectural changes.
+6. **Update this AGENTS.md** with any architectural changes.
 
 ## Environment Variables
 
