@@ -360,6 +360,9 @@ It never merges the two singles definitions, since they can represent distinct s
 
 ### Source-health drill-down (D4)
 
+- `SourceStalenessBadge.tsx` is the push half of source health: a header chip that appears only when any source's `freshness_p50_hours` crosses the board's own "bad" threshold (72h) or the snapshot itself is older than 30h, and navigates to the Source health view.
+It reads the same `source_health` snapshot as the board, renders nothing on a fetch failure, and is absent (never disabled) when everything is fresh.
+
 - Every red metric in `SourceHealthView` is a button that opens the Pokémon Match Review queue with that health row's exact source filter.
 - The board is a materialized snapshot, not a live view.
   It shows the newest `computed_at`, warns after 30 hours, labels the legacy `rows_written` value as the current listing count, and calls the read-only button "Reload view" so a database reread is not mistaken for a recompute.
