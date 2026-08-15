@@ -424,6 +424,8 @@ Card Ladder, Collectr, and PriceCharting are excluded because they are indicator
 There is no routine Pass action.
 - The `price_below_exit` watch is evaluated client-side on the watchlist: a watch has fired when the current price sits at or below the flagged price (fired count banner + per-card badge in `DecisionWatchlist`).
 There is still no push notification path; the watchlist is the alert surface.
+- `DecisionOutcomes` (Browse > Outcomes tab, Pokemon) reads `deal_outcome_summary_v` + the decided rows of `deal_opportunity_outcomes_v`: every seen opportunity classified taken / dismissed / dismissed-then-bought / implicit-pass / open.
+- `CurationCorrections` (bottom of Image auto-accept) reads `curation_corrections_summary_v`: per-buyer curator fix rates over decided rows, rejects carried separately.
 Watch sends the exact grade signal plus browser prices and ROI to `record_deal_decision`.
 Dismiss calls `dismiss_deal_opportunity` and requires a reason for the exceptional deliberate rejection.
 - Watch is one primitive, not a second client list.

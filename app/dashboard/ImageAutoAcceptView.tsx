@@ -15,6 +15,7 @@ import {
   type AutoAcceptSourceStatus,
   unreviewedSamples,
 } from "@/lib/image-autoaccept";
+import CurationCorrections from "./CurationCorrections";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -568,6 +569,7 @@ export default function ImageAutoAcceptView() {
           </div>
         </section>
       )}
+      <CurationCorrections />
     </div>
   );
 }

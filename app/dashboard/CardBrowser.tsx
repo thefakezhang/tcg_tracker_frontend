@@ -48,6 +48,7 @@ import { useTranslation } from "@/lib/i18n";
 import { useExitBasis, type ExitPercentile } from "./ExitBasisContext";
 import { exitValue, isHighValueWeakEvidence } from "./grade-signals";
 import DecisionWatchlist from "./DecisionWatchlist";
+import DecisionOutcomes from "./DecisionOutcomes";
 import { DecisionActions } from "./DecisionActions";
 import { browserOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
 import { sourceLabel } from "@/lib/source-labels";
@@ -143,7 +144,7 @@ export default function CardBrowser() {
   const [weakEvidenceOnly, setWeakEvidenceOnly] = useState(false);
   // Tally the copies you can actually sell: owned minus consignment.
   const [availableOnly, setAvailableOnly] = useState(false);
-  const [surface, setSurface] = useState<"browse" | "watchlist">("browse");
+  const [surface, setSurface] = useState<"browse" | "watchlist" | "outcomes">("browse");
 
   useEffect(() => {
     if (window.matchMedia?.("(max-width: 639px)").matches) setViewMode("grid");
@@ -367,16 +368,20 @@ export default function CardBrowser() {
   };
 
   const surfaceTabs = (
-    <Tabs value={surface} onValueChange={(value) => setSurface(String(value) as "browse" | "watchlist")}>
+    <Tabs value={surface} onValueChange={(value) => setSurface(String(value) as "browse" | "watchlist" | "outcomes")}>
       <TabsList className="h-11 sm:h-8">
         <TabsTrigger value="browse">{t("decision.browse")}</TabsTrigger>
         <TabsTrigger value="watchlist">{t("decision.watchlist")}</TabsTrigger>
+        <TabsTrigger value="outcomes">{t("outcomes.tab")}</TabsTrigger>
       </TabsList>
     </Tabs>
   );
 
   if (activeGame === "pokemon" && surface === "watchlist") {
     return <div className="space-y-4">{surfaceTabs}<DecisionWatchlist /></div>;
+  }
+  if (activeGame === "pokemon" && surface === "outcomes") {
+    return <div className="space-y-4">{surfaceTabs}<DecisionOutcomes /></div>;
   }
 
   return (
