@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { staleSourceCount, newestComputedAt, type HealthRow } from "./SourceStalenessBadge";
+import { staleSourceCount, newestComputedAt, isStaleSource, type HealthRow } from "./SourceStalenessBadge";
 
 const row = (source: string, run_date: string, fresh: number | null, computed = `${run_date}T08:00:00Z`): HealthRow => ({
   source, run_date, freshness_p50_hours: fresh, computed_at: computed,
@@ -40,5 +40,21 @@ describe("newestComputedAt", () => {
   });
   it("is null on empty", () => {
     expect(newestComputedAt([])).toBeNull();
+  });
+});
+
+describe("isStaleSource distinguishes dead from incremental", () => {
+  const base = { source: "x", run_date: "2026-08-14", computed_at: "2026-08-14T08:00:00Z" };
+  it("stale p50 with no run info is stale", () => {
+    expect(isStaleSource({ ...base, freshness_p50_hours: 500 }, 72)).toBe(true);
+  });
+  it("stale p50 but a successful run inside the window is NOT stale (tcgplayer re-stamps only changed rows)", () => {
+    expect(isStaleSource({ ...base, freshness_p50_hours: 549, notes: { last_run_hours: 30 } }, 72)).toBe(false);
+  });
+  it("stale p50 and the last run is also old -> stale", () => {
+    expect(isStaleSource({ ...base, freshness_p50_hours: 549, notes: { last_run_hours: 120 } }, 72)).toBe(true);
+  });
+  it("fresh p50 is never stale regardless of run info", () => {
+    expect(isStaleSource({ ...base, freshness_p50_hours: 5, notes: { last_run_hours: 900 } }, 72)).toBe(false);
   });
 });

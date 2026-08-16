@@ -492,6 +492,9 @@ Batch-accept controls are suppressed there (the batch RPC only accepts pending/n
 It reads the same `source_health` snapshot as the board, renders nothing on a fetch failure, and is absent (never disabled) when everything is fresh.
 
 - Every red metric in `SourceHealthView` is a button that opens the Pokémon Match Review queue with that health row's exact source filter.
+- Freshness has a headline and a secondary signal.
+`freshness_p50_hours` (median listing age) is the honest "how stale is what you see"; `notes.last_run_hours` (newest successful `source_run_requests` completion) and `notes.last_write_hours` (newest listing write) tell "dead" from "alive but incremental" - a source that only re-stamps changed rows (tcgplayer) shows a p50 of weeks while it ran days ago.
+The board renders the secondary line under the p50 and downgrades a bad p50 to warn when the source ran inside the window; `SourceStalenessBadge` (`isStaleSource`) fires only when BOTH the p50 and the last run are past the threshold.
 - The board is a materialized snapshot, not a live view.
   It shows the newest `computed_at`, warns after 30 hours, labels the legacy `rows_written` value as the current listing count, and calls the read-only button "Reload view" so a database reread is not mistaken for a recompute.
 - Match rate is durable confirmed-link coverage against durable confirmed links plus the still-pending candidate queue, not matcher accuracy.

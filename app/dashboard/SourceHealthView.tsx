@@ -71,6 +71,17 @@ const level = {
   drift: (n: number | null): Level => (!n ? "ok" : n < 10 ? "warn" : "bad"),
 };
 
+// The rollup writes two secondary freshness signals into notes (backend
+// sourcehealth/rollup.go): last_write_hours (newest listing write) and
+// last_run_hours (newest successful source_run_requests completion). The p50
+// stays the headline - it is the honest "how stale is what you see" - but a
+// source that only re-stamps changed rows (tcgplayer) shows a p50 of weeks
+// while it ran days ago; these tell "dead" from "alive but incremental".
+function secondaryFreshness(notes: Record<string, unknown> | null): { run: number | null; write: number | null } {
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return { run: num(notes?.last_run_hours), write: num(notes?.last_write_hours) };
+}
+
 const levelClass: Record<Level, string> = {
   ok: "text-emerald-600 dark:text-emerald-400",
   warn: "text-amber-600 dark:text-amber-400",
@@ -299,11 +310,25 @@ export default function SourceHealthView() {
                       </span>
                     )}
                   </TableCell>
-                  <Cell
-                    value={r.freshness_p50_hours == null ? "-" : `${Math.round(r.freshness_p50_hours)}h`}
-                    tone={level.freshness(r.freshness_p50_hours)}
-                    {...drillProps(r.source)}
-                  />
+                  {(() => {
+                    const sec = secondaryFreshness(r.notes);
+                    // Headline tone comes from the more reliable of the two:
+                    // if the source RAN recently, a stale p50 is incremental
+                    // re-stamping, not death - downgrade bad to warn.
+                    let tone = level.freshness(r.freshness_p50_hours);
+                    if (tone === "bad" && sec.run != null && sec.run < 72) tone = "warn";
+                    const parts: string[] = [];
+                    if (sec.run != null) parts.push(t("health.lastRun", { h: Math.round(sec.run) }));
+                    else if (sec.write != null) parts.push(t("health.lastWrite", { h: Math.round(sec.write) }));
+                    return (
+                      <Cell
+                        value={r.freshness_p50_hours == null ? "-" : `${Math.round(r.freshness_p50_hours)}h`}
+                        tone={tone}
+                        delta={parts.join(" ") || undefined}
+                        {...drillProps(r.source)}
+                      />
+                    );
+                  })()}
                   <Cell
                     value={r.match_rate == null ? "-" : `${Math.round(r.match_rate * 100)}%`}
                     tone={level.matchRate(r.match_rate)}

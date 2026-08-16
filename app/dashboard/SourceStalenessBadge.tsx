@@ -30,6 +30,18 @@ export interface HealthRow {
   run_date: string;
   freshness_p50_hours: number | null;
   computed_at: string;
+  notes?: Record<string, unknown> | null;
+}
+
+// A source is "stale" for the badge when its p50 is past the bad threshold
+// AND it has not RUN successfully within that window either - a source that
+// ran recently but only re-stamps changed rows (tcgplayer) is incremental,
+// not dead, and must not fire the header alarm.
+export function isStaleSource(r: HealthRow, badHours: number): boolean {
+  if (r.freshness_p50_hours == null || r.freshness_p50_hours < badHours) return false;
+  const run = r.notes?.last_run_hours;
+  if (typeof run === "number" && Number.isFinite(run) && run < badHours) return false;
+  return true;
 }
 
 // Pure scoping: the table keeps one row per source PER SNAPSHOT (the board is
@@ -41,7 +53,7 @@ export function staleSourceCount(rows: HealthRow[], badHours: number): number {
   const newestRun = rows.reduce((acc, r) => (r.run_date > acc ? r.run_date : acc), rows[0].run_date);
   const latest = new Map<string, HealthRow>();
   for (const r of rows) if (r.run_date === newestRun && !latest.has(r.source)) latest.set(r.source, r);
-  return [...latest.values()].filter((r) => r.freshness_p50_hours != null && r.freshness_p50_hours >= badHours).length;
+  return [...latest.values()].filter((r) => isStaleSource(r, badHours)).length;
 }
 
 export function newestComputedAt(rows: HealthRow[]): string | null {
@@ -61,7 +73,7 @@ export default function SourceStalenessBadge() {
     // counting raw rows multiplies the stale count by the snapshot history.
     const { data, error } = await supabase
       .from("source_health")
-      .select("source, run_date, freshness_p50_hours, computed_at")
+      .select("source, run_date, freshness_p50_hours, computed_at, notes")
       .order("run_date", { ascending: false })
       .limit(400);
     if (error || !data?.length) return; // no false signal either way; the board stays authoritative
