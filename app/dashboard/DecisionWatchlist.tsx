@@ -193,7 +193,7 @@ export default function DecisionWatchlist() {
                 <div>
                   <h3 className="truncate font-medium">{language === "en" && row.english_name ? row.english_name : row.regional_name}</h3>
                   <p className="text-xs text-muted-foreground">{row.set_code} {row.card_number} · {row.psa_grade === 0 ? t("evidence.raw") : `PSA ${row.psa_grade}`} · {t("column.roi")} {fmtRoi(marketRoi)}</p>
-                  <OwnedCountLine owned={owned?.owned} incoming={owned?.incoming} avgCost={owned?.avgCost} totalCost={owned?.costBasis} />
+                  <OwnedCountLine owned={owned?.owned} incoming={owned?.incoming} avgCost={owned?.avgCost} totalCost={owned?.costBasis} consigned={owned?.consigned} />
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   <Badge variant="outline"><Eye className="size-3" />{t("decision.watching")}</Badge>

@@ -449,6 +449,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "buyList.save": "保存",
   "buyList.addTo": "購入リストに追加",
   "buyList.added": "{name}に追加しました",
+  "buyList.targetPriceSaveFailed": "目標価格を保存できません: {detail}",
   "buyList.empty": "この購入リストにカードはありません",
   "buyList.delete": "削除",
   "buyList.deleteConfirm": "この購入リストを削除しますか？",

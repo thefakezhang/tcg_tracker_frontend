@@ -202,7 +202,7 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
                     </div>
                     {(() => {
                       const c = ownedCounts.get(ownedInventoryKey({ game: "pokemon", cardId: r.card_id }));
-                      return <OwnedCountLine owned={c?.owned} incoming={c?.incoming} avgCost={c?.avgCost} totalCost={c?.costBasis} />;
+                      return <OwnedCountLine owned={c?.owned} incoming={c?.incoming} avgCost={c?.avgCost} totalCost={c?.costBasis} consigned={c?.consigned} />;
                     })()}
                   </TableCell>
                   <TableCell>

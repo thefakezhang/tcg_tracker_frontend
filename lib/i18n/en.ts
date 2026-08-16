@@ -447,6 +447,7 @@ const en = {
   "buyList.save": "Save",
   "buyList.addTo": "Add to Buy List",
   "buyList.added": "Added to {name}",
+  "buyList.targetPriceSaveFailed": "Target price not saved: {detail}",
   "buyList.empty": "No cards in this buy list",
   "buyList.delete": "Delete",
   "buyList.deleteConfirm": "Delete this buy list?",
