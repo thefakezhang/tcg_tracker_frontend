@@ -141,6 +141,7 @@ export default function SealedDetailModal({
   const [edition, setEdition] = useState<string>("all");
   const [targetPrice, setTargetPrice] = useState<string>("");
   const [savingTargetPrice, setSavingTargetPrice] = useState(false);
+  const [targetPriceError, setTargetPriceError] = useState<string | null>(null);
 
   const saveTargetPrice = useCallback(async () => {
     if (entryId == null || savingTargetPrice) return;
@@ -153,8 +154,10 @@ export default function SealedDetailModal({
       .update({ target_price_usd: parsed })
       .eq("entry_id", entryId);
     if (error) {
-      console.error("Failed to save target price:", error);
+      // Surface it: the check icon used to render as if saved.
+      setTargetPriceError(error.message);
     } else {
+      setTargetPriceError(null);
       onTargetPriceChange?.(entryId, parsed);
     }
     setSavingTargetPrice(false);
@@ -441,6 +444,9 @@ export default function SealedDetailModal({
                     <Check className="size-4" />
                   )}
                 </Button>
+                {targetPriceError && (
+                  <span role="alert" className="text-xs text-destructive">{t("buyList.targetPriceSaveFailed", { detail: targetPriceError })}</span>
+                )}
               </div>
             )}
             {addedTo && (

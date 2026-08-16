@@ -429,7 +429,7 @@ export function createMtgColumns(
         );
       },
       size: 400,
-      meta: { className: "w-[40%]" },
+      meta: { className: "max-w-64 whitespace-normal" },
     },
     {
       id: "set_code",
@@ -452,12 +452,14 @@ export function createMtgColumns(
     },
     {
       id: "foil_type",
+      meta: { className: "hidden lg:table-cell" },
       accessorFn: (row) => row.card.foil_type ?? null,
       header: ({ column }) => <SortableHeader column={column} label={t("column.foilType")} />,
       cell: ({ row }) => mtgFoilLabel(row.original.card, t),
     },
     {
       id: "language",
+      meta: { className: "hidden xl:table-cell" },
       accessorFn: (row) => row.card.language ?? null,
       header: ({ column }) => <SortableHeader column={column} label={t("column.language")} />,
       cell: ({ getValue }) => (getValue() as string | null) ?? "—",
@@ -533,10 +535,11 @@ export function createSealedColumns(
         );
       },
       size: 400,
-      meta: { className: "w-[40%]" },
+      meta: { className: "max-w-64 whitespace-normal" },
     },
     {
       id: "productType",
+      meta: { className: "hidden xl:table-cell" },
       accessorFn: (row) => (row as CardRowData & SealedExtras).productType ?? null,
       header: ({ column }) => <SortableHeader column={column} label={t("column.productType")} />,
       cell: ({ getValue }) => {
@@ -564,6 +567,7 @@ export function createSealedColumns(
     },
     {
       id: "set_code",
+      meta: { className: "hidden lg:table-cell" },
       accessorFn: (row) => {
         const v = row.card.set_code;
         return v && v !== "UNKNOWN" ? v : null;
@@ -599,9 +603,17 @@ export function createSealedColumns(
   ];
 }
 
+// Columns the buy list can never fill: BuyListView builds rows without signal /
+// deal / observation / owned data, so these render a permanent "-" block (and
+// a Decision control acting on a null snapshot). Dropped rather than shown
+// empty.
+const BUYLIST_UNFILLABLE = new Set([
+  "psa_grade", "conservativeExit", "annualized", "dealNet", "rawToGrade", "relativeValue", "decision",
+]);
+
 export function createBuylistColumns(t: TranslateFn, language: Language = "en"): ColumnDef<CardRowData>[] {
   return [
-    ...createColumns(t, language),
+    ...createColumns(t, language).filter((c) => !BUYLIST_UNFILLABLE.has(c.id ?? "")),
     {
       id: "targetPrice",
       accessorFn: (row) => (row as CardRowData & { targetPriceUsd?: number | null }).targetPriceUsd ?? undefined,

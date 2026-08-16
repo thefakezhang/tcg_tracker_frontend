@@ -552,6 +552,8 @@ own data hook and modal, because sealed products differ structurally from cards:
   `pokemon_sealed_buylist_entries` is the third entry table, merged in `BuyListView` and keyed on
   `product_id + sealed_condition + variant_edition`; `BuyListView` opens `SealedDetailModal` for sealed
   entries. `addToBuylist` takes an optional `{ sealedCondition, variantEdition }` for sealed inserts.
+- The Sealed browser has parity with the card browser for the shared inventory signal: the same `Available only` toggle, landed cost and consigned counts on rows and tiles, phone-height inputs, and the phone card-grid default.
+`createMtgColumns` / `createSealedColumns` defer their secondary columns behind breakpoints like `createColumns` does (`columns-responsive.test.ts` pins all three), and `createBuylistColumns` drops the columns buy-list rows can never fill.
 - The `aggregate-prices` edge function's `computeAndInsertSealed()` populates
   `pokemon_sealed_price_summaries` (same buy/sell/ROI + cross-region logic as cards).
 - **RLS note:** the views run as their owner and bypass base-table RLS, so browse works regardless. But

@@ -71,6 +71,13 @@ export default function SealedBrowser() {
   const [roiFloor, setRoiFloor] = useState<string>("");
   const [roiCeiling, setRoiCeiling] = useState<string>("");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  // Phone default is the card grid (the list is a 9-column horizontal scroll
+  // there); same rule as CardBrowser.
+  useEffect(() => {
+    if (window.matchMedia?.("(max-width: 639px)").matches) setViewMode("grid");
+  }, []);
+  // Tally the copies you can actually sell: owned minus consignment.
+  const [availableOnly, setAvailableOnly] = useState(false);
   const [sortColumn, setSortColumn] = useState("roi");
   const [sortAsc, setSortAsc] = useState(false);
   const [page, setPage] = useState(0);
@@ -114,7 +121,17 @@ export default function SealedBrowser() {
         sealedCondition: row.sealedCondition,
         variantEdition: row.variantEdition,
       }));
-      return { ...row, ownedQty: counts?.owned ?? 0, incomingQty: counts?.incoming ?? 0 };
+      return {
+        ...row,
+        ownedQty: counts?.owned ?? 0,
+        incomingQty: counts?.incoming ?? 0,
+        // Parity with CardBrowser: landed cost + consignment were fetched by
+        // the shared hook but silently dropped here, so sealed rows could
+        // never show cost basis or the consigned chip.
+        ownedAvgCostUsd: counts?.avgCost ?? null,
+        ownedCostBasisUsd: counts?.costBasis ?? null,
+        ownedConsigned: counts?.consigned ?? 0,
+      };
     }),
     [data, ownedCounts],
   );
@@ -155,7 +172,7 @@ export default function SealedBrowser() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 [&_input]:h-11 sm:[&_input]:h-8">
         <Input
           type="text"
           placeholder={t("cardBrowser.namePlaceholder")}
@@ -172,7 +189,7 @@ export default function SealedBrowser() {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="outline" className="shrink-0" />}>
+          <DropdownMenuTrigger render={<Button variant="outline" className="h-11 shrink-0 sm:h-8" />}>
             {t("sealedBrowser.conditionPrefix")}{conditionTriggerLabel}
             <ChevronDown className="ml-1 size-4" />
           </DropdownMenuTrigger>
@@ -190,7 +207,7 @@ export default function SealedBrowser() {
           </DropdownMenuContent>
         </DropdownMenu>
         <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="outline" className="shrink-0" />}>
+          <DropdownMenuTrigger render={<Button variant="outline" className="h-11 shrink-0 sm:h-8" />}>
             {t("sealedBrowser.editionPrefix")}{editionTriggerLabel}
             <ChevronDown className="ml-1 size-4" />
           </DropdownMenuTrigger>
@@ -208,7 +225,7 @@ export default function SealedBrowser() {
           </DropdownMenuContent>
         </DropdownMenu>
         <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="outline" className="shrink-0" />}>
+          <DropdownMenuTrigger render={<Button variant="outline" className="h-11 shrink-0 sm:h-8" />}>
             {sellRegion === "all" ? t("cardBrowser.regionAll") : sellRegion}
             <ChevronDown className="ml-1 size-4" />
           </DropdownMenuTrigger>
@@ -223,33 +240,41 @@ export default function SealedBrowser() {
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
+        <Button
+          variant={availableOnly ? "default" : "outline"}
+          className="h-11 shrink-0 sm:h-8"
+          onClick={() => setAvailableOnly((v) => !v)}
+          title={t("inventory.excludeConsigned")}
+        >
+          {t("inventory.excludeConsigned")}
+        </Button>
         <Input
           type="number"
           placeholder={t("cardBrowser.minBuyPrice")}
           value={minBuyPrice}
           onChange={(e) => setMinBuyPrice(e.target.value)}
-          className="min-w-0 flex-1"
+          className="h-11 min-w-[calc(50%-0.25rem)] flex-1 sm:h-8 sm:min-w-0"
         />
         <Input
           type="number"
           placeholder={t("cardBrowser.minSellPrice")}
           value={minSellPrice}
           onChange={(e) => setMinSellPrice(e.target.value)}
-          className="min-w-0 flex-1"
+          className="h-11 min-w-[calc(50%-0.25rem)] flex-1 sm:h-8 sm:min-w-0"
         />
         <Input
           type="number"
           placeholder={t("cardBrowser.roiFloor")}
           value={roiFloor}
           onChange={(e) => setRoiFloor(e.target.value)}
-          className="min-w-0 flex-1"
+          className="h-11 min-w-[calc(50%-0.25rem)] flex-1 sm:h-8 sm:min-w-0"
         />
         <Input
           type="number"
           placeholder={t("cardBrowser.roiCeiling")}
           value={roiCeiling}
           onChange={(e) => setRoiCeiling(e.target.value)}
-          className="min-w-0 flex-1"
+          className="h-11 min-w-[calc(50%-0.25rem)] flex-1 sm:h-8 sm:min-w-0"
         />
       </div>
       <div className="flex items-center gap-2">
@@ -289,7 +314,7 @@ export default function SealedBrowser() {
       )}
 
       <DataTable
-        columns={useMemo(() => createSealedColumns(t, language), [t, language])}
+        columns={useMemo(() => createSealedColumns(t, language, availableOnly), [t, language, availableOnly])}
         data={dataWithOwned as CardRowData[]}
         loading={loading}
         sorting={sorting}
@@ -356,7 +381,7 @@ export default function SealedBrowser() {
                     {editionLabel(t, row.variantEdition)} · {conditionLabel(t, row.sealedCondition)}
                     {misc ? ` · ${misc}` : ""}
                   </CardDescription>
-                  <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} />
+                  <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} avgCost={row.ownedAvgCostUsd} totalCost={row.ownedCostBasisUsd} consigned={row.ownedConsigned} availableOnly={availableOnly} />
                 </CardHeader>
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
                   <div className="grid w-full grid-cols-[1fr_auto_1fr] gap-2">

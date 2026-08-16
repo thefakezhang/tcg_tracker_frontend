@@ -247,6 +247,7 @@ export default function CardDetailModal({
   const [activeTab, setActiveTab] = useState<"non-psa" | "psa">(initialPsaMode);
   const [targetPrice, setTargetPrice] = useState<string>("");
   const [savingTargetPrice, setSavingTargetPrice] = useState(false);
+  const [targetPriceError, setTargetPriceError] = useState<string | null>(null);
   const [jpExclusive, setJpExclusive] = useState(false);
   const [savingJp, setSavingJp] = useState(false);
   const [askingPrice, setAskingPrice] = useState("");
@@ -295,8 +296,10 @@ export default function CardDetailModal({
       .update({ target_price_usd: parsed })
       .eq("entry_id", entryId);
     if (error) {
-      console.error("Failed to save target price:", error);
+      // Surface it: the check icon used to render as if saved.
+      setTargetPriceError(error.message);
     } else {
+      setTargetPriceError(null);
       onTargetPriceChange?.(entryId, parsed);
     }
     setSavingTargetPrice(false);
@@ -1024,6 +1027,9 @@ export default function CardDetailModal({
                     <Check className="size-4" />
                   )}
                 </Button>
+                {targetPriceError && (
+                  <span role="alert" className="text-xs text-destructive">{t("buyList.targetPriceSaveFailed", { detail: targetPriceError })}</span>
+                )}
               </div>
             )}
             {addedTo && (
