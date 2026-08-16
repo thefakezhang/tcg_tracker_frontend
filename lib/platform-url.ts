@@ -160,6 +160,9 @@ export function platformUrl(
         : `https://snkrdunk.com/en/trading-cards/${id}`;
     case "collectr":
       return `https://app.collectr.com/product/${id}`;
+    case "artofpkm":
+      // id is "<aop_set_id>/<ordinal>" - the card page URL's own shape.
+      return `https://www.artofpkm.com/sets/${id.replace("/", "/card/")}`;
     case "cardrush":
       return `https://www.cardrush-pokemon.jp/product/${id}`;
     case "hareruya":

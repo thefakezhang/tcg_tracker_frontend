@@ -20,6 +20,7 @@ const SOURCE_LABELS: Record<string, string> = {
   toban: "Kaitori Touban",
   torecabank: "Toreca Bank",
   torecabirth: "Toreca Birth",
+  artofpkm: "The Art of Pokémon",
 };
 
 export function sourceLabel(source: string): string {

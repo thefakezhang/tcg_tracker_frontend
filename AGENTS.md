@@ -458,6 +458,13 @@ The mutation sends both the displayed ledger balance and observed count so the b
 - Architecture, goals, non-goals, local authentication guards, and browser acceptance are documented in `docs/lot_inventory_economics.md`.
 - Backend allocation and immutability rules are documented in `docs/inventory_subledger_contract.md` in the backend repository.
 
+### Authoritative catalog feed (artofpkm)
+
+- The backend `seed-artofpkm` crawler pushes every Japanese card on artofpkm.com into the Pokemon match-review queue; identity-resolved cards arrive as confirms (bulk-confirmable), new cards as proposals.
+- Queue rows render the artofpkm descriptor (English name, set name + release date, rarity, illustrator, unmapped-set note) in the source line, and the create-from-candidate form prefills `english_name` from `source_fields` (top-level or `by_source`).
+- Card Index > Pokemon > **Set crosswalk** (`ArtofpkmSetsTab.tsx`) lists every artofpkm set with our `set_code`, the auto-mapper's method, and a bind control (`card_index_bind_artofpkm_set`); curator bindings are never overwritten by the seeder.
+- Backend architecture, flow, goals and non-goals: `docs/artofpkm_catalog_source.md` in the backend repository.
+
 ### Card Index link attachment (R1)
 
 - `lib/platform-url.ts` is the single frontend source for platform item links, copied-product-URL parsing, platform inference, and direct search links.

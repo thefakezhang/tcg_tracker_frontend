@@ -184,8 +184,13 @@ const CONFIGS: Record<Game, GameConfig> = {
     ],
     createDefaults: (c) => {
       const f = c.source_fields ?? {};
+      // Authoritative catalog feeds (artofpkm) carry the English name; the
+      // unified identity queue nests per-source data under by_source, so look
+      // there too. The create form must not blank it.
+      const bySrc = (f as Record<string, unknown>).by_source as Record<string, Record<string, string>> | undefined;
+      const nestedEn = bySrc ? Object.values(bySrc).map((d) => d?.english_name).find(Boolean) ?? "" : "";
       return {
-        regional_name: c.source_name, english_name: "",
+        regional_name: c.source_name, english_name: f.english_name || nestedEn || "",
         set_code: norm(f.set_code), card_number: f.card_number || "",
         language: f.language || "jp", misc_info: norm(f.misc_info),
       };
@@ -865,6 +870,14 @@ export default function MatchReviewView({
                     d.raw_variant,
                     d.grade && d.grade !== "psa" ? d.grade : "",
                     d.cert ? `cert ${d.cert}` : "",
+                    // Authoritative catalog feeds (artofpkm) describe the card by its
+                    // English name, set (name when the crosswalk is unmapped), rarity
+                    // and illustrator - what the curator needs to place a new card.
+                    d.english_name,
+                    d.aop_set_name ? `${d.aop_set_name}${d.release_date ? ` (${d.release_date})` : ""}` : "",
+                    d.set_mapping,
+                    d.rarity,
+                    d.illustrator ? `illus. ${d.illustrator}` : "",
                   ]
                     .filter(Boolean)
                     .join(" · ");
