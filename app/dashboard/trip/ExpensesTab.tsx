@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldGroup } from "@/components/ui/field";
 import ReceiptsDialog from "../Receipts";
+import { formatUsd } from "@/lib/money";
+import { formatDate } from "@/lib/dates";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -30,7 +32,7 @@ interface Expense {
 
 // tripId === null → general/overhead business expenses not tied to any trip.
 export default function ExpensesTab({ tripId }: { tripId: number | null }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const { saving, save } = useSaving();
   const [rows, setRows] = useState<Expense[]>([]);
   const [open, setOpen] = useState(false);
@@ -110,8 +112,8 @@ export default function ExpensesTab({ tripId }: { tripId: number | null }) {
             <TableRow key={r.expense_id}>
               <TableCell className="truncate max-w-[240px]">{r.description}</TableCell>
               <TableCell>{r.category ?? "—"}</TableCell>
-              <TableCell>{r.incurred_at}</TableCell>
-              <TableCell>${r.amount_usd} <span className="text-xs text-muted-foreground">({r.orig_currency} {r.amount_orig})</span></TableCell>
+              <TableCell>{formatDate(r.incurred_at, language)}</TableCell>
+              <TableCell>{formatUsd(Number(r.amount_usd))} <span className="text-xs text-muted-foreground">({r.orig_currency} {r.amount_orig})</span></TableCell>
               <TableCell>
                 <div className="flex items-center justify-end gap-1">
                   <ReceiptsDialog ownerType="expense" ownerId={r.expense_id} />
@@ -127,7 +129,7 @@ export default function ExpensesTab({ tripId }: { tripId: number | null }) {
           )}
         </TableBody>
       </Table>
-      {rows.length > 0 && <p className="text-sm font-medium">Total: ${total.toFixed(2)}</p>}
+      {rows.length > 0 && <p className="text-sm font-medium">Total: {formatUsd(total)}</p>}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-sm">

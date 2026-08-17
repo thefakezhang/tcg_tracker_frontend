@@ -13,6 +13,7 @@ import { useTrips } from "../TripContext";
 import { useSaving } from "@/lib/use-saving";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { formatRoi, formatUsd } from "@/lib/money";
 import {
   Table, TableHeader, TableRow, TableHead, TableBody, TableCell,
 } from "@/components/ui/table";
@@ -125,8 +126,6 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
 
   const roiClass = (roi: number | null) =>
     roi == null ? "" : roi >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive";
-  const fmtRoi = (roi: number | null | undefined) =>
-    roi == null ? "-" : `${Math.round(roi * 100) / 100}%`;
 
   return (
     <div className="min-w-0 space-y-3">
@@ -208,7 +207,7 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
                   <TableCell>
                     {r.observed_price_usd != null ? (
                       <div>
-                        <div>${Number(r.observed_price_usd).toFixed(2)}</div>
+                        <div>{formatUsd(Number(r.observed_price_usd))}</div>
                         <div className="text-xs text-muted-foreground">
                           {r.observed_currency} {Number(r.observed_price_orig).toLocaleString()}{r.observed_store ? ` · ${r.observed_store}` : ""}
                         </div>
@@ -216,13 +215,13 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
                     ) : "-"}
                   </TableCell>
                   <TableCell>
-                    {r.us_bid_usd != null ? `$${Number(r.us_bid_usd).toFixed(2)}` : "-"}
+                    {r.us_bid_usd != null ? formatUsd(Number(r.us_bid_usd)) : "-"}
                   </TableCell>
                   <TableCell className={`text-right font-medium ${roiClass(r.gross_roi_pct)}`}>
                     {r.gross_roi_pct != null ? `${r.gross_roi_pct > 0 ? "+" : ""}${Number(r.gross_roi_pct).toFixed(1)}%` : "-"}
                   </TableCell>
                   <TableCell className="text-right text-muted-foreground">
-                    {fmtRoi(cardData.get(String(r.card_id))?.roi)}
+                    {formatRoi(cardData.get(String(r.card_id))?.roi)}
                   </TableCell>
                 </TableRow>
               ))}

@@ -307,6 +307,8 @@ The raw reads that remain are either reference tables that cannot approach the c
 
 ### Price Display & Currency Conversion
 
+Rendering: see the shared formatters rule under Conventions (`lib/money.ts`, `lib/dates.ts`).
+
 Prices flow through two layers:
 
 1. **Normalized prices** (`normalizedPrice` on `PriceEntry`) — always converted to USD using `rateMap` for sorting/ROI. This happens in `computePriceSummaries()`.
@@ -644,7 +646,11 @@ The listings tables have a foreign key to `currencies` — queries join via `cur
   An unprefixed `max-w-lg` override does NOT win on desktop (`tailwind-merge` only replaces same-variant classes, so `sm:max-w-sm` survives and applies at >= 640px) and it clobbers the phone margin.
   Write `sm:max-w-lg` / `sm:max-w-xl`.
   Seven dialogs (Card Index create/edit, Pokémon and MTG index modals, both Match Review dialogs, Customers) shipped 128px+ narrower than declared because of this; the Customers dialog clipped its own fields once a wishlist item carried market tables.
-- **USD rendering** goes through `formatUsd` / `formatUsdWhole` (`lib/money.ts`), never `` `$${n}` `` - raw numbers print fractional cents (`$890.625`) and drop thousands separators.
+- **Money, ROI and dates render through shared formatters** - never `` `$${n}` ``, `toFixed`, `Math.round(roi * 100) / 100`, `toLocaleDateString()` or a raw `YYYY-MM-DD` column in JSX.
+  `lib/money.ts`: `formatUsd` ("$1,234.56", accounting; negatives as "-$12.34"), `formatUsdWhole` ("$1,235", compact summaries), `formatUsdCompact` (dense browse tables: whole above $100, cents below), `formatJpy` ("¥1,235"), `formatRoi` (market ROI in browse tables: "12.5%", em dash when unknown).
+  Theoretical / realized returns keep `formatRoiPct` (`theoretical-roi.ts`): signed, 1dp - a different meaning, deliberately a different look.
+  `lib/dates.ts`: `formatDate` ("Aug 16, 2026" / "2026年8月16日" - month names so day/month order cannot be misread across a JP-US business) and `formatDateTime` (adds a short local time, for ops surfaces); both take the app `language`, and both pin a bare `YYYY-MM-DD` to local midnight (`new Date("2026-08-16")` is UTC midnight and renders as the previous day in the Americas).
+  Before the 2026-08-18 unification the app had four USD formats, three JPY copies, six inline ROI formulas and dates rendered three ways.
 - **No `window.alert` / `window.confirm` for errors**: action failures render inline as `<p role="alert" className="text-xs text-destructive">` next to the control that failed (lot panel `lotError`, receipt uploaders `uploadError`, dialogs' `error`), cleared at the start of the next attempt.
   Browser alerts block the tab, are unstyled, and vanish without a trace; the last ones were removed 2026-08-18.
 - **Icons**: Import from `lucide-react`. Don't add other icon libraries.

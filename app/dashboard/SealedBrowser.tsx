@@ -57,6 +57,7 @@ import {
 } from "./owned-inventory";
 import { OwnedCountLine } from "./OwnedCountLine";
 
+import { formatRoi } from "@/lib/money";
 export default function SealedBrowser() {
   const { t } = useTranslation();
   const { language } = useLanguage();
@@ -397,7 +398,7 @@ export default function SealedBrowser() {
                   </div>
                   <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
                     <span className="text-muted-foreground">{t("column.roi")}</span>
-                    <span>{row.roi !== null ? `${Math.round(row.roi * 100) / 100}%` : "—"}</span>
+                    <span>{formatRoi(row.roi)}</span>
                   </div>
                 </CardFooter>
               </Card>

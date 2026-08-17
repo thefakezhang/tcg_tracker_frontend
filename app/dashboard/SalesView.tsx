@@ -11,6 +11,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { formatUsdWhole } from "@/lib/money";
+import { formatDate } from "@/lib/dates";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -66,7 +68,7 @@ async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncat
 }
 
 export default function SalesView() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const [leg, setLeg] = useState<"all" | "import" | "export">("all");
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(PAGE);
@@ -125,7 +127,7 @@ export default function SalesView() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-24">{t("trips.month")}</TableHead>
+            <TableHead className="w-24">{t("trips.date")}</TableHead>
             <TableHead>{t("trips.item")}</TableHead>
             <TableHead className="w-20">{t("trips.leg")}</TableHead>
             <TableHead className="w-12">{t("trips.qty")}</TableHead>
@@ -142,7 +144,7 @@ export default function SalesView() {
             return (
             <Fragment key={e.gid}>
             <TableRow className={isLot ? "cursor-pointer" : ""} onClick={isLot ? () => toggleExpand(e.gid) : undefined}>
-              <TableCell>{e.sold_at}</TableCell>
+              <TableCell>{formatDate(e.sold_at, language)}</TableCell>
               <TableCell className="truncate max-w-[280px]">
                 <span className="flex items-center gap-1">
                   {isLot && (open ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />)}
@@ -155,9 +157,9 @@ export default function SalesView() {
                 </Badge>
               </TableCell>
               <TableCell>{e.qty}</TableCell>
-              <TableCell>${e.gross.toFixed(0)}</TableCell>
-              <TableCell>${e.cogs.toFixed(0)}</TableCell>
-              <TableCell className={e.margin < 0 ? "text-destructive" : ""}>${e.margin.toFixed(0)}</TableCell>
+              <TableCell>{formatUsdWhole(e.gross)}</TableCell>
+              <TableCell>{formatUsdWhole(e.cogs)}</TableCell>
+              <TableCell className={e.margin < 0 ? "text-destructive" : ""}>{formatUsdWhole(e.margin)}</TableCell>
               <TableCell className="text-right">
                 {e.sale_group != null && (
                   <ReceiptsDialog ownerType={`sale:${e.game}`} ownerId={e.sale_group} />
@@ -170,9 +172,9 @@ export default function SalesView() {
                 <TableCell className="truncate max-w-[280px] pl-6">{s.name} ×{s.quantity}</TableCell>
                 <TableCell />
                 <TableCell>{s.quantity}</TableCell>
-                <TableCell>${Number(s.gross_usd).toFixed(0)}</TableCell>
-                <TableCell>${Number(s.cogs_usd).toFixed(0)}</TableCell>
-                <TableCell className={Number(s.margin_usd) < 0 ? "text-destructive" : ""}>${Number(s.margin_usd).toFixed(0)}</TableCell>
+                <TableCell>{formatUsdWhole(Number(s.gross_usd))}</TableCell>
+                <TableCell>{formatUsdWhole(Number(s.cogs_usd))}</TableCell>
+                <TableCell className={Number(s.margin_usd) < 0 ? "text-destructive" : ""}>{formatUsdWhole(Number(s.margin_usd))}</TableCell>
                 <TableCell />
               </TableRow>
             ))}
@@ -188,7 +190,7 @@ export default function SalesView() {
       <div className="flex items-center justify-between gap-2">
         {events.length > 0 && (
           <p className="text-sm font-medium">
-            {t("sales.totalSummary", { gross: total.gross.toFixed(0), margin: total.margin.toFixed(0) })}
+            {t("sales.totalSummary", { gross: formatUsdWhole(total.gross), margin: formatUsdWhole(total.margin) })}
           </p>
         )}
         {data?.truncated && (

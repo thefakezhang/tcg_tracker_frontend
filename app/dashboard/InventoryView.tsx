@@ -33,6 +33,7 @@ import {
   clearInventoryLineConsignment,
 } from "./inventory-consignment";
 import InventoryConsignmentSheet, { type RecordSaleInput } from "./InventoryConsignmentSheet";
+import { formatUsd } from "@/lib/money";
 import {
   buildPokemonInventoryShortageArgs,
   type InventoryReconciliationInput,
@@ -261,12 +262,12 @@ export default function InventoryView() {
     if (r.priced === 0) return <span className="text-xs text-muted-foreground">{t("roi.unpriced")}</span>;
     return (
       <div className="text-xs">
-        <div className="tabular-nums">${r.netUsd.toFixed(2)}</div>
+        <div className="tabular-nums">{formatUsd(r.netUsd)}</div>
         <div className={`tabular-nums ${roiToneClass(r.roiPct)}`}>{formatRoiPct(r.roiPct)}</div>
         {/* The gross market value behind the net, so the column can't be read
             as what the card sells for. */}
         <div className="text-muted-foreground">
-          {t("roi.marketGross", { usd: r.grossUsd.toFixed(2) })}
+          {t("roi.marketGross", { usd: formatUsd(r.grossUsd) })}
           {r.netPct != null && <> · {t("roi.netBasis", { pct: Math.round(r.netPct * 100) })}</>}
         </div>
         {r.unpriced > 0 && (
@@ -315,7 +316,7 @@ export default function InventoryView() {
         <span>{t("inventory.totalQty", { n: totals.qty })}</span>
         <span>{t("inventory.totalConsigned", { n: totals.consigned })}</span>
         <span>{t("inventory.totalAvailable", { n: totals.available })}</span>
-        <span>{t("inventory.totalCost", { usd: totals.cost.toFixed(2) })}</span>
+        <span>{t("inventory.totalCost", { usd: formatUsd(totals.cost) })}</span>
       </div>
 
       <TheoreticalRoiSummary
@@ -355,13 +356,13 @@ export default function InventoryView() {
                 </div>
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">{t("inventory.totalCostCol")}</span>
-                  <span>${Number(h.total_cost_usd).toFixed(2)}</span>
+                  <span>{formatUsd(Number(h.total_cost_usd))}</span>
                 </div>
                 {holdingRoi(h)?.priced ? (
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="text-muted-foreground">{t("roi.theoretical")}</span>
                     <span className="tabular-nums">
-                      ${holdingRoi(h)!.netUsd.toFixed(2)}{" "}
+                      {formatUsd(holdingRoi(h)!.netUsd)}{" "}
                       <span className={roiToneClass(holdingRoi(h)!.roiPct)}>
                         {formatRoiPct(holdingRoi(h)!.roiPct)}
                       </span>
@@ -402,8 +403,8 @@ export default function InventoryView() {
                 <TableCell>{h.qty_on_hand}</TableCell>
                 <TableCell className="text-violet-500">{h.qty_consigned}</TableCell>
                 <TableCell>{h.qty_available}</TableCell>
-                <TableCell>${Number(h.avg_cost_usd).toFixed(2)}</TableCell>
-                <TableCell>${Number(h.total_cost_usd).toFixed(2)}</TableCell>
+                <TableCell>{formatUsd(Number(h.avg_cost_usd))}</TableCell>
+                <TableCell>{formatUsd(Number(h.total_cost_usd))}</TableCell>
                 <TableCell>{renderRoiCell(holdingRoi(h))}</TableCell>
                 <TableCell>
                   <Button variant="outline" size="sm" className="min-h-11 sm:min-h-7" onClick={() => setSelectedKey(keyOf(h))}>

@@ -14,6 +14,8 @@ import { useOwnedInventoryCounts, ownedInventoryKey } from "./owned-inventory";
 import { OwnedCountLine } from "./OwnedCountLine";
 import CardDetailModal from "./CardDetailModal";
 
+import { formatRoi, formatUsd } from "@/lib/money";
+import { formatDate } from "@/lib/dates";
 interface WatchedDeal {
   rule_id: number;
   card_id: number;
@@ -117,8 +119,6 @@ export default function DecisionWatchlist() {
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, maxOwned, lowStockFirst, ownedCounts, cardData]);
-  const fmtRoi = (roi: number | null | undefined) =>
-    roi == null ? "-" : `${Math.round(roi * 100) / 100}%`;
 
   async function unwatch(ruleId: number) {
     setActionError(null);
@@ -192,7 +192,7 @@ export default function DecisionWatchlist() {
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <h3 className="truncate font-medium">{language === "en" && row.english_name ? row.english_name : row.regional_name}</h3>
-                  <p className="text-xs text-muted-foreground">{row.set_code} {row.card_number} · {row.psa_grade === 0 ? t("evidence.raw") : `PSA ${row.psa_grade}`} · {t("column.roi")} {fmtRoi(marketRoi)}</p>
+                  <p className="text-xs text-muted-foreground">{row.set_code} {row.card_number} · {row.psa_grade === 0 ? t("evidence.raw") : `PSA ${row.psa_grade}`} · {t("column.roi")} {formatRoi(marketRoi)}</p>
                   <OwnedCountLine owned={owned?.owned} incoming={owned?.incoming} avgCost={owned?.avgCost} totalCost={owned?.costBasis} consigned={owned?.consigned} />
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
@@ -210,8 +210,8 @@ export default function DecisionWatchlist() {
                 </div>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                <div><div className="text-[10px] uppercase text-muted-foreground">{t("decision.flagged")}</div><div className="font-medium">{price(row.flagged_price, row.flagged_currency)}</div><div className="text-[10px] text-muted-foreground">{new Date(row.decided_at).toLocaleDateString(language)}</div></div>
-                <div><div className="text-[10px] uppercase text-muted-foreground">{t("decision.now")}</div><div className="flex items-center gap-1 font-medium">{price(row.current_price, row.current_currency)}{movement != null && movement > 0 ? <ArrowUpRight className="size-3 text-emerald-500" /> : movement != null && movement < 0 ? <ArrowDownRight className="size-3 text-rose-500" /> : null}{fired && <span className="rounded-full bg-emerald-500/15 px-1.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">{t("decision.alertFired")}</span>}</div><div className="text-[10px] text-muted-foreground">{row.current_observed_on ? new Date(`${row.current_observed_on}T00:00:00`).toLocaleDateString(language) : "-"}</div></div>
+                <div><div className="text-[10px] uppercase text-muted-foreground">{t("decision.flagged")}</div><div className="font-medium">{price(row.flagged_price, row.flagged_currency)}</div><div className="text-[10px] text-muted-foreground">{formatDate(row.decided_at, language)}</div></div>
+                <div><div className="text-[10px] uppercase text-muted-foreground">{t("decision.now")}</div><div className="flex items-center gap-1 font-medium">{price(row.current_price, row.current_currency)}{movement != null && movement > 0 ? <ArrowUpRight className="size-3 text-emerald-500" /> : movement != null && movement < 0 ? <ArrowDownRight className="size-3 text-rose-500" /> : null}{fired && <span className="rounded-full bg-emerald-500/15 px-1.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">{t("decision.alertFired")}</span>}</div><div className="text-[10px] text-muted-foreground">{row.current_observed_on ? formatDate(`${row.current_observed_on}T00:00:00`, language) : "-"}</div></div>
               </div>
               {row.reason ? <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{row.reason}</p> : null}
               {sightings.length > 0 ? (
@@ -230,7 +230,7 @@ export default function DecisionWatchlist() {
                           </div>
                           <div className="shrink-0 text-right">
                             <div className="font-semibold tabular-nums">{price(Number(sighting.observed_price), sighting.currency)}</div>
-                            {sighting.currency !== "USD" ? <div className="text-[10px] text-muted-foreground">{t("decision.normalizedUsd", { value: `$${Number(sighting.price_usd).toFixed(2)}` })}</div> : null}
+                            {sighting.currency !== "USD" ? <div className="text-[10px] text-muted-foreground">{t("decision.normalizedUsd", { value: formatUsd(Number(sighting.price_usd)) })}</div> : null}
                           </div>
                         </div>
                         <div className="mt-1 flex items-center justify-between gap-2">

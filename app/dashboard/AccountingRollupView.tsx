@@ -5,6 +5,7 @@ import { Download } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
+import { formatUsd } from "@/lib/money";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -70,11 +71,11 @@ export default function AccountingRollupView() {
           {rows.map((r) => (
             <TableRow key={r.period_month}>
               <TableCell>{r.period_month.slice(0, 7)}</TableCell>
-              <TableCell className="text-right">${r.revenue_usd}</TableCell>
-              <TableCell className="text-right">${r.cogs_usd}</TableCell>
-              <TableCell className="text-right">${r.fees_usd}</TableCell>
-              <TableCell className="text-right">${r.expenses_usd}</TableCell>
-              <TableCell className={`text-right ${r.net_usd < 0 ? "text-destructive" : ""}`}>${r.net_usd}</TableCell>
+              <TableCell className="text-right">{formatUsd(Number(r.revenue_usd))}</TableCell>
+              <TableCell className="text-right">{formatUsd(Number(r.cogs_usd))}</TableCell>
+              <TableCell className="text-right">{formatUsd(Number(r.fees_usd))}</TableCell>
+              <TableCell className="text-right">{formatUsd(Number(r.expenses_usd))}</TableCell>
+              <TableCell className={`text-right ${r.net_usd < 0 ? "text-destructive" : ""}`}>{formatUsd(Number(r.net_usd))}</TableCell>
             </TableRow>
           ))}
           {rows.length === 0 && (

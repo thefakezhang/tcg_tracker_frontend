@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { formatUsd } from "@/lib/money";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -104,9 +105,9 @@ export default function ConsignmentControl({
         <div className="space-y-1">
           <div className="font-medium text-emerald-600 dark:text-emerald-400">
             {st.soldQty == null
-              ? t("consign.soldFor", { amount: `$${(st.saleUsd ?? 0).toFixed(2)}` })
-              : t("consign.soldCopiesFor", { qty: st.soldQty, amount: `$${(st.saleUsd ?? 0).toFixed(2)}` })}
-            {st.feeUsd ? ` (${t("consign.net", { amount: `$${((st.saleUsd ?? 0) - (st.feeUsd ?? 0)).toFixed(2)}` })})` : ""}
+              ? t("consign.soldFor", { amount: formatUsd(st.saleUsd ?? 0) })
+              : t("consign.soldCopiesFor", { qty: st.soldQty, amount: formatUsd(st.saleUsd ?? 0) })}
+            {st.feeUsd ? ` (${t("consign.net", { amount: formatUsd((st.saleUsd ?? 0) - (st.feeUsd ?? 0)) })})` : ""}
           </div>
           <AlertDialog>
             <AlertDialogTrigger render={<Button type="button" variant="outline" size="sm" className="min-h-11 sm:h-7" disabled={saving} />}>

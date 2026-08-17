@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Field, FieldGroup } from "@/components/ui/field";
+import { formatDate } from "@/lib/dates";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -1019,7 +1020,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
           <div className="flex items-center gap-1">
             <select value={hSortCol ?? "date"} onChange={(e) => setHSortCol(e.target.value as HCol)}
               className="min-h-11 rounded-md border bg-background px-2 text-xs sm:min-h-8" aria-label={t("trips.sortBy")}>
-              <option value="date">{t("trips.month")}</option>
+              <option value="date">{t("trips.date")}</option>
               <option value="name">{t("trips.item")}</option>
               <option value="qty">{t("trips.qty")}</option>
               <option value="gross">{t("trips.saleGross")}</option>
@@ -1054,7 +1055,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                   <div className="flex items-center gap-1 truncate text-sm font-medium">
                     {ev.isLot ? <Badge variant="secondary" className="text-[10px]">{t("trips.lotItems", { n: ev.items.length })}</Badge> : <span className="truncate">{ev.items[0].name}</span>}
                   </div>
-                  <div className="text-xs text-muted-foreground">{ev.sold_at} · ×{ev.qty}</div>
+                  <div className="text-xs text-muted-foreground">{formatDate(ev.sold_at, language)} · ×{ev.qty}</div>
                   <div className="mt-1 grid grid-cols-3 gap-1 text-xs tabular-nums">
                     <span title={t("trips.saleGross")}>{formatUsdWhole(ev.gross)}</span>
                     <span className="text-muted-foreground" title={t("trips.saleCogs")}>{formatUsdWhole(ev.cogs)}</span>
@@ -1101,7 +1102,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                     <div className="truncate text-sm font-medium">
                       {ev.isLot ? t("trips.lotItems", { n: ev.items.length }) : ev.items[0].name}
                     </div>
-                    <div className="text-xs text-muted-foreground">{ev.sold_at} · ×{ev.qty}</div>
+                    <div className="text-xs text-muted-foreground">{formatDate(ev.sold_at, language)} · ×{ev.qty}</div>
                   </div>
                   <div className="flex shrink-0 items-center gap-3 text-sm">
                     <span className="tabular-nums">{formatUsdWhole(ev.gross)}</span>
@@ -1186,7 +1187,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
               )}
               <CardContent className="space-y-1 p-2">
                 <div className="truncate text-xs font-medium">{s.name}</div>
-                <div className="text-xs text-muted-foreground">{s.sold_at} · ×{s.quantity}</div>
+                <div className="text-xs text-muted-foreground">{formatDate(s.sold_at, language)} · ×{s.quantity}</div>
                 <div className="flex justify-between text-[11px] tabular-nums text-muted-foreground">
                   <span title={t("trips.saleGross")}>{formatUsd(s.gross_usd)}</span>
                   <span title={t("trips.saleCogs")}>−{formatUsd(s.cogs_usd)}</span>
@@ -1205,7 +1206,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
         <TableHeader>
           <TableRow>
             {hHead("name", t("trips.item"))}
-            {hHead("date", t("trips.month"), "w-24")}
+            {hHead("date", t("trips.date"), "w-24")}
             {hHead("qty", t("trips.qty"), "w-12")}
             {hHead("gross", t("trips.saleGross"), "w-20")}
             {hHead("cogs", t("trips.saleCogs"), "w-20")}
@@ -1264,13 +1265,13 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                 <Field><Label>{t("trips.saleFx")}</Label>
                   <Input type="number" value={fx} onChange={(e) => setFx(e.target.value)} /></Field>
                 <p className="text-xs text-muted-foreground">
-                  {t("trips.usdComputed", { usd: (Number(proceeds) * Number(fx) || 0).toFixed(2) })}
+                  {t("trips.usdComputed", { usd: formatUsd(Number(proceeds) * Number(fx) || 0) })}
                 </p>
               </>
             )}
             <Field><Label>{t("trips.saleFees")}</Label>
               <Input type="number" value={fees} onChange={(e) => setFees(e.target.value)} /></Field>
-            <Field><Label>{t("trips.month")}</Label>
+            <Field><Label>{t("trips.date")}</Label>
               <Input type="date" value={soldAt} onChange={(e) => setSoldAt(e.target.value)} /></Field>
             <Field><Label>{t("trips.soldTo")}</Label>
               {customerSelect(saleCustomerId, setSaleCustomerId)}</Field>
@@ -1295,13 +1296,13 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                 <Field><Label>{t("trips.saleFx")}</Label>
                   <Input type="number" value={eFx} onChange={(e) => setEFx(e.target.value)} /></Field>
                 <p className="text-xs text-muted-foreground">
-                  {t("trips.usdComputed", { usd: (Number(eProceeds) * Number(eFx) || 0).toFixed(2) })}
+                  {t("trips.usdComputed", { usd: formatUsd(Number(eProceeds) * Number(eFx) || 0) })}
                 </p>
               </>
             )}
             <Field><Label>{t("trips.saleFees")}</Label>
               <Input type="number" value={eFees} onChange={(e) => setEFees(e.target.value)} /></Field>
-            <Field><Label>{t("trips.month")}</Label>
+            <Field><Label>{t("trips.date")}</Label>
               <Input type="date" value={eDate} onChange={(e) => setEDate(e.target.value)} /></Field>
             {Number(eQty) !== editSel?.quantity && (
               <p className="text-xs text-muted-foreground">{t("trips.editSaleQtyNote")}</p>
@@ -1325,13 +1326,13 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                 <Field><Label>{t("trips.saleFx")}</Label>
                   <Input type="number" value={eLotFx} onChange={(e) => setELotFx(e.target.value)} /></Field>
                 <p className="text-xs text-muted-foreground">
-                  {t("trips.usdComputed", { usd: (Number(eLotGross) * Number(eLotFx) || 0).toFixed(2) })}
+                  {t("trips.usdComputed", { usd: formatUsd(Number(eLotGross) * Number(eLotFx) || 0) })}
                 </p>
               </>
             )}
             <Field><Label>{t("trips.saleFees")}</Label>
               <Input type="number" value={eLotFees} onChange={(e) => setELotFees(e.target.value)} /></Field>
-            <Field><Label>{t("trips.month")}</Label>
+            <Field><Label>{t("trips.date")}</Label>
               <Input type="date" value={eLotDate} onChange={(e) => setELotDate(e.target.value)} /></Field>
             <p className="text-xs text-muted-foreground">{t("trips.editLotNote")}</p>
           </FieldGroup>
@@ -1420,15 +1421,15 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                 <Field><Label>{t("trips.saleFx")}</Label>
                   <Input type="number" value={lotFx} onChange={(e) => setLotFx(e.target.value)} /></Field>
                 <p className="text-xs text-muted-foreground">
-                  {t("trips.usdComputed", { usd: (Number(lotGross) * Number(lotFx) || 0).toFixed(2) })}
+                  {t("trips.usdComputed", { usd: formatUsd(Number(lotGross) * Number(lotFx) || 0) })}
                 </p>
               </>
             )}
             {lotAllocationMethod === "explicit_prices" && (
               <p className={`text-xs ${lotExplicitMatches ? "text-muted-foreground" : "text-destructive"}`}>
                 {lotExplicitMatches
-                  ? t("trips.explicitTotal", { total: lotExplicitTotal.toFixed(2) })
-                  : t("trips.explicitMismatch", { total: lotExplicitTotal.toFixed(2), gross: (Number(lotGross) || 0).toFixed(2) })}
+                  ? t("trips.explicitTotal", { total: formatUsd(lotExplicitTotal) })
+                  : t("trips.explicitMismatch", { total: formatUsd(lotExplicitTotal), gross: formatUsd(Number(lotGross) || 0) })}
               </p>
             )}
             <Field><Label>{t("trips.sharedExpense")}</Label>
@@ -1446,7 +1447,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                 <Input type="number" min={0} step="0.01" value={lotFees} onChange={(e) => setLotFees(e.target.value)} className="min-h-11" />
               </div>
             </Field>
-            <Field><Label>{t("trips.month")}</Label>
+            <Field><Label>{t("trips.date")}</Label>
               <Input type="date" value={lotDate} onChange={(e) => setLotDate(e.target.value)} /></Field>
             <Field><Label>{t("trips.soldTo")}</Label>
               {customerSelect(lotCustomerId, setLotCustomerId)}</Field>

@@ -49,6 +49,8 @@ import FullyLoadedCostLabel from "./FullyLoadedCostLabel";
 import ConsignmentControl from "./ConsignmentControl";
 import { type InventoryEconomicsRow } from "../inventory-economics";
 
+import { formatUsd } from "@/lib/money";
+import { formatDate } from "@/lib/dates";
 type CardGame = "pokemon" | "mtg";
 type LotItemCatalog = CardGame | "pokemon_sealed";
 type Leg = "import" | "export";
@@ -490,7 +492,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     }
     return (
       <div className="text-xs">
-        <div className="tabular-nums">${Number(r.exit_net_usd).toFixed(2)}</div>
+        <div className="tabular-nums">{formatUsd(Number(r.exit_net_usd))}</div>
         <div className={`tabular-nums ${roiToneClass(r.theoretical_roi_pct)}`}>
           {formatRoiPct(r.theoretical_roi_pct)}
         </div>
@@ -498,13 +500,13 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
             never mistaken for what the card sells at. */}
         {r.exit_unit_usd != null && (
           <div className="text-muted-foreground">
-            {t("roi.marketGross", { usd: (Number(r.exit_unit_usd) * r.qty_on_hand).toFixed(2) })}
+            {t("roi.marketGross", { usd: formatUsd(Number(r.exit_unit_usd) * r.qty_on_hand) })}
             {r.net_pct != null && <> · {t("roi.netBasis", { pct: Math.round(r.net_pct * 100) })}</>}
           </div>
         )}
         {r.qty_on_hand > 1 && (
           <div className="text-muted-foreground">
-            ${(Number(r.exit_net_usd) / r.qty_on_hand).toFixed(2)} {t("trips.landedCostPerUnit")}
+            {formatUsd(Number(r.exit_net_usd) / r.qty_on_hand)} {t("trips.landedCostPerUnit")}
           </div>
         )}
         {r.below_cost && (
@@ -548,10 +550,10 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     const marginPct = gross > 0 ? (profit / gross) * 100 : null;
     return (
       <div className="text-[11px] text-muted-foreground">
-        {t("trips.soldFor")}: <span className="tabular-nums text-foreground">${gross.toFixed(2)}</span>
+        {t("trips.soldFor")}: <span className="tabular-nums text-foreground">{formatUsd(gross)}</span>
         {" · "}
         <span className={`tabular-nums ${profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
-          {profit >= 0 ? "+" : ""}${profit.toFixed(2)}{marginPct != null ? ` (${marginPct.toFixed(0)}%)` : ""}
+          {profit >= 0 ? "+" : ""}{formatUsd(profit)}{marginPct != null ? ` (${marginPct.toFixed(0)}%)` : ""}
         </span>
       </div>
     );
@@ -935,11 +937,11 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
             onClick={() => setSelectedLot(l.lot_id)}
             className={`min-h-11 rounded-md border px-3 py-2 text-left text-sm ${selectedLot === l.lot_id ? "border-primary bg-accent" : "hover:bg-accent/50"}`}
           >
-            <div className="font-medium">{l.shop_label || l.acquired_at}</div>
+            <div className="font-medium">{l.shop_label || formatDate(l.acquired_at, language)}</div>
             <div className="text-xs text-muted-foreground">
               {l.total_cost_usd == null
                 ? t("trips.lotTotalFromItems")
-                : `${l.orig_currency} ${l.total_cost_orig} → $${l.total_cost_usd}`}
+                : `${l.orig_currency} ${l.total_cost_orig} → ${formatUsd(Number(l.total_cost_usd))}`}
               {l.lines_imported ? ` · ${t("trips.finalized")}` : ""}
             </div>
           </button>
@@ -955,28 +957,28 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
         <div className="space-y-3 rounded-md border p-3">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <div className="font-medium">{lot.shop_label || lot.acquired_at}</div>
+              <div className="font-medium">{lot.shop_label || formatDate(lot.acquired_at, language)}</div>
               <div className="text-xs text-muted-foreground">
                 {t("trips.directPurchase")}{" "}
                 {lot.total_cost_usd == null
                   ? t("trips.lotTotalFromItems")
-                  : `$${Number(lot.total_cost_usd).toFixed(2)}`}
+                  : formatUsd(Number(lot.total_cost_usd))}
                 {" · "}
-                {t("trips.acquisitionCosts")} ${acquisitionCostUsd.toFixed(2)}
+                {t("trips.acquisitionCosts")} {formatUsd(acquisitionCostUsd)}
                 {" · "}
-                {t("trips.landedCost")} ${landedLotUsd.toFixed(2)}
+                {t("trips.landedCost")} {formatUsd(landedLotUsd)}
                 {landedPerUnitUsd != null && (
                   <>
                     {" · "}
-                    ${landedPerUnitUsd.toFixed(2)} {t("trips.landedCostPerUnit")}
+                    {formatUsd(landedPerUnitUsd)} {t("trips.landedCostPerUnit")}
                   </>
                 )}
                 {loadedPerUnitUsd != null && (
                   <>
                     {" · "}
-                    <FullyLoadedCostLabel /> ${lotLoadedUsd.toFixed(2)}
+                    <FullyLoadedCostLabel /> {formatUsd(lotLoadedUsd)}
                     {" · "}
-                    ${loadedPerUnitUsd.toFixed(2)} {t("trips.landedCostPerUnit")}
+                    {formatUsd(loadedPerUnitUsd)} {t("trips.landedCostPerUnit")}
                   </>
                 )}
               </div>
@@ -1031,7 +1033,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                 </p>
               </div>
               <span className="text-sm tabular-nums">
-                ${acquisitionCostUsd.toFixed(2)}
+                {formatUsd(acquisitionCostUsd)}
               </span>
             </div>
 
@@ -1100,7 +1102,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                     />
                   )}
                   <span className="text-right tabular-nums">
-                    ${Number(cost.amount_usd).toFixed(2)}
+                    {formatUsd(Number(cost.amount_usd))}
                   </span>
                   {!lot.lines_imported && (
                     <Button
@@ -1197,13 +1199,11 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                 </Button>
                 <p className="text-xs text-muted-foreground sm:col-span-6">
                   {t("trips.costUsdPreview", {
-                    usd: (
-                      (
-                        costCategory === "discount_refund" ? -1 : 1
-                      )
+                    usd: formatUsd(
+                      (costCategory === "discount_refund" ? -1 : 1)
                       * (Number(costAmount) || 0)
-                      * (Number(costFx) || 0)
-                    ).toFixed(2),
+                      * (Number(costFx) || 0),
+                    ),
                   })}
                 </p>
               </div>
@@ -1329,7 +1329,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                       <span>×{ln.quantity}</span>
                       <span className="text-right font-medium">
                         {lot.lines_imported
-                          ? `${t("trips.landedCost")} $${Number(ln.allocated_cost_usd).toFixed(2)}`
+                          ? `${t("trips.landedCost")} ${formatUsd(Number(ln.allocated_cost_usd))}`
                           : (ln.price_override_usd != null
                               ? `${toNative(ln.price_override_usd)} ${lotCcy}`
                               : "-")}
@@ -1337,9 +1337,9 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                     </div>
                     {lot.lines_imported && (
                       <div className="text-right text-[11px] tabular-nums text-muted-foreground">
-                        ${Number(ln.direct_purchase_cost_usd).toFixed(2)}
+                        {formatUsd(Number(ln.direct_purchase_cost_usd))}
                         {" + "}
-                        ${Number(ln.acquisition_cost_alloc_usd).toFixed(2)}
+                        {formatUsd(Number(ln.acquisition_cost_alloc_usd))}
                       </div>
                     )}
                     {lot.lines_imported && lineSold(ln) && (
@@ -1351,7 +1351,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                       <div className="flex items-center justify-between gap-1 text-[11px]">
                         <span className="text-muted-foreground">{t("roi.theoretical")}</span>
                         <span className="tabular-nums">
-                          ${Number(lineRoi(ln)!.exit_net_usd).toFixed(2)}{" "}
+                          {formatUsd(Number(lineRoi(ln)!.exit_net_usd))}{" "}
                           <span className={roiToneClass(lineRoi(ln)!.theoretical_roi_pct)}>
                             {formatRoiPct(lineRoi(ln)!.theoretical_roi_pct)}
                           </span>
@@ -1486,20 +1486,20 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                   </TableCell>
                   {lot.lines_imported && (
                     <>
-                      <TableCell>${Number(ln.direct_purchase_cost_usd).toFixed(2)}</TableCell>
-                      <TableCell>${Number(ln.acquisition_cost_alloc_usd).toFixed(2)}</TableCell>
+                      <TableCell>{formatUsd(Number(ln.direct_purchase_cost_usd))}</TableCell>
+                      <TableCell>{formatUsd(Number(ln.acquisition_cost_alloc_usd))}</TableCell>
                       <TableCell>
-                        ${Number(ln.allocated_cost_usd).toFixed(2)}
+                        {formatUsd(Number(ln.allocated_cost_usd))}
                         {ln.quantity > 1 && (
                           <div className="text-xs text-muted-foreground">
-                            ${(Number(ln.allocated_cost_usd) / ln.quantity).toFixed(2)} {t("trips.landedCostPerUnit")}
+                            {formatUsd(Number(ln.allocated_cost_usd) / ln.quantity)} {t("trips.landedCostPerUnit")}
                           </div>
                         )}
                         {ln.loadedCostUsd != null && Number(ln.overheadAllocUsd ?? 0) > 0 && (
                           <div className="text-xs text-muted-foreground">
-                            <FullyLoadedCostLabel /> ${Number(ln.loadedCostUsd).toFixed(2)}
+                            <FullyLoadedCostLabel /> {formatUsd(Number(ln.loadedCostUsd))}
                             {ln.quantity > 1 && (
-                              <> · ${(Number(ln.loadedCostUsd) / ln.quantity).toFixed(2)} {t("trips.landedCostPerUnit")}</>
+                              <> · {formatUsd(Number(ln.loadedCostUsd) / ln.quantity)} {t("trips.landedCostPerUnit")}</>
                             )}
                           </div>
                         )}
@@ -1567,7 +1567,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
             <p className="text-xs text-muted-foreground">
               {cTotal.trim() === ""
                 ? t("trips.lotTotalOptionalHint")
-                : t("trips.usdComputed", { usd: (Number(cTotal) * Number(cFx) || 0).toFixed(2) })}
+                : t("trips.usdComputed", { usd: formatUsd(Number(cTotal) * Number(cFx) || 0) })}
             </p>
           </FieldGroup>
           <DialogFooter>
@@ -1623,7 +1623,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
               <Input value={salePlatform} onChange={(e) => setSalePlatform(e.target.value)} placeholder="eBay, mercari…" /></Field>
             <p className="text-xs text-muted-foreground">
               {t("trips.saleTotal", { total: cart.reduce((s, c) => s + (Number(c.price) || 0), 0).toFixed(2), ccy: saleCcy })}
-              {saleCcy.trim().toUpperCase() !== "USD" && ` · ${t("trips.usdComputed", { usd: (cart.reduce((s, c) => s + (Number(c.price) || 0), 0) * (Number(saleFx) || 1)).toFixed(2) })}`}
+              {saleCcy.trim().toUpperCase() !== "USD" && ` · ${t("trips.usdComputed", { usd: formatUsd(cart.reduce((s, c) => s + (Number(c.price) || 0), 0) * (Number(saleFx) || 1)) })}`}
             </p>
             {saleError && <p className="text-xs text-destructive">{saleError}</p>}
           </FieldGroup>

@@ -9,6 +9,7 @@ import { useSupabaseQuery, QueryError } from "./use-query";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 
+import { formatUsdWhole } from "@/lib/money";
 // Reach out (docs/customers_crm.md, Phase 3): the money view. Reads
 // customer_reachout_v - wishlist items that are in your inventory right now -
 // grouped by customer, so it answers "who can I sell to today, from stock."
@@ -234,11 +235,11 @@ export default function ReachOutView() {
                         <span title={t("reachout.youHold")}>×{r.qty_on_hand}</span>
                         {r.max_price_usd != null && (
                           <span className="text-foreground" title={t("reachout.theyPay")}>
-                            ≤${Number(r.max_price_usd).toFixed(0)}
+                            ≤{formatUsdWhole(Number(r.max_price_usd))}
                           </span>
                         )}
                         {r.avg_cost_usd != null && (
-                          <span title={t("reachout.yourCost")}>${Number(r.avg_cost_usd).toFixed(0)}</span>
+                          <span title={t("reachout.yourCost")}>{formatUsdWhole(Number(r.avg_cost_usd))}</span>
                         )}
                       </span>
                     </div>

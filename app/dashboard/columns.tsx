@@ -16,6 +16,7 @@ import { UidChip } from "./UidChip";
 import { MarketEvidenceBadge } from "./MarketEvidenceCallout";
 import type { MarketEvidence } from "./market-evidence";
 
+import { formatJpy, formatRoi, formatUsd, formatUsdCompact } from "@/lib/money";
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
   const { displayCurrency, convertPrice } = useCurrency();
   if (!entry) return <span>{"\u2014"}</span>;
@@ -46,17 +47,14 @@ export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }:
 }
 
 
-function formatRoi(roi: number | null): string {
-  if (roi === null) return "\u2014";
-  return `${Math.round(roi * 100) / 100}%`;
-}
-
+// Null-tolerant wrappers over the shared formatters: the browse tables show
+// "-" for a value the pipeline has not produced.
 function usd(value: number | null | undefined): string {
-  return value == null ? "-" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value);
+  return value == null ? "-" : formatUsd(value);
 }
 
 function jpy(value: number | null | undefined): string {
-  return value == null ? "-" : `¥${Math.round(value).toLocaleString()}`;
+  return value == null ? "-" : formatJpy(value);
 }
 
 function signedPercent(value: number | null | undefined): string {
@@ -305,7 +303,7 @@ export function createColumns(
           : undefined;
         return (
           <div className="space-y-1">
-            <div>{v == null ? "\u2014" : v >= 100 ? `$${Math.round(v).toLocaleString()}` : `$${v.toFixed(2)}`}</div>
+            <div>{v == null ? "\u2014" : formatUsdCompact(v)}</div>
             <MarketEvidenceBadge evidence={evidence} />
           </div>
         );
@@ -503,7 +501,7 @@ export function TargetPriceCell({ value }: { value: number | null }) {
     const converted = convertPrice(value, "USD");
     return <span>{converted.symbol}{converted.price}</span>;
   }
-  return <span>${value.toFixed(2)}</span>;
+  return <span>{formatUsd(value)}</span>;
 }
 
 type SealedExtras = {

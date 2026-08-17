@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { Badge } from "@/components/ui/badge";
 
+import { formatUsdWhole } from "@/lib/money";
 // Trip reach-out (docs/customers_crm.md, Phase 4): the "when traveling" panel.
 // customer_trip_match_v = customers whose active wishlist matches what you bought /
 // are buying on THIS trip, plus follow-ups due by the trip's end.
@@ -124,7 +125,7 @@ export default function TripReachoutTab({ tripId, tripEnd }: { tripId: number; t
                         <span title={t("tripReach.buying")}>×{r.qty_on_trip}</span>
                         {r.max_price_usd != null && (
                           <span className="text-foreground" title={t("reachout.theyPay")}>
-                            ≤${Number(r.max_price_usd).toFixed(0)}
+                            ≤{formatUsdWhole(Number(r.max_price_usd))}
                           </span>
                         )}
                       </span>

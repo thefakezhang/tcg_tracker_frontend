@@ -9,6 +9,7 @@ import { useSupabaseQuery, QueryError } from "./use-query";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 
+import { formatUsdWhole } from "@/lib/money";
 // Pre-trip shopping list (docs/customers_crm.md, Phase 5): the "what should I
 // hunt for on this trip" view. Reads customer_shopping_list_v — every card
 // that at least one customer wants via a criteria row, aggregated across
@@ -153,7 +154,7 @@ export default function ShoppingListView() {
                     </Badge>
                   </td>
                   <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-xs">
-                    {r.top_ceiling_usd != null ? `≤$${Number(r.top_ceiling_usd).toFixed(0)}` : "—"}
+                    {r.top_ceiling_usd != null ? `≤${formatUsdWhole(Number(r.top_ceiling_usd))}` : "—"}
                   </td>
                 </tr>
               ))}

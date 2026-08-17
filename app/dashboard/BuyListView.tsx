@@ -29,6 +29,7 @@ import ExportBuyListModal from "./ExportBuyListModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatRoi } from "@/lib/money";
 import {
   Card,
   CardAction,
@@ -485,9 +486,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
                   {t("column.roi")}
                 </span>
                 <span>
-                  {row.roi !== null
-                    ? `${Math.round(row.roi * 100) / 100}%`
-                    : "\u2014"}
+                  {formatRoi(row.roi)}
                 </span>
               </div>
               <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">

@@ -8,12 +8,13 @@ import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue, fetchLocationMap, fetchRateMap, fetchConditionsCache } from "./use-card-data";
 import { ListingTable, type DetailListing } from "./CardDetailModal";
-import { toUsd } from "@/lib/money";
+import { formatUsdWhole, toUsd } from "@/lib/money";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { formatDate } from "@/lib/dates";
 import {
   Dialog,
   DialogContent,
@@ -508,7 +509,7 @@ function CustomerDetail({
   onOpenChange: (o: boolean) => void;
   onChanged: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const [form, setForm] = useState<Customer | null>(customer);
   const [handleRows, setHandleRows] = useState<[string, string][]>([]);
   const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
@@ -806,7 +807,7 @@ function CustomerDetail({
                       )}
                       {w.max_price_usd != null && (
                         <span className="shrink-0 text-xs text-muted-foreground">
-                          ≤${Number(w.max_price_usd).toFixed(0)}
+                          ≤{formatUsdWhole(Number(w.max_price_usd))}
                         </span>
                       )}
                       <Badge variant={w.intent === "committed" ? "default" : "outline"} className="shrink-0 text-[10px]">
@@ -849,7 +850,7 @@ function CustomerDetail({
                       {w.label ?? `#${w.card_id ?? w.product_id}`}
                     </div>
                     {w.max_price_usd != null && (
-                      <div className="text-[10px] text-muted-foreground">≤${Number(w.max_price_usd).toFixed(0)}</div>
+                      <div className="text-[10px] text-muted-foreground">≤{formatUsdWhole(Number(w.max_price_usd))}</div>
                     )}
                     <div className="text-[10px] text-muted-foreground">
                       {t(`customers.intent.${w.intent}` as never)} ×{w.target_quantity}
@@ -903,7 +904,7 @@ function CustomerDetail({
                       <Badge variant={c.intent === "committed" ? "default" : "outline"} className="text-[10px]">
                         {t(`customers.intent.${c.intent}` as never)} ×{c.target_quantity_total}
                       </Badge>
-                      {c.intent_expires_at && <Badge variant="outline" className="text-[10px]">{t("customers.intentExpires")} {c.intent_expires_at.slice(0, 10)}</Badge>}
+                      {c.intent_expires_at && <Badge variant="outline" className="text-[10px]">{t("customers.intentExpires")} {formatDate(c.intent_expires_at, language)}</Badge>}
                     </div>
                   </div>
                   <Button
@@ -933,7 +934,7 @@ function CustomerDetail({
               <History className="size-3.5" /> {t("customers.purchases")}
               {purchases.length > 0 && (
                 <span className="text-xs font-normal text-muted-foreground">
-                  · {t("customers.totalSpent").replace("{v}", `$${totalSpent.toFixed(0)}`)}
+                  · {t("customers.totalSpent").replace("{v}", formatUsdWhole(totalSpent))}
                 </span>
               )}
             </Label>
@@ -948,7 +949,7 @@ function CustomerDetail({
                       {purchaseLabel(p)}
                       {p.quantity > 1 && <span className="text-muted-foreground"> ×{p.quantity}</span>}
                     </span>
-                    <span className="shrink-0 text-xs tabular-nums">${Number(p.gross_usd).toFixed(0)}</span>
+                    <span className="shrink-0 text-xs tabular-nums">{formatUsdWhole(Number(p.gross_usd))}</span>
                   </div>
                 ))}
               </div>

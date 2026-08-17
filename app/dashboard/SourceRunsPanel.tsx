@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
+import { formatDateTime } from "@/lib/dates";
 import {
   capabilityState,
   classifySnapshotError,
@@ -106,12 +107,12 @@ function ReadinessExplanation({ readiness }: { readiness: ModeReadiness }) {
 }
 
 function LoadIssueBanner({ issue, staleAt, retry }: { issue: SnapshotIssue; staleAt?: string; retry: () => void }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   return (
     <section className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3" aria-live="polite">
       <p className="text-sm font-medium">{t(`runs.issue.${issue}.title` as never)}</p>
       <p className="text-muted-foreground mt-1 text-xs">{t(`runs.issue.${issue}.body` as never)}</p>
-      {staleAt ? <p className="text-muted-foreground mt-1 text-xs">{t("runs.showingPrior", { time: new Date(staleAt).toLocaleString() })}</p> : null}
+      {staleAt ? <p className="text-muted-foreground mt-1 text-xs">{t("runs.showingPrior", { time: formatDateTime(staleAt, language) })}</p> : null}
       <Button type="button" variant="outline" size="sm" className="mt-3 min-h-11" onClick={retry}>
         {t("runs.retry")}
       </Button>
@@ -127,7 +128,7 @@ function HostCard({ host, onToggle, toggling }: {
   onToggle: (host: SourceRunHost) => void;
   toggling: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const [armed, setArmed] = useState(false);
   const lanes = ["http", "browser", "session"] as const;
   return (
@@ -216,7 +217,7 @@ function HostCard({ host, onToggle, toggling }: {
         </div>
       </div>
       <p className="text-muted-foreground mt-2 text-[10px]">
-        {t("runs.heartbeatAt", { time: new Date(host.last_heartbeat_at).toLocaleString() })}
+        {t("runs.heartbeatAt", { time: formatDateTime(host.last_heartbeat_at, language) })}
       </p>
     </article>
   );
@@ -233,7 +234,7 @@ function RunEvidence({
   cancelling: boolean;
   onCancel: (run: SourceRun) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const seconds = durationSeconds(run, now);
   return (
     <article className="min-w-0 rounded-md border p-3" data-testid={`source-run-${run.run_id}`}>
@@ -241,7 +242,7 @@ function RunEvidence({
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">{run.job} · {t(`runs.mode.${run.mode}` as never)}</p>
           <p className="text-muted-foreground mt-0.5 text-[11px]">
-            {new Date(run.requested_at).toLocaleString()}
+            {formatDateTime(run.requested_at, language)}
             {seconds != null ? ` · ${t("runs.duration", { seconds })}` : ""}
           </p>
         </div>
@@ -266,8 +267,8 @@ function RunEvidence({
         {t("runs.attemptCount", { count: run.claim_attempt_count })}
         {run.exit_code != null ? ` · ${t("runs.exitCode", { code: run.exit_code })}` : ""}
       </p>
-      {run.state === "claimed" && run.claimed_at ? <p className="text-muted-foreground mt-1 text-[11px]">{t("runs.claimedAt", { time: new Date(run.claimed_at).toLocaleString() })}</p> : null}
-      {run.state === "running" && run.started_at ? <p className="text-muted-foreground mt-1 text-[11px]">{t("runs.startedAt", { time: new Date(run.started_at).toLocaleString() })}</p> : null}
+      {run.state === "claimed" && run.claimed_at ? <p className="text-muted-foreground mt-1 text-[11px]">{t("runs.claimedAt", { time: formatDateTime(run.claimed_at, language) })}</p> : null}
+      {run.state === "running" && run.started_at ? <p className="text-muted-foreground mt-1 text-[11px]">{t("runs.startedAt", { time: formatDateTime(run.started_at, language) })}</p> : null}
       {run.state === "error" && run.started_at ? (
         <p className="text-destructive mt-2 flex items-start gap-1.5 text-xs">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
@@ -308,7 +309,7 @@ function RunEvidence({
 
 /** Registry-driven whole-source run control with truthful host readiness. */
 export function SourceRunsPanel() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const [snapshot, setSnapshot] = useState<SourceRunSnapshot>(EMPTY_SNAPSHOT);
   const [hasSnapshot, setHasSnapshot] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -499,7 +500,7 @@ export function SourceRunsPanel() {
                   <p className="text-muted-foreground mt-1 text-[11px]">
                     {t("runs.taskLatest", {
                       state: task.latest_run.state,
-                      time: task.latest_run.finished_at ? new Date(task.latest_run.finished_at).toLocaleString() : "",
+                      time: task.latest_run.finished_at ? formatDateTime(task.latest_run.finished_at, language) : "",
                     })}
                   </p>
                 ) : null}

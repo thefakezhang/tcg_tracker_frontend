@@ -15,6 +15,7 @@ import {
 } from "./tcgplayer-collection-csv";
 import { matchCollectionRow, type MatchableHolding } from "./tcgplayer-collection-match";
 
+import { formatUsd } from "@/lib/money";
 export interface TcgImportEntry {
   holdingKey: string;
   qty: number;
@@ -164,7 +165,7 @@ export default function TcgplayerImportDialog({ open, onOpenChange, holdings, on
                           <div className="text-muted-foreground">{[row.set, row.number, row.condition].filter(Boolean).join(" · ")}</div>
                         </TableCell>
                         <TableCell className="tabular-nums">{row.quantity}</TableCell>
-                        <TableCell className="tabular-nums">{row.priceUsd == null ? "-" : `$${row.priceUsd.toFixed(2)}`}</TableCell>
+                        <TableCell className="tabular-nums">{row.priceUsd == null ? "-" : formatUsd(row.priceUsd)}</TableCell>
                         <TableCell className="text-xs">
                           {match.status === "matched" && (
                             <span className="text-emerald-600 dark:text-emerald-400">
