@@ -429,7 +429,7 @@ function MtgCardModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{isCreate ? t("cardIndex.createTitleMtg") : t("cardIndex.editTitleMtg")}</DialogTitle>
         </DialogHeader>

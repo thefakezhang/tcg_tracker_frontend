@@ -299,6 +299,10 @@ Rules:
 
 Prior incidents, both silent: the match-review queue fetched 2,907 anchor rows for a 500-card page and rendered 61% of the page as if those cards had **no** external links (a curator would create a duplicate of a card that already exists); the Collectr import chunked by 200 card_numbers, which fan out to thousands of defs, so a truncated candidate list made the matcher fall through to `cands[0]` and write the **wrong** card_id into lot lines.
 
+Sweep baseline (2026-08-18): every raw `.from()` read in `app/` and `lib/` was classified against live row counts.
+Data-scaled reads now page: Sales tab holdings and the full sales ledger (the ledger used to stop silently at 300, so the history search box could not find older sales), customer wishlist market listings (up to ~50 listings per card), owned-inventory counts and card observations on the browse page, lot overhead allocations.
+The raw reads that remain are either reference tables that cannot approach the cap by construction (conditions, locations, exchange rates, trips, buylists, exit profiles, `pokemon_sets`) or scoped to one entity (one card's holdings/observations, one lot, one plan, one trip); when adding a read of either kind, still ask which shape it is.
+
 `lib/supabase/select-all.test.ts` is the regression guard (`npm test`). Its fake emulates the clamp; keep the "cap smaller than PAGE" case.
 
 ### Price Display & Currency Conversion
@@ -636,6 +640,11 @@ The listings tables have a foreign key to `currencies` — queries join via `cur
   Pure logic, component behavior, and data-access helpers stay in this suite.
   Cross-boundary CUJ acceptance lives under `scripts/e2e` and must use the shared Docker and browser lock plus literal-loopback authentication guards.
 - **shadcn/ui components** live in `components/ui/`. These are generated files — customize only when needed, prefer wrapping over modifying.
+- **Dialog widths are `sm:`-prefixed**: the base `DialogContent` carries `sm:max-w-sm` (384px) plus a phone `max-w-[calc(100%-2rem)]`.
+  An unprefixed `max-w-lg` override does NOT win on desktop (`tailwind-merge` only replaces same-variant classes, so `sm:max-w-sm` survives and applies at >= 640px) and it clobbers the phone margin.
+  Write `sm:max-w-lg` / `sm:max-w-xl`.
+  Seven dialogs (Card Index create/edit, Pokémon and MTG index modals, both Match Review dialogs, Customers) shipped 128px+ narrower than declared because of this; the Customers dialog clipped its own fields once a wishlist item carried market tables.
+- **USD rendering** goes through `formatUsd` / `formatUsdWhole` (`lib/money.ts`), never `` `$${n}` `` - raw numbers print fractional cents (`$890.625`) and drop thousands separators.
 - **Icons**: Import from `lucide-react`. Don't add other icon libraries.
 - **Type safety**: Translation keys are type-checked. Supabase queries return `unknown` records that are explicitly cast in mapping functions.
 

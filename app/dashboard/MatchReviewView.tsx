@@ -1236,7 +1236,7 @@ function MatchToExisting({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader><DialogTitle>{alias ? t("review.aliasTitle") : t("review.matchTitle")}</DialogTitle></DialogHeader>
         {candidate && (
           <p className="text-xs text-muted-foreground">
@@ -1312,7 +1312,7 @@ function CreateFromCandidate({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader><DialogTitle>{t("review.createTitle")}</DialogTitle></DialogHeader>
         {candidate && (
           <p className="text-xs text-muted-foreground">

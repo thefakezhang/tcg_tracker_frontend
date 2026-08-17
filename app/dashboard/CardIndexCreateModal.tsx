@@ -238,7 +238,7 @@ export default function CardIndexCreateModal({
         if (!o) reset();
       }}
     >
-      <DialogContent className="max-w-xl">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{t("cardIndex.createTitle")}</DialogTitle>
         </DialogHeader>
