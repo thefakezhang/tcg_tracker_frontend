@@ -531,12 +531,16 @@ function PokemonCardModal({
     if (!q || !card || mergeTarget) { setMergeResults([]); return; }
     const timer = setTimeout(async () => {
       const supabase = createClient();
-      const { data } = await supabase
+      // Same resolver as the index search box (lib/card-search): name / set /
+      // number text, the displayed 8-hex uid prefix or a full uuid, and exact
+      // platform external ids - a merge target is most often picked by uid.
+      const extIds = await externalIdMatches(supabase, "pokemon_external_identifiers", "card_id", q);
+      let mq = supabase
         .from("pokemon_card_definitions")
         .select("card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, image_url")
-        .or(`regional_name.ilike.%${q}%,english_name.ilike.%${q}%`)
-        .neq("card_uid", card.card_uid)
-        .limit(8);
+        .neq("card_uid", card.card_uid);
+      for (const f of smartSearchFilters(q, ["regional_name", "english_name", "set_code", "card_number"], "card_uid", "card_id", extIds)) mq = mq.or(f);
+      const { data } = await mq.limit(8);
       setMergeResults(((data as IndexCard[]) ?? []).map((c) => ({ ...c, links: [] })));
     }, 250);
     return () => clearTimeout(timer);

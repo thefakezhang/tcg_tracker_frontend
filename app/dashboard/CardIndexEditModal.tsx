@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Trash2, Plus, GitMerge } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { useTranslation } from "@/lib/i18n";
 import {
   Dialog,
@@ -97,12 +98,15 @@ export default function CardIndexEditModal({
     }
     const handle = setTimeout(async () => {
       const supabase = createClient();
-      const { data } = await supabase
+      // Same resolver as the sealed index search box (lib/card-search): name /
+      // set text, the displayed uid prefix or a full uuid, exact external ids.
+      const extIds = await externalIdMatches(supabase, "pokemon_sealed_external_identifiers", "product_id", q);
+      let mq = supabase
         .from("pokemon_sealed_products")
         .select("product_id, name, set_code")
-        .ilike("name", `%${q.replace(/[%,]/g, " ")}%`)
-        .neq("product_id", product.product_id)
-        .limit(6);
+        .neq("product_id", product.product_id);
+      for (const f of smartSearchFilters(q, ["name", "english_name", "set_code"], "product_uid", "product_id", extIds)) mq = mq.or(f);
+      const { data } = await mq.limit(6);
       setMergeResults((data as { product_id: number; name: string; set_code: string }[]) ?? []);
     }, 300);
     return () => clearTimeout(handle);
