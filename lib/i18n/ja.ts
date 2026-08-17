@@ -904,6 +904,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "aopSets.colCards": "枚数",
   "aopSets.colCode": "当方コード",
   "aopSets.colBind": "紐付け",
+  "aopSets.spans": "当方の{n}セットにまたがる",
   "aopSets.none": "未対応",
   "aopSets.bind": "紐付け",
   "matches.count": "{n}件のマッチ",
