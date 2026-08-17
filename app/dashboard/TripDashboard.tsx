@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pencil, Trash2, Loader2, Flag } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
 import { useTrips } from "./TripContext";
+import { readUrlParam, writeUrlParam } from "./UrlStateSync";
 import ImportTab from "./trip/ImportTab";
 import SalesTab from "./trip/SalesTab";
 import ExportTab from "./trip/ExportTab";
@@ -37,7 +38,10 @@ export default function TripDashboard({ tripId }: { tripId: number }) {
 
   const [editOpen, setEditOpen] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
-  const [tab, setTab] = useState("import");
+  // The tab is a leaf URL param (?tab=...) so a trip's Sales/Watchlist/... can
+  // be linked and survives reload; UrlStateSync drops it when the trip changes.
+  const [tab, setTab] = useState(() => readUrlParam("tab") ?? "import");
+  useEffect(() => { writeUrlParam("tab", tab === "import" ? null : tab); }, [tab]);
   const [name, setName] = useState("");
   const [startedAt, setStartedAt] = useState("");
   const [endedAt, setEndedAt] = useState("");
