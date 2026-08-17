@@ -167,6 +167,7 @@ export default function PurchasePlannerView() {
   const [allocationLine, setAllocationLine] = useState<PurchasePlanLine | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [disposition, setDisposition] = useState<DemandCoverage | null>(null);
+  const [lineError, setLineError] = useState<string | null>(null);
   const { data, error, isLoading, retry } = useSupabaseQuery(["purchase-planner", planId], () => fetchPlannerData(planId));
 
   useEffect(() => {
@@ -182,8 +183,9 @@ export default function PurchasePlannerView() {
 
   async function removeLine(lineId: number) {
     if (!window.confirm(t("purchasePlanner.removeLineConfirm"))) return;
+    setLineError(null);
     const { error: deleteError } = await createClient().from("purchase_plan_lines").delete().eq("plan_line_id", lineId);
-    if (deleteError) window.alert(deleteError.message);
+    if (deleteError) setLineError(deleteError.message);
     else retry();
   }
 
@@ -261,6 +263,7 @@ export default function PurchasePlannerView() {
               <TabsTrigger value="customers">{t("purchasePlanner.customersTab")}</TabsTrigger>
             </TabsList>
             <TabsContent value="cards" className="mt-2">
+              {lineError && <p role="alert" className="mb-2 text-sm text-destructive">{lineError}</p>}
               <PlanLines
                 lines={lines}
                 allocations={allocations}

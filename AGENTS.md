@@ -645,6 +645,8 @@ The listings tables have a foreign key to `currencies` — queries join via `cur
   Write `sm:max-w-lg` / `sm:max-w-xl`.
   Seven dialogs (Card Index create/edit, Pokémon and MTG index modals, both Match Review dialogs, Customers) shipped 128px+ narrower than declared because of this; the Customers dialog clipped its own fields once a wishlist item carried market tables.
 - **USD rendering** goes through `formatUsd` / `formatUsdWhole` (`lib/money.ts`), never `` `$${n}` `` - raw numbers print fractional cents (`$890.625`) and drop thousands separators.
+- **No `window.alert` / `window.confirm` for errors**: action failures render inline as `<p role="alert" className="text-xs text-destructive">` next to the control that failed (lot panel `lotError`, receipt uploaders `uploadError`, dialogs' `error`), cleared at the start of the next attempt.
+  Browser alerts block the tab, are unstyled, and vanish without a trace; the last ones were removed 2026-08-18.
 - **Icons**: Import from `lucide-react`. Don't add other icon libraries.
 - **Type safety**: Translation keys are type-checked. Supabase queries return `unknown` records that are explicitly cast in mapping functions.
 

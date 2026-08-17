@@ -44,6 +44,7 @@ export default function ReceiptsDialog({
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [count, setCount] = useState<number | null>(initialCount ?? null);
   const [busy, setBusy] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   // Adopt a refreshed batch count while closed; once open, our own fetch wins.
   useEffect(() => {
@@ -72,19 +73,22 @@ export default function ReceiptsDialog({
   async function upload(files: FileList | null) {
     if (!files || files.length === 0) return;
     setBusy(true);
+    setUploadError(null);
     const supabase = createClient();
     const prefix = ownerType.replace(/[^a-z0-9]+/gi, "_");
+    const failed: string[] = [];
     for (const file of Array.from(files)) {
       const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
       const path = `${prefix}/${ownerId}/${crypto.randomUUID()}.${ext}`;
       const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, file, { contentType: file.type || "image/jpeg" });
-      if (upErr) { alert(upErr.message); continue; }
+      if (upErr) { failed.push(`${file.name}: ${upErr.message}`); continue; }
       const { error: insErr } = await supabase
         .from("receipts")
         .insert({ owner_type: ownerType, owner_id: ownerId, storage_path: path, original_name: file.name });
-      if (insErr) alert(insErr.message);
+      if (insErr) failed.push(`${file.name}: ${insErr.message}`);
     }
     setBusy(false);
+    if (failed.length) setUploadError(failed.join(" · "));
     await fetchReceipts();
   }
 
@@ -118,6 +122,7 @@ export default function ReceiptsDialog({
               {t("trips.uploadReceipt")}
               <input type="file" accept={ACCEPT} multiple className="hidden" disabled={busy} onChange={(e) => upload(e.target.files)} />
             </label>
+            {uploadError && <p role="alert" className="text-xs text-destructive">{uploadError}</p>}
             {receipts.length === 0 ? (
               <p className="text-xs text-muted-foreground">{t("trips.noReceipts")}</p>
             ) : (
