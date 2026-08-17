@@ -9,6 +9,8 @@ import {
 } from "./sell-lot-draft";
 import { Undo2, ImageOff, ChevronUp, ChevronDown, ChevronsUpDown, Loader2, Pencil } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAll, selectAllByIds } from "@/lib/supabase/select-all";
+import { formatUsd, formatUsdWhole } from "@/lib/money";
 import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
 import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
@@ -200,18 +202,29 @@ export default function SalesTab({ tripId }: { tripId: number }) {
 
   const fetchHoldings = useCallback(async () => {
     const supabase = createClient();
-    const { data } = await supabase
-      .from("inventory_holdings_v")
-      .select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd")
-      .order("total_cost_usd", { ascending: false });
-    const rows = ((data as Omit<Holding, "imageUrl" | "englishName">[]) ?? []).map((h) => ({ ...h, imageUrl: null as string | null, englishName: null as string | null }));
+    // Whole-inventory read: row count is a function of the business, not of a
+    // page size we control, so page past the PostgREST cap (selectAll) instead
+    // of silently losing every holding past row 1000. InventoryView reads the
+    // same view the same way; the value-desc order is applied client-side
+    // because selectAll needs a stable key order to page correctly.
+    const holdingsData = await selectAll<Omit<Holding, "imageUrl" | "englishName">>(
+      () => supabase
+        .from("inventory_holdings_v")
+        .select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd"),
+      ["game", "item_type", "leg", "card_id", "product_id", "condition_id", "psa_grade", "sealed_condition", "variant_edition"],
+    );
+    const rows = holdingsData
+      .map((h) => ({ ...h, imageUrl: null as string | null, englishName: null as string | null }))
+      .sort((a, b) => Number(b.total_cost_usd) - Number(a.total_cost_usd));
     // batch-fetch image_url (+ english_name for pokemon) for grid view
     const ids = (g: string, key: "card_id" | "product_id") => rows.filter((r) => r.game === g).map((r) => r[key]!).filter(Boolean);
     const fetchDefs = async (table: string, idCol: string, list: number[], cols: string) => {
       const m = new Map<number, { image_url: string | null; english_name?: string | null }>();
       if (list.length === 0) return m;
-      const { data: defs } = await supabase.from(table).select(cols).in(idCol, list);
-      for (const d of (defs as unknown as Record<string, unknown>[]) ?? []) m.set(d[idCol] as number, { image_url: (d.image_url as string) ?? null, english_name: (d.english_name as string) ?? null });
+      const defs = await selectAllByIds<Record<string, unknown>>(
+        list, [idCol], (chunk) => supabase.from(table).select(cols).in(idCol, chunk),
+      );
+      for (const d of defs) m.set(d[idCol] as number, { image_url: (d.image_url as string) ?? null, english_name: (d.english_name as string) ?? null });
       return m;
     };
     const [pkm, mtg, sealed] = await Promise.all([
@@ -231,12 +244,19 @@ export default function SalesTab({ tripId }: { tripId: number }) {
   // old 3-table + joins assembly. Reverted sales are dropped (revert undoes them).
   const fetchSales = useCallback(async () => {
     const supabase = createClient();
-    const { data, error } = await supabase
-      .from("sales_ledger_v")
-      .select("sale_id, kind, game, sale_group, card_id, product_id, condition_id, psa_grade, sealed_condition, variant_edition, regional_name, set_code, card_number, misc_info, image_url, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted, customer_id")
-      .order("sold_at", { ascending: false }).limit(300);
-    if (error) { setSales([]); return; }
-    const rows = (data as LedgerSaleRow[]) ?? [];
+    // The full ledger, paged: the history search box searches this list, so a
+    // silent cap (this used to be .limit(300)) made older sales unfindable.
+    // Newest-first is applied client-side; selectAll pages on a stable key.
+    let rows: LedgerSaleRow[];
+    try {
+      rows = await selectAll<LedgerSaleRow>(
+        () => supabase
+          .from("sales_ledger_v")
+          .select("sale_id, kind, game, sale_group, card_id, product_id, condition_id, psa_grade, sealed_condition, variant_edition, regional_name, set_code, card_number, misc_info, image_url, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted, customer_id"),
+        ["game", "sale_id"],
+      );
+    } catch { setSales([]); return; }
+    rows.sort((a, b) => (a.sold_at < b.sold_at ? 1 : a.sold_at > b.sold_at ? -1 : 0));
     const grouped = [...new Set(
       rows
         .map((row) => row.sale_group)
@@ -244,13 +264,10 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     )];
     const sourceFactGroups = new Set<number>();
     if (grouped.length > 0) {
-      const { data: headers } = await supabase
-        .from("sale_lots")
-        .select("sale_group")
-        .in("sale_group", grouped);
-      for (const header of (headers as { sale_group: number }[] | null) ?? []) {
-        sourceFactGroups.add(Number(header.sale_group));
-      }
+      const headers = await selectAllByIds<{ sale_group: number }>(
+        grouped, ["sale_group"], (chunk) => supabase.from("sale_lots").select("sale_group").in("sale_group", chunk),
+      );
+      for (const header of headers) sourceFactGroups.add(Number(header.sale_group));
     }
     const live: SaleRow[] = rows
       .filter((r) => !r.is_reverted)
@@ -937,7 +954,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                     <Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge>
                     <span className="truncate">{h.item_type === "sealed" ? `${h.sealed_condition}/${h.variant_edition}` : h.psa_grade ? `PSA ${h.psa_grade}` : ""}</span>
                   </div>
-                  <div className="flex items-center justify-between text-xs"><span>×{h.qty_on_hand}</span><span>${h.avg_cost_usd}</span></div>
+                  <div className="flex items-center justify-between text-xs"><span>×{h.qty_on_hand}</span><span>{formatUsd(Number(h.avg_cost_usd))}</span></div>
                   <Button size="sm" variant="outline" className="min-h-11 w-full sm:min-h-7" onClick={() => openSale(h)}>{t("trips.recordSale")}</Button>
                 </CardContent>
               </Card>
@@ -975,7 +992,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
               </TableCell>
               <TableCell><Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge></TableCell>
               <TableCell>{h.qty_on_hand}</TableCell>
-              <TableCell>${h.avg_cost_usd}</TableCell>
+              <TableCell>{formatUsd(Number(h.avg_cost_usd))}</TableCell>
               <TableCell>
                 <Button size="sm" variant="outline" onClick={() => openSale(h)}>{t("trips.recordSale")}</Button>
               </TableCell>
@@ -1039,9 +1056,9 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                   </div>
                   <div className="text-xs text-muted-foreground">{ev.sold_at} · ×{ev.qty}</div>
                   <div className="mt-1 grid grid-cols-3 gap-1 text-xs tabular-nums">
-                    <span title={t("trips.saleGross")}>${ev.gross.toFixed(0)}</span>
-                    <span className="text-muted-foreground" title={t("trips.saleCogs")}>${ev.cogs.toFixed(0)}</span>
-                    <span className={ev.margin < 0 ? "text-destructive" : ""} title={t("trips.saleMargin")}>${ev.margin.toFixed(0)} · {ev.marginPct}%</span>
+                    <span title={t("trips.saleGross")}>{formatUsdWhole(ev.gross)}</span>
+                    <span className="text-muted-foreground" title={t("trips.saleCogs")}>{formatUsdWhole(ev.cogs)}</span>
+                    <span className={ev.margin < 0 ? "text-destructive" : ""} title={t("trips.saleMargin")}>{formatUsdWhole(ev.margin)} · {ev.marginPct}%</span>
                   </div>
                   <div className="mt-1 flex items-center gap-1">
                     {!ev.reverted && !ev.sourceFactLot && (
@@ -1062,9 +1079,9 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                     <div key={s.key} className="flex items-center justify-between gap-2 text-[11px]">
                       <span className="truncate text-muted-foreground">{s.name} ×{s.quantity}</span>
                       <span className="flex shrink-0 items-center gap-2 tabular-nums">
-                        <span>${s.gross_usd}</span>
-                        <span className="text-muted-foreground">${s.cogs_usd}</span>
-                        <span className={s.margin_usd < 0 ? "text-destructive" : ""}>${s.margin_usd}</span>
+                        <span>{formatUsd(s.gross_usd)}</span>
+                        <span className="text-muted-foreground">{formatUsd(s.cogs_usd)}</span>
+                        <span className={s.margin_usd < 0 ? "text-destructive" : ""}>{formatUsd(s.margin_usd)}</span>
                       </span>
                     </div>
                   ))}
@@ -1087,8 +1104,8 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                     <div className="text-xs text-muted-foreground">{ev.sold_at} · ×{ev.qty}</div>
                   </div>
                   <div className="flex shrink-0 items-center gap-3 text-sm">
-                    <span className="tabular-nums">${ev.gross.toFixed(0)}</span>
-                    <span className={`tabular-nums ${ev.margin < 0 ? "text-destructive" : ""}`}>${ev.margin.toFixed(0)} · {ev.marginPct}%</span>
+                    <span className="tabular-nums">{formatUsdWhole(ev.gross)}</span>
+                    <span className={`tabular-nums ${ev.margin < 0 ? "text-destructive" : ""}`}>{formatUsdWhole(ev.margin)} · {ev.marginPct}%</span>
                     {ev.reverted ? (
                       <span className="text-xs text-muted-foreground">{t("trips.reverted")}</span>
                     ) : (
@@ -1133,9 +1150,9 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                     <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
                       <span>{t("trips.item")}</span>
                       <span className="flex shrink-0 items-center gap-3">
-                        <span className="w-14 text-right">{t("trips.saleGross")}</span>
-                        <span className="w-14 text-right">{t("trips.saleCogs")}</span>
-                        <span className="w-20 text-right">{t("trips.saleMargin")}</span>
+                        <span className="w-16 text-right">{t("trips.saleGross")}</span>
+                        <span className="w-16 text-right">{t("trips.saleCogs")}</span>
+                        <span className="w-28 text-right">{t("trips.saleMargin")}</span>
                         <span className="w-7" />
                       </span>
                     </div>
@@ -1143,9 +1160,9 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                       <div key={s.key} className="flex items-center justify-between gap-2 text-xs">
                         <span className="truncate text-muted-foreground">{s.name} ×{s.quantity}</span>
                         <span className="flex shrink-0 items-center gap-3 tabular-nums">
-                          <span className="w-14 text-right">${s.gross_usd}</span>
-                          <span className="w-14 text-right text-muted-foreground">${s.cogs_usd}</span>
-                          <span className={`w-20 text-right ${s.margin_usd < 0 ? "text-destructive" : ""}`}>${s.margin_usd} · {s.marginPct}%</span>
+                          <span className="w-16 whitespace-nowrap text-right">{formatUsd(s.gross_usd)}</span>
+                          <span className="w-16 whitespace-nowrap text-right text-muted-foreground">{formatUsd(s.cogs_usd)}</span>
+                          <span className={`w-28 whitespace-nowrap text-right ${s.margin_usd < 0 ? "text-destructive" : ""}`}>{formatUsd(s.margin_usd)} · {s.marginPct}%</span>
                           {voidButton(s)}
                         </span>
                       </div>
@@ -1171,11 +1188,11 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                 <div className="truncate text-xs font-medium">{s.name}</div>
                 <div className="text-xs text-muted-foreground">{s.sold_at} · ×{s.quantity}</div>
                 <div className="flex justify-between text-[11px] tabular-nums text-muted-foreground">
-                  <span title={t("trips.saleGross")}>${s.gross_usd}</span>
-                  <span title={t("trips.saleCogs")}>−${s.cogs_usd}</span>
+                  <span title={t("trips.saleGross")}>{formatUsd(s.gross_usd)}</span>
+                  <span title={t("trips.saleCogs")}>−{formatUsd(s.cogs_usd)}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
-                  <span className={s.margin_usd < 0 ? "text-destructive" : ""}>${s.margin_usd} · {s.marginPct}%</span>
+                  <span className={s.margin_usd < 0 ? "text-destructive" : ""}>{formatUsd(s.margin_usd)} · {s.marginPct}%</span>
                   {voidButton(s)}
                 </div>
               </CardContent>
@@ -1203,9 +1220,9 @@ export default function SalesTab({ tripId }: { tripId: number }) {
               <TableCell className="truncate max-w-[240px]">{s.name}</TableCell>
               <TableCell>{s.sold_at}</TableCell>
               <TableCell>{s.quantity}</TableCell>
-              <TableCell>${s.gross_usd}</TableCell>
-              <TableCell>${s.cogs_usd}</TableCell>
-              <TableCell className={s.margin_usd < 0 ? "text-destructive" : ""}>${s.margin_usd}</TableCell>
+              <TableCell>{formatUsd(s.gross_usd)}</TableCell>
+              <TableCell>{formatUsd(s.cogs_usd)}</TableCell>
+              <TableCell className={s.margin_usd < 0 ? "text-destructive" : ""}>{formatUsd(s.margin_usd)}</TableCell>
               <TableCell className={s.margin_usd < 0 ? "text-destructive" : ""}>{s.marginPct}%</TableCell>
               <TableCell>{voidButton(s)}</TableCell>
             </TableRow>

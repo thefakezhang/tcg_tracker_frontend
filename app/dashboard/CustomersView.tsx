@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Users, Search, Plus, Trash2, X, Star, Bell, History, Filter, LayoutGrid, List, ImageOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAllByIds } from "@/lib/supabase/select-all";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue, fetchLocationMap, fetchRateMap, fetchConditionsCache } from "./use-card-data";
@@ -234,44 +235,46 @@ async function searchCatalog(
 async function resolveWishlist(items: WishlistItem[]): Promise<WishlistItem[]> {
   if (!items.length) return items;
   const supabase = createClient();
+  // Keyed by game AND id: card_id spaces overlap across the pokemon / mtg
+  // catalogs, so a bare id would let one game's card label the other's item.
   const meta = new Map<string, { label: string; image_url: string | null }>();
-  const singleIds = items.filter((i) => i.card_id).map((i) => i.card_id as number);
-  const sealedIds = items.filter((i) => i.product_id).map((i) => i.product_id as number);
-  if (singleIds.length) {
-    for (const table of ["pokemon_card_definitions", "mtg_card_definitions_v"]) {
-      const { data } = await supabase
-        .from(table)
-        .select("card_id, regional_name, english_name, set_code, card_number, misc_info, image_url")
-        .in("card_id", singleIds);
-      for (const r of (data ?? []) as {
-        card_id: number;
-        regional_name: string;
-        english_name: string | null;
-        set_code: string;
-        card_number: string;
-        misc_info?: string | null;
-        image_url: string | null;
-      }[]) {
-        meta.set(`c${r.card_id}`, {
-          label: `${r.english_name || r.regional_name} · ${r.set_code} ${r.card_number}${
-            r.misc_info && r.misc_info !== "UNKNOWN" ? ` (${r.misc_info})` : ""
-          }`,
-          image_url: r.image_url,
-        });
-      }
-    }
+  const idsFor = (game: string, key: "card_id" | "product_id") =>
+    items.filter((i) => i.game === game && i[key]).map((i) => i[key] as number);
+  const suffix = (r: { set_code: string; card_number: string; misc_info?: string | null }) =>
+    ` · ${r.set_code} ${r.card_number}${r.misc_info && r.misc_info !== "UNKNOWN" ? ` (${r.misc_info})` : ""}`;
+  const pk = idsFor("pokemon", "card_id");
+  if (pk.length) {
+    const rows = await selectAllByIds<{
+      card_id: number; regional_name: string; english_name: string | null;
+      set_code: string; card_number: string; misc_info?: string | null; image_url: string | null;
+    }>(pk, ["card_id"], (chunk) => supabase
+      .from("pokemon_card_definitions")
+      .select("card_id, regional_name, english_name, set_code, card_number, misc_info, image_url")
+      .in("card_id", chunk));
+    for (const r of rows) meta.set(`pokemon:${r.card_id}`, { label: `${r.english_name || r.regional_name}${suffix(r)}`, image_url: r.image_url });
   }
-  if (sealedIds.length) {
-    const { data } = await supabase
-      .from("pokemon_sealed_products")
-      .select("product_id, name, set_code, image_url")
-      .in("product_id", sealedIds);
-    for (const r of (data ?? []) as { product_id: number; name: string; set_code: string; image_url: string | null }[]) {
-      meta.set(`p${r.product_id}`, { label: r.name, image_url: r.image_url });
-    }
+  // The MTG view carries local_name, not english_name - the same shape split the
+  // wishlist search box already makes; a shared select 400s on this table.
+  const mtg = idsFor("mtg", "card_id");
+  if (mtg.length) {
+    const rows = await selectAllByIds<{
+      card_id: number; regional_name: string; local_name: string | null;
+      set_code: string; card_number: string; misc_info?: string | null; image_url: string | null;
+    }>(mtg, ["card_id"], (chunk) => supabase
+      .from("mtg_card_definitions_v")
+      .select("card_id, regional_name, local_name, set_code, card_number, misc_info, image_url")
+      .in("card_id", chunk));
+    for (const r of rows) meta.set(`mtg:${r.card_id}`, { label: `${r.regional_name}${r.local_name ? ` / ${r.local_name}` : ""}${suffix(r)}`, image_url: r.image_url });
+  }
+  const sealed = idsFor("pokemon_sealed", "product_id");
+  if (sealed.length) {
+    const rows = await selectAllByIds<{ product_id: number; name: string; set_code: string; image_url: string | null }>(
+      sealed, ["product_id"], (chunk) => supabase.from("pokemon_sealed_products").select("product_id, name, set_code, image_url").in("product_id", chunk),
+    );
+    for (const r of rows) meta.set(`pokemon_sealed:${r.product_id}`, { label: r.name, image_url: r.image_url });
   }
   return items.map((i) => {
-    const m = i.card_id ? meta.get(`c${i.card_id}`) : meta.get(`p${i.product_id}`);
+    const m = meta.get(`${i.game}:${i.card_id ?? i.product_id}`);
     return { ...i, label: m?.label, image_url: m?.image_url ?? null };
   });
 }
@@ -301,20 +304,29 @@ async function fetchWishlistListings(items: WishlistItem[]): Promise<Map<string,
     last_updated: (r.last_updated as string | null) ?? null,
   });
   const cardCols = "card_id, location_id, price_type, price, currency, condition, psa_grade, listing_url, last_updated, currencies(symbol)";
+  // One wishlist item fans out to every listing of that card (up to ~50 today),
+  // so these reads page past the PostgREST cap; a truncated read would show a
+  // wanted card as "no market" when it has one.
   if (pk.length) {
-    const { data } = await supabase.from("pokemon_market_listings").select(cardCols).in("card_id", pk);
-    for (const r of (data ?? []) as Record<string, unknown>[]) add(`pokemon:${r.card_id}`, toRow(r));
+    const rows = await selectAllByIds<Record<string, unknown>>(
+      pk, ["listing_id"], (chunk) => supabase.from("pokemon_market_listings").select(cardCols).in("card_id", chunk),
+    );
+    for (const r of rows) add(`pokemon:${r.card_id}`, toRow(r));
   }
   if (mtg.length) {
-    const { data } = await supabase.from("mtg_market_listings").select(cardCols).in("card_id", mtg);
-    for (const r of (data ?? []) as Record<string, unknown>[]) add(`mtg:${r.card_id}`, toRow(r));
+    const rows = await selectAllByIds<Record<string, unknown>>(
+      mtg, ["listing_id"], (chunk) => supabase.from("mtg_market_listings").select(cardCols).in("card_id", chunk),
+    );
+    for (const r of rows) add(`mtg:${r.card_id}`, toRow(r));
   }
   if (sealed.length) {
-    const { data } = await supabase
-      .from("pokemon_sealed_market_listings")
-      .select("product_id, location_id, price_type, price, currency, listing_url, last_updated, currencies(symbol)")
-      .in("product_id", sealed);
-    for (const r of (data ?? []) as Record<string, unknown>[]) add(`pokemon_sealed:${r.product_id}`, toRow(r));
+    const rows = await selectAllByIds<Record<string, unknown>>(
+      sealed, ["listing_id"], (chunk) => supabase
+        .from("pokemon_sealed_market_listings")
+        .select("product_id, location_id, price_type, price, currency, listing_url, last_updated, currencies(symbol)")
+        .in("product_id", chunk),
+    );
+    for (const r of rows) add(`pokemon_sealed:${r.product_id}`, toRow(r));
   }
   return map;
 }
@@ -363,12 +375,17 @@ function MarketBreakdown({
   const buy = rows.filter((r) => r.price_type === "Buy").sort((a, b) => usd(b) - usd(a)).map((r) => toDetailListing(r, locations, conditionsMap));
   if (sell.length === 0 && buy.length === 0) return null;
   return (
-    <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
-      <div>
+    // min-w-0 on the grid and both columns: a grid column's default min-width is
+    // its content's intrinsic width, so two listing tables side by side would
+    // otherwise force the whole dialog body wider than the dialog and clip every
+    // field in it. With min-w-0 each table scrolls inside its own column
+    // (CardDetailModal's ListingTables uses the same shape).
+    <div className="mt-1.5 grid min-w-0 gap-2 sm:grid-cols-2">
+      <div className="min-w-0">
         <div className="mb-1 text-[11px] font-medium">{t("modal.sell")}</div>
         <ListingTable listings={sell} conditionHeader={t("modal.condition")} t={t} />
       </div>
-      <div>
+      <div className="min-w-0">
         <div className="mb-1 text-[11px] font-medium">{t("modal.buy")}</div>
         <ListingTable listings={buy} conditionHeader={t("modal.condition")} t={t} />
       </div>
@@ -636,7 +653,7 @@ function CustomerDetail({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("customers.detailTitle")}</DialogTitle>
         </DialogHeader>

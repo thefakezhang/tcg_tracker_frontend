@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAllByIds } from "@/lib/supabase/select-all";
 
 // The operator's own on-the-ground observations for a card, aggregated: how many
 // were logged, and the cheapest one (its original price + USD-normalized value).
@@ -31,15 +32,18 @@ export function useCardObservations(
     if (game !== "pokemon" || ids.length === 0) { setMap(new Map()); return; }
     let cancelled = false;
     const supabase = createClient();
-    void supabase
-      .from("trip_observations_v")
-      .select("card_id, price_usd, observed_price, currency, observed_at")
-      .in("card_id", ids)
-      .then(({ data, error }) => {
+    // One card -> many sightings: page past the cap so a card's cheapest / latest
+    // observation can't vanish once the trip log grows.
+    void selectAllByIds<Record<string, unknown>>(
+      ids, ["sighting_id"], (chunk) => supabase
+        .from("trip_observations_v")
+        .select("card_id, price_usd, observed_price, currency, observed_at")
+        .in("card_id", chunk),
+    ).then(
+      (data) => {
         if (cancelled) return;
-        if (error) { setMap(new Map()); return; }
         const m = new Map<string, CardObservation>();
-        for (const r of (data as Record<string, unknown>[] | null) ?? []) {
+        for (const r of data) {
           const k = String(r.card_id);
           const cur = m.get(k) ?? { count: 0, cheapestUsd: null, cheapestOrig: null, cheapestCurrency: null, lastAt: null };
           cur.count += 1;
@@ -54,7 +58,9 @@ export function useCardObservations(
           m.set(k, cur);
         }
         setMap(m);
-      });
+      },
+      () => { if (!cancelled) setMap(new Map()); },
+    );
     return () => { cancelled = true; };
   }, [game, idsKey]);
 

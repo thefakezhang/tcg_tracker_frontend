@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { selectAllByIds } from "@/lib/supabase/select-all";
 
 export type OwnedInventoryGame = "pokemon" | "mtg" | "pokemon_sealed";
 
@@ -130,26 +131,26 @@ export function useOwnedInventoryCounts(
     }
 
     const supabase = createClient();
-    void supabase
-      .from("owned_inventory_counts_v")
-      .select(
-        "game, card_id, product_id, sealed_condition, variant_edition, qty_owned, qty_incoming, cost_basis_usd, avg_cost_usd, qty_consigned, qty_available",
-      )
-      .eq("game", game)
-      .in(idColumn, ids)
-      .then(({ data, error }) => {
+    // One identity fans out to a row per (sealed_condition, variant_edition), so
+    // page past the cap: a truncated read renders an owned card as not owned.
+    void selectAllByIds<OwnedInventoryCountRow>(
+      ids,
+      ["card_id", "product_id", "sealed_condition", "variant_edition"],
+      (chunk) => supabase
+        .from("owned_inventory_counts_v")
+        .select(
+          "game, card_id, product_id, sealed_condition, variant_edition, qty_owned, qty_incoming, cost_basis_usd, avg_cost_usd, qty_consigned, qty_available",
+        )
+        .eq("game", game)
+        .in(idColumn, chunk),
+    ).then(
+      (rows) => { if (!cancelled) setCounts(ownedInventoryCountMap(rows)); },
+      (error) => {
         if (cancelled) return;
-        if (error) {
-          console.error("Failed to load owned inventory counts:", error);
-          setCounts(new Map());
-          return;
-        }
-        setCounts(
-          ownedInventoryCountMap(
-            (data as OwnedInventoryCountRow[] | null) ?? [],
-          ),
-        );
-      });
+        console.error("Failed to load owned inventory counts:", error);
+        setCounts(new Map());
+      },
+    );
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps

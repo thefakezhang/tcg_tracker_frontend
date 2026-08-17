@@ -27,6 +27,7 @@ export default function LotReceipts({ lotId }: { lotId: number }) {
   const { t } = useTranslation();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [busy, setBusy] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const fetchReceipts = useCallback(async () => {
     const supabase = createClient();
@@ -48,18 +49,21 @@ export default function LotReceipts({ lotId }: { lotId: number }) {
   async function upload(files: FileList | null) {
     if (!files || files.length === 0) return;
     setBusy(true);
+    setUploadError(null);
     const supabase = createClient();
+    const failed: string[] = [];
     for (const file of Array.from(files)) {
       const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
       const path = `${lotId}/${crypto.randomUUID()}.${ext}`;
       const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, file, { contentType: file.type || "image/jpeg" });
-      if (upErr) { alert(upErr.message); continue; }
+      if (upErr) { failed.push(`${file.name}: ${upErr.message}`); continue; }
       const { error: insErr } = await supabase
         .from("acquisition_lot_receipts")
         .insert({ lot_id: lotId, storage_path: path, original_name: file.name });
-      if (insErr) alert(insErr.message);
+      if (insErr) failed.push(`${file.name}: ${insErr.message}`);
     }
     setBusy(false);
+    if (failed.length) setUploadError(failed.join(" · "));
     await fetchReceipts();
   }
 
@@ -80,6 +84,7 @@ export default function LotReceipts({ lotId }: { lotId: number }) {
           <input type="file" accept={ACCEPT} multiple className="hidden" disabled={busy} onChange={(e) => upload(e.target.files)} />
         </label>
       </div>
+      {uploadError && <p role="alert" className="text-xs text-destructive">{uploadError}</p>}
       {receipts.length === 0 ? (
         <p className="text-xs text-muted-foreground">{t("trips.noReceipts")}</p>
       ) : (

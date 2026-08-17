@@ -196,6 +196,11 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const [salePlatform, setSalePlatform] = useState("");
   const [saleFees, setSaleFees] = useState("");
   const [saleError, setSaleError] = useState<string | null>(null);
+  // Lot-panel action failures (add line / cost edits / finalize / unfinalize /
+  // delete) render inline under the lot header instead of a browser alert(),
+  // and clear on the next action or when another lot is selected.
+  const [lotError, setLotError] = useState<string | null>(null);
+  useEffect(() => { setLotError(null); }, [selectedLot]);
 
   const gameForLine = (ln: LotLine): string =>
     ln.kind === "sealed" ? "pokemon_sealed" : ln.table === "mtg_lot_lines" ? "mtg" : "pokemon";
@@ -373,18 +378,21 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     // view only returns finalized JP lines, so non-JP or draft lots get nothing
     // and the loaded figure simply doesn't render. Keyed by (game, line_id)
     // because line_id is only unique within its own table.
-    const { data: ovh } = await supabase
-      .from("trip_overhead_alloc_v")
-      .select("game, line_id, overhead_alloc_usd, loaded_cost_usd")
-      .eq("lot_id", lotId);
-    if (ovh && ovh.length) {
+    const ovh = await selectAll<{ game: string; line_id: number; overhead_alloc_usd: number; loaded_cost_usd: number }>(
+      () => supabase
+        .from("trip_overhead_alloc_v")
+        .select("game, line_id, overhead_alloc_usd, loaded_cost_usd")
+        .eq("lot_id", lotId),
+      ["game", "line_id"],
+    );
+    if (ovh.length) {
       const tableToGame: Record<string, string> = {
         pokemon_lot_lines: "pokemon",
         mtg_lot_lines: "mtg",
         pokemon_sealed_lot_lines: "pokemon_sealed",
       };
       const ovhMap = new Map<string, { overhead: number; loaded: number }>();
-      for (const o of ovh as { game: string; line_id: number; overhead_alloc_usd: number; loaded_cost_usd: number }[]) {
+      for (const o of ovh) {
         ovhMap.set(`${o.game}:${o.line_id}`, { overhead: Number(o.overhead_alloc_usd), loaded: Number(o.loaded_cost_usd) });
       }
       for (const ln of out) {
@@ -727,6 +735,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   }
 
   async function addLine(hit: SearchHit) {
+    setLotError(null);
     if (!selectedLot) return;
     const supabase = createClient();
     const { error } = hit.kind === "sealed"
@@ -747,7 +756,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           quantity: 1,
         });
     if (error) {
-      alert(error.message);
+      setLotError(error.message);
       return;
     }
     await reloadLot(selectedLot);
@@ -755,20 +764,25 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   }
 
   async function updateLine(line: LotLine, patch: Partial<Pick<LotLine, "quantity" | "condition_id" | "psa_grade" | "sealed_condition" | "variant_edition" | "price_override_usd">>) {
+    setLotError(null);
     const supabase = createClient();
-    await supabase.from(line.table).update(patch).eq("line_id", line.line_id);
+    const { error } = await supabase.from(line.table).update(patch).eq("line_id", line.line_id);
+    if (error) setLotError(error.message);
     if (selectedLot) await reloadLot(selectedLot);
     bumpOwnedInventory();
   }
 
   async function removeLine(line: LotLine) {
+    setLotError(null);
     const supabase = createClient();
-    await supabase.from(line.table).delete().eq("line_id", line.line_id);
+    const { error } = await supabase.from(line.table).delete().eq("line_id", line.line_id);
+    if (error) setLotError(error.message);
     if (selectedLot) await reloadLot(selectedLot);
     bumpOwnedInventory();
   }
 
   async function addCost() {
+    setLotError(null);
     if (!selectedLot || !lot) return;
     const rawAmount = Math.abs(Number(costAmount) || 0);
     const amountOrig =
@@ -790,7 +804,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       note: costNote.trim() || null,
     });
     if (error) {
-      alert(error.message);
+      setLotError(error.message);
       return;
     }
     setCostAmount("");
@@ -807,6 +821,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       | "fx_rate_used" | "note"
     >>,
   ) {
+    setLotError(null);
     if (!selectedLot) return;
     const supabase = createClient();
     const { error } = await supabase
@@ -814,7 +829,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       .update(patch)
       .eq("cost_id", cost.cost_id);
     if (error) {
-      alert(error.message);
+      setLotError(error.message);
       await fetchCosts(selectedLot);
       return;
     }
@@ -822,6 +837,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   }
 
   async function removeCost(costId: number) {
+    setLotError(null);
     if (!selectedLot) return;
     const supabase = createClient();
     const { error } = await supabase
@@ -829,13 +845,14 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       .delete()
       .eq("cost_id", costId);
     if (error) {
-      alert(error.message);
+      setLotError(error.message);
       return;
     }
     await fetchCosts(selectedLot);
   }
 
   async function finalize() {
+    setLotError(null);
     if (!selectedLot) return;
     const supabase = createClient();
     const isNet = (m?: string) => !!m && /networkerror|failed to fetch|load failed/i.test(m);
@@ -849,7 +866,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     if (error) {
       // The server blocks a blank-line lot with no total; show the friendly,
       // translated guidance instead of the raw SQL exception.
-      alert(/have no price and the lot has no total/.test(error.message)
+      setLotError(/have no price and the lot has no total/.test(error.message)
         ? t("trips.finalizeNeedsPrices", { count: blankLineCount })
         : error.message);
       return;
@@ -860,16 +877,18 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   }
 
   async function unfinalize() {
+    setLotError(null);
     if (!selectedLot) return;
     const supabase = createClient();
     const { error } = await supabase.rpc("unfinalize_acquisition_lot", { p_lot_id: selectedLot });
-    if (error) { alert(error.message); return; } // e.g. "void those sales first"
+    if (error) { setLotError(error.message); return; } // e.g. "void those sales first"
     await fetchLots();
     await reloadLot(selectedLot);
     bumpOwnedInventory();
   }
 
   async function deleteLot(lotId: number) {
+    setLotError(null);
     // Close the confirm dialog before the async work: deleting clears the
     // selection, which unmounts this panel (and the dialog) - closing first
     // lets base-ui release the pointer-events lock so the page stays clickable.
@@ -878,7 +897,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     // Lot lines cascade on delete; the DB blocks deletion of a lot whose lines
     // have already been sold (sale layers reference them), surfaced here.
     const { error } = await supabase.from("acquisition_lots").delete().eq("lot_id", lotId);
-    if (error) { alert(error.message); return; }
+    if (error) { setLotError(error.message); return; }
     setSelectedLot(null);
     await fetchLots();
     await refreshOpenLots();
@@ -996,6 +1015,8 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
               </AlertDialog>
             </div>
           </div>
+
+          {lotError && <p role="alert" className="text-xs text-destructive">{lotError}</p>}
 
           <LotReceipts lotId={lot.lot_id} />
 
