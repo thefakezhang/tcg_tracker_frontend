@@ -11,6 +11,7 @@ import { TripProvider, useTrips } from "./TripContext";
 import { LotPickerProvider } from "./LotPickerContext";
 import { ReviewQueueNavigationProvider } from "./ReviewQueueNavigationContext";
 import { ExitBasisProvider } from "./ExitBasisContext";
+import UrlStateSync from "./UrlStateSync";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { AppSidebar } from "./AppSidebar";
 import { viewBySentinel } from "./views";
@@ -74,6 +75,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
         <ReviewQueueNavigationProvider>
         <LotPickerProvider>
         <HeaderProvider>
+          <UrlStateSync>
           <SidebarProvider>
             <AppSidebar user={user} />
             <SidebarInset>
@@ -81,6 +83,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
               <main className="min-w-0 p-3 sm:p-6">{children}</main>
             </SidebarInset>
           </SidebarProvider>
+          </UrlStateSync>
         </HeaderProvider>
         </LotPickerProvider>
         </ReviewQueueNavigationProvider>

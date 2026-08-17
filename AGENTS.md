@@ -92,7 +92,9 @@ app/
     layout.tsx            # Auth guard, renders DashboardShell
     page.tsx              # Main-pane router, first match wins: views-registry sentinel -> TripDashboard (positive trip id) -> BuyListView -> SealedBrowser (pokemon_sealed) -> CardBrowser
     DashboardShell.tsx    # Context providers + sidebar + header
-    views.tsx             # Single source of truth for top-level views (sentinel -> group/icon/label/component)
+    views.tsx             # Single source of truth for top-level views (sentinel -> slug/group/icon/label/component)
+    url-state.ts          # Pure codec: view-selection contexts <-> /dashboard query string (?view=, ?trip=&tab=, ?buylist=, ?game=)
+    UrlStateSync.tsx      # Applies the URL on first paint / popstate, pushes history on context change; readUrlParam / writeUrlParam for leaf state
     AppSidebar.tsx        # Navigation, game picker, buy lists, user settings menu
     AccountMenuContent.tsx # Sidebar account dropdown: language, display currency, sign out
     AccountRegisterModal.tsx # GL account register dialog (get_account_register RPC)
@@ -507,7 +509,9 @@ The board renders the secondary line under the p50 and downgrades a bad p50 to w
 - Match rate is durable confirmed-link coverage against durable confirmed links plus the still-pending candidate queue, not matcher accuracy.
 - The same view reads the newest immutable `calibration_runs` row and surfaces its sample count, band coverage, bias, and representative-price recommendation.
   A zero-overlap run is explicitly a watch state and never presents a fabricated percentile.
-- Dashboard navigation is sentinel-based rather than URL-based.
+- Dashboard navigation is sentinel-based in memory (`activeTripId`: 0 = trips overview, negatives = standalone views, positives = a trip; plus `activeBuylistId`, `activeGame`) and mirrored to the URL by `UrlStateSync` (`url-state.ts` is the pure codec): `/dashboard?view=<slug>` (slug from `views.tsx`), `?trip=<id>&tab=<tab>`, `?buylist=<id>`, `?game=mtg|pokemon_sealed`; no params = Pokémon browse.
+  The URL wins on first paint (deep links, reload, bookmarks - `page.tsx` renders nothing until it has been applied so a deep link never flashes the browse view), every context change pushes a history entry so back/forward move between views, and leaf state such as the trip tab is written with `writeUrlParam` (replaceState) and dropped when its owner changes.
+  Give every new top-level view a `slug`; give any new leaf sub-state that a user would want to return to a `readUrlParam` / `writeUrlParam` pair.
 `ReviewQueueNavigationContext` carries a one-shot `{ game, source }` target to `RoutedMatchReviewView`; the route captures and consumes it so a later ordinary sidebar visit starts unfiltered.
 - `MatchReviewView` accepts `initialGame` and `initialSource` props.
 Its source predicate remains server-side so the filtered count and pagination describe the same source slice.
