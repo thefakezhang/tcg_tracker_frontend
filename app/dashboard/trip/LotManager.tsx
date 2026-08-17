@@ -373,18 +373,21 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     // view only returns finalized JP lines, so non-JP or draft lots get nothing
     // and the loaded figure simply doesn't render. Keyed by (game, line_id)
     // because line_id is only unique within its own table.
-    const { data: ovh } = await supabase
-      .from("trip_overhead_alloc_v")
-      .select("game, line_id, overhead_alloc_usd, loaded_cost_usd")
-      .eq("lot_id", lotId);
-    if (ovh && ovh.length) {
+    const ovh = await selectAll<{ game: string; line_id: number; overhead_alloc_usd: number; loaded_cost_usd: number }>(
+      () => supabase
+        .from("trip_overhead_alloc_v")
+        .select("game, line_id, overhead_alloc_usd, loaded_cost_usd")
+        .eq("lot_id", lotId),
+      ["game", "line_id"],
+    );
+    if (ovh.length) {
       const tableToGame: Record<string, string> = {
         pokemon_lot_lines: "pokemon",
         mtg_lot_lines: "mtg",
         pokemon_sealed_lot_lines: "pokemon_sealed",
       };
       const ovhMap = new Map<string, { overhead: number; loaded: number }>();
-      for (const o of ovh as { game: string; line_id: number; overhead_alloc_usd: number; loaded_cost_usd: number }[]) {
+      for (const o of ovh) {
         ovhMap.set(`${o.game}:${o.line_id}`, { overhead: Number(o.overhead_alloc_usd), loaded: Number(o.loaded_cost_usd) });
       }
       for (const ln of out) {
