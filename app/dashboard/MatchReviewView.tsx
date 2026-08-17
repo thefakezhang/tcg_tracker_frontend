@@ -1296,6 +1296,8 @@ function CreateFromCandidate({
   }
   const set = (k: string, v: string) => setForm((p) => ({ ...p, [k]: v }));
   const nameOk = (form[cfg.createNameKey] ?? "").trim().length > 0;
+  const setCodeChoices = ((candidate?.source_fields?.set_code_choices as string | undefined) ?? "")
+    .split(",").map((c) => c.trim()).filter(Boolean);
 
   async function create() {
     if (!candidate) return;
@@ -1326,7 +1328,22 @@ function CreateFromCandidate({
                   {(fld.options ?? []).map((v) => <option key={v} value={v}>{v}</option>)}
                 </select>
               ) : (
-                <Input value={form[fld.key] ?? ""} onChange={(e) => set(fld.key, e.target.value)} />
+                <>
+                  <Input value={form[fld.key] ?? ""} onChange={(e) => set(fld.key, e.target.value)} />
+                  {/* An artofpkm set that spans several of our codes (a multi-
+                      deck starter set): the feed hands over the candidate deck
+                      codes; one tap fills the field instead of a blank guess. */}
+                  {fld.key === "set_code" && setCodeChoices.length > 0 && (
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {setCodeChoices.map((c) => (
+                        <button key={c} type="button" onClick={() => set("set_code", c)}
+                          className={`rounded-full border px-2 py-0.5 font-mono text-[11px] ${form.set_code === c ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"}`}>
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           ))}

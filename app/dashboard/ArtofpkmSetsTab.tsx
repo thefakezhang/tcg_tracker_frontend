@@ -120,8 +120,29 @@ export default function ArtofpkmSetsTab() {
                 <td className="whitespace-nowrap px-3 py-1.5 text-xs text-muted-foreground">{r.release_date ?? "-"}</td>
                 <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums">{r.card_count ?? "-"}</td>
                 <td className="whitespace-nowrap px-3 py-1.5">
-                  <span className={`font-mono ${METHOD_TONE[r.mapping_method] ?? ""}`}>{r.set_code ?? t("aopSets.none")}</span>
-                  <div className="text-[10px] text-muted-foreground" title={r.mapping_note ?? undefined}>{r.mapping_method}{r.mapping_note ? ` · ${r.mapping_note}` : ""}</div>
+                  {(() => {
+                    // One artofpkm set spanning several of our codes (multi-deck
+                    // starter sets, the D/P collections) is not owed work: our
+                    // per-deck split is the correct model and cards resolve to
+                    // their deck at create time. Show it as such, not as unmapped.
+                    const spans = !r.set_code && r.mapping_note?.startsWith("release date shared by: ")
+                      ? r.mapping_note.replace("release date shared by: ", "").split(",").map((c) => c.trim())
+                      : null;
+                    if (spans) {
+                      return (
+                        <>
+                          <span className="text-xs text-amber-600 dark:text-amber-400">{t("aopSets.spans", { n: spans.length })}</span>
+                          <div className="font-mono text-[10px] text-muted-foreground">{spans.join(" · ")}</div>
+                        </>
+                      );
+                    }
+                    return (
+                      <>
+                        <span className={`font-mono ${METHOD_TONE[r.mapping_method] ?? ""}`}>{r.set_code ?? t("aopSets.none")}</span>
+                        <div className="text-[10px] text-muted-foreground" title={r.mapping_note ?? undefined}>{r.mapping_method}{r.mapping_note ? ` · ${r.mapping_note}` : ""}</div>
+                      </>
+                    );
+                  })()}
                 </td>
                 <td className="px-3 py-1.5">
                   <div className="flex items-center gap-1">

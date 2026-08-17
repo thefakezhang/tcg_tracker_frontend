@@ -902,6 +902,7 @@ const en = {
   "aopSets.colCards": "Cards",
   "aopSets.colCode": "Our code",
   "aopSets.colBind": "Bind",
+  "aopSets.spans": "spans {n} of our sets",
   "aopSets.none": "unmapped",
   "aopSets.bind": "Bind",
   "matches.count": "{n} matches",
