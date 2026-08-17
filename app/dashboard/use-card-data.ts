@@ -531,6 +531,24 @@ export function useCardData(options: {
     const summariesTable = summaryTableForSource(activeGame, requiredSource);
     const cardDefTable = CARD_TABLE_MAP[activeGame];
 
+    // Set filter by NAME or code. Codes are identifiers (TMP-VM1-B, OLD-IPB)
+    // nobody should have to memorise; pokemon_set_search_v carries every name
+    // a code goes by (ours + artofpkm's JP/EN), so "vending" or "拡張パック"
+    // resolves to the codes to filter on. Falls back to the raw code ilike
+    // when nothing matches by name (or for MTG, which has no such view yet).
+    const scTyped = dSetCode.trim();
+    let setCodesByName: string[] | null = null;
+    if (scTyped && activeGame === "pokemon") {
+      const { data: hits } = await supabase
+        .from("pokemon_set_search_v")
+        .select("set_code")
+        .ilike("search_text", `%${scTyped.toLowerCase()}%`)
+        .limit(200);
+      if (abort.signal.aborted) return;
+      const codes = [...new Set(((hits ?? []) as { set_code: string }[]).map((h) => h.set_code))];
+      if (codes.length) setCodesByName = codes;
+    }
+
     // Build query with joined card definitions
     const selectStr = `*, ${cardDefTable}!inner(${cardDefCols(activeGame)})`;
 
@@ -581,7 +599,10 @@ export function useCardData(options: {
       }
     }
     if (cn) query = query.ilike(`${cardDefTable}.card_number`, `%${cn}%`);
-    if (sc) query = query.ilike(`${cardDefTable}.set_code`, `%${sc}%`);
+    if (sc) {
+      if (setCodesByName) query = query.in(`${cardDefTable}.set_code`, setCodesByName);
+      else query = query.ilike(`${cardDefTable}.set_code`, `%${sc}%`);
+    }
     if (rarity) query = query.eq(`${cardDefTable}.rarity`, rarity);
     if (promosOnly && activeGame === "pokemon") {
       query = query.or(POKEMON_PROMO_OR, { referencedTable: cardDefTable });

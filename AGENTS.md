@@ -268,7 +268,8 @@ Each context follows the same pattern:
 ### Data Fetching (`use-card-data.ts`)
 
 - `useCardData()` is the main hook. It queries pre-computed `{game}_price_summaries` tables with server-side pagination, sorting, and filtering. Joins card definitions via `!inner` foreign key.
-- Filters: game, PSA mode, name search, card number, set code, single selected tier.
+- Filters: game, PSA mode, name search, card number, set (by NAME or code), single selected tier.
+The set box resolves typed text through `pokemon_set_search_v` (our set names plus artofpkm's JP/EN names) to the codes to filter on, falling back to a raw code ilike; codes are identifiers nobody should have to memorise ("vending" finds the vending sheets).
 - Source availability is an exact server-side presence gate backed by `*_price_summaries_by_source_v`; source choices come from `card_browser_source_options_v` and keep buylist evidence separate from for-sale evidence.
 - A selected source changes the query target but not the meaning of the global best-price columns shown in the result rows.
 - External-identifier lookup failures use a typed safe error, keep the last successful page visible, and expose an accessible Retry action without rendering database details.
@@ -462,7 +463,7 @@ The mutation sends both the displayed ledger balance and observed count so the b
 
 - The backend `seed-artofpkm` crawler pushes every Japanese card on artofpkm.com into the Pokemon match-review queue; identity-resolved cards arrive as confirms (bulk-confirmable), new cards as proposals.
 - Queue rows render the artofpkm descriptor (English name, set name + release date, rarity, illustrator, unmapped-set note) in the source line, and the create-from-candidate form prefills `english_name` from `source_fields` (top-level or `by_source`).
-- Card Index > Pokemon > **Set crosswalk** (`ArtofpkmSetsTab.tsx`) lists every artofpkm set with our `set_code`, the auto-mapper's method, and a bind control (`card_index_bind_artofpkm_set`); curator bindings are never overwritten by the seeder.
+- Card Index > Pokemon > **Set crosswalk** (`ArtofpkmSetsTab.tsx`) lists every artofpkm set with our `set_code`, the auto-mapper's method, and a bind control (`card_index_bind_artofpkm_set`), sorted by card count (each bind places every queued card in that set, so size is the leverage order); curator bindings are never overwritten by the seeder and a bind also upserts the code into `pokemon_sets`.
 - Backend architecture, flow, goals and non-goals: `docs/artofpkm_catalog_source.md` in the backend repository.
 
 ### Card Index link attachment (R1)

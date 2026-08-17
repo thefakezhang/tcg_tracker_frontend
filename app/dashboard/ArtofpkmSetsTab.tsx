@@ -33,6 +33,9 @@ async function fetchSets(): Promise<Row[]> {
   const { data, error } = await supabase
     .from("pokemon_artofpkm_sets")
     .select("aop_set_id, name_en, name_jp, era, release_date, card_count, set_code, mapping_method, mapping_note")
+    // Biggest sets first: each bind places every queued card in that set, so
+    // card count IS the leverage order for the operator's worklist.
+    .order("card_count", { ascending: false, nullsFirst: false })
     .order("release_date", { ascending: false, nullsFirst: false });
   if (error) throw error;
   return (data ?? []) as Row[];

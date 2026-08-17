@@ -15,7 +15,7 @@ const en = {
   "cardBrowser.cardNumberLabel": "Card number",
   "cardBrowser.cardNumberNumerator": "No.",
   "cardBrowser.cardNumberDenominator": "Total",
-  "cardBrowser.setCodePlaceholder": "Set code...",
+  "cardBrowser.setCodePlaceholder": "Set name or code...",
   "cardBrowser.setCodeLabel": "Set code",
   "cardBrowser.list": "List",
   "cardBrowser.grid": "Grid",

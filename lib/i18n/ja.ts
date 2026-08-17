@@ -17,7 +17,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardBrowser.cardNumberLabel": "カード番号",
   "cardBrowser.cardNumberNumerator": "番号",
   "cardBrowser.cardNumberDenominator": "総数",
-  "cardBrowser.setCodePlaceholder": "セットコード...",
+  "cardBrowser.setCodePlaceholder": "セット名またはコード...",
   "cardBrowser.setCodeLabel": "セットコード",
   "cardBrowser.list": "リスト",
   "cardBrowser.grid": "グリッド",
