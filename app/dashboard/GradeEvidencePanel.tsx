@@ -24,6 +24,8 @@ import {
 } from "./grade-signals";
 import { calculateDealEconomics, parseExitCostProfile, type ExitCostProfile } from "./deal-economics";
 
+import { formatJpy } from "@/lib/money";
+import { formatDate } from "@/lib/dates";
 interface GradeEvidencePanelProps {
   card: CardRowData;
   cardId: number;
@@ -40,7 +42,7 @@ interface GradeEvidencePanelProps {
 const SIGNAL_COLUMNS = "card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, entry_at_default, net_at_default, annualized_at_default, exit_platform, raw_to_grade_ev_usd, relative_value_pct, recent_volatility, slab_confidence, flags";
 
 function moneyJpy(value: number | null): string {
-  return value == null ? "-" : `¥${Math.round(value).toLocaleString()}`;
+  return value == null ? "-" : formatJpy(value);
 }
 
 function moneyUsd(value: number | null): string {
@@ -136,14 +138,14 @@ function CompSparkline({ sales, events }: { sales: SlabSale[]; events: SignalEve
         <polyline points={points} fill="none" className="stroke-primary" strokeWidth="2" strokeLinejoin="round" />
         {dated.map((sale, index) => (
           <circle key={`${sale.saleDate}:${sale.priceUsd}:${index}`} cx={x(new Date(sale.saleDate).getTime())} cy={y(sale.priceUsd)} r="2.5" className="fill-background stroke-primary">
-                <title>{`${new Date(sale.saleDate).toLocaleDateString(language)}: $${sale.priceUsd.toLocaleString(language)}${sale.platform ? ` · ${sale.platform}` : ""}`}</title>
+                <title>{`${formatDate(sale.saleDate, language)}: $${sale.priceUsd.toLocaleString(language)}${sale.platform ? ` · ${sale.platform}` : ""}`}</title>
           </circle>
         ))}
       </svg>
       <div className="flex justify-between text-[10px] text-muted-foreground">
-        <span>{new Date(minTime).toLocaleDateString(language)}</span>
+        <span>{formatDate(minTime, language)}</span>
         <span>{t("evidence.soldComps", { count: dated.length })}</span>
-        <span>{new Date(maxTime).toLocaleDateString(language)}</span>
+        <span>{formatDate(maxTime, language)}</span>
       </div>
     </div>
   );
@@ -336,7 +338,7 @@ export default function GradeEvidencePanel({ card, cardId, setCode, listingFresh
   const observationGrade = sightingGrade;
   const observationSignal = signals.find((signal) => signal.psaGrade === observationGrade) ?? null;
   const entryDescription = askingUsd == null ? t("economics.enterAsk") : `${t("economics.entryUsd")}: ${moneyUsd(askingUsd)}`;
-  const fxDescription = jpyUsd == null ? t("economics.fxUnavailable") : `1 JPY = ${jpyUsd.toFixed(8)} USD · ${fxAsOf ? new Date(fxAsOf).toLocaleDateString(language) : "-"}`;
+  const fxDescription = jpyUsd == null ? t("economics.fxUnavailable") : `1 JPY = ${jpyUsd.toFixed(8)} USD · ${fxAsOf ? formatDate(fxAsOf, language) : "-"}`;
 
   return (
     <div className="mt-4 space-y-3 border-t pt-4">

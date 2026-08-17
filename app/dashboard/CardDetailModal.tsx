@@ -76,6 +76,8 @@ import { formatRoiPct, roiToneClass } from "./theoretical-roi";
 import { MarketEvidenceCallout } from "./MarketEvidenceCallout";
 import { compareMarketEstimates, type MarketEvidence } from "./market-evidence";
 
+import { formatUsd } from "@/lib/money";
+import { formatDate } from "@/lib/dates";
 const BUYLIST_ENTRY_TABLE: Record<Game, string> = {
   pokemon: "pokemon_buylist_entries",
   mtg: "mtg_buylist_entries",
@@ -850,7 +852,7 @@ export default function CardDetailModal({
                       {s.leg ? ` · ${s.leg}` : ""}{s.tripName ? ` · ${s.tripName}` : ""}
                     </span>
                     <span className="flex shrink-0 items-center gap-1.5 tabular-nums">
-                      <span>{s.qtyOnHand}× · ${s.unitCostUsd.toFixed(2)}/ea</span>
+                      <span>{s.qtyOnHand}× · {formatUsd(s.unitCostUsd)}/ea</span>
                       {s.roiPct != null && (
                         <span className={roiToneClass(s.roiPct)} title={t("roi.theoretical")}>
                           {formatRoiPct(s.roiPct)}
@@ -911,12 +913,12 @@ export default function CardDetailModal({
               ))}
               {sellDone && (
                 <div role="status" className="text-emerald-600 dark:text-emerald-400">
-                  {t("inventory.sellDone", { margin: sellDone.marginUsd.toFixed(2) })}
+                  {t("inventory.sellDone", { margin: formatUsd(sellDone.marginUsd) })}
                 </div>
               )}
               <div className="flex items-baseline justify-between gap-2 border-t pt-0.5 font-medium">
                 <span>{t("inventory.avgLanded")}</span>
-                <span className="tabular-nums">${avg.toFixed(2)}/ea</span>
+                <span className="tabular-nums">{formatUsd(avg)}/ea</span>
               </div>
               {cardRoiPct != null && (
                 <>
@@ -928,13 +930,13 @@ export default function CardDetailModal({
                       )}
                     </span>
                     <span className="tabular-nums">
-                      ${pricedNet.toFixed(2)}{" "}
+                      {formatUsd(pricedNet)}{" "}
                       <span className={roiToneClass(cardRoiPct)}>{formatRoiPct(cardRoiPct)}</span>
                     </span>
                   </div>
                   {/* Where that net came from: gross market, and the fee rate. */}
                   <div className="flex items-baseline justify-between gap-2 text-muted-foreground">
-                    <span>{t("roi.marketGross", { usd: pricedGross.toFixed(2) })}</span>
+                    <span>{t("roi.marketGross", { usd: formatUsd(pricedGross) })}</span>
                     {netPct != null && <span>{t("roi.netBasis", { pct: Math.round(netPct * 100) })}</span>}
                   </div>
                 </>
@@ -950,9 +952,9 @@ export default function CardDetailModal({
                 <span className="min-w-0 truncate text-muted-foreground">
                   {p.shopLabel || p.acquiredAt || t("inventory.lot")}
                   {p.leg ? ` · ${p.leg}` : ""}
-                  {p.acquiredAt ? ` · ${new Date(`${p.acquiredAt}T00:00:00`).toLocaleDateString(language)}` : ""}
+                  {p.acquiredAt ? ` · ${formatDate(p.acquiredAt, language)}` : ""}
                 </span>
-                <span className="shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">${p.unitUsd.toFixed(2)}</span>
+                <span className="shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">{formatUsd(p.unitUsd)}</span>
               </div>
             ))}
           </div>
@@ -965,11 +967,11 @@ export default function CardDetailModal({
                 <span className="min-w-0 truncate text-muted-foreground">
                   {o.store_name}
                   {o.psa_grade > 0 ? ` · PSA ${o.psa_grade}` : ""}
-                  {" · "}{new Date(o.observed_at).toLocaleDateString(language)}
+                  {" · "}{formatDate(o.observed_at, language)}
                 </span>
                 <span className="shrink-0 tabular-nums">
                   {o.currency === "JPY" ? "¥" : o.currency === "USD" ? "$" : ""}{Number(o.observed_price).toLocaleString()}
-                  {o.currency !== "USD" ? ` · $${Number(o.price_usd).toFixed(2)}` : ""}
+                  {o.currency !== "USD" ? ` · ${formatUsd(Number(o.price_usd))}` : ""}
                 </span>
               </div>
             ))}

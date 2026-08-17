@@ -43,6 +43,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { QueryError, useSupabaseQuery } from "./use-query";
 
+import { formatUsd } from "@/lib/money";
 const selectClass =
   "h-9 w-full rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
 
@@ -143,7 +144,7 @@ async function searchCatalog(game: CatalogResult["game"], raw: string): Promise<
 }
 
 function money(value: number | null | undefined): string {
-  return value == null ? "-" : `$${Number(value).toFixed(2)}`;
+  return value == null ? "-" : formatUsd(Number(value));
 }
 
 function itemMeta(line: PurchasePlanLine): string {

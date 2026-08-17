@@ -63,6 +63,7 @@ import { useCardObservations } from "./card-observations";
 import { QueryError } from "./use-query";
 import { activateOnEnterOrSpace } from "@/lib/keyboard-activation";
 import { MarketEvidenceBadge } from "./MarketEvidenceCallout";
+import { formatJpy, formatRoi, formatUsdCompact } from "@/lib/money";
 import {
   buildMarketEvidenceMaps,
   buildTcgMarketMap,
@@ -89,7 +90,7 @@ const PROMOS_OPTION = "__promos__";
 // Compact USD for the tcgplayer market value: whole dollars once it's meaningful,
 // cents for the sub-$100 long tail.
 function fmtUsd(n: number): string {
-  return n >= 100 ? `$${Math.round(n).toLocaleString()}` : `$${n.toFixed(2)}`;
+  return formatUsdCompact(n);
 }
 
 export default function CardBrowser() {
@@ -822,7 +823,7 @@ export default function CardBrowser() {
                   </div>
                   <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
                     <span className="text-muted-foreground">{t("column.roi")}</span>
-                    <span>{row.roi !== null ? `${Math.round(row.roi * 100) / 100}%` : "\u2014"}</span>
+                    <span>{formatRoi(row.roi)}</span>
                   </div>
                   {activeGame === "pokemon" && tcgMarket.get(Number(row.card.card_id)) != null && (
                     <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
@@ -841,7 +842,7 @@ export default function CardBrowser() {
                   {activeGame === "pokemon" && (
                     <div className="flex w-full justify-between gap-2 border-t border-foreground/10 pt-2">
                       <span className="text-muted-foreground">P{exitPercentile} {t("column.conservativeExit")}</span>
-                      <span>{conservativeExit == null ? "-" : `¥${Math.round(conservativeExit).toLocaleString()}`}</span>
+                      <span>{conservativeExit == null ? "-" : formatJpy(conservativeExit)}</span>
                     </div>
                   )}
                   {activeGame === "pokemon" && (

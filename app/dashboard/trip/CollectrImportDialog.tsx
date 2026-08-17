@@ -7,6 +7,7 @@ import { selectAll, chunkIds } from "@/lib/supabase/select-all";
 import { resolveCard, type MatchStatus } from "./collectr-match";
 import { useTranslation } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
+import { formatUsd } from "@/lib/money";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
@@ -235,7 +236,7 @@ export function CollectrImportDialog({
                             )}
                           </TableCell>
                           <TableCell>{r.qty}</TableCell>
-                          <TableCell>${r.marketUsd}</TableCell>
+                          <TableCell>{formatUsd(Number(r.marketUsd))}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

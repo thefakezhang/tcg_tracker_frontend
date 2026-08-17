@@ -26,6 +26,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import type { RoiLine } from "./theoretical-roi";
+import { formatDate } from "@/lib/dates";
 import {
   inventoryShortage,
   parsePhysicalCount,
@@ -100,7 +101,7 @@ export default function InventoryConsignmentSheet({
   onClear,
   onReconcile,
 }: InventoryConsignmentSheetProps) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const [values, setValues] = useState<Record<string, string>>({});
   const [consignees, setConsignees] = useState<Record<string, string>>({});
   const [saleForm, setSaleForm] = useState<Record<string, { usd: string; fee: string; at: string }>>({});
@@ -360,7 +361,7 @@ export default function InventoryConsignmentSheet({
                       <div className="text-sm">
                         <span className="font-medium text-emerald-600 dark:text-emerald-400">{t("inventory.soldTo", { who: savedConsignee })}</span>
                         <span className="ml-2 text-muted-foreground">
-                          {line.consignment_sold_at?.slice(0, 10)} · {t("inventory.saleGross")} {formatUsd(line.consignment_sale_usd ?? 0)}
+                          {formatDate(line.consignment_sold_at, language)} · {t("inventory.saleGross")} {formatUsd(line.consignment_sale_usd ?? 0)}
                           {(line.consignment_fee_usd ?? 0) > 0 && <> · {t("inventory.saleFee")} {formatUsd(line.consignment_fee_usd ?? 0)}</>}
                           {net != null && <> · {t("inventory.saleNet")} <strong>{formatUsd(net)}</strong></>}
                         </span>

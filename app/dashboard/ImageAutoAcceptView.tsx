@@ -23,6 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
+import { formatDateTime } from "@/lib/dates";
 interface Box {
   x0: number;
   y0: number;
@@ -175,7 +176,7 @@ function SourceCard({
 }
 
 export default function ImageAutoAcceptView() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [correctingLatest, setCorrectingLatest] = useState(false);
@@ -554,7 +555,7 @@ export default function ImageAutoAcceptView() {
                     <Badge variant="outline">{t(`autoAccept.runMode.${run.execution_mode}`)}</Badge>
                   </div>
                   <div className="break-words text-xs text-muted-foreground">
-                    {new Date(run.started_at).toLocaleString()} · {t("autoAccept.runSummary", {
+                    {formatDateTime(run.started_at, language)} · {t("autoAccept.runSummary", {
                       promoted: typeof run.summary.promoted === "number" ? run.summary.promoted : 0,
                       failed: typeof run.summary.failed === "number" ? run.summary.failed : 0,
                     })}

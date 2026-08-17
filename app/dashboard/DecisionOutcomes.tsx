@@ -6,6 +6,7 @@ import { useTranslation } from "@/lib/i18n";
 import { useLanguage } from "./LanguageContext";
 import { useSupabaseQuery, QueryError } from "./use-query";
 
+import { formatDate } from "@/lib/dates";
 // The decision-quality feedback loop (000209) finally on screen: every
 // opportunity the operator SAW is classified as taken / dismissed /
 // dismissed_then_bought / implicit_pass / open. Counts come from the
@@ -140,7 +141,7 @@ export default function DecisionOutcomes() {
                   <td className="whitespace-nowrap px-3 py-1.5 text-xs text-muted-foreground">{r.source_name ?? "-"}</td>
                   <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums">{price(r.entry_price, r.entry_currency)}</td>
                   <td className="whitespace-nowrap px-3 py-1.5 text-xs text-muted-foreground">
-                    {new Date(r.bought_at ?? r.dismissed_at ?? r.first_seen_at).toLocaleDateString(language)}
+                    {formatDate(r.bought_at ?? r.dismissed_at ?? r.first_seen_at, language)}
                   </td>
                   <td className="max-w-[220px] truncate px-3 py-1.5 text-xs text-muted-foreground" title={r.dismiss_reason ?? undefined}>
                     {r.dismiss_reason ?? "-"}

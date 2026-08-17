@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { useTrips } from "./TripContext";
+import { formatUsd, formatUsdWhole } from "@/lib/money";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -31,7 +32,6 @@ interface Position {
   expenses: number; // trip + overhead
 }
 
-const usd = (n: number) => "$" + Math.round(n).toLocaleString();
 
 async function fetchPosition(): Promise<Position> {
   const supabase = createClient();
@@ -90,14 +90,14 @@ export default function TripsOverview() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat
             label={t("trips.capitalInInventory")}
-            value={usd(pos.invCost)}
-            sub={`${t("trips.legImport")} ${usd(pos.invImport)} · ${t("trips.legExport")} ${usd(pos.invExport)}`}
+            value={formatUsdWhole(pos.invCost)}
+            sub={`${t("trips.legImport")} ${formatUsdWhole(pos.invImport)} · ${t("trips.legExport")} ${formatUsdWhole(pos.invExport)}`}
           />
-          <Stat label={t("trips.realizedMargin")} value={usd(pos.margin)} />
-          <Stat label={t("trips.colExpenses")} value={usd(pos.expenses)} />
+          <Stat label={t("trips.realizedMargin")} value={formatUsdWhole(pos.margin)} />
+          <Stat label={t("trips.colExpenses")} value={formatUsdWhole(pos.expenses)} />
           <Stat
             label={t("trips.colNet")}
-            value={usd(pos.margin - pos.expenses)}
+            value={formatUsdWhole(pos.margin - pos.expenses)}
             valueClassName={pos.margin - pos.expenses < 0 ? "text-destructive" : ""}
           />
         </div>
@@ -124,11 +124,11 @@ export default function TripsOverview() {
             >
               <TableCell className="font-medium">{r.name}</TableCell>
               <TableCell>{r.status}</TableCell>
-              <TableCell className="text-right">${r.export_profit_usd}</TableCell>
-              <TableCell className="text-right">${r.import_realized_margin_usd}</TableCell>
-              <TableCell className="text-right">${r.expenses_usd}</TableCell>
+              <TableCell className="text-right">{formatUsd(Number(r.export_profit_usd))}</TableCell>
+              <TableCell className="text-right">{formatUsd(Number(r.import_realized_margin_usd))}</TableCell>
+              <TableCell className="text-right">{formatUsd(Number(r.expenses_usd))}</TableCell>
               <TableCell className={`text-right ${r.realized_net_usd < 0 ? "text-destructive" : ""}`}>
-                ${r.realized_net_usd}
+                {formatUsd(Number(r.realized_net_usd))}
               </TableCell>
               <TableCell className="text-right">{r.roi_pct == null ? "—" : `${r.roi_pct}%`}</TableCell>
             </TableRow>

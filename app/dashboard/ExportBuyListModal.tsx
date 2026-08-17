@@ -25,6 +25,7 @@ import { type CardRowData, getCardDisplayName } from "./use-card-data";
 import { useLanguage, type Language } from "./LanguageContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatUsd } from "@/lib/money";
 import {
   Card,
   CardAction,
@@ -389,7 +390,7 @@ export default function ExportBuyListModal({
         const converted = convertPrice(usd, "USD");
         return `${converted.symbol}${converted.price}`;
       }
-      return `$${usd.toFixed(2)}`;
+      return formatUsd(usd);
     },
     [displayCurrency, convertPrice]
   );

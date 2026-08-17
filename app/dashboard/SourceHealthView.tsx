@@ -21,6 +21,7 @@ import { useTrips } from "./TripContext";
 import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNavigationContext";
 import { selectAll } from "@/lib/supabase/select-all";
 
+import { formatDate, formatDateTime } from "@/lib/dates";
 interface InversionRow { game: "pokemon" | "mtg"; card_id: number; source: string; inversion_ratio: number | null; }
 interface InversionGroup { game: "pokemon" | "mtg"; source: string; count: number; maxRatio: number; }
 
@@ -131,7 +132,7 @@ function Cell({
  * source that just got worse is visible without remembering yesterday's numbers.
  */
 export default function SourceHealthView() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const { setActiveTripId } = useTrips();
   const { setActiveBuylistId } = useBuyList();
   const { openReviewQueue } = useReviewQueueNavigation();
@@ -261,7 +262,7 @@ export default function SourceHealthView() {
           </h2>
           {computedAt && (
             <p className="text-muted-foreground text-xs">
-              {t("health.computedAt", { time: new Date(computedAt).toLocaleString() })}
+              {t("health.computedAt", { time: formatDateTime(computedAt, language) })}
             </p>
           )}
         </div>
@@ -372,7 +373,7 @@ export default function SourceHealthView() {
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h3 className="text-sm font-medium">{t("health.calibrationTitle")}</h3>
             <span className="text-muted-foreground text-xs">
-              {calibration.model_version} - {new Date(calibration.run_at).toLocaleDateString()}
+              {calibration.model_version} - {formatDate(calibration.run_at, language)}
             </span>
           </div>
           <p className={`mt-2 text-sm font-medium ${calibration.sample_count > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
