@@ -6,13 +6,15 @@ import MatchReviewView from "./MatchReviewView";
 
 const mocks = vi.hoisted(() => ({
   queryKeys: [] as unknown[][],
-  data: { candidates: [], items: new Map(), total: 0 } as {
+  data: { candidates: [], items: new Map(), total: 0, proposedTotal: 0 } as {
     candidates: Record<string, unknown>[];
     items: Map<number, Record<string, unknown>>;
     total: number;
+    proposedTotal?: number;
   },
   rpc: vi.fn(),
   retry: vi.fn(),
+  pages: [] as unknown[][],
 }));
 
 vi.mock("@/lib/i18n", () => ({
@@ -27,7 +29,16 @@ vi.mock("@/lib/i18n", () => ({
   }),
 }));
 
-vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc: mocks.rpc }) }));
+// A chainable stand-in for the PostgREST builder: every filter returns the
+// builder, and `range` resolves to the page mocks.pages hands out. Only what
+// proposedIdsInFilter touches (select / eq / gte / or / not / order / range).
+function fakeBuilder() {
+  const b: Record<string, unknown> = {};
+  for (const m of ["select", "eq", "gte", "or", "not", "order", "in"]) b[m] = () => b;
+  b.range = (from: number) => Promise.resolve({ data: mocks.pages.shift() ?? [], error: null, from });
+  return b;
+}
+vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc: mocks.rpc, from: () => fakeBuilder() }) }));
 
 vi.mock("./use-query", () => ({
   useSupabaseQuery: (key: unknown[]) => {
@@ -45,9 +56,64 @@ vi.mock("./use-query", () => ({
 afterEach(() => {
   cleanup();
   mocks.queryKeys.length = 0;
-  mocks.data = { candidates: [], items: new Map(), total: 0 };
+  mocks.data = { candidates: [], items: new Map(), total: 0, proposedTotal: 0 };
   mocks.rpc.mockReset();
   mocks.retry.mockReset();
+  mocks.pages.length = 0;
+});
+
+describe("accept all proposals", () => {
+  function proposedRow(id: number) {
+    return {
+      candidate_id: id, source_platform: "identity", source_key: "", source_name: `card ${id}`, source_raw: null,
+      source_fields: { source: "hareruya2", set_code: "SI", card_number: `${id}/414`, misc_info: "UNKNOWN", language: "jp" },
+      source_image_url: null, proposed_id: 808600 + id, candidate_ids: [], confidence: 1, reason: "identity", matched: [],
+    };
+  }
+
+  it("confirms every proposal in the filter in chunks and reports the real count", async () => {
+    // 250 proposals in the filter, only one page of 2 rows loaded: accept-all
+    // must act on the 250, not the 2, and must not send them in one call.
+    mocks.data = { candidates: [proposedRow(1), proposedRow(2)], items: new Map(), total: 250, proposedTotal: 250 };
+    mocks.pages = [Array.from({ length: 250 }, (_, i) => ({ candidate_id: i + 1 })), []];
+    // The bulk RPC returns a bare integer: rows it actually confirmed.
+    mocks.rpc.mockImplementation((_name: string, args: { p_ids: number[] }) => Promise.resolve({ data: args.p_ids.length - 1, error: null }));
+
+    render(<MatchReviewView initialGame="pokemon" initialSource="hareruya2" />);
+    fireEvent.click(screen.getByRole("button", { name: "review.acceptAll" }));
+    fireEvent.click(await screen.findByRole("button", { name: "review.acceptAllConfirm" }));
+
+    await waitFor(() => expect(mocks.rpc).toHaveBeenCalledTimes(3));
+    const calls = mocks.rpc.mock.calls as [string, { p_ids: number[] }][];
+    expect(calls.every(([name]) => name === "card_index_resolve_pokemon_candidates_confirm")).toBe(true);
+    expect(calls.map(([, a]) => a.p_ids.length)).toEqual([100, 100, 50]);
+    expect(calls.flatMap(([, a]) => a.p_ids)).toEqual(Array.from({ length: 250 }, (_, i) => i + 1));
+    // 99 + 99 + 49 confirmed: the status carries what the RPCs said, not what was asked.
+    await waitFor(() => expect(screen.getByText("review.acceptAllDone")).toBeTruthy());
+    expect(mocks.retry).toHaveBeenCalledOnce();
+  });
+
+  it("stops at the first failing chunk and says how far it got", async () => {
+    mocks.data = { candidates: [proposedRow(1)], items: new Map(), total: 150, proposedTotal: 150 };
+    mocks.pages = [Array.from({ length: 150 }, (_, i) => ({ candidate_id: i + 1 })), []];
+    mocks.rpc
+      .mockResolvedValueOnce({ data: 100, error: null })
+      .mockResolvedValueOnce({ data: null, error: { message: "identity X IS definition card 42" } });
+
+    render(<MatchReviewView initialGame="pokemon" initialSource="hareruya2" />);
+    fireEvent.click(screen.getByRole("button", { name: "review.acceptAll" }));
+    fireEvent.click(await screen.findByRole("button", { name: "review.acceptAllConfirm" }));
+
+    await waitFor(() => expect(mocks.rpc).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByText("review.acceptAllStopped")).toBeTruthy());
+    expect(mocks.retry).toHaveBeenCalledOnce();
+  });
+
+  it("offers nothing to accept when no row carries a proposal", () => {
+    mocks.data = { candidates: [], items: new Map(), total: 40, proposedTotal: 0 };
+    render(<MatchReviewView initialGame="pokemon" initialSource="hareruya2" />);
+    expect(screen.queryByRole("button", { name: "review.acceptAll" })).toBeNull();
+  });
 });
 
 describe("Pokemon collision resolution", () => {

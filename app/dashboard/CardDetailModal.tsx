@@ -252,6 +252,8 @@ export default function CardDetailModal({
   const [targetPriceError, setTargetPriceError] = useState<string | null>(null);
   const [jpExclusive, setJpExclusive] = useState(false);
   const [savingJp, setSavingJp] = useState(false);
+  const [cute, setCute] = useState(false);
+  const [savingCute, setSavingCute] = useState(false);
   const [askingPrice, setAskingPrice] = useState("");
   const [askingCurrency, setAskingCurrency] = useState<"JPY" | "USD">("JPY");
   const [sightingGrade, setSightingGrade] = useState(0);
@@ -267,6 +269,7 @@ export default function CardDetailModal({
   // Sync the manual JP-exclusive flag from the opened card.
   useEffect(() => {
     setJpExclusive(!!card?.card.is_japan_exclusive);
+    setCute(!!card?.card.is_cute);
     setAskingPrice("");
     setAskingCurrency("JPY");
   }, [card]);
@@ -286,6 +289,24 @@ export default function CardDetailModal({
       card.card.is_japan_exclusive = next; // keep the row in sync for the list
     }
   }, [card, jpExclusive, savingJp]);
+
+  // The "cute" flag mirrors the JP-exclusive one: a manual curator mark, one
+  // narrow RPC, kept in sync on the row so the list reflects it immediately.
+  const toggleCute = useCallback(async () => {
+    if (!card || savingCute) return;
+    const next = !cute;
+    setSavingCute(true);
+    const supabase = createClient();
+    const { error } = await supabase.rpc("set_pokemon_cute", {
+      p_card_id: Number(card.card.card_id),
+      p_value: next,
+    });
+    setSavingCute(false);
+    if (!error) {
+      setCute(next);
+      card.card.is_cute = next;
+    }
+  }, [card, cute, savingCute]);
 
   const saveTargetPrice = useCallback(async () => {
     if (!entryGame || entryId == null || savingTargetPrice) return;
@@ -659,6 +680,17 @@ export default function CardDetailModal({
                       onCheckedChange={toggleJpExclusive}
                     />
                     <span className="select-none">🇯🇵 {t("modal.jpExclusive")}</span>
+                  </label>
+                )}
+                {activeGame === "pokemon" && (
+                  <label className="ml-1 inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs sm:min-h-0">
+                    <Switch
+                      size="sm"
+                      checked={cute}
+                      disabled={savingCute}
+                      onCheckedChange={toggleCute}
+                    />
+                    <span className="select-none">🩷 {t("modal.cute")}</span>
                   </label>
                 )}
                 <UidChip uid={def.card_uid} />
