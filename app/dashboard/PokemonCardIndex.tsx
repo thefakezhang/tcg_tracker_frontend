@@ -5,6 +5,7 @@ import { Search, ImageOff, Pencil, Plus, Trash2, GitMerge } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
 import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
+import { isOpaqueLinkID, linkChipLabel, platformShort } from "@/lib/source-labels";
 import { uploadCardImage } from "@/lib/upload-card-image";
 import {
   normalizePlatformID,
@@ -94,7 +95,7 @@ export const pokemonEditActionClassName = "size-11 shrink-0 sm:size-7";
 
 const COLS = "card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, image_url";
 const PLATFORMS = pokemonSinglePlatforms;
-const PLATFORM_SHORT: Record<string, string> = { tcgplayer: "TCG", snkrdunk: "SNKR", pricecharting: "PC", collectr: "COLL", cardladder: "CL", cardkingdom: "CK", shinsoku: "SHIN", surugaya: "SRG", expedition_gaming: "EXP", tcgplayer_SKU: "SKU" };
+const PLATFORM_SHORT: Record<string, string> = Object.fromEntries(pokemonSinglePlatforms.map((p) => [p, platformShort(p)]));
 const PLATFORM_HINT_KEYS: Record<string, TranslationKey> = {
   tcgplayer: "cardIndex.linkFormat.tcgplayer",
   snkrdunk: "cardIndex.linkFormat.snkrdunk",
@@ -379,13 +380,17 @@ function CardsTab() {
                       ) : (
                         c.links.map((l) => {
                           const url = platformUrl(l.platform_name, l.external_reference_id, "single", l.listing_url);
-                          const label = `${PLATFORM_SHORT[l.platform_name] ?? l.platform_name} ${l.external_reference_id}`;
+                          // Opaque keys (torecabirth row uids, identity keys)
+                          // show the platform only; the raw key stays on the tooltip.
+                          const opaque = isOpaqueLinkID(l.platform_name, l.external_reference_id);
+                          const label = linkChipLabel(l.platform_name, l.external_reference_id);
+                          const chipClass = `rounded border px-1.5 py-0.5 text-xs text-muted-foreground${opaque ? " border-dashed" : ""}`;
                           return url ? (
-                            <a key={l.platform_name + l.external_reference_id} href={url} target="_blank" rel="noreferrer" className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted">
+                            <a key={l.platform_name + l.external_reference_id} href={url} target="_blank" rel="noreferrer" title={l.external_reference_id} className={`${chipClass} hover:bg-muted`}>
                               {label}
                             </a>
                           ) : (
-                            <span key={l.platform_name + l.external_reference_id} className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground">
+                            <span key={l.platform_name + l.external_reference_id} title={l.external_reference_id} className={chipClass}>
                               {label}
                             </span>
                           );

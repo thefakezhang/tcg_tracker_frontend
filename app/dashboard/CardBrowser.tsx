@@ -126,6 +126,7 @@ export default function CardBrowser() {
   const [rarity, setRarity] = useState<string>("");          // "" = all (Pokémon only)
   const [promosOnly, setPromosOnly] = useState(false);       // Pokémon promotional cards
   const [jpExclusiveOnly, setJpExclusiveOnly] = useState(false); // manual JP-exclusive flag
+  const [cuteOnly, setCuteOnly] = useState(false); // manual "cute" flag (293)
   const [minBuyPrice, setMinBuyPrice] = useState<string>("");
   const [minSellPrice, setMinSellPrice] = useState<string>("");
   const [roiFloor, setRoiFloor] = useState<string>("");
@@ -172,6 +173,7 @@ export default function CardBrowser() {
       rarity: rarity || null,
       promosOnly,
       jpExclusiveOnly,
+      cuteOnly,
       minBuyPrice: minBuyPrice !== "" ? Number(minBuyPrice) : null,
       minSellPrice: minSellPrice !== "" ? Number(minSellPrice) : null,
       roiFloor: roiFloor !== "" ? Number(roiFloor) : null,
@@ -323,7 +325,7 @@ export default function CardBrowser() {
   useEffect(() => {
     setPage(0);
     setRowSelection({});
-  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, jpExclusiveOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, jpExclusiveOnly, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -536,6 +538,15 @@ export default function CardBrowser() {
             onClick={() => setJpExclusiveOnly((v) => !v)}
           >
             {t("cardBrowser.jpExclusiveOnly")}
+          </Button>
+        )}
+        {activeGame === "pokemon" && (
+          <Button
+            variant={cuteOnly ? "default" : "outline"}
+            className="h-11 shrink-0 sm:h-8"
+            onClick={() => setCuteOnly((v) => !v)}
+          >
+            {t("cardBrowser.cuteOnly")}
           </Button>
         )}
         <Button

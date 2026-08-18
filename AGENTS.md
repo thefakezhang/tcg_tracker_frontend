@@ -408,6 +408,8 @@ Never render a lease token, raw log, credential, arbitrary heartbeat failure sum
 - Has its own tier filter dropdown.
 - Uses `useCurrency()` for price conversion in `ListingTable`.
 - "Add to Buy List" button (popover) lets users save cards to any buy list.
+- Two manual curator flags on Pokémon cards, each a `Switch` in the header and a filter button in `CardBrowser`: **Japanese exclusive** (`is_japan_exclusive`, RPC `set_pokemon_japan_exclusive`, 000093) and **Cute** (`is_cute`, RPC `set_pokemon_cute`, 000293 - the "cute" market segment the operator buys and sells by).
+Both are selected in `use-card-data.ts`'s definition columns, filtered server-side (`jpExclusiveOnly` / `cuteOnly`), and written straight back onto the row so the list reflects the toggle without a refetch.
 ### Per-grade evidence panel (S3)
 
 - `GradeEvidencePanel.tsx` reads the latest `pokemon_grade_signals` model row per card and grade, Card Ladder sold comps, bid locations, and applicable market events.
@@ -515,6 +517,12 @@ The board renders the secondary line under the p50 and downgrades a bad p50 to w
 `ReviewQueueNavigationContext` carries a one-shot `{ game, source }` target to `RoutedMatchReviewView`; the route captures and consumes it so a later ordinary sidebar visit starts unfiltered.
 - `MatchReviewView` accepts `initialGame` and `initialSource` props.
 Its source predicate remains server-side so the filtered count and pagination describe the same source slice.
+- **Accept all** (`review.acceptAll`): the mass-accept for text-based curation.
+The toolbar button counts every row in the current bucket + source that carries a machine proposal (a server-side head count, so it describes the whole filter, not the loaded page), confirms the count in an `AlertDialog`, then lists the ids with `selectAll` and feeds `rpcBulkConfirm` in chunks of 100 (`ACCEPT_ALL_CHUNK`) with a running "Accepting n / of" label.
+Chunking exists because every bulk confirm RPC confirms row by row (links, memory, refresh) and one call over thousands of ids would outrun the 8s authenticated `statement_timeout`; each chunk commits on its own, so a failing chunk (an alias/definition contradiction from migration 000292, say) stops the run, keeps what already went through, and reports "stopped after n of N: <error>".
+The bulk RPCs `RETURN integer` (a bare count, all three games); `bulkCount` reads that, and the selection-strip status now shows applied vs skipped honestly.
+- **Link chips**: `lib/source-labels.ts` owns `platformShort` and `linkChipLabel` / `isOpaqueLinkID`, shared by the Card Index and the review queue.
+Synthetic link ids - torecabirth's buyback row uid (`pokemon__<uuid>__N`), the torecabank / big_tcg / expedition identity keys (`name|number|misc`) - are real links (the price refresh and the matcher key on them) but not something a person reads, so a chip shows the platform only, dashed, with the raw key on the tooltip; platform-native ids (`TCG 604028`) print in full.
 
 ### Events calendar (S6)
 

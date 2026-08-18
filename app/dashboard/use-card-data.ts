@@ -45,6 +45,7 @@ export interface CardDefinition {
   image_url: string | null;
   rarity?: string | null; // Pokémon only (from TCGPlayer); undefined for MTG
   is_japan_exclusive?: boolean | null; // Pokémon only; manual curator flag (093)
+  is_cute?: boolean | null; // Pokémon only; manual curator flag (293)
   // MTG-only (from mtg_card_definitions_v); undefined for Pokémon.
   is_foil?: boolean | null;
   foil_type?: string | null;
@@ -73,7 +74,7 @@ export function cardMeta(setCode?: string | null, cardNumber?: string | null, mi
 }
 
 export const POKEMON_CARD_DEF_COLS =
-  "card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, image_url, rarity, is_japan_exclusive";
+  "card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, image_url, rarity, is_japan_exclusive, is_cute";
 export const MTG_CARD_DEF_COLS =
   "card_id, card_uid, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language";
 
@@ -457,6 +458,7 @@ export function useCardData(options: {
   rarity: string | null;
   promosOnly: boolean;
   jpExclusiveOnly: boolean;
+  cuteOnly: boolean;
   minBuyPrice: number | null;
   minSellPrice: number | null;
   roiFloor: number | null;
@@ -488,6 +490,7 @@ export function useCardData(options: {
     rarity,
     promosOnly,
     jpExclusiveOnly,
+    cuteOnly,
     minBuyPrice,
     minSellPrice,
     roiFloor,
@@ -517,7 +520,7 @@ export function useCardData(options: {
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, jpExclusiveOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, jpExclusiveOnly, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -609,6 +612,9 @@ export function useCardData(options: {
     }
     if (jpExclusiveOnly && activeGame === "pokemon") {
       query = query.eq(`${cardDefTable}.is_japan_exclusive`, true);
+    }
+    if (cuteOnly && activeGame === "pokemon") {
+      query = query.eq(`${cardDefTable}.is_cute`, true);
     }
 
     // Region filter on sell side (displayed as "Lowest Buy")

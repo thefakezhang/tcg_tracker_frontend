@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
-import { sourceLabel } from "@/lib/source-labels";
+import { isOpaqueLinkID, linkChipLabel, platformShort, sourceLabel } from "@/lib/source-labels";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { ReviewQueueGame } from "./ReviewQueueNavigationContext";
 
 // Match review queue (docs/card_index_curation_console.md): the curator empties the
@@ -254,7 +264,7 @@ const CONFIGS: Record<Game, GameConfig> = {
   },
 };
 
-const PLATFORM_SHORT: Record<string, string> = { pricecharting: "PC", tcgplayer: "TCG", snkrdunk: "SNKR", collectr: "COLL", shinsoku: "SHIN", cardkingdom: "CK", torecabirth: "TB", torecabank: "TBK", big_tcg: "BIG", toban: "TOBAN" };
+
 function anchorURL(platform: string, id: string): string | null {
   switch (platform) {
     case "pricecharting": return `https://www.pricecharting.com/game/${id}`;
@@ -339,7 +349,7 @@ function CollisionPanel({
         <div className="text-muted-foreground">{incomingIdentity.join(" · ") || "—"}</div>
         {incomingSourceExternal && (
           <div className="text-muted-foreground">
-            {(PLATFORM_SHORT[incomingSourceExternal.platform] ?? incomingSourceExternal.platform)}
+            {platformShort(incomingSourceExternal.platform)}
             {" #"}
             {(() => {
               const url = anchorURL(incomingSourceExternal.platform, incomingSourceExternal.id);
@@ -358,7 +368,7 @@ function CollisionPanel({
 
       {/* One box per colliding platform id, with resolution actions. */}
       {collisions.map((coll, i) => {
-        const platformLabel = PLATFORM_SHORT[coll.platform] ?? coll.platform;
+        const platformLabel = platformShort(coll.platform);
         const url = coll.id_url ?? anchorURL(coll.platform, coll.id);
         const identityLine = [
           coll.existing_set_code,
@@ -506,15 +516,31 @@ interface QueueData {
   candidates: Candidate[];
   items: Map<number, CatalogItem>;
   total: number;
+  // Rows in this bucket + source that carry a machine proposal - what
+  // "accept all" would confirm. Counted server-side so the button is honest
+  // about the whole filter, not just the loaded page.
+  proposedTotal: number;
 }
+
+// The bulk resolve RPCs confirm one row at a time (links, memory, refresh), so a
+// single call over thousands of ids would outrun the authenticated
+// statement_timeout (8s). Accept-all therefore feeds them in chunks; each chunk
+// commits on its own, so a failure mid-way keeps what already went through and
+// reports where it stopped.
+const ACCEPT_ALL_CHUNK = 100;
 
 // A bucket is one of the curator's mental "files". generated/manual/nonexistant are
 // all rows of the candidates table, split by status + confidence; they share the row
 // UI and the move actions. (aliases + saved are separate tables, fetched elsewhere.)
-// What the bulk resolve RPCs report back.
-interface BulkResult {
-  confirmed?: number;
-  skipped?: number;
+// What the bulk resolve RPCs report back: the number of rows they actually
+// acted on. Every one of them (confirm / reject / create, all three games)
+// RETURNS integer - a bare count, not an object.
+function bulkCount(data: unknown): number | null {
+  if (typeof data === "number") return data;
+  if (data && typeof data === "object" && typeof (data as { confirmed?: unknown }).confirmed === "number") {
+    return (data as { confirmed: number }).confirmed;
+  }
+  return null;
 }
 
 type Bucket = "generated" | "manual" | "nonexistant";
@@ -544,6 +570,10 @@ async function fetchQueue(cfg: GameConfig, bucket: Bucket, limit: number, source
   // Total in this bucket, so the header shows the real size (not just the loaded page).
   const { count: total } = await applySource(applyBucket(
     supabase.from(cfg.candidatesTable).select("candidate_id", { count: "exact", head: true }),
+    bucket,
+  ), source);
+  const { count: proposedTotal } = await applySource(applyBucket(
+    supabase.from(cfg.candidatesTable).select("candidate_id", { count: "exact", head: true }).not(cfg.proposedCol, "is", null),
     bucket,
   ), source);
   const { data: rows, error } = await applySource(applyBucket(
@@ -597,7 +627,22 @@ async function fetchQueue(cfg: GameConfig, bucket: Bucket, limit: number, source
       });
     }
   }
-  return { candidates, items, total: total ?? candidates.length };
+  return { candidates, items, total: total ?? candidates.length, proposedTotal: proposedTotal ?? 0 };
+}
+
+// proposedIdsInFilter lists every candidate in the bucket + source that carries
+// a proposal, paging past the PostgREST cap: accept-all must act on the whole
+// filter, not on the rows that happen to be loaded.
+async function proposedIdsInFilter(cfg: GameConfig, bucket: Bucket, source: string): Promise<number[]> {
+  const supabase = createClient();
+  const rows = await selectAll<{ candidate_id: number }>(
+    () => applySource(applyBucket(
+      supabase.from(cfg.candidatesTable).select("candidate_id").not(cfg.proposedCol, "is", null),
+      bucket,
+    ), source),
+    ["candidate_id"],
+  );
+  return rows.map((r) => r.candidate_id);
 }
 
 function Anchors({ links }: { links: CatalogLink[] }) {
@@ -606,14 +651,15 @@ function Anchors({ links }: { links: CatalogLink[] }) {
     <div className="flex flex-wrap gap-1">
       {links.map((l) => {
         const url = anchorURL(l.platform_name, l.external_reference_id);
-        const label = `${PLATFORM_SHORT[l.platform_name] ?? l.platform_name} ${l.external_reference_id}`;
+        const label = linkChipLabel(l.platform_name, l.external_reference_id);
+        const dashed = isOpaqueLinkID(l.platform_name, l.external_reference_id) ? " border-dashed" : "";
         return url ? (
-          <a key={l.platform_name + l.external_reference_id} href={url} target="_blank" rel="noreferrer"
-            className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary">
+          <a key={l.platform_name + l.external_reference_id} href={url} target="_blank" rel="noreferrer" title={l.external_reference_id}
+            className={`rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary${dashed}`}>
             {label}
           </a>
         ) : (
-          <span key={l.platform_name + l.external_reference_id} className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground">
+          <span key={l.platform_name + l.external_reference_id} title={l.external_reference_id} className={`rounded border px-1.5 py-0.5 text-xs text-muted-foreground${dashed}`}>
             {label}
           </span>
         );
@@ -643,6 +689,10 @@ export default function MatchReviewView({
   const candidates = data?.candidates ?? [];
   const items = data?.items ?? new Map<number, CatalogItem>();
   const total = data?.total ?? 0;
+  const proposedTotal = data?.proposedTotal ?? 0;
+  const [acceptAllOpen, setAcceptAllOpen] = useState(false);
+  // "accepted so far / of" while an accept-all is running; null when idle.
+  const [acceptAllProgress, setAcceptAllProgress] = useState<{ done: number; of: number } | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Survives the selection clear that follows a successful bulk action, so the
@@ -682,21 +732,62 @@ export default function MatchReviewView({
   function toggleAll() {
     setSelected((prev) => (prev.size === candidates.length ? new Set() : new Set(candidates.map((c) => c.candidate_id))));
   }
+  // Accept every proposal in the current bucket + source, in chunks, with
+  // progress. This is the mass-accept for text-based curation: the machine
+  // proposals (identity / memory / link consensus) that a curator would
+  // otherwise confirm one page at a time.
+  async function acceptAll() {
+    setAcceptAllOpen(false);
+    setBusyId(-1);
+    setErr(null);
+    setStatus(null);
+    let ids: number[];
+    try {
+      ids = await proposedIdsInFilter(cfg, bucket, source);
+    } catch (e) {
+      setBusyId(null);
+      setErr(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    let done = 0;
+    setAcceptAllProgress({ done, of: ids.length });
+    const supabase = createClient();
+    for (let i = 0; i < ids.length; i += ACCEPT_ALL_CHUNK) {
+      const chunk = ids.slice(i, i + ACCEPT_ALL_CHUNK);
+      const { data, error: e } = await supabase.rpc(cfg.rpcBulkConfirm, { p_ids: chunk });
+      if (e) {
+        setAcceptAllProgress(null);
+        setBusyId(null);
+        setErr(t("review.acceptAllStopped").replace("{n}", String(done)).replace("{of}", String(ids.length)).replace("{error}", e.message));
+        setSelected(new Set());
+        retry();
+        return;
+      }
+      done += bulkCount(data) ?? chunk.length;
+      setAcceptAllProgress({ done, of: ids.length });
+    }
+    setAcceptAllProgress(null);
+    setBusyId(null);
+    setStatus(t("review.acceptAllDone").replace("{n}", String(done)).replace("{of}", String(ids.length)));
+    setSelected(new Set());
+    retry();
+  }
   async function bulk(rpc: string) {
     setBusyId(-1);
     setErr(null);
+    const requested = selected.size;
     const { data, error: e } = await createClient().rpc(rpc, { p_ids: [...selected] });
     setBusyId(null);
     if (e) { setErr(e.message); return; }
     // The bulk RPCs RETURN what they actually did; these counts used to be
     // discarded, so a bulk that silently skipped rows looked identical to one
     // that applied to every row.
-    const r = data as BulkResult | null;
-    if (r && typeof r.confirmed === "number") {
+    const n = bulkCount(data);
+    if (n != null) {
       setStatus(
         t("review.bulkResult")
-          .replace("{n}", String(r.confirmed))
-          .replace("{skipped}", String(r.skipped ?? 0)),
+          .replace("{n}", String(n))
+          .replace("{skipped}", String(Math.max(0, requested - n))),
       );
     } else {
       setStatus(null);
@@ -765,7 +856,37 @@ export default function MatchReviewView({
             {t("review.countOf").replace("{shown}", String(candidates.length)).replace("{total}", String(total))}
           </span>
         )}
+        {!isLoading && bucket !== "nonexistant" && proposedTotal > 0 && (
+          <Button
+            size="sm"
+            variant="default"
+            className="ml-auto"
+            disabled={busyId === -1}
+            onClick={() => setAcceptAllOpen(true)}
+          >
+            <Check className="size-3.5" />
+            {acceptAllProgress
+              ? t("review.acceptAllProgress").replace("{done}", String(acceptAllProgress.done)).replace("{of}", String(acceptAllProgress.of))
+              : t("review.acceptAll").replace("{n}", String(proposedTotal))}
+          </Button>
+        )}
       </div>
+      <AlertDialog open={acceptAllOpen} onOpenChange={setAcceptAllOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("review.acceptAllTitle").replace("{n}", String(proposedTotal))}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("review.acceptAllBody")
+                .replace("{bucket}", t(`review.bucket.${bucket}` as "review.bucket.generated"))
+                .replace("{source}", source ? sourceLabel(source) : t("review.sourceAll"))}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={acceptAll}>{t("review.acceptAllConfirm").replace("{n}", String(proposedTotal))}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <p className="text-xs text-muted-foreground">{t(`review.bucketHint.${bucket}` as "review.bucketHint.generated")}</p>
       {selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
@@ -1058,12 +1179,13 @@ export default function MatchReviewView({
                               <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">{t("review.adds")}</span>
                               {c.matched.map((m) => {
                                 const url = anchorURL(m.platform, m.id);
-                                const label = `${PLATFORM_SHORT[m.platform] ?? m.platform} ${m.id}`;
+                                const label = linkChipLabel(m.platform, m.id);
+                                const dashed = isOpaqueLinkID(m.platform, m.id) ? " border-dashed" : "";
                                 return url ? (
-                                  <a key={m.platform + m.id} href={url} target="_blank" rel="noreferrer"
-                                    className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary">{label}</a>
+                                  <a key={m.platform + m.id} href={url} target="_blank" rel="noreferrer" title={m.id}
+                                    className={`rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary${dashed}`}>{label}</a>
                                 ) : (
-                                  <span key={m.platform + m.id} className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground">{label}</span>
+                                  <span key={m.platform + m.id} title={m.id} className={`rounded border px-1.5 py-0.5 text-xs text-muted-foreground${dashed}`}>{label}</span>
                                 );
                               })}
                             </div>
