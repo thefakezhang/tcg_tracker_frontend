@@ -119,7 +119,10 @@ export default function AopReviewTab() {
   const [filter, setFilter] = useState<"all" | "clash" | "clean">("all");
   const [search, setSearch] = useState("");
   const [done, setDone] = useState<Record<number, "created" | "skipped">>({});
-  const { saving, save } = useSaving();
+  // Which row is mid-flight. useSaving's flag is component-wide, so using it to
+  // disable would grey out every button on the page for one row's request.
+  const [busy, setBusy] = useState<number | null>(null);
+  const { save } = useSaving();
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const rows = useMemo(() => {
@@ -127,16 +130,21 @@ export default function AopReviewTab() {
     const q = search.trim().toLowerCase();
     return all.filter(
       (r) =>
+        // A resolved row leaves the worklist. Fading it in place read as a
+        // broken button rather than a success: a disabled control on a dimmed
+        // row is what failure looks like everywhere else in the app.
+        !done[r.candidate_id] &&
         (filter === "all" || (filter === "clash" ? r.lookalikes.length > 0 : r.lookalikes.length === 0)) &&
         (!q ||
           r.source_name.toLowerCase().includes(q) ||
           r.english_name.toLowerCase().includes(q) ||
           (r.set_code ?? "").toLowerCase().includes(q)),
     );
-  }, [data, filter, search]);
+  }, [data, filter, search, done]);
 
   const create = async (r: ReviewRow) => {
     setSaveError(null);
+    setBusy(r.candidate_id);
     const ok = await save(async () => {
       const { error: e } = await createClient().rpc("card_index_resolve_pokemon_candidate_create", {
         p_candidate_id: r.candidate_id,
@@ -152,11 +160,13 @@ export default function AopReviewTab() {
         throw e;
       }
     });
+    setBusy(null);
     if (ok) setDone((d) => ({ ...d, [r.candidate_id]: "created" }));
   };
 
   const skip = async (r: ReviewRow) => {
     setSaveError(null);
+    setBusy(r.candidate_id);
     const ok = await save(async () => {
       const { error: e } = await createClient().rpc("card_index_resolve_pokemon_candidate_reject", {
         p_candidate_id: r.candidate_id,
@@ -166,6 +176,7 @@ export default function AopReviewTab() {
         throw e;
       }
     });
+    setBusy(null);
     if (ok) setDone((d) => ({ ...d, [r.candidate_id]: "skipped" }));
   };
 
@@ -174,6 +185,7 @@ export default function AopReviewTab() {
 
   const all = data ?? [];
   const clash = all.filter((r) => r.lookalikes.length > 0).length;
+  const resolved = Object.keys(done).length;
 
   return (
     <div className="min-w-0 space-y-3">
@@ -195,6 +207,9 @@ export default function AopReviewTab() {
           className="min-h-11 w-full sm:min-h-8 sm:w-56"
         />
       </div>
+      {resolved > 0 && (
+        <p className="text-xs text-emerald-600 dark:text-emerald-400">{t("aopReview.resolved", { n: resolved })}</p>
+      )}
       {saveError && (
         <p role="alert" className="text-xs text-destructive">
           {saveError}
@@ -204,10 +219,8 @@ export default function AopReviewTab() {
         <p className="text-sm text-muted-foreground">{t("aopReview.empty")}</p>
       ) : (
         <ul className="space-y-3">
-          {rows.map((r) => {
-            const state = done[r.candidate_id];
-            return (
-              <li key={r.candidate_id} className={`rounded-md border p-3 ${state ? "opacity-50" : ""}`}>
+          {rows.map((r) => (
+            <li key={r.candidate_id} className="rounded-md border p-3">
                 <div className="flex flex-wrap gap-4">
                   <div className="w-28 shrink-0">
                     {r.source_image_url ? (
@@ -263,18 +276,17 @@ export default function AopReviewTab() {
                       </div>
                     )}
                     <div className="flex flex-wrap gap-2 pt-1">
-                      <Button size="sm" className="min-h-11 sm:min-h-8" disabled={saving || !!state} onClick={() => create(r)}>
-                        {state === "created" ? t("aopReview.created") : t("aopReview.create")}
+                      <Button size="sm" className="min-h-11 sm:min-h-8" disabled={busy === r.candidate_id} onClick={() => create(r)}>
+                        {busy === r.candidate_id ? t("aopReview.working") : t("aopReview.create")}
                       </Button>
-                      <Button size="sm" variant="outline" className="min-h-11 sm:min-h-8" disabled={saving || !!state} onClick={() => skip(r)}>
-                        {state === "skipped" ? t("aopReview.skipped") : t("aopReview.skip")}
+                      <Button size="sm" variant="outline" className="min-h-11 sm:min-h-8" disabled={busy === r.candidate_id} onClick={() => skip(r)}>
+                        {t("aopReview.skip")}
                       </Button>
                     </div>
                   </div>
                 </div>
               </li>
-            );
-          })}
+          ))}
         </ul>
       )}
     </div>
