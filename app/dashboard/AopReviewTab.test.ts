@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { foldName } from "./AopReviewTab";
+import { canonicalName, foldName } from "./AopReviewTab";
 
 // foldName decides which catalog cards are shown beside a candidate as possible
 // duplicates, so it has to agree with matchreview.FoldCardName on the backend.
@@ -28,5 +28,23 @@ describe("foldName", () => {
   it("survives empty and missing input", () => {
     expect(foldName("")).toBe("");
     expect(foldName(undefined as unknown as string)).toBe("");
+  });
+});
+
+describe("canonicalName", () => {
+  it("writes the catalog's spelling of the feed's markup", () => {
+    // The feed's tokens are not names. Storing them raw is how 39 twins of
+    // cards we already held were created.
+    expect(canonicalName("{MEGA}カメックスEX")).toBe("MカメックスEX");
+    expect(canonicalName("ビクティニ{PRISM_STAR}")).toBe("ビクティニ◇");
+  });
+
+  it("leaves an ordinary name alone", () => {
+    expect(canonicalName("ミジュマル")).toBe("ミジュマル");
+    expect(canonicalName("")).toBe("");
+  });
+
+  it("only rewrites {MEGA} as a prefix, which is the only place it means M", () => {
+    expect(canonicalName("なにか{MEGA}")).toBe("なにか{MEGA}");
   });
 });

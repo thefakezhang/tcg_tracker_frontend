@@ -903,7 +903,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "aopReview.blocked": "同一性が不足 ({n})",
   "aopReview.search": "名前 / セットを検索…",
   "aopReview.empty": "確認待ちはありません。",
-  "aopReview.blockedWhy": "このままでは作成できません。保有していないセット記号を指すか、印刷された番号がありません。",
+  "aopReview.blockedWhy": "このままでは作成できません。保有していないセット記号を指す、印刷された番号がない、または仕上げが特定できないまま既に保有しているカードです。",
   "aopReview.noImage": "画像なし",
   "aopReview.create": "作成",
   "aopReview.working": "処理中…",
