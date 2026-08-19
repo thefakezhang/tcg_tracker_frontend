@@ -25,7 +25,7 @@ import { MultiSelectFilter } from "@/components/ui/multi-select-filter";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import PokemonMatchesTab from "./PokemonMatchesTab";
-import ArtofpkmSetsTab from "./ArtofpkmSetsTab";
+import AopReviewTab from "./AopReviewTab";
 
 // Card Index editor for pokemon SINGLES (Stage 2-A). Mirrors the sealed catalog
 // surface over the card_index_*_pokemon_* RPCs so variant adds + TCGID links go
@@ -247,7 +247,7 @@ const CATALOG_PAGE = 500;
 
 export default function PokemonCardIndex() {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<"cards" | "matches" | "aopSets">("cards");
+  const [tab, setTab] = useState<"cards" | "matches" | "aopReview">("cards");
   return (
     <div className="min-w-0 space-y-4">
       <div className="flex flex-wrap gap-1">
@@ -257,11 +257,11 @@ export default function PokemonCardIndex() {
         <Button size="sm" variant={tab === "matches" ? "default" : "outline"} onClick={() => setTab("matches")}>
           {t("cardIndex.tabMatches")}
         </Button>
-        <Button size="sm" variant={tab === "aopSets" ? "default" : "outline"} onClick={() => setTab("aopSets")}>
-          {t("cardIndex.tabAopSets")}
+        <Button size="sm" variant={tab === "aopReview" ? "default" : "outline"} onClick={() => setTab("aopReview")}>
+          {t("cardIndex.tabAopReview")}
         </Button>
       </div>
-      {tab === "cards" ? <CardsTab /> : tab === "matches" ? <PokemonMatchesTab /> : <ArtofpkmSetsTab />}
+      {tab === "cards" ? <CardsTab /> : tab === "matches" ? <PokemonMatchesTab /> : <AopReviewTab />}
     </div>
   );
 }
