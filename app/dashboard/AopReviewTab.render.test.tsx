@@ -77,8 +77,11 @@ describe("AopReviewTab", () => {
     // A row with nothing sharing its name says so, so it can be cleared fast.
     expect(screen.getByText(/No catalog card shares this name/)).toBeTruthy();
 
-    // Both actions are offered per row.
-    expect(screen.getAllByRole("button", { name: "Create" })).toHaveLength(2);
+    // Both actions are offered per row, and neither is disabled while idle -
+    // a greyed button on a dimmed row was previously mistaken for a dead click.
+    const creates = screen.getAllByRole("button", { name: "Create" });
+    expect(creates).toHaveLength(2);
+    expect(creates.every((b) => !(b as HTMLButtonElement).disabled)).toBe(true);
     expect(screen.getAllByRole("button", { name: "Not needed" })).toHaveLength(2);
   });
 
