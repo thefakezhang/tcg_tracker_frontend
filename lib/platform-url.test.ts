@@ -54,6 +54,12 @@ describe("platformUrl", () => {
     expect(platformUrl("cardkingdom", "506"))
       .toBe("https://card-kingdom.jp/pokemon/products/detail/506");
     expect(platformUrl("cardkingdom", "psa10:397/SM-P")).toBe("");
+    // Collectr pages live at getcollectr.com/explore/product - both id shapes
+    // (Collectr-native 10xxxxxx and tcgplayer-shaped) are real pages there.
+    expect(platformUrl("collectr", "10002199"))
+      .toBe("https://app.getcollectr.com/explore/product/10002199");
+    expect(platformUrl("collectr", "618166"))
+      .toBe("https://app.getcollectr.com/explore/product/618166");
   });
 
   it("uses a stored Shinsoku sell product URL without treating the IAP handle as a product id", () => {
