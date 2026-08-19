@@ -136,7 +136,8 @@ app/
     MtgAliasesTab.tsx     # MTG text-variance alias manager (mtg_card_aliases)
     MtgCardIndex.tsx      # MTG catalog tab of the Card Index
     OwnedCountLine.tsx    # One-line owned/incoming signal on browse tiles and rows
-    PokemonCardIndex.tsx  # Pokemon catalog tab of the Card Index (create/edit/merge/link attach)
+    PokemonCardIndex.tsx  # Pokemon catalog tab of the Card Index (create/edit/merge/link attach/curator flags)
+    PokemonCuratorFlags.tsx # Shared JP-exclusive / Cute flag switches, row chips, and RPC writer (Card Detail Modal + Card Index)
     PokemonMatchesTab.tsx # Pokemon match-memory manager (pokemon_card_matches)
     PriceEvidenceBadge.tsx # Independent semantic price evidence for image-curation candidates
     PurchasePlannerView.tsx # Pre-order card plan, customer assignments, backups, coverage, and readiness review
@@ -410,6 +411,9 @@ Never render a lease token, raw log, credential, arbitrary heartbeat failure sum
 - "Add to Buy List" button (popover) lets users save cards to any buy list.
 - Two manual curator flags on Pokémon cards, each a `Switch` in the header and a filter button in `CardBrowser`: **Japanese exclusive** (`is_japan_exclusive`, RPC `set_pokemon_japan_exclusive`, 000093) and **Cute** (`is_cute`, RPC `set_pokemon_cute`, 000293 - the "cute" market segment the operator buys and sells by).
 Both are selected in `use-card-data.ts`'s definition columns, filtered server-side (`jpExclusiveOnly` / `cuteOnly`), and written straight back onto the row so the list reflects the toggle without a refetch.
+- The switches, the read-only row chips, and the RPC writer live in `PokemonCuratorFlags.tsx` (`POKEMON_CURATOR_FLAGS` is the single definition of key, RPC, emoji, and labels) and are shared with the Card Index editor.
+The Card Browser only lists cards that have a `pokemon_price_summaries` row (its query is an `!inner` join from the summary table), so roughly a quarter of the catalog can never open this modal; those cards are flagged from the Card Index instead (see Card Index curator flags below).
+A failed flag write now shows the RPC error inline next to the switches instead of silently leaving the switch unmoved.
 ### Per-grade evidence panel (S3)
 
 - `GradeEvidencePanel.tsx` reads the latest `pokemon_grade_signals` model row per card and grade, Card Ladder sold comps, bid locations, and applicable market events.
@@ -476,6 +480,15 @@ The mutation sends both the displayed ledger balance and observed count so the b
 - Card Index > Pokemon > **Needs review** (`AopReviewTab.tsx`) is the artofpkm rows no automated tier could settle. Rows whose card the catalog demonstrably holds are removed from the queue and rows with a usable printed number are created, so what reaches this tab is only where a name cannot decide: unnumbered old-back promos (two thirds of that bucket shares a name with a card already filed elsewhere, because promos were spun out of it one product at a time) and sets whose crosswalk evidence splits across sibling codes. Each row shows its artofpkm scan beside every catalog card sharing its name, with set, number and finish, and resolves through the match-review candidate RPCs (`card_index_resolve_pokemon_candidate_create` / `_reject`). `foldName` mirrors `matchreview.FoldCardName`, including that a one-character bracket group is identity but its brackets are not.
 - It replaced a **Set crosswalk** tab that bound artofpkm sets to our codes by hand. That job is done and automated: `verify-artofpkm-crosswalk` decides a binding from where a set's cards actually live, never from its name, and `-fix` applies what the evidence settles. `card_index_bind_artofpkm_set` still exists for a one-off correction.
 - Backend architecture, flow, goals and non-goals: `docs/artofpkm_catalog_source.md` in the backend repository.
+
+### Card Index curator flags
+
+- The Pokémon Card Index is the one surface that reaches the whole singles catalog: `fetchIndex` reads `pokemon_card_definitions` directly, with no price-summary join, so cards that have no comp data (8,943 of 32,484 definitions in Aug 2026) are listed here and nowhere else.
+- The edit modal therefore carries the same two curator switches as the Card Detail Modal (`PokemonCuratorFlagSwitches` from `PokemonCuratorFlags.tsx`), under a "Curator flags" heading between the identity fields and Links.
+Like link attach, each switch saves the moment it is toggled through its own RPC (`set_pokemon_japan_exclusive` / `set_pokemon_cute`) and calls `onSaved` so the list behind the modal refetches; the identity fields still wait for Save.
+- Each index row shows a compact chip per set flag (`PokemonCuratorFlagChips`) in the Variant column, next to the misc badge, with the full label on the tooltip; unflagged rows render nothing extra.
+- Goals: every catalog card can be marked, from the surface that can find it, with one shared definition so the two surfaces cannot drift.
+Non-goals: flag filters on the Card Index (the Card Browser's JP-exclusive / Cute filter buttons remain the way to list flagged cards), and a flag-aware Card Browser for cards without price data (the browser is a market view; its summary-first query is deliberate).
 
 ### Card Index link attachment (R1)
 

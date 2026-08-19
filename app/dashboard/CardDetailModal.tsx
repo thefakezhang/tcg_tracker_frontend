@@ -20,7 +20,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -67,6 +66,11 @@ import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
 import { RefreshPricesAction } from "./RefreshPricesAction";
 import { UidChip } from "./UidChip";
+import {
+  PokemonCuratorFlagSwitches,
+  pokemonCuratorFlagValues,
+  type PokemonCuratorFlagValues,
+} from "./PokemonCuratorFlags";
 import { useOwnedInventoryVersion, bumpOwnedInventory } from "./owned-inventory";
 import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
 import GradeEvidencePanel from "./GradeEvidencePanel";
@@ -250,10 +254,9 @@ export default function CardDetailModal({
   const [targetPrice, setTargetPrice] = useState<string>("");
   const [savingTargetPrice, setSavingTargetPrice] = useState(false);
   const [targetPriceError, setTargetPriceError] = useState<string | null>(null);
-  const [jpExclusive, setJpExclusive] = useState(false);
-  const [savingJp, setSavingJp] = useState(false);
-  const [cute, setCute] = useState(false);
-  const [savingCute, setSavingCute] = useState(false);
+  // Manual curator flags (JP exclusive / cute) - shared switches + RPCs with
+  // the Card Index editor (PokemonCuratorFlags.tsx).
+  const [curatorFlags, setCuratorFlags] = useState<PokemonCuratorFlagValues>(pokemonCuratorFlagValues(null));
   const [askingPrice, setAskingPrice] = useState("");
   const [askingCurrency, setAskingCurrency] = useState<"JPY" | "USD">("JPY");
   const [sightingGrade, setSightingGrade] = useState(0);
@@ -266,47 +269,12 @@ export default function CardDetailModal({
     return tab === "psa" ? (rowGrade > 0 ? rowGrade : 10) : 0;
   }, [card]);
 
-  // Sync the manual JP-exclusive flag from the opened card.
+  // Sync the manual curator flags from the opened card.
   useEffect(() => {
-    setJpExclusive(!!card?.card.is_japan_exclusive);
-    setCute(!!card?.card.is_cute);
+    setCuratorFlags(pokemonCuratorFlagValues(card?.card));
     setAskingPrice("");
     setAskingCurrency("JPY");
   }, [card]);
-
-  const toggleJpExclusive = useCallback(async () => {
-    if (!card || savingJp) return;
-    const next = !jpExclusive;
-    setSavingJp(true);
-    const supabase = createClient();
-    const { error } = await supabase.rpc("set_pokemon_japan_exclusive", {
-      p_card_id: Number(card.card.card_id),
-      p_value: next,
-    });
-    setSavingJp(false);
-    if (!error) {
-      setJpExclusive(next);
-      card.card.is_japan_exclusive = next; // keep the row in sync for the list
-    }
-  }, [card, jpExclusive, savingJp]);
-
-  // The "cute" flag mirrors the JP-exclusive one: a manual curator mark, one
-  // narrow RPC, kept in sync on the row so the list reflects it immediately.
-  const toggleCute = useCallback(async () => {
-    if (!card || savingCute) return;
-    const next = !cute;
-    setSavingCute(true);
-    const supabase = createClient();
-    const { error } = await supabase.rpc("set_pokemon_cute", {
-      p_card_id: Number(card.card.card_id),
-      p_value: next,
-    });
-    setSavingCute(false);
-    if (!error) {
-      setCute(next);
-      card.card.is_cute = next;
-    }
-  }, [card, cute, savingCute]);
 
   const saveTargetPrice = useCallback(async () => {
     if (!entryGame || entryId == null || savingTargetPrice) return;
@@ -672,26 +640,15 @@ export default function CardDetailModal({
                   </Badge>
                 )}
                 {activeGame === "pokemon" && (
-                  <label className="ml-1 inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs sm:min-h-0">
-                    <Switch
-                      size="sm"
-                      checked={jpExclusive}
-                      disabled={savingJp}
-                      onCheckedChange={toggleJpExclusive}
-                    />
-                    <span className="select-none">🇯🇵 {t("modal.jpExclusive")}</span>
-                  </label>
-                )}
-                {activeGame === "pokemon" && (
-                  <label className="ml-1 inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs sm:min-h-0">
-                    <Switch
-                      size="sm"
-                      checked={cute}
-                      disabled={savingCute}
-                      onCheckedChange={toggleCute}
-                    />
-                    <span className="select-none">🩷 {t("modal.cute")}</span>
-                  </label>
+                  <PokemonCuratorFlagSwitches
+                    cardId={Number(def.card_id)}
+                    values={curatorFlags}
+                    labelClassName="ml-1"
+                    onChange={(flag, value) => {
+                      setCuratorFlags((prev) => ({ ...prev, [flag]: value }));
+                      def[flag] = value; // keep the row in sync for the list
+                    }}
+                  />
                 )}
                 <UidChip uid={def.card_uid} />
               </div>
