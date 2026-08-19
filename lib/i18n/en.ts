@@ -901,7 +901,7 @@ const en = {
   "aopReview.blocked": "Needs an identity ({n})",
   "aopReview.search": "Search name / set…",
   "aopReview.empty": "Nothing left to review.",
-  "aopReview.blockedWhy": "Cannot be created as-is: its set code names no set we hold, or it has no printed number.",
+  "aopReview.blockedWhy": "Cannot be created as-is: its set code names no set we hold, it has no printed number, or we already hold this card in a finish the source did not name.",
   "aopReview.noImage": "no scan",
   "aopReview.create": "Create",
   "aopReview.working": "Working…",

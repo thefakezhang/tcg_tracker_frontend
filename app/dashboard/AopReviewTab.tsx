@@ -79,8 +79,7 @@ export async function fetchReview(): Promise<ReviewRow[]> {
   if (cands.length === 0) return [];
 
   // One round trip for the set codes that exist. A candidate whose set_code
-  // names no set cannot be created - that is the real blocker, and the only
-  // reason a row belongs in front of a person.
+  // names no set cannot be created - that is one blocker.
   const { data: sets, error: setErr } = await supabase
     .from("pokemon_sets")
     .select("set_code, language")
@@ -88,13 +87,40 @@ export async function fetchReview(): Promise<ReviewRow[]> {
   if (setErr) throw setErr;
   const known = new Set(((sets ?? []) as { set_code: string; language: string }[]).map((x) => `${x.language}\u001f${x.set_code}`));
 
+  // The other blocker: a card we ALREADY hold at this set and number under this
+  // name, in some finish. artofpkm never states a finish, so its rows arrive
+  // with misc_info UNKNOWN and match no card we hold as 1ED / アンリミ /
+  // レアリティなし. Comparing the full identity therefore called them new, and a
+  // bulk run created 23 unspecified-finish copies of cards we already had.
+  // The resolver has always refused to resolve an unstated finish ONTO a
+  // specific-finish card because you cannot tell which print it is; that same
+  // uncertainty means it must not be created either. It is a curator's
+  // question, not a new card.
+  const numbers = Array.from(new Set(cands.map((c) => c.card_number).filter(Boolean))) as string[];
+  const held = new Set<string>();
+  if (numbers.length > 0) {
+    const { data: defs, error: defErr } = await supabase
+      .from("pokemon_card_definitions")
+      .select("set_code, card_number, regional_name")
+      .in("card_number", numbers)
+      .limit(10000);
+    if (defErr) throw defErr;
+    for (const d of (defs ?? []) as { set_code: string; card_number: string; regional_name: string }[]) {
+      held.add(`${d.set_code}\u001f${d.card_number}\u001f${d.regional_name}`);
+    }
+  }
+
   return cands.map((c) => {
     const aop = c.source_fields?.by_source?.artofpkm ?? {};
     return {
       ...c,
       english_name: aop.english_name ?? "",
       illustrator: aop.illustrator ?? "",
-      ready: Boolean(c.set_code) && known.has(`${c.language ?? "jp"}\u001f${c.set_code}`) && Boolean(c.card_number),
+      ready:
+        Boolean(c.set_code) &&
+        known.has(`${c.language ?? "jp"}\u001f${c.set_code}`) &&
+        Boolean(c.card_number) &&
+        !held.has(`${c.set_code}\u001f${c.card_number}\u001f${c.source_name}`),
     };
   });
 }
