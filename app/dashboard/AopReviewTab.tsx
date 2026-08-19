@@ -236,7 +236,16 @@ export default function AopReviewTab() {
                             <div key={d.card_id} className="flex w-24 flex-col gap-1">
                               {d.image_url ? (
                                 /* eslint-disable-next-line @next/next/no-img-element */
-                                <img src={d.image_url} alt={d.regional_name} className="w-full rounded" loading="lazy" />
+                                <img
+                                  src={d.image_url}
+                                  // Distinct from the candidate's own scan: both
+                                  // carry the same card name, so without the set
+                                  // code a screen reader cannot tell the row's
+                                  // card from the one it might duplicate.
+                                  alt={`${d.regional_name} (${d.set_code})`}
+                                  className="w-full rounded"
+                                  loading="lazy"
+                                />
                               ) : (
                                 <div className="flex h-32 w-full items-center justify-center rounded bg-muted text-[10px] text-muted-foreground">
                                   {t("aopReview.noImage")}
