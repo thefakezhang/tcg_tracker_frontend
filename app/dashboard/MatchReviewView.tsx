@@ -271,6 +271,7 @@ function anchorURL(platform: string, id: string): string | null {
     case "snkrdunk": return `https://snkrdunk.com/apparels/${id}`;
     case "tcgplayer": return `https://www.tcgplayer.com/product/${id}`;
     case "cardrush": return `https://www.cardrush-pokemon.jp/product/${id}`;
+    case "collectr": return `https://app.getcollectr.com/explore/product/${id}`;
     // Card Kingdom sell ids are numeric EC-CUBE product ids; buylist keys
     // (psa10:…, box:…) have no per-item page.
     case "cardkingdom": return /^\d+$/.test(id) ? `https://card-kingdom.jp/pokemon/products/detail/${id}` : null;

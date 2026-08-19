@@ -159,7 +159,10 @@ export function platformUrl(
         ? `https://snkrdunk.com/apparels/${id}`
         : `https://snkrdunk.com/en/trading-cards/${id}`;
     case "collectr":
-      return `https://app.collectr.com/product/${id}`;
+      // Collectr's product pages live at getcollectr.com/explore/product; the
+      // id may be Collectr-native (10xxxxxx) or the card's tcgplayer id - both
+      // are real pages there.
+      return `https://app.getcollectr.com/explore/product/${id}`;
     case "artofpkm":
       // id is "<aop_set_id>/<ordinal>" - the card page URL's own shape.
       return `https://www.artofpkm.com/sets/${id.replace("/", "/card/")}`;
