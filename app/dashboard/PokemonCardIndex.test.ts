@@ -59,6 +59,8 @@ describe("Pokemon Card Index query boundary", () => {
         language: "en",
         misc_info: "SR仕様, 英語版",
         image_url: null,
+        is_japan_exclusive: false,
+        is_cute: true,
       }],
       error: null,
     });
@@ -90,12 +92,17 @@ describe("Pokemon Card Index query boundary", () => {
     expect(count.or.mock.calls.map(([filter]) => filter)).toEqual(expectedFilters);
     expect(definitions.or.mock.calls.map(([filter]) => filter)).toEqual(expectedFilters);
     expect(definitions.select).toHaveBeenCalledWith(expect.stringContaining("english_name_version"));
+    // The curator flags ride along on every index row: the Card Index is the
+    // surface that reaches cards the price-summary-driven browser never lists.
+    expect(definitions.select).toHaveBeenCalledWith(expect.stringContaining("is_japan_exclusive, is_cute"));
     expect(result.total).toBe(1);
     expect(result.cards).toEqual([
       expect.objectContaining({
         card_uid: "da807f6b-e540-44a1-bbbc-1b3179cf9211",
         english_name: "Iono",
         english_name_version: 1,
+        is_japan_exclusive: false,
+        is_cute: true,
         links: [expect.objectContaining({ external_reference_id: "545661" })],
       }),
     ]);
