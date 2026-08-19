@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LanguageProvider } from "./LanguageContext";
 import AopReviewTab, { type ReviewRow } from "./AopReviewTab";
@@ -80,6 +80,24 @@ describe("AopReviewTab", () => {
     expect(screen.getByRole("button", { name: "All (2)" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Ready to create (1)" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Needs an identity (1)" })).toBeTruthy();
+  });
+
+  it("offers bulk create only for ready rows, and arms before firing", () => {
+    render(
+      <LanguageProvider>
+        <AopReviewTab />
+      </LanguageProvider>,
+    );
+    // One of the two fixtures is ready, so the offer counts one - never the
+    // blocked row, which has no identity to create from.
+    const arm = screen.getByRole("button", { name: "Create all 1 ready" });
+    expect(arm).toBeTruthy();
+    // Nothing destructive on the first click: it writes definitions with no
+    // undo on this screen, so it asks once.
+    expect(screen.queryByRole("button", { name: /Yes - create/ })).toBeNull();
+    fireEvent.click(arm);
+    expect(screen.getByRole("button", { name: "Yes - create 1 cards" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
   });
 
   it("never counts name collisions, which decide nothing", () => {

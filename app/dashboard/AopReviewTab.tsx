@@ -108,6 +108,11 @@ export default function AopReviewTab() {
   // Which row is mid-flight. useSaving's flag is component-wide, so using it to
   // disable would grey out every button on the page for one row's request.
   const [busy, setBusy] = useState<number | null>(null);
+  // Bulk create is two-step on purpose: it writes hundreds of definitions and
+  // there is no undo in this screen. `armed` is the first click, `bulk` is the
+  // live progress, and it stops on the first failure rather than plough on.
+  const [armed, setArmed] = useState(false);
+  const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
   const { save } = useSaving();
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -166,11 +171,46 @@ export default function AopReviewTab() {
     if (ok) setDone((d) => ({ ...d, [r.candidate_id]: "skipped" }));
   };
 
+  // Every row here has a complete identity and matches no card, so each is a
+  // card we lack. Creating them one click at a time asks the same question
+  // hundreds of times with one possible answer.
+  const createAllReady = async () => {
+    const targets = (data ?? []).filter((r) => r.ready && !done[r.candidate_id]);
+    if (targets.length === 0) return;
+    setArmed(false);
+    setSaveError(null);
+    setBulk({ done: 0, total: targets.length });
+    const supabase = createClient();
+    for (let i = 0; i < targets.length; i++) {
+      const r = targets[i];
+      const { error: e } = await supabase.rpc("card_index_resolve_pokemon_candidate_create", {
+        p_candidate_id: r.candidate_id,
+        p_regional_name: r.source_name,
+        p_english_name: r.english_name || null,
+        p_set_code: r.set_code,
+        p_card_number: r.card_number || null,
+        p_language: r.language || "jp",
+        p_misc_info: r.misc_info || "UNKNOWN",
+      });
+      if (e) {
+        // Stop here. Whatever broke this row is likely to break the rest, and
+        // the ones already created stay created - the counter says how many.
+        setSaveError(t("aopReview.bulkStopped", { n: i, name: r.source_name, msg: e.message }));
+        setBulk(null);
+        return;
+      }
+      setDone((d) => ({ ...d, [r.candidate_id]: "created" }));
+      setBulk({ done: i + 1, total: targets.length });
+    }
+    setBulk(null);
+  };
+
   if (error) return <QueryError onRetry={retry} />;
   if (isLoading) return <p className="text-sm text-muted-foreground">{t("common.loading")}</p>;
 
   const all = data ?? [];
   const ready = all.filter((r) => r.ready).length;
+  const readyPending = all.filter((r) => r.ready && !done[r.candidate_id]).length;
   const resolved = Object.keys(done).length;
 
   return (
@@ -193,6 +233,26 @@ export default function AopReviewTab() {
           className="min-h-11 w-full sm:min-h-8 sm:w-56"
         />
       </div>
+      {readyPending > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          {bulk ? (
+            <p className="text-xs text-muted-foreground">{t("aopReview.bulkProgress", { done: bulk.done, total: bulk.total })}</p>
+          ) : armed ? (
+            <>
+              <Button size="sm" variant="destructive" className="min-h-11 sm:min-h-8" onClick={createAllReady}>
+                {t("aopReview.bulkConfirm", { n: readyPending })}
+              </Button>
+              <Button size="sm" variant="outline" className="min-h-11 sm:min-h-8" onClick={() => setArmed(false)}>
+                {t("common.cancel")}
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" variant="secondary" className="min-h-11 sm:min-h-8" onClick={() => setArmed(true)}>
+              {t("aopReview.bulk", { n: readyPending })}
+            </Button>
+          )}
+        </div>
+      )}
       {resolved > 0 && (
         <p className="text-xs text-emerald-600 dark:text-emerald-400">{t("aopReview.resolved", { n: resolved })}</p>
       )}
