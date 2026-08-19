@@ -64,6 +64,15 @@ export function foldName(s: string): string {
     .replace(/\s+/g, "");
 }
 
+// canonicalName strips the catalog-feed's own markup and writes the glyph the
+// catalog uses. It must stay in step with matchreview.FoldCardName, which folds
+// the same two tokens. Applied both to the "do we hold this" test and to what
+// Create sends, because storing the raw string is how 39 twins of cards we
+// already held got written with "{PRISM_STAR}" in their Japanese name.
+export function canonicalName(s: string): string {
+  return (s ?? "").replace(/^\{MEGA\}/, "M").replace(/\{PRISM_STAR\}/g, "\u25c7");
+}
+
 export async function fetchReview(): Promise<ReviewRow[]> {
   const supabase = createClient();
   const { data, error } = await supabase
@@ -106,7 +115,7 @@ export async function fetchReview(): Promise<ReviewRow[]> {
       .limit(10000);
     if (defErr) throw defErr;
     for (const d of (defs ?? []) as { set_code: string; card_number: string; regional_name: string }[]) {
-      held.add(`${d.set_code}\u001f${d.card_number}\u001f${d.regional_name}`);
+      held.add(`${d.set_code}\u001f${d.card_number}\u001f${canonicalName(d.regional_name)}`);
     }
   }
 
@@ -120,7 +129,7 @@ export async function fetchReview(): Promise<ReviewRow[]> {
         Boolean(c.set_code) &&
         known.has(`${c.language ?? "jp"}\u001f${c.set_code}`) &&
         Boolean(c.card_number) &&
-        !held.has(`${c.set_code}\u001f${c.card_number}\u001f${c.source_name}`),
+        !held.has(`${c.set_code}\u001f${c.card_number}\u001f${canonicalName(c.source_name)}`),
     };
   });
 }
@@ -165,7 +174,7 @@ export default function AopReviewTab() {
     const ok = await save(async () => {
       const { error: e } = await createClient().rpc("card_index_resolve_pokemon_candidate_create", {
         p_candidate_id: r.candidate_id,
-        p_regional_name: r.source_name,
+        p_regional_name: canonicalName(r.source_name),
         p_english_name: r.english_name || null,
         p_set_code: r.set_code,
         p_card_number: r.card_number || null,
@@ -211,7 +220,7 @@ export default function AopReviewTab() {
       const r = targets[i];
       const { error: e } = await supabase.rpc("card_index_resolve_pokemon_candidate_create", {
         p_candidate_id: r.candidate_id,
-        p_regional_name: r.source_name,
+        p_regional_name: canonicalName(r.source_name),
         p_english_name: r.english_name || null,
         p_set_code: r.set_code,
         p_card_number: r.card_number || null,
