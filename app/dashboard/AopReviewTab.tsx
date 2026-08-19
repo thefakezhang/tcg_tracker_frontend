@@ -40,20 +40,15 @@ interface Candidate {
   source_fields: { by_source?: { artofpkm?: { english_name?: string; illustrator?: string; rarity?: string } } } | null;
 }
 
-interface Existing {
-  card_id: number;
-  regional_name: string;
-  english_name: string | null;
-  set_code: string;
-  card_number: string | null;
-  misc_info: string | null;
-  image_url: string | null;
-}
-
 export interface ReviewRow extends Candidate {
   english_name: string;
   illustrator: string;
-  lookalikes: Existing[];
+  // Whether the row's identity is complete: its set_code names a real set and
+  // it carries a printed number. That is the only thing on this screen that
+  // decides anything, because identity is (set_code, card_number, misc_info,
+  // language). A shared NAME is not a conflict - it is the normal case, and
+  // showing counts of it asked the operator to adjudicate noise.
+  ready: boolean;
 }
 
 // foldName is the comparison key for "is this the same printed card". It must
@@ -83,32 +78,23 @@ export async function fetchReview(): Promise<ReviewRow[]> {
   const cands = (data ?? []) as Candidate[];
   if (cands.length === 0) return [];
 
-  // One round trip for every catalog card sharing a name with any candidate.
-  // Names are matched exactly here and folded in JS: PostgREST cannot express
-  // the fold, and the exact set is small enough that over-fetching is cheaper
-  // than a request per row.
-  const names = Array.from(new Set(cands.map((c) => c.source_name).filter(Boolean)));
-  const { data: defs, error: defErr } = await supabase
-    .from("pokemon_card_definitions")
-    .select("card_id, regional_name, english_name, set_code, card_number, misc_info, image_url")
-    .in("regional_name", names)
+  // One round trip for the set codes that exist. A candidate whose set_code
+  // names no set cannot be created - that is the real blocker, and the only
+  // reason a row belongs in front of a person.
+  const { data: sets, error: setErr } = await supabase
+    .from("pokemon_sets")
+    .select("set_code, language")
     .limit(5000);
-  if (defErr) throw defErr;
+  if (setErr) throw setErr;
+  const known = new Set(((sets ?? []) as { set_code: string; language: string }[]).map((x) => `${x.language}\u001f${x.set_code}`));
 
-  const byName = new Map<string, Existing[]>();
-  for (const d of (defs ?? []) as Existing[]) {
-    const k = foldName(d.regional_name);
-    const arr = byName.get(k) ?? [];
-    arr.push(d);
-    byName.set(k, arr);
-  }
   return cands.map((c) => {
     const aop = c.source_fields?.by_source?.artofpkm ?? {};
     return {
       ...c,
       english_name: aop.english_name ?? "",
       illustrator: aop.illustrator ?? "",
-      lookalikes: (byName.get(foldName(c.source_name)) ?? []).sort((a, b) => a.set_code.localeCompare(b.set_code)),
+      ready: Boolean(c.set_code) && known.has(`${c.language ?? "jp"}\u001f${c.set_code}`) && Boolean(c.card_number),
     };
   });
 }
@@ -116,7 +102,7 @@ export async function fetchReview(): Promise<ReviewRow[]> {
 export default function AopReviewTab() {
   const { t } = useTranslation();
   const { data, error, isLoading, retry } = useSupabaseQuery(["aop-review"], fetchReview);
-  const [filter, setFilter] = useState<"all" | "clash" | "clean">("all");
+  const [filter, setFilter] = useState<"all" | "ready" | "blocked">("all");
   const [search, setSearch] = useState("");
   const [done, setDone] = useState<Record<number, "created" | "skipped">>({});
   // Which row is mid-flight. useSaving's flag is component-wide, so using it to
@@ -134,7 +120,7 @@ export default function AopReviewTab() {
         // broken button rather than a success: a disabled control on a dimmed
         // row is what failure looks like everywhere else in the app.
         !done[r.candidate_id] &&
-        (filter === "all" || (filter === "clash" ? r.lookalikes.length > 0 : r.lookalikes.length === 0)) &&
+        (filter === "all" || (filter === "ready" ? r.ready : !r.ready)) &&
         (!q ||
           r.source_name.toLowerCase().includes(q) ||
           r.english_name.toLowerCase().includes(q) ||
@@ -184,7 +170,7 @@ export default function AopReviewTab() {
   if (isLoading) return <p className="text-sm text-muted-foreground">{t("common.loading")}</p>;
 
   const all = data ?? [];
-  const clash = all.filter((r) => r.lookalikes.length > 0).length;
+  const ready = all.filter((r) => r.ready).length;
   const resolved = Object.keys(done).length;
 
   return (
@@ -194,11 +180,11 @@ export default function AopReviewTab() {
         <Button size="sm" variant={filter === "all" ? "default" : "outline"} className="min-h-11 sm:min-h-8" onClick={() => setFilter("all")}>
           {t("aopReview.all", { n: all.length })}
         </Button>
-        <Button size="sm" variant={filter === "clash" ? "default" : "outline"} className="min-h-11 sm:min-h-8" onClick={() => setFilter("clash")}>
-          {t("aopReview.clash", { n: clash })}
+        <Button size="sm" variant={filter === "ready" ? "default" : "outline"} className="min-h-11 sm:min-h-8" onClick={() => setFilter("ready")}>
+          {t("aopReview.ready", { n: ready })}
         </Button>
-        <Button size="sm" variant={filter === "clean" ? "default" : "outline"} className="min-h-11 sm:min-h-8" onClick={() => setFilter("clean")}>
-          {t("aopReview.clean", { n: all.length - clash })}
+        <Button size="sm" variant={filter === "blocked" ? "default" : "outline"} className="min-h-11 sm:min-h-8" onClick={() => setFilter("blocked")}>
+          {t("aopReview.blocked", { n: all.length - ready })}
         </Button>
         <Input
           value={search}
@@ -237,43 +223,8 @@ export default function AopReviewTab() {
                     <div className="text-xs text-muted-foreground">
                       {[r.english_name, r.set_code, r.card_number, r.misc_info, r.illustrator].filter(Boolean).join(" · ")}
                     </div>
-                    {r.lookalikes.length === 0 ? (
-                      <p className="text-xs text-emerald-600 dark:text-emerald-400">{t("aopReview.noClash")}</p>
-                    ) : (
-                      <div className="space-y-1">
-                        <p className="text-xs text-amber-600 dark:text-amber-400">
-                          {t("aopReview.clashCount", { n: r.lookalikes.length })}
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          {r.lookalikes.map((d) => (
-                            <div key={d.card_id} className="flex w-24 flex-col gap-1">
-                              {d.image_url ? (
-                                /* eslint-disable-next-line @next/next/no-img-element */
-                                <img
-                                  src={d.image_url}
-                                  // Distinct from the candidate's own scan: both
-                                  // carry the same card name, so without the set
-                                  // code a screen reader cannot tell the row's
-                                  // card from the one it might duplicate.
-                                  alt={`${d.regional_name} (${d.set_code})`}
-                                  className="w-full rounded"
-                                  loading="lazy"
-                                />
-                              ) : (
-                                <div className="flex h-32 w-full items-center justify-center rounded bg-muted text-[10px] text-muted-foreground">
-                                  {t("aopReview.noImage")}
-                                </div>
-                              )}
-                              <span className="text-[10px] leading-tight text-muted-foreground">
-                                {d.set_code}
-                                <br />
-                                {d.card_number}
-                                {d.misc_info && d.misc_info !== "UNKNOWN" ? ` · ${d.misc_info}` : ""}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
+                    {r.ready ? null : (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">{t("aopReview.blockedWhy")}</p>
                     )}
                     <div className="flex flex-wrap gap-2 pt-1">
                       <Button size="sm" className="min-h-11 sm:min-h-8" disabled={busy === r.candidate_id} onClick={() => create(r)}>

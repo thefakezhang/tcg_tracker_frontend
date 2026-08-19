@@ -17,18 +17,8 @@ const rows = vi.hoisted(() => [
     language: "jp",
     source_image_url: "https://cdn.test/aop-pikachu.webp",
     source_fields: null,
-    // the case the tab exists for: a promo already spun off into its own set
-    lookalikes: [
-      {
-        card_id: 11,
-        regional_name: "_____のピカチュウ",
-        english_name: "_____'s Pikachu",
-        set_code: "OLD-HIBPC",
-        card_number: "旧裏",
-        misc_info: "UNKNOWN",
-        image_url: "https://cdn.test/ours.webp",
-      },
-    ],
+    // the case the tab exists for: no printed number, so no complete identity
+    ready: false,
   },
   {
     candidate_id: 2,
@@ -36,12 +26,12 @@ const rows = vi.hoisted(() => [
     english_name: "Pokémon Illustrator",
     illustrator: "Atsuko Nishida",
     set_code: "OLD-UPC",
-    card_number: null,
+    card_number: "007/019",
     misc_info: "UNKNOWN",
     language: "jp",
     source_image_url: "https://cdn.test/aop-illustrator.webp",
     source_fields: null,
-    lookalikes: [],
+    ready: true,
   },
 ]);
 
@@ -55,7 +45,7 @@ vi.mock("@/lib/use-saving", () => ({ useSaving: () => ({ saving: false, save: vi
 afterEach(cleanup);
 
 describe("AopReviewTab", () => {
-  it("shows each candidate with its scan and the catalog cards sharing its name", () => {
+  it("shows each candidate with its scan, and says which cannot be created", () => {
     render(
       <LanguageProvider>
         <AopReviewTab />
@@ -66,16 +56,12 @@ describe("AopReviewTab", () => {
     expect(screen.getByText("_____のピカチュウ")).toBeTruthy();
     expect(screen.getByText("ポケモンイラストレーター")).toBeTruthy();
 
-    // The colliding row surfaces the card it may duplicate, so the operator can
-    // compare pictures rather than guess from the name.
     expect(screen.getByAltText("_____のピカチュウ").getAttribute("src")).toBe("https://cdn.test/aop-pikachu.webp");
-    // The catalog card's alt names its set, so the two images are distinguishable
-    // to a screen reader even though both are the same card name.
-    expect(screen.getByAltText("_____のピカチュウ (OLD-HIBPC)").getAttribute("src")).toBe("https://cdn.test/ours.webp");
-    expect(screen.getByText(/OLD-HIBPC/)).toBeTruthy();
 
-    // A row with nothing sharing its name says so, so it can be cleared fast.
-    expect(screen.getByText(/No catalog card shares this name/)).toBeTruthy();
+    // The row that cannot be created says why, once. The row that can says
+    // nothing: it needs no explanation, and in the normal course it should
+    // never have reached this screen at all.
+    expect(screen.getAllByText(/Cannot be created as-is/)).toHaveLength(1);
 
     // Both actions are offered per row, and neither is disabled while idle -
     // a greyed button on a dimmed row was previously mistaken for a dead click.
@@ -85,14 +71,27 @@ describe("AopReviewTab", () => {
     expect(screen.getAllByRole("button", { name: "Not needed" })).toHaveLength(2);
   });
 
-  it("counts the clash and no-clash buckets in the filters", () => {
+  it("counts what can be created against what cannot", () => {
     render(
       <LanguageProvider>
         <AopReviewTab />
       </LanguageProvider>,
     );
     expect(screen.getByRole("button", { name: "All (2)" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Shares a name (1)" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "No clash (1)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ready to create (1)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Needs an identity (1)" })).toBeTruthy();
+  });
+
+  it("never counts name collisions, which decide nothing", () => {
+    render(
+      <LanguageProvider>
+        <AopReviewTab />
+      </LanguageProvider>,
+    );
+    // Identity is (set_code, card_number, misc_info, language). Two cards
+    // sharing a name is the normal case; surfacing it asked the operator to
+    // adjudicate noise, and it is why a row with nothing to decide was shown.
+    expect(screen.queryByText(/shares a name/i)).toBeNull();
+    expect(screen.queryByText(/clash/i)).toBeNull();
   });
 });
