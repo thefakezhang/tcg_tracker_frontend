@@ -7,9 +7,10 @@
 // has no stable per-item page (an identity key, a bare SKU, a cert), so callers
 // fall back to plain text.
 //
-// snkrdunk is the one platform whose URL depends on the catalog: singles use
-// the public /en/trading-cards/ route, while the sealed pricing pipeline still
-// uses /apparels/. Pass kind accordingly.
+// snkrdunk products live at /apparels/<id>, singles and sealed alike. The
+// older /en/trading-cards/ route still resolves and is still accepted when a
+// curator pastes one, but it serves the ENGLISH title - so a curator checking
+// a Japanese card against it reads a translated name, not the one we store.
 const NUMERIC = /^\d+$/;
 
 /** Platforms an operator can attach to a Pokemon single in the Card Index. */
@@ -155,9 +156,11 @@ export function platformUrl(
     case "pricecharting":
       return `https://www.pricecharting.com/game/${id}`;
     case "snkrdunk":
-      return kind === "sealed"
-        ? `https://snkrdunk.com/apparels/${id}`
-        : `https://snkrdunk.com/en/trading-cards/${id}`;
+      // /apparels/ is the canonical product route for both singles and sealed.
+      // The /en/trading-cards/ route still resolves, but it serves the English
+      // title, so a curator checking a Japanese card against it reads a
+      // translated name rather than the one the catalog stores.
+      return `https://snkrdunk.com/apparels/${id}`;
     case "collectr":
       // Collectr's product pages live at getcollectr.com/explore/product; the
       // id may be Collectr-native (10xxxxxx) or the card's tcgplayer id - both
