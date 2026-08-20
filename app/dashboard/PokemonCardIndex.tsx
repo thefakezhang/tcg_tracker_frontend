@@ -31,7 +31,7 @@ import {
   type PokemonCuratorFlagValues,
 } from "./PokemonCuratorFlags";
 import PokemonMatchesTab from "./PokemonMatchesTab";
-import AopReviewTab from "./AopReviewTab";
+import CardLinksTab from "./CardLinksTab";
 
 // Card Index editor for pokemon SINGLES (Stage 2-A). Mirrors the sealed catalog
 // surface over the card_index_*_pokemon_* RPCs so variant adds + TCGID links go
@@ -258,7 +258,7 @@ const CATALOG_PAGE = 500;
 
 export default function PokemonCardIndex() {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<"cards" | "matches" | "aopReview">("cards");
+  const [tab, setTab] = useState<"cards" | "matches" | "links">("cards");
   return (
     <div className="min-w-0 space-y-4">
       <div className="flex flex-wrap gap-1">
@@ -268,11 +268,11 @@ export default function PokemonCardIndex() {
         <Button size="sm" variant={tab === "matches" ? "default" : "outline"} onClick={() => setTab("matches")}>
           {t("cardIndex.tabMatches")}
         </Button>
-        <Button size="sm" variant={tab === "aopReview" ? "default" : "outline"} onClick={() => setTab("aopReview")}>
-          {t("cardIndex.tabAopReview")}
+        <Button size="sm" variant={tab === "links" ? "default" : "outline"} onClick={() => setTab("links")}>
+          {t("cardIndex.tabLinks")}
         </Button>
       </div>
-      {tab === "cards" ? <CardsTab /> : tab === "matches" ? <PokemonMatchesTab /> : <AopReviewTab />}
+      {tab === "cards" ? <CardsTab /> : tab === "matches" ? <PokemonMatchesTab /> : <CardLinksTab />}
     </div>
   );
 }
