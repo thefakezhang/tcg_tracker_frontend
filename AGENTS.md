@@ -112,6 +112,14 @@ app/
     CurationView.tsx      # Image-buylist candidate review for singles (keyboard-first)
     CurrencyContext.tsx   # Display currency (none/USD/JPY), localStorage persisted
     CustomersView.tsx     # Customer CRM: customers plus exact wishlist and criteria wants
+    GradeEvidencePanel.tsx # Per-grade bands, comps, demand, flags, and event annotations
+    PriceEvidenceBadge.tsx # Independent semantic price evidence for image-curation candidates
+    ImageAutoAcceptView.tsx # Catalog calibration, controls, capped canaries, run audit, and rollback
+    InventoryEconomics.tsx # Line-level direct, landed, sale, and profit drill-down under Finances
+    POSView.tsx            # Camera-first sale sessions and acquisition intake with exact recovery
+    owned-inventory.ts     # Batched catalog-level Owned N read model
+    grade-signals.ts      # Typed S2 signal parser and conservative-exit helpers
+    ExitBasisContext.tsx  # Persisted P10/P25/P50 conservative-exit setting
     DecisionActions.tsx   # Shared Watch/Dismiss controls and immutable snapshot builder
     DecisionWatchlist.tsx # Active watch rules with at-watch/current prices and history-preserving Unwatch
     DuplicateConflictsPanel.tsx # Listing duplicate-conflict drill-down (listing_duplicate_conflicts)
@@ -204,6 +212,8 @@ app/
 components/ui/            # shadcn/ui primitives (do not edit directly unless customizing)
 lib/
   utils.ts                # cn() utility (clsx + tailwind-merge)
+  purchase-planning.ts    # Planner read-model types, demand ordering, and summary calculations
+  pos-camera.ts            # Recognizer contracts, capture normalization, durable retry, and media keys
   card-search.ts          # Shared search-term semantics for every curator card search
                           # (Card Index catalogs, curation override picker, match-review
                           # dialog): name/set/number text, card uid (full or the displayed
@@ -499,6 +509,22 @@ Like link attach, each switch saves the moment it is toggled through its own RPC
 - Goals: every catalog card can be marked, from the surface that can find it, with one shared definition so the two surfaces cannot drift.
 Non-goals: flag filters on the Card Index (the Card Browser's JP-exclusive / Cute filter buttons remain the way to list flagged cards), and a flag-aware Card Browser for cards without price data (the browser is a market view; its summary-first query is deliberate).
 
+### Camera POS
+
+- `POSView.tsx` owns the operator CUJ for persistent in-person sale sessions and recognition-assisted acquisition intake.
+- `lib/pos-camera.ts` owns strict recognizer response parsing, stable frame gating, normalized capture geometry, bounded recognizer requests, exact retry payload validation, and owner-prefixed content-addressed media keys.
+- Status and recognition fetches share one 15-second deadline across the initial request, token refresh, and single retry.
+Caller aborts and deadline listeners are always cleaned up.
+- Recognition remains advisory until the operator explicitly confirms a candidate.
+The browser persists model, catalog, recognizer configuration, capture hash, and all five browser timing boundaries before inventory mutation.
+- Sale and acquisition writes use owner-scoped localStorage operations with frozen UUIDs and payloads.
+Ambiguous responses reconcile against authoritative RPC state before the operation can clear.
+- Acquisition media is proven or uploaded before the lot line is added.
+A pre-add definitive failure may delete only an authoritative orphan, while a committed line always preserves its exact bytes and retries registration without orphan deletion.
+- The authenticated acceptance runner `scripts/e2e/run-pos-camera-phone.sh` holds the shared local Docker/browser lock, hash-checks and applies the mirrored POS migration, creates exact disposable fixtures, and drives `scripts/e2e/pos-camera-phone.mjs` at 390x844 and 1440x900.
+It uses a real canvas-backed `getUserMedia` stream and real local Supabase auth, PostgREST, and Storage; only recognizer status and recognition HTTP are fulfilled in-browser.
+The gate covers pause/reload/resume, lost committed responses, FIFO revalidation and finalization, partial media upload with exact reselect, committed registration recovery, touch targets, Japanese document language, storage hashes, and exact cleanup.
+
 ### Card Index link attachment (R1)
 
 - `lib/platform-url.ts` is the single frontend source for platform item links, copied-product-URL parsing, platform inference, and direct search links.
@@ -676,6 +702,7 @@ The listings tables have a foreign key to `currencies` — queries join via `cur
 - **Tests**: vitest runs with `npm test` (`*.test.ts` next to the code under test).
   Pure logic, component behavior, and data-access helpers stay in this suite.
   Cross-boundary CUJ acceptance lives under `scripts/e2e` and must use the shared Docker and browser lock plus literal-loopback authentication guards.
+  Run the camera POS gate with `TCG_BACKEND_ROOT=/absolute/backend/worktree SUPABASE_BIN=/absolute/supabase scripts/e2e/run-pos-camera-phone.sh` only against the assigned locked local stack.
 - **shadcn/ui components** live in `components/ui/`. These are generated files — customize only when needed, prefer wrapping over modifying.
 - **Dialog widths are `sm:`-prefixed**: the base `DialogContent` carries `sm:max-w-sm` (384px) plus a phone `max-w-[calc(100%-2rem)]`.
   An unprefixed `max-w-lg` override does NOT win on desktop (`tailwind-merge` only replaces same-variant classes, so `sm:max-w-sm` survives and applies at >= 640px) and it clobbers the phone margin.

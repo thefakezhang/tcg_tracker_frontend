@@ -16,6 +16,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   DropdownMenu,
@@ -61,12 +62,17 @@ function ViewButton({ v }: { v: ViewDef }) {
   const { t } = useTranslation();
   const { activeTripId, setActiveTripId } = useTrips();
   const { setActiveBuylistId } = useBuyList();
+  const { isMobile, setOpenMobile } = useSidebar();
   const Icon = v.icon;
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
         isActive={activeTripId === v.sentinel}
-        onClick={() => { setActiveTripId(v.sentinel); setActiveBuylistId(null); }}
+        onClick={() => {
+          setActiveTripId(v.sentinel);
+          setActiveBuylistId(null);
+          if (isMobile) setOpenMobile(false);
+        }}
       >
         <Icon className="size-4" />
         {t(v.sidebarKey)}
