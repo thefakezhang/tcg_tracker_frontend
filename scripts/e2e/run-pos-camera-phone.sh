@@ -391,10 +391,12 @@ WITH condition AS (
   ) VALUES ('import','2026-08-01','POS camera E2E ' || :'token' || ' FIFO 1','USD',20,1,20)
   RETURNING lot_id
 ), line_one AS (
-  INSERT INTO pokemon_lot_lines (
-    lot_id,card_id,condition_id,psa_grade,quantity,price_override_usd
-  ) SELECT lot_one.lot_id,card.card_id,condition.condition_id,0,2,10
-      FROM lot_one,card,condition RETURNING line_id,lot_id
+  SELECT add_pokemon_lot_line_with_decision(
+           lot_one.lot_id,card.card_id,condition.condition_id,0,2,10,
+           NULL,jsonb_build_object('fixture','pos_camera_e2e')
+         ) AS line_id,
+         lot_one.lot_id
+    FROM lot_one,card,condition
 ), finalize_one AS (
   SELECT finalize_acquisition_lot(lot_id) FROM line_one
 ), lot_two AS (
@@ -403,10 +405,12 @@ WITH condition AS (
   ) SELECT 'import','2026-08-02','POS camera E2E ' || :'token' || ' FIFO 2','USD',180,1,180
     FROM finalize_one RETURNING lot_id
 ), line_two AS (
-  INSERT INTO pokemon_lot_lines (
-    lot_id,card_id,condition_id,psa_grade,quantity,price_override_usd
-  ) SELECT lot_two.lot_id,card.card_id,condition.condition_id,0,6,30
-      FROM lot_two,card,condition RETURNING line_id,lot_id
+  SELECT add_pokemon_lot_line_with_decision(
+           lot_two.lot_id,card.card_id,condition.condition_id,0,6,30,
+           NULL,jsonb_build_object('fixture','pos_camera_e2e')
+         ) AS line_id,
+         lot_two.lot_id
+    FROM lot_two,card,condition
 ), finalize_two AS (
   SELECT finalize_acquisition_lot(lot_id) FROM line_two
 ), open_one AS (
