@@ -108,6 +108,7 @@ app/
     CardIndexCreateModal.tsx # Card Index new-card dialog (staged platform links, deferred image upload)
     CardIndexEditModal.tsx # Card Index edit dialog (identity fields, platform links, merge)
     CardIndexView.tsx     # Card Index catalog surface with Pokemon / MTG / sealed tabs
+    CardLinksTab.tsx      # Card Index > Pokemon > Needs IDs: unnumbered cards missing a tcgplayer/snkrdunk id, bound by hand
     CurationView.tsx      # Image-buylist candidate review for singles (keyboard-first)
     CurrencyContext.tsx   # Display currency (none/USD/JPY), localStorage persisted
     CustomersView.tsx     # Customer CRM: customers plus exact wishlist and criteria wants
@@ -473,13 +474,21 @@ The mutation sends both the displayed ledger balance and observed count so the b
 - Architecture, goals, non-goals, local authentication guards, and browser acceptance are documented in `docs/lot_inventory_economics.md`.
 - Backend allocation and immutability rules are documented in `docs/inventory_subledger_contract.md` in the backend repository.
 
-### Authoritative catalog feed (artofpkm)
+### Card Index link worklist (Needs IDs)
 
-- The backend `seed-artofpkm` crawler pushes every Japanese card on artofpkm.com into the Pokemon match-review queue; identity-resolved cards arrive as confirms (bulk-confirmable), new cards as proposals.
-- Queue rows render the artofpkm descriptor (English name, set name + release date, rarity, illustrator, unmapped-set note) in the source line, and the create-from-candidate form prefills `english_name` from `source_fields` (top-level or `by_source`).
-- Card Index > Pokemon > **Needs review** (`AopReviewTab.tsx`) is the artofpkm rows no automated tier could settle. Rows whose card the catalog demonstrably holds are removed from the queue and rows with a usable printed number are created, so what reaches this tab is only where a name cannot decide: unnumbered old-back promos (two thirds of that bucket shares a name with a card already filed elsewhere, because promos were spun out of it one product at a time) and sets whose crosswalk evidence splits across sibling codes. Each row shows its artofpkm scan beside every catalog card sharing its name, with set, number and finish, and resolves through the match-review candidate RPCs (`card_index_resolve_pokemon_candidate_create` / `_reject`). `foldName` mirrors `matchreview.FoldCardName`, including that a one-character bracket group is identity but its brackets are not.
-- It replaced a **Set crosswalk** tab that bound artofpkm sets to our codes by hand. That job is done and automated: `verify-artofpkm-crosswalk` decides a binding from where a set's cards actually live, never from its name, and `-fix` applies what the evidence settles. `card_index_bind_artofpkm_set` still exists for a one-off correction.
-- Backend architecture, flow, goals and non-goals: `docs/artofpkm_catalog_source.md` in the backend repository.
+- `CardLinksTab.tsx` is Card Index > Pokemon > **Needs IDs**: the cards no platform can price, because nothing points at them.
+It reads `pokemon_card_link_coverage_v` (backend migration 000310) and writes through `card_index_attach_pokemon_link`, the same RPC the Card Index editor uses, so an attach also resolves any pending review candidate the new link now fully covers.
+- The view's `is_numbered` column carries the split the work divides along, and the tab shows only the `false` side.
+A card with a real collector number is matched automatically from `(set_code, card_number)` - what the snkrdunk harvest and match-gen run on - so it is not a person's job.
+A card whose number is a stand-in identifies no position within its set and no matcher can ever key on it: `旧裏` on old-back cards, `DPBP#nnn` (a species number shared by a Pokemon and its LV.X), a bare set code on unnumbered promos like `XY-P`, or `UNKNOWN`.
+- Work runs set by set: pick a set from the list (ordered by how many cards still need ids), then bind each card.
+The field accepts a bare id or a pasted product URL - `normalizePlatformID` extracts it, the same parse the editor uses - and the search icon opens that platform pre-filled with the card's Japanese name and set, which is how the id is found in the first place.
+- Rows bound in the session stay visible with their new id rather than disappearing, so the operator can see what they just did; the set list re-counts on the next load.
+- Goals: make the missing-id population addressable per set and per card, from evidence the database already has, and write through the reviewed RPC rather than a second attach path.
+Non-goals: it does not decide what an id should be (that is the operator, or the automated harvest for numbered cards), and it does not surface numbered cards - a numbered card missing an id is a matcher gap, not a data-entry task.
+
+- It replaced a **Needs review** tab that reviewed rows from the artofpkm catalog feed, which is retired.
+That feed's evidence tables remain queryable in the backend, so "which cards do we not hold" is still answerable; only the crawl and its review surface are gone.
 
 ### Card Index curator flags
 
