@@ -47,7 +47,7 @@ describe("pokemonSinglePlatforms", () => {
 describe("platformUrl", () => {
   it("uses Snkrdunk's current public singles route", () => {
     expect(platformUrl("snkrdunk", "91276", "single"))
-      .toBe("https://snkrdunk.com/en/trading-cards/91276");
+      .toBe("https://snkrdunk.com/apparels/91276");
   });
 
   it("links numeric Card Kingdom sell ids but not content-keyed buylist ids", () => {
