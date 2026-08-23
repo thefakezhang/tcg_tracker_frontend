@@ -289,6 +289,20 @@ interface AcquisitionOperationState {
 
 function saleLineMatchesFrozen(line: SaleLine, frozen: FrozenSaleAdd): boolean {
   const args = frozen.rpc_args;
+  // get_pos_sale_session_state wraps its response in jsonb_strip_nulls. Its
+  // add_request therefore omits semantically-null optional request fields.
+  // Compare the same canonical wire representation while preserving every
+  // non-null value that makes an exact retry safe.
+  const expectedRequest = Object.fromEntries(Object.entries({
+    requested_agreed_unit_price_usd: args.p_agreed_unit_price_usd,
+    requested_sell_percentage: args.p_sell_percentage,
+    requested_rounding_mode: args.p_rounding_mode,
+    manual_market_unit_usd: args.p_manual_market_unit_usd,
+    manual_market_reason: args.p_manual_market_reason,
+    browser_snapshot: args.p_browser_snapshot,
+    expected_preview_token: args.p_expected_preview_token,
+    expected_preview_cogs_usd: args.p_expected_preview_cogs_usd,
+  }).filter(([, value]) => value !== null));
   return (
     line.line_id === args.p_line_id
     && line.identity.card_uid === args.p_card_uid
@@ -297,16 +311,7 @@ function saleLineMatchesFrozen(line: SaleLine, frozen: FrozenSaleAdd): boolean {
     && Number(line.identity.psa_grade) === args.p_psa_grade
     && Number(line.quantity) === args.p_quantity
     && (line.recognition?.request_id ?? null) === args.p_recognition_request_id
-    && exactPOSValue(line.add_request) === exactPOSValue({
-      requested_agreed_unit_price_usd: args.p_agreed_unit_price_usd,
-      requested_sell_percentage: args.p_sell_percentage,
-      requested_rounding_mode: args.p_rounding_mode,
-      manual_market_unit_usd: args.p_manual_market_unit_usd,
-      manual_market_reason: args.p_manual_market_reason,
-      browser_snapshot: args.p_browser_snapshot,
-      expected_preview_token: args.p_expected_preview_token,
-      expected_preview_cogs_usd: args.p_expected_preview_cogs_usd,
-    })
+    && exactPOSValue(line.add_request) === exactPOSValue(expectedRequest)
   );
 }
 
