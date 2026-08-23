@@ -263,6 +263,10 @@ export default function CardDetailModal({
   // Re-fetch holdings when any lot write bumps the owned-inventory store
   // (e.g. the Bought flow adds a draft-lot line while this modal is open).
   const ownedVersion = useOwnedInventoryVersion();
+  // Bumped when a targeted refresh this modal requested has finished, which
+  // re-runs the listings effect below so the panel shows the prices that just
+  // landed rather than the ones it opened with.
+  const [refreshedVersion, setRefreshedVersion] = useState(0);
 
   const defaultSightingGrade = useCallback((tab: "non-psa" | "psa") => {
     const rowGrade = Number(card?.psaGrade ?? 0);
@@ -479,7 +483,7 @@ export default function CardDetailModal({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, open, activeGame, ownedVersion]);
+  }, [card, open, activeGame, ownedVersion, refreshedVersion]);
 
   const { buyNonPsa, sellNonPsa, buyPsa, sellPsa } = useMemo(() => {
     const normalize = (l: MarketListing) =>
@@ -671,7 +675,10 @@ export default function CardDetailModal({
                   verdict renders inline; freshness itself stays on FreshnessChip,
                   which turns green once a queued refresh lands. */}
               <div className="mt-2">
-                <RefreshPricesAction cardIds={[Number(def.card_id)]} />
+                <RefreshPricesAction
+                  cardIds={[Number(def.card_id)]}
+                  onRefreshed={() => setRefreshedVersion((v) => v + 1)}
+                />
               </div>
             </div>
           </div>

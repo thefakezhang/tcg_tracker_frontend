@@ -723,7 +723,10 @@ export default function CardBrowser() {
               )}
             </span>
           )}
-          <RefreshPricesAction cardIds={selectedCardIds} />
+          {/* Re-read the page once the queued refresh lands, so the prices and
+              their freshness chips show the new values instead of the ages the
+              table was rendered with before the click. */}
+          <RefreshPricesAction cardIds={selectedCardIds} onRefreshed={refetch} />
         </div>
       )}
 
