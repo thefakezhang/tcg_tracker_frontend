@@ -118,6 +118,7 @@ SELECT related.sale_group
 ALTER TABLE public.pos_sale_sessions DISABLE TRIGGER pos_sale_sessions_closed_immutable;
 ALTER TABLE public.pos_sale_session_lines DISABLE TRIGGER pos_sale_session_lines_closed_immutable;
 ALTER TABLE public.card_recognition_audits DISABLE TRIGGER card_recognition_audits_controlled_transition;
+ALTER TABLE public.deal_decisions DISABLE TRIGGER deal_decisions_pos_delete_immutable;
 ALTER TABLE public.inventory_card_media DISABLE TRIGGER inventory_card_media_append_only;
 ALTER TABLE public.pokemon_lot_lines DISABLE TRIGGER pokemon_lot_lines_pos_lineage_immutable;
 ALTER TABLE public.sale_lots DISABLE TRIGGER sale_lots_immutable;
@@ -186,6 +187,7 @@ DELETE FROM public.tcgplayer_metrics
 DELETE FROM public.pokemon_external_identifiers WHERE card_id = :'card_id'::integer;
 DELETE FROM public.pokemon_card_definitions WHERE card_id = :'card_id'::integer;
 DELETE FROM public.conditions WHERE condition_id = :'condition_id'::integer;
+SET CONSTRAINTS ALL IMMEDIATE;
 ALTER TABLE public.pokemon_sales ENABLE TRIGGER pokemon_grouped_sales_immutable;
 ALTER TABLE public.sale_expense_allocations ENABLE TRIGGER sale_expense_allocations_immutable;
 ALTER TABLE public.sale_expenses ENABLE TRIGGER sale_expenses_immutable;
@@ -194,6 +196,7 @@ ALTER TABLE public.sale_lots ENABLE TRIGGER sale_lots_immutable;
 ALTER TABLE public.pokemon_lot_lines ENABLE TRIGGER pokemon_lot_lines_pos_lineage_immutable;
 ALTER TABLE public.inventory_card_media ENABLE TRIGGER inventory_card_media_append_only;
 ALTER TABLE public.card_recognition_audits ENABLE TRIGGER card_recognition_audits_controlled_transition;
+ALTER TABLE public.deal_decisions ENABLE TRIGGER deal_decisions_pos_delete_immutable;
 ALTER TABLE public.pos_sale_session_lines ENABLE TRIGGER pos_sale_session_lines_closed_immutable;
 ALTER TABLE public.pos_sale_sessions ENABLE TRIGGER pos_sale_sessions_closed_immutable;
 DELETE FROM auth.users WHERE id = :'owner_id'::uuid;
@@ -317,22 +320,41 @@ migration_basename="$(basename "$internal_migration")"
 migration_version="${migration_basename%%_*}"
 [[ "$migration_version" =~ ^[0-9]{6}$ ]] || fail "POS camera migration version is unsafe"
 supabase_migration="$backend_root/supabase/migrations/$migration_basename"
-down_migration="$backend_root/internal/db/migrations/${migration_basename%.up.sql}.down.sql"
-[[ -f "$supabase_migration" && -f "$down_migration" ]] ||
-  fail "POS camera up mirrors and down migration must exist"
+[[ -f "$supabase_migration" ]] || fail "POS camera Supabase up mirror is missing"
 supabase_hash="$(sha256sum "$supabase_migration" | cut -d ' ' -f 1)"
 internal_hash="$(sha256sum "$internal_migration" | cut -d ' ' -f 1)"
 [[ "$supabase_hash" == "$internal_hash" ]] ||
   fail "POS camera migration mirror hashes differ"
-if [[ "$(psql_local -Atqc \
-  "SELECT EXISTS (SELECT 1 FROM supabase_migrations.schema_migrations WHERE version = '$migration_version')")" == "t" ]]; then
-  psql_local --single-transaction \
-    --file="$down_migration" \
-    --command="DELETE FROM supabase_migrations.schema_migrations WHERE version = '$migration_version'"
-fi
-(cd "$backend_root" && HOME="${TMPDIR:-/tmp}" "$supabase_bin" migration up --local)
-psql_local -Atqc "SELECT 1 FROM supabase_migrations.schema_migrations WHERE version = '$migration_version'" |
-  grep -qx '1' || fail "local schema migration ledger omitted $migration_version"
+
+# The browser lane shares the local Supabase database with durable operator
+# evidence. It must never roll migrations back: 000317 intentionally refuses
+# that rollback whenever POS or recognition data exists. Fresh-schema replay is
+# covered by the migration integration suite; this lane verifies that its full
+# POS migration set is applied before exercising the authenticated browser CUJ.
+pos_migration_versions=()
+while IFS= read -r pos_migration_file; do
+  pos_migration_name="$(basename "$pos_migration_file")"
+  pos_migration_version="${pos_migration_name%%_*}"
+  [[ "$pos_migration_version" =~ ^[0-9]{6}$ ]] ||
+    fail "POS migration version is unsafe: $pos_migration_name"
+  [[ "$pos_migration_version" < "$migration_version" ]] && continue
+  pos_migration_mirror="$backend_root/supabase/migrations/$pos_migration_name"
+  [[ -f "$pos_migration_mirror" ]] ||
+    fail "POS migration mirror is missing: $pos_migration_name"
+  pos_migration_internal_hash="$(sha256sum "$pos_migration_file" | cut -d ' ' -f 1)"
+  pos_migration_supabase_hash="$(sha256sum "$pos_migration_mirror" | cut -d ' ' -f 1)"
+  [[ "$pos_migration_internal_hash" == "$pos_migration_supabase_hash" ]] ||
+    fail "POS migration mirror hashes differ: $pos_migration_name"
+  pos_migration_versions+=("$pos_migration_version")
+done < <(find "$backend_root/internal/db/migrations" -maxdepth 1 -type f \
+  -name '*_pos_*.up.sql' -print | sort)
+[[ "${#pos_migration_versions[@]}" -gt 0 ]] ||
+  fail "no POS migration replay lane was found"
+(cd "$backend_root" && HOME="${TMPDIR:-/tmp}" "$supabase_bin" migration up --local --include-all)
+for pos_migration_version in "${pos_migration_versions[@]}"; do
+  psql_local -Atqc "SELECT 1 FROM supabase_migrations.schema_migrations WHERE version = '$pos_migration_version'" |
+    grep -qx '1' || fail "local schema migration ledger omitted $pos_migration_version"
+done
 psql_local -Atqc \
   "SELECT pg_get_function_result('public.complete_card_recognition_browser_timing(uuid,numeric,numeric)'::regprocedure)" |
   grep -qx 'boolean' || fail "local browser timing completion RPC signature is missing"

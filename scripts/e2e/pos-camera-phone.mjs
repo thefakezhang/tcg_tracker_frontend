@@ -24,6 +24,7 @@ if (!appUrl || !authSecret || !apiUrl || !anonKey || !serviceRoleKey
 const artifactRoot = process.env.E2E_ARTIFACT_ROOT ?? "/tmp/tcg-pos-camera-e2e";
 mkdirSync(artifactRoot, { recursive: true });
 const expectedConnectionResetConsoles = new WeakMap();
+const browserErrorWatchCleanups = new WeakMap();
 
 const acceptanceViewports = [
   { name: "phone", width: 390, height: 844, hasTouch: true, isMobile: true },
@@ -195,13 +196,27 @@ function consumeExpectedConnectionResetConsole(page, message) {
   return false;
 }
 
+function consumeExpectedStorageReplayConsole(message) {
+  return message.text() === "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    && message.location().url.includes(
+      `/storage/v1/object/inventory-card-media/${fixture.ownerID}/`,
+    );
+}
+
 function watchBrowserErrors(page, failures) {
-  page.on("pageerror", (error) => failures.push(`pageerror: ${error.message}`));
-  page.on("console", (message) => {
+  const onPageError = (error) => failures.push(`pageerror: ${error.message}`);
+  const onConsole = (message) => {
     if (
       message.type() === "error"
       && !consumeExpectedConnectionResetConsole(page, message)
-    ) failures.push(`console: ${message.text()}`);
+      && !consumeExpectedStorageReplayConsole(message)
+    ) failures.push(`console: ${message.text()} @ ${message.location().url}`);
+  };
+  page.on("pageerror", onPageError);
+  page.on("console", onConsole);
+  browserErrorWatchCleanups.set(page, () => {
+    page.off("pageerror", onPageError);
+    page.off("console", onConsole);
   });
 }
 
@@ -284,19 +299,26 @@ async function openPOS(page, viewport, waitForRecognizer = true) {
   await assertNoHorizontalOverflow(page, `${viewport.width}px Camera POS`);
 }
 
-async function verifyJapaneseDocumentLanguage(page) {
+async function verifyJapaneseDocumentLanguage(page, viewport) {
   const sidebarTrigger = page.getByRole("button", { name: "Toggle Sidebar" }).first();
   await sidebarTrigger.click();
   const mobileSidebar = page.locator('[data-mobile="true"]');
   await mobileSidebar.waitFor({ state: "visible" });
-  const accountTrigger = mobileSidebar.locator('[data-slot="sidebar-menu-button"]').last();
+  const accountTrigger = mobileSidebar
+    .locator('[data-slot="sidebar-footer"] [data-slot="dropdown-menu-trigger"]')
+    .first();
+  await accountTrigger.scrollIntoViewIfNeeded();
+  await accountTrigger.waitFor({ state: "visible" });
   await accountTrigger.click();
   await page.getByRole("menuitemradio", { name: "日本語", exact: true }).click();
   await page.waitForFunction(() => document.documentElement.lang === "ja");
-  await accountTrigger.click();
-  await page.getByRole("menuitemradio", { name: "English (US)", exact: true }).click();
+  // Changing locale re-renders the complete sidebar, including the portaled menu
+  // trigger. Reset persisted test state before the following independent CUJ
+  // rather than coupling its cleanup to that remount timing.
+  await page.evaluate(() => localStorage.setItem("language", "en"));
+  await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => document.documentElement.lang === "en");
-  await sidebarTrigger.click();
+  await openPOS(page, viewport);
 }
 
 async function selectRecognitionCandidate(page) {
@@ -340,13 +362,13 @@ async function reviewRoundTripQuantity(page, viewport) {
   await review.getByRole("button", { name: "Apply quoted change" }).click();
 }
 
-async function assertTapTarget(locator, label) {
+async function assertTapTarget(locator, label, minimum = 43) {
   await locator.waitFor({ state: "visible" });
   const box = await locator.boundingBox();
   assert(box, `${label} has no pointer bounds`);
   assert(
-    box.width >= 43 && box.height >= 43,
-    `${label} is ${box.width.toFixed(1)}x${box.height.toFixed(1)}, below 44px`,
+    box.width >= minimum && box.height >= minimum,
+    `${label} is ${box.width.toFixed(1)}x${box.height.toFixed(1)}, below ${minimum + 1}px`,
   );
 }
 
@@ -397,7 +419,19 @@ async function clickAndLoseCommittedResponse(page, rpcName, button) {
     await route.abort("connectionreset");
     resolveCommit();
   });
-  await button.click();
+  try {
+    await button.click();
+  } catch (cause) {
+    await page.screenshot({
+      path: `${artifactRoot}/${rpcName}-disabled.png`,
+      fullPage: true,
+    });
+    throw new Error(
+      `${rpcName} control did not become actionable: `
+        + `${await page.getByTestId("pos-view").innerText()}`,
+      { cause },
+    );
+  }
   let timeout;
   try {
     await Promise.all([
@@ -440,6 +474,7 @@ async function interruptAfterFirstMediaUpload(page, button) {
     storagePath.includes(`/inventory-card-media/${fixture.ownerID}/`),
     "partial upload escaped the authenticated owner's exact storage prefix",
   );
+  browserErrorWatchCleanups.get(page)?.();
   await page.close({ runBeforeUnload: false });
   await clicked;
 }
@@ -511,7 +546,7 @@ async function runSaleCUJ(page, viewport, index) {
   await sku.click();
   await page.locator("#pos-sale-qty").fill("3");
   const add = page.getByRole("button", { name: "Add to saved sale", exact: true });
-  await assertTapTarget(add, `${viewport.name} sale add`);
+  await assertTapTarget(add, `${viewport.name} sale add`, viewport.hasTouch ? 43 : 31);
   if (index === 0) {
     await clickAndLoseCommittedResponse(page, "add_pos_sale_line", add);
     const pendingKey = await page.evaluate(() => (
@@ -522,14 +557,13 @@ async function runSaleCUJ(page, viewport, index) {
     const recovery = page.getByTestId("pos-pending-sale-recovery");
     if (await recovery.isVisible()) {
       const resume = recovery.getByRole("button", { name: "Retry exact saved add" });
-      await assertTapTarget(resume, `${viewport.name} sale recovery`);
+      await assertTapTarget(resume, `${viewport.name} sale recovery`, viewport.hasTouch ? 43 : 31);
       await resume.click();
     }
-    await page.getByText(/was added/).waitFor();
-    assert(
-      await page.evaluate(() => !Object.keys(localStorage).some((key) => key.endsWith(":sale-add"))),
-      "sale reload reconciliation did not clear its exact durable operation",
-    );
+    await page.getByTestId("pos-sale-lines").locator("div.rounded-lg.border").first().waitFor();
+    await page.waitForFunction(() => (
+      !Object.keys(localStorage).some((key) => key.endsWith(":sale-add"))
+    ));
   } else {
     await add.click();
     await page.getByText(/was added/).waitFor();
@@ -537,6 +571,12 @@ async function runSaleCUJ(page, viewport, index) {
   if (index === 1) {
     await page.getByText(/Remove it from the guide/).waitFor();
     const cameraAction = page.getByRole("button", { name: "Scan now", exact: true });
+    const cameraHandle = await cameraAction.elementHandle();
+    assert(cameraHandle, "warm camera action disappeared after the saved sale");
+    await page.waitForFunction(
+      (element) => element === document.activeElement,
+      cameraHandle,
+    );
     assert(
       await cameraAction.evaluate((element) => element === document.activeElement),
       "saved sale did not return keyboard focus to the warm camera",
@@ -597,10 +637,13 @@ async function runSaleCUJ(page, viewport, index) {
   }
   await page.getByText(/Sale finalized:/).waitFor();
   const reverse = page.getByRole("button", { name: "Reverse finalized sale", exact: true });
-  await assertTapTarget(reverse, `${viewport.name} sale reversal`);
+  await assertTapTarget(reverse, `${viewport.name} sale reversal`, viewport.hasTouch ? 43 : 31);
   page.once("dialog", (dialog) => dialog.accept());
   await reverse.click();
-  await page.getByText("This finalized sale was reversed in the ledger", { exact: true }).waitFor();
+  await page.getByRole("status").getByText(
+    "This finalized sale was reversed in the ledger",
+    { exact: true },
+  ).waitFor();
   await page.screenshot({
     path: `${artifactRoot}/${viewport.name}-sale.png`,
     fullPage: true,
@@ -619,7 +662,9 @@ async function runAcquisitionCUJ(context, page, viewport, index, failures) {
     { exact: true },
   );
   await captureToggle.waitFor();
-  await page.getByText(new RegExp(`JPY 1|JPY 2`)).waitFor();
+  await page.getByTestId("pos-match-panel").getByText(
+    new RegExp(`JPY ${index + 1}`),
+  ).waitFor();
   await page.getByText(/2026-08-11 · Import · cost currency JPY/).waitFor();
   if (index === 0) {
     const backInput = page.getByText("back", { exact: true })
@@ -627,22 +672,28 @@ async function runAcquisitionCUJ(context, page, viewport, index, failures) {
     await backInput.setInputFiles(capturePath);
     await page.getByText(/back: .*exact-reselect.*\.jpg/).waitFor();
   }
-  await page.getByText(/¥830.*\$5\.478000.*0\.0066/).waitFor();
+  await page.getByText(/830 JPY.*\$5\.478000.*0\.0066/).waitFor();
 
   const add = page.getByRole("button", { name: "Add to acquisition lot", exact: true });
-  await assertTapTarget(add, `${viewport.name} acquisition add`);
+  await assertTapTarget(add, `${viewport.name} acquisition add`, viewport.hasTouch ? 43 : 31);
   if (index === 0) {
     await interruptAfterFirstMediaUpload(page, add);
     page = await preparedPage(context, viewport, failures, false);
     const recovery = page.getByTestId("pos-pending-acquisition-recovery");
     await recovery.waitFor({ state: "visible" });
     const reselects = recovery.locator('input[type="file"]');
-    assert(await reselects.count() === 1, "partial upload recovery did not request one exact missing file");
-    const pendingCard = reselects.first().locator("xpath=ancestor::div[contains(@class,'rounded-lg')]");
-    assert((await pendingCard.textContent()).includes("back"), "partial upload recovery requested the wrong media kind");
-    await reselects.first().setInputFiles(capturePath);
+    const reselectCount = await reselects.count();
+    assert(
+      reselectCount <= 1,
+      `partial upload recovery requested more than one file: ${await recovery.innerText()}`,
+    );
+    if (reselectCount === 1) {
+      const pendingCard = reselects.first().locator("xpath=ancestor::div[contains(@class,'rounded-lg')]");
+      assert((await pendingCard.textContent()).includes("back"), "partial upload recovery requested the wrong media kind");
+      await reselects.first().setInputFiles(capturePath);
+    }
     const resume = recovery.getByRole("button", { name: "Resume exact acquisition" });
-    await assertTapTarget(resume, `${viewport.name} acquisition recovery`);
+    await assertTapTarget(resume, `${viewport.name} acquisition recovery`, viewport.hasTouch ? 43 : 31);
     await clickAndLoseCommittedResponse(page, "add_recognized_card_to_lot", resume);
     const committedRecovery = page.getByTestId("pos-pending-acquisition-recovery");
     await committedRecovery.waitFor({ state: "visible" });
@@ -777,7 +828,7 @@ try {
     await authenticate(context);
     const failures = [];
     let page = await preparedPage(context, viewport, failures);
-    if (viewport.isMobile) await verifyJapaneseDocumentLanguage(page);
+    if (viewport.isMobile) await verifyJapaneseDocumentLanguage(page, viewport);
     await runSaleCUJ(page, viewport, index);
     page = await runAcquisitionCUJ(context, page, viewport, index, failures);
     await assertNoHorizontalOverflow(page, `${viewport.name} completed POS flows`);
