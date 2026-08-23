@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -34,19 +34,39 @@ type CardRefreshTargets = {
  * because that shop stores no durable per-card handle. Nothing is inferred here -
  * the matrix lives in the RPC (docs/targeted_refresh.md).
  */
+/** How often the queued work is checked, and how long it is followed for. */
+const WATCH_POLL_MS = 10_000;
+const WATCH_MAX_MS = 30 * 60 * 1000;
+
 export function RefreshPricesAction({
   cardIds,
   onQueued,
+  onRefreshed,
   size = "sm",
 }: {
   cardIds: number[];
   onQueued?: (verdicts: CardRefreshVerdict[]) => void;
+  /**
+   * Called once the work queued by this button has finished, so the caller can
+   * re-read the card and show the new prices.
+   *
+   * Without it the request is fire-and-forget: the worker updates
+   * pokemon_market_listings.last_updated minutes later, but the open view still
+   * renders the values it loaded before the click, so FreshnessChip keeps
+   * reporting the old "Updated N h ago". Asking for a refresh and being told the
+   * data is hours old is the same as the refresh not working.
+   */
+  onRefreshed?: () => void;
   size?: "sm" | "default";
 }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [verdicts, setVerdicts] = useState<CardRefreshVerdict[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [watching, setWatching] = useState<number[]>([]);
+  // Held in a ref so changing the callback identity cannot restart the watch.
+  const onRefreshedRef = useRef(onRefreshed);
+  onRefreshedRef.current = onRefreshed;
 
   // Ask the backend whether these cards can benefit from a refresh at all. The
   // source matrix deliberately lives in the RPC - that is what lets a shop which
@@ -89,7 +109,60 @@ export function RefreshPricesAction({
     const parsed = (data ?? []) as CardRefreshVerdict[];
     setVerdicts(parsed);
     onQueued?.(parsed);
+    // Follow only the cards that actually got queued. A card that was already
+    // pending is somebody else's request to wait on, and a card nothing could be
+    // queued for will never produce a completion to notice.
+    setWatching(parsed.filter((v) => v.queued.length > 0).map((v) => v.card_id));
   };
+
+  // Watch the queued work and tell the caller when it is done. This polls rather
+  // than subscribing, matching RefreshInFlightStrip: the dashboard deliberately
+  // carries no realtime dependency.
+  useEffect(() => {
+    if (watching.length === 0) return;
+    let cancelled = false;
+    const startedAt = Date.now();
+    const supabase = createClient();
+
+    const finish = () => {
+      if (cancelled) return;
+      cancelled = true;
+      setWatching([]);
+      onRefreshedRef.current?.();
+    };
+
+    const poll = async () => {
+      if (cancelled) return;
+      const { data, error: pollError } = await supabase
+        .from("refresh_requests")
+        .select("request_id")
+        .in("card_id", watching)
+        .in("status", ["pending", "running"])
+        .limit(1);
+      if (cancelled) return;
+      // A failed poll says nothing about the work, so keep waiting rather than
+      // reporting a completion that may not have happened.
+      if (pollError) return;
+      if ((data ?? []).length === 0) {
+        finish();
+        return;
+      }
+      // Give up following eventually. The prices may still land later, but a
+      // poll that runs forever is a leak, and the drain has clearly not gone the
+      // way the ETA promised.
+      if (Date.now() - startedAt > WATCH_MAX_MS && !cancelled) {
+        cancelled = true;
+        setWatching([]);
+      }
+    };
+
+    void poll();
+    const id = setInterval(() => void poll(), WATCH_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [watching]);
 
   // Aggregate across the selected cards so the summary reads per source, not per card.
   const queued = new Map<string, string>(); // source -> lane
