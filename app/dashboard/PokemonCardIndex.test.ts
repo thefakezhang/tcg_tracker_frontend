@@ -94,7 +94,7 @@ describe("Pokemon Card Index query boundary", () => {
     expect(definitions.select).toHaveBeenCalledWith(expect.stringContaining("english_name_version"));
     // The curator flags ride along on every index row: the Card Index is the
     // surface that reaches cards the price-summary-driven browser never lists.
-    expect(definitions.select).toHaveBeenCalledWith(expect.stringContaining("is_japan_exclusive, is_cute"));
+    expect(definitions.select).toHaveBeenCalledWith(expect.stringContaining("is_japan_exclusive, is_cute, japan_exclusive_artwork"));
     expect(result.total).toBe(1);
     expect(result.cards).toEqual([
       expect.objectContaining({

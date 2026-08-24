@@ -420,8 +420,10 @@ Never render a lease token, raw log, credential, arbitrary heartbeat failure sum
 - Has its own tier filter dropdown.
 - Uses `useCurrency()` for price conversion in `ListingTable`.
 - "Add to Buy List" button (popover) lets users save cards to any buy list.
-- Two manual curator flags on Pokémon cards, each a `Switch` in the header and a filter button in `CardBrowser`: **Japanese exclusive** (`is_japan_exclusive`, RPC `set_pokemon_japan_exclusive`, 000093) and **Cute** (`is_cute`, RPC `set_pokemon_cute`, 000293 - the "cute" market segment the operator buys and sells by).
-Both are selected in `use-card-data.ts`'s definition columns, filtered server-side (`jpExclusiveOnly` / `cuteOnly`), and written straight back onto the row so the list reflects the toggle without a refetch.
+- Two manual curator flags on Pokémon cards remain editable as `Switch` controls: **Legacy JP-exclusive review** (`is_japan_exclusive`, RPC `set_pokemon_japan_exclusive`, 000093) and **Cute** (`is_cute`, RPC `set_pokemon_cute`, 000293 - the "cute" market segment the operator buys and sells by).
+The legacy flag is intentionally separate from the evidence-backed `artwork` and `stamps` dimensions introduced in 000338, and it is excluded from the Artwork, Stamp / marking, Either, and Both filters.
+`use-card-data.ts` selects both typed dimensions with their short reason and primary evidence URL, applies the `all`, `artwork`, `stamps`, `either`, `both`, or `legacy` query mode server-side, and still filters Cute independently.
+Typed evidence is read-only in the browser and card index because it is projected from the versioned backend manifest, while curator flag writes continue to update the row immediately without a refetch.
 - The switches, the read-only row chips, and the RPC writer live in `PokemonCuratorFlags.tsx` (`POKEMON_CURATOR_FLAGS` is the single definition of key, RPC, emoji, and labels) and are shared with the Card Index editor.
 The Card Browser only lists cards that have a `pokemon_price_summaries` row (its query is an `!inner` join from the summary table), so roughly a quarter of the catalog can never open this modal; those cards are flagged from the Card Index instead (see Card Index curator flags below).
 A failed flag write now shows the RPC error inline next to the switches instead of silently leaving the switch unmoved.
@@ -506,8 +508,9 @@ That feed's evidence tables remain queryable in the backend, so "which cards do 
 - The edit modal therefore carries the same two curator switches as the Card Detail Modal (`PokemonCuratorFlagSwitches` from `PokemonCuratorFlags.tsx`), under a "Curator flags" heading between the identity fields and Links.
 Like link attach, each switch saves the moment it is toggled through its own RPC (`set_pokemon_japan_exclusive` / `set_pokemon_cute`) and calls `onSaved` so the list behind the modal refetches; the identity fields still wait for Save.
 - Each index row shows a compact chip per set flag (`PokemonCuratorFlagChips`) in the Variant column, next to the misc badge, with the full label on the tooltip; unflagged rows render nothing extra.
-- Goals: every catalog card can be marked, from the surface that can find it, with one shared definition so the two surfaces cannot drift.
-Non-goals: flag filters on the Card Index (the Card Browser's JP-exclusive / Cute filter buttons remain the way to list flagged cards), and a flag-aware Card Browser for cards without price data (the browser is a market view; its summary-first query is deliberate).
+- Evidence-backed Japanese-exclusive artwork and stamp / marking classifications render independently in index rows and card details, including a short reason and an independently focusable source link for each qualifying dimension.
+- Goals: every catalog card can retain legacy review and Cute flags from the surface that can find it, while researched Japanese-exclusivity stays a separate reproducible read contract.
+Non-goals: typed filter controls on the Card Index, and a flag-aware Card Browser for cards without price data (the browser is a market view; its summary-first query is deliberate).
 
 ### Camera POS
 

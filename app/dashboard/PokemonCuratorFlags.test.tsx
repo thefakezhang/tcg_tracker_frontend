@@ -57,8 +57,8 @@ describe("Pokémon curator flags", () => {
         <PokemonCuratorFlagChips card={{ is_japan_exclusive: true, is_cute: true }} />
       </LanguageProvider>,
     );
-    expect(screen.getByTestId("curator-flag-is_japan_exclusive").textContent).toContain("JP-exclusive");
-    expect(screen.getByTestId("curator-flag-is_japan_exclusive").getAttribute("title")).toBe("Japanese exclusive");
+    expect(screen.getByTestId("curator-flag-is_japan_exclusive").textContent).toContain("Legacy JP review");
+    expect(screen.getByTestId("curator-flag-is_japan_exclusive").getAttribute("title")).toBe("Legacy JP-exclusive review");
     expect(screen.getByTestId("curator-flag-is_cute").textContent).toContain("Cute");
   });
 
@@ -94,7 +94,7 @@ describe("Pokémon curator flags", () => {
       />,
     );
 
-    fireEvent.click(screen.getByText("🇯🇵 Japanese exclusive"));
+    fireEvent.click(screen.getByText("🇯🇵 Legacy JP-exclusive review"));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("permission denied");
     expect(mocks.rpc).toHaveBeenCalledWith("set_pokemon_japan_exclusive", { p_card_id: 7, p_value: false });

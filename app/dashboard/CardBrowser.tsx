@@ -53,6 +53,9 @@ import { DecisionActions } from "./DecisionActions";
 import { browserOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
 import { sourceLabel } from "@/lib/source-labels";
 import type { SourceSide } from "./source-availability";
+import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
+import type { JapanExclusivityMode } from "./japan-exclusivity";
+import { JapanExclusivityFilter } from "./JapanExclusivityFilter";
 import {
   ownedInventoryKey,
   useOwnedInventoryCounts,
@@ -125,7 +128,7 @@ export default function CardBrowser() {
   const [sourceSide, setSourceSide] = useState<SourceSide>("buy");
   const [rarity, setRarity] = useState<string>("");          // "" = all (Pokémon only)
   const [promosOnly, setPromosOnly] = useState(false);       // Pokémon promotional cards
-  const [jpExclusiveOnly, setJpExclusiveOnly] = useState(false); // manual JP-exclusive flag
+  const [japanExclusivity, setJapanExclusivity] = useState<JapanExclusivityMode>("all");
   const [cuteOnly, setCuteOnly] = useState(false); // manual "cute" flag (293)
   const [minBuyPrice, setMinBuyPrice] = useState<string>("");
   const [minSellPrice, setMinSellPrice] = useState<string>("");
@@ -172,7 +175,7 @@ export default function CardBrowser() {
       sourceSide,
       rarity: rarity || null,
       promosOnly,
-      jpExclusiveOnly,
+      japanExclusivity,
       cuteOnly,
       minBuyPrice: minBuyPrice !== "" ? Number(minBuyPrice) : null,
       minSellPrice: minSellPrice !== "" ? Number(minSellPrice) : null,
@@ -302,7 +305,7 @@ export default function CardBrowser() {
     setSourceSide("buy");
     setRarity("");
     setPromosOnly(false);
-    setJpExclusiveOnly(false);
+    setJapanExclusivity("all");
     setWeakEvidenceOnly(false);
     setMinBuyPrice("");
     setMinSellPrice("");
@@ -325,7 +328,7 @@ export default function CardBrowser() {
   useEffect(() => {
     setPage(0);
     setRowSelection({});
-  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, jpExclusiveOnly, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, japanExclusivity, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -532,13 +535,7 @@ export default function CardBrowser() {
           </DropdownMenu>
         )}
         {activeGame === "pokemon" && (
-          <Button
-            variant={jpExclusiveOnly ? "default" : "outline"}
-            className="h-11 shrink-0 sm:h-8"
-            onClick={() => setJpExclusiveOnly((v) => !v)}
-          >
-            {t("cardBrowser.jpExclusiveOnly")}
-          </Button>
+          <JapanExclusivityFilter value={japanExclusivity} onValueChange={setJapanExclusivity} />
         )}
         {activeGame === "pokemon" && (
           <Button
@@ -820,6 +817,7 @@ export default function CardBrowser() {
                       {misc}
                     </CardDescription>
                   )}
+                  <JapanExclusiveEvidence card={row.card} compact />
                   <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} avgCost={row.ownedAvgCostUsd} totalCost={row.ownedCostBasisUsd} consigned={row.ownedConsigned} availableOnly={availableOnly} />
                   <ObservedLine observed={row.observed} />
                 </CardHeader>

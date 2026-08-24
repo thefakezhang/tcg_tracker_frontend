@@ -79,6 +79,7 @@ import { detailOpportunityPayloads, recordOpportunityExposures } from "./opportu
 import { formatRoiPct, roiToneClass } from "./theoretical-roi";
 import { MarketEvidenceCallout } from "./MarketEvidenceCallout";
 import { compareMarketEstimates, type MarketEvidence } from "./market-evidence";
+import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
 
 import { formatUsd } from "@/lib/money";
 import { formatDate } from "@/lib/dates";
@@ -656,6 +657,11 @@ export default function CardDetailModal({
                 )}
                 <UidChip uid={def.card_uid} />
               </div>
+              {activeGame === "pokemon" && (
+                <div className="mt-2 max-w-2xl">
+                  <JapanExclusiveEvidence card={def} />
+                </div>
+              )}
               <div className="mt-1 text-xs">
                 {ownedSummary.total + incomingQty > 0 ? (
                   <span className="text-muted-foreground">

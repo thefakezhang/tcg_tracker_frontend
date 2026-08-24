@@ -16,6 +16,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/dates";
 import {
+  JAPAN_EXCLUSIVITY_LABELS,
+  JapanExclusivityCriterionField,
+  type JapanExclusivityCriterionMode,
+} from "./JapanExclusivityCriterionField";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -82,6 +87,7 @@ interface WishCriteria {
   set_codes: string[] | null;
   languages: string[] | null;
   is_japan_exclusive: boolean | null;
+  japan_exclusivity_mode: JapanExclusivityCriterionMode | null;
   is_promo: boolean | null;
   price_min_usd: number | null;
   price_max_usd: number | null;
@@ -115,7 +121,7 @@ function purchaseLabel(p: PurchaseRow): string {
 const GAMES = ["pokemon_sealed", "pokemon", "mtg"] as const;
 const HANDLE_SUGGESTIONS = ["discord", "instagram", "x", "line", "whatsapp", "phone", "email"];
 const selectClass =
-  "h-9 w-full rounded-md border bg-transparent px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
+  "h-11 w-full rounded-md border bg-transparent px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring sm:h-9";
 
 async function fetchCustomers(search: string): Promise<Customer[]> {
   const supabase = createClient();
@@ -778,12 +784,12 @@ function CustomerDetail({
               </Label>
               {wishlist.length > 0 && (
                 <div className="flex items-center gap-0.5 rounded-md border p-0.5">
-                  <Button type="button" size="icon" className="size-6"
+                  <Button type="button" size="icon" className="size-11 sm:size-8"
                     variant={wishlistView === "list" ? "secondary" : "ghost"}
                     onClick={() => setWishlistView("list")} aria-label={t("customers.wishlistViewList")}>
                     <List className="size-3.5" />
                   </Button>
-                  <Button type="button" size="icon" className="size-6"
+                  <Button type="button" size="icon" className="size-11 sm:size-8"
                     variant={wishlistView === "grid" ? "secondary" : "ghost"}
                     onClick={() => setWishlistView("grid")} aria-label={t("customers.wishlistViewGrid")}>
                     <LayoutGrid className="size-3.5" />
@@ -813,7 +819,13 @@ function CustomerDetail({
                       <Badge variant={w.intent === "committed" ? "default" : "outline"} className="shrink-0 text-[10px]">
                         {t(`customers.intent.${w.intent}` as never)} ×{w.target_quantity}
                       </Badge>
-                      <Button variant="ghost" size="icon" className="size-7" onClick={() => removeWish(w.wishlist_id)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-11 sm:size-8"
+                        aria-label={t("customers.removeWish")}
+                        onClick={() => removeWish(w.wishlist_id)}
+                      >
                         <Trash2 className="size-3.5" />
                       </Button>
                     </div>
@@ -841,7 +853,8 @@ function CustomerDetail({
                         </Badge>
                       )}
                       <Button type="button" variant="secondary" size="icon"
-                        className="absolute right-1 top-1 size-6 opacity-0 transition-opacity group-hover:opacity-100"
+                        className="absolute right-1 top-1 size-11 opacity-100 transition-opacity sm:size-8 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                        aria-label={t("customers.removeWish")}
                         onClick={() => removeWish(w.wishlist_id)}>
                         <Trash2 className="size-3" />
                       </Button>
@@ -863,7 +876,7 @@ function CustomerDetail({
             <WishlistAdd customerId={form.customer_id} onAdded={reloadWishlist} />
           </div>
 
-          {/* Criteria-based wishlist: "SARs after M1", "JP exclusive promos",
+          {/* Criteria-based wishlist: "SARs after M1", "exclusive-art promos",
               etc. Feeds the pre-trip shopping list (customer_shopping_list_v)
               and criterion-matched reach-out (customer_reachout_criteria_v). */}
           <div className="space-y-2 border-t pt-3">
@@ -891,7 +904,11 @@ function CustomerDetail({
                               : null,
                         c.set_codes?.length ? `sets ${c.set_codes.join(",")}` : null,
                         c.languages?.length ? c.languages.join("/") : null,
-                        c.is_japan_exclusive ? "JP-only" : null,
+                        c.japan_exclusivity_mode
+                          ? t(JAPAN_EXCLUSIVITY_LABELS[c.japan_exclusivity_mode])
+                          : c.is_japan_exclusive
+                            ? t("customers.japanExclusivity.legacy")
+                            : null,
                         c.is_promo ? "promo" : null,
                         c.price_min_usd != null || c.price_max_usd != null
                           ? `$${c.price_min_usd ?? 0}-${c.price_max_usd ?? "∞"}`
@@ -910,7 +927,8 @@ function CustomerDetail({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="size-7"
+                    className="size-11 sm:size-8"
+                    aria-label={t("customers.removeCriterion")}
                     onClick={async () => {
                       const supabase = createClient();
                       await supabase
@@ -988,7 +1006,7 @@ const POKEMON_RARITY_OPTIONS = [
 
 interface SetOption { set_code: string; name: string; release_date: string | null; }
 
-function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () => void }) {
+export function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () => void }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [game, setGame] = useState<string>("pokemon");
@@ -996,7 +1014,7 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
   const [rarities, setRarities] = useState<string[]>([]);
   const [setAfter, setSetAfter] = useState("");
   const [setBefore, setSetBefore] = useState("");
-  const [jpOnly, setJpOnly] = useState(false);
+  const [japanExclusivityMode, setJapanExclusivityMode] = useState<"" | JapanExclusivityCriterionMode>("");
   const [promoOnly, setPromoOnly] = useState(false);
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
@@ -1027,7 +1045,7 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
       setRarities([]);
       setSetAfter("");
       setSetBefore("");
-      setJpOnly(false);
+      setJapanExclusivityMode("");
       setPromoOnly(false);
       setPriceMin("");
       setPriceMax("");
@@ -1049,7 +1067,8 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
       set_after_code: setAfter.trim() || null,
       set_before_code: setBefore.trim() || null,
       languages: game === "pokemon" || game === "pokemon_sealed" ? ["jp"] : null,
-      is_japan_exclusive: jpOnly ? true : null,
+      japan_exclusivity_mode: game === "pokemon" && japanExclusivityMode ? japanExclusivityMode : null,
+      is_japan_exclusive: game === "pokemon" && japanExclusivityMode === "legacy" ? true : null,
       is_promo: promoOnly ? true : null,
       price_min_usd: priceMin ? Number(priceMin) : null,
       price_max_usd: priceMax ? Number(priceMax) : null,
@@ -1168,7 +1187,7 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
                         key={r}
                         type="button"
                         onClick={() => toggleRarity(r)}
-                        className={`rounded-full border px-2 py-0.5 text-xs transition ${on ? "bg-primary text-primary-foreground border-primary" : "hover:bg-accent"}`}
+                        className={`min-h-11 rounded-full border px-2 py-0.5 text-xs transition sm:min-h-8 ${on ? "bg-primary text-primary-foreground border-primary" : "hover:bg-accent"}`}
                       >
                         {r}
                       </button>
@@ -1230,16 +1249,14 @@ function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdded: () 
               </div>
             </div>
 
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-1.5 text-sm">
-                <input
-                  type="checkbox"
-                  checked={jpOnly}
-                  onChange={(e) => setJpOnly(e.target.checked)}
+            <div className="space-y-2">
+              {game === "pokemon" && (
+                <JapanExclusivityCriterionField
+                  value={japanExclusivityMode}
+                  onValueChange={setJapanExclusivityMode}
                 />
-                JP exclusive
-              </label>
-              <label className="flex items-center gap-1.5 text-sm">
+              )}
+              <label className="flex min-h-11 items-center gap-1.5 text-sm sm:min-h-8">
                 <input
                   type="checkbox"
                   checked={promoOnly}

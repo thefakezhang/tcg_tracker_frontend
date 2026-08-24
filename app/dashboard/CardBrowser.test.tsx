@@ -112,6 +112,26 @@ beforeEach(() => {
 });
 
 describe("CardBrowser surfaces", () => {
+  it("exposes every Japanese-exclusivity mode and defaults the data query to all cards", async () => {
+    render(<CardBrowser />);
+
+    expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      japanExclusivity: "all",
+    }));
+    fireEvent.click(screen.getByRole("button", { name: /cardBrowser\.jpExclusiveAll/ }));
+    expect(await screen.findByText("cardBrowser.jpExclusiveHint")).toBeTruthy();
+    const options = await screen.findAllByRole("menuitemradio");
+    expect(options.map((option) => option.textContent)).toEqual([
+      "cardBrowser.jpExclusiveAll",
+      "cardBrowser.jpExclusiveArtwork",
+      "cardBrowser.jpExclusiveStamps",
+      "cardBrowser.jpExclusiveEither",
+      "cardBrowser.jpExclusiveBoth",
+      "cardBrowser.jpExclusiveLegacy",
+    ]);
+    expect(options.every((option) => option.className.includes("min-h-11"))).toBe(true);
+  });
+
   it("defaults the opportunity display to highest ROI first", () => {
     render(<CardBrowser />);
 

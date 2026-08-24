@@ -6,8 +6,10 @@ import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 
-// The two manual curator flags on Pokémon cards: Japanese exclusive (000093) and
-// Cute (000293). Each is one boolean column on pokemon_card_definitions written
+// The two manual curator flags on Pokémon cards: legacy JP-exclusive review
+// (000093) and Cute (000293). The legacy flag is not researched artwork or stamp
+// evidence and never participates in the typed Either filter. Each is one
+// boolean column on pokemon_card_definitions written
 // through its own narrow SECURITY DEFINER RPC, so any authenticated surface that
 // knows a card_id can flip it. Two surfaces do: the Card Detail Modal (reached
 // from the Card Browser, which only lists cards that HAVE a price summary) and
