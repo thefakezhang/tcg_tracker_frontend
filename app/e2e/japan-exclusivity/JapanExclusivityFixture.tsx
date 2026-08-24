@@ -52,8 +52,8 @@ const CARDS: FixtureCard[] = [
   },
   {
     id: "legacy",
-    name: "Legacy M6 review row",
-    number: "001/M6",
+    name: "Legacy trophy review row",
+    number: "No. 1/OLD-UPC",
     is_japan_exclusive: true,
   },
   {
