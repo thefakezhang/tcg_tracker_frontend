@@ -11,13 +11,13 @@ vi.mock("@/lib/i18n", () => ({
 }));
 
 describe("Japanese exclusivity master list download", () => {
-  it("publishes the generated 557-row buyer-readable CSV", () => {
+  it("publishes the generated 922-row buyer-readable CSV", () => {
     const csv = readFileSync(
       resolve(process.cwd(), "public/pokemon-japan-exclusives-master-list.csv"),
       "utf8",
     );
     const lines = csv.trimEnd().split("\n");
-    expect(lines).toHaveLength(558);
+    expect(lines).toHaveLength(923);
     expect(lines[0]).toBe(
       "era,release_date,set_name,set_code,card_number,edition,variant,language,japanese_name,english_name,category,artwork_reason,artwork_evidence_urls,stamps_reason,stamps_evidence_urls,canonical_image_url,card_uid",
     );
