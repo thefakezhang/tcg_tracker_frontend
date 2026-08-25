@@ -67,6 +67,13 @@ async function assertTapTarget(locator, label) {
   assert(box.width >= 44 && box.height >= 44, `${label} is ${box.width}x${box.height}, below 44px`);
 }
 
+async function waitForSubtreeAnimations(locator) {
+  await locator.evaluate(async (element) => {
+    const animations = element.getAnimations({ subtree: true });
+    await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+  });
+}
+
 async function assertEvidencePopup(page, link, activation, label) {
   const href = await link.getAttribute("href");
   assert(href, `${label} has no href`);
@@ -161,6 +168,7 @@ async function runViewport(browser, name, viewport) {
   await addCriterion.click();
   const criterionDialog = page.getByRole("dialog", { name: "Add criterion" });
   await criterionDialog.waitFor({ state: "visible" });
+  await waitForSubtreeAnimations(criterionDialog);
   const dialogBounds = await criterionDialog.boundingBox();
   const cancelCriterion = criterionDialog.getByRole("button", { name: "Cancel" });
   const saveCriterion = criterionDialog.getByRole("button", { name: "Save" });
