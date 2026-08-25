@@ -423,7 +423,7 @@ Never render a lease token, raw log, credential, arbitrary heartbeat failure sum
 - The manual **Cute** curator flag remains editable as a `Switch` control (`is_cute`, RPC `set_pokemon_cute`, 000293 - the "cute" market segment the operator buys and sells by).
 `use-card-data.ts` selects the evidence-backed `artwork` and `stamps` dimensions with their short reason and primary evidence URL, applies the `all`, `artwork`, `stamps`, `either`, or `both` query mode server-side, and filters Cute independently.
 Typed evidence is read-only in the browser and card index because it is projected from the versioned backend manifest, while the Cute curator write updates the row immediately without a refetch.
-The browser also exposes the generated 366-row buyer-readable master CSV through `JapanExclusiveMasterListDownload.tsx`.
+The browser also exposes the generated 383-row buyer-readable master CSV through `JapanExclusiveMasterListDownload.tsx`.
 - The switch, the read-only row chip, and the RPC writer live in `PokemonCuratorFlags.tsx` and are shared with the Card Index editor.
 The Card Browser only lists cards that have a `pokemon_price_summaries` row (its query is an `!inner` join from the summary table), so roughly a quarter of the catalog can never open this modal; those cards are flagged from the Card Index instead (see Card Index curator flags below).
 A failed flag write now shows the RPC error inline next to the switches instead of silently leaving the switch unmoved.

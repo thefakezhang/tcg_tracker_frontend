@@ -129,7 +129,7 @@ async function runViewport(browser, name, viewport) {
   assert(masterResponse.ok(), `${name} master list request failed: ${masterResponse.status()}`);
   const masterCSV = await masterResponse.text();
   assert(masterCSV.startsWith("era,release_date,set_name,set_code,card_number"), `${name} master list header changed`);
-  assert(masterCSV.trimEnd().split("\n").length === 367, `${name} master list does not contain 366 approved rows`);
+  assert(masterCSV.trimEnd().split("\n").length === 384, `${name} master list does not contain 383 approved rows`);
 
   for (const [label, expected] of modes) {
     await selectMode(page, label, expected);
@@ -233,7 +233,7 @@ async function runViewport(browser, name, viewport) {
     customerModes: 4,
     criterionActions: 2,
     criterionDialog: { dialogBounds, cancelBounds, saveBounds },
-    masterRows: 366,
+    masterRows: 383,
     pageErrors,
   };
 }
@@ -252,7 +252,7 @@ try {
       "independent keyboard and pointer evidence-link popups without parent navigation",
       "customer and shopping artwork/stamps/either/both semantics",
       "real Add criterion dialog Save and Cancel remain reachable inside 390x844",
-      "366-row buyer-readable master CSV download",
+      "383-row buyer-readable master CSV download",
       "44px phone trigger, options, fields, actions, download, and evidence links",
       "no page-level horizontal overflow",
     ],
