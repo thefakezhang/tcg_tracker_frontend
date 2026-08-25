@@ -421,7 +421,7 @@ Never render a lease token, raw log, credential, arbitrary heartbeat failure sum
 - Uses `useCurrency()` for price conversion in `ListingTable`.
 - "Add to Buy List" button (popover) lets users save cards to any buy list.
 - Two manual curator flags on Pokémon cards remain editable as `Switch` controls: **Legacy JP-exclusive review** (`is_japan_exclusive`, RPC `set_pokemon_japan_exclusive`, 000093) and **Cute** (`is_cute`, RPC `set_pokemon_cute`, 000293 - the "cute" market segment the operator buys and sells by).
-The legacy flag is intentionally separate from the evidence-backed `artwork` and `stamps` dimensions introduced in 000338, and it is excluded from the Artwork, Stamp / marking, Either, and Both filters.
+The legacy flag is intentionally separate from the evidence-backed `artwork` and `stamps` dimensions introduced in 000339, and it is excluded from the Artwork, Stamp / marking, Either, and Both filters.
 `use-card-data.ts` selects both typed dimensions with their short reason and primary evidence URL, applies the `all`, `artwork`, `stamps`, `either`, `both`, or `legacy` query mode server-side, and still filters Cute independently.
 Typed evidence is read-only in the browser and card index because it is projected from the versioned backend manifest, while curator flag writes continue to update the row immediately without a refetch.
 - The switches, the read-only row chips, and the RPC writer live in `PokemonCuratorFlags.tsx` (`POKEMON_CURATOR_FLAGS` is the single definition of key, RPC, emoji, and labels) and are shared with the Card Index editor.
