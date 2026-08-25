@@ -1143,6 +1143,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "customers.wishlistNoResults": "該当なし。名前・弾コード・カード番号で試してみて。",
   "customers.criteria": "条件付きウィッシュリスト",
   "customers.criteriaAdd": "条件を追加",
+  "customers.criteriaSaveFailed": "条件を追加できませんでした: {detail}。入力内容は保持されています。確認してもう一度お試しください。",
   "customers.criteriaEmpty": "条件はまだありません。「M1以降のSAR」「JP限定プロモ」など、特定のカードより条件で欲しがることが多い。",
   "customers.criteriaUnlabeled": "(未命名)",
   "customers.criteriaNoFilters": "条件未設定",

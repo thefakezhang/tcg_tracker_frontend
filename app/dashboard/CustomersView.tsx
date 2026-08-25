@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/dates";
+import { formatMutationError } from "@/lib/mutation-error";
 import {
   JAPAN_EXCLUSIVITY_LABELS,
   JapanExclusivityCriterionField,
@@ -1020,6 +1021,7 @@ export function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdd
   const [intent, setIntent] = useState<"interest" | "requested" | "committed">("interest");
   const [intentExpiresAt, setIntentExpiresAt] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [sets, setSets] = useState<SetOption[]>([]);
 
   // Load pokemon sets (JP) newest first so the set-range dropdowns can render
@@ -1049,31 +1051,43 @@ export function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdd
       setTargetQuantity("1");
       setIntent("interest");
       setIntentExpiresAt("");
+      setError(null);
     }
   }, [open]);
 
   async function add() {
     if (busy) return;
     setBusy(true);
+    setError(null);
     const supabase = createClient();
-    await supabase.from("customer_wish_criteria").insert({
-      customer_id: customerId,
-      game,
-      label: label.trim() || null,
-      rarities: rarities.length ? rarities : null,
-      set_after_code: setAfter.trim() || null,
-      set_before_code: setBefore.trim() || null,
-      languages: game === "pokemon" || game === "pokemon_sealed" ? ["jp"] : null,
-      japan_exclusivity_mode: game === "pokemon" && japanExclusivityMode ? japanExclusivityMode : null,
-      is_promo: promoOnly ? true : null,
-      price_min_usd: priceMin ? Number(priceMin) : null,
-      price_max_usd: priceMax ? Number(priceMax) : null,
-      priority: Number(priority) || 3,
-      target_quantity_total: Math.max(Number(targetQuantity) || 1, 1),
-      intent,
-      intent_expires_at: intentExpiresAt ? new Date(`${intentExpiresAt}T23:59:59`).toISOString() : null,
-    });
-    setBusy(false);
+    try {
+      const { error: insertError } = await supabase.from("customer_wish_criteria").insert({
+        customer_id: customerId,
+        game,
+        label: label.trim() || null,
+        rarities: rarities.length ? rarities : null,
+        set_after_code: setAfter.trim() || null,
+        set_before_code: setBefore.trim() || null,
+        languages: game === "pokemon" || game === "pokemon_sealed" ? ["jp"] : null,
+        japan_exclusivity_mode: game === "pokemon" && japanExclusivityMode ? japanExclusivityMode : null,
+        is_promo: promoOnly ? true : null,
+        price_min_usd: priceMin ? Number(priceMin) : null,
+        price_max_usd: priceMax ? Number(priceMax) : null,
+        priority: Number(priority) || 3,
+        target_quantity_total: Math.max(Number(targetQuantity) || 1, 1),
+        intent,
+        intent_expires_at: intentExpiresAt ? new Date(`${intentExpiresAt}T23:59:59`).toISOString() : null,
+      });
+      if (insertError) {
+        setError(formatMutationError(insertError));
+        return;
+      }
+    } catch (insertError) {
+      setError(formatMutationError(insertError));
+      return;
+    } finally {
+      setBusy(false);
+    }
     onAdded();
     setOpen(false);
   }
@@ -1265,6 +1279,11 @@ export function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdd
               </label>
             </div>
           </div>
+          {error && (
+            <p role="alert" className="max-h-24 shrink-0 overflow-y-auto rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+              {t("customers.criteriaSaveFailed", { detail: error })}
+            </p>
+          )}
           <DialogFooter className="shrink-0 border-t pt-3" data-testid="criteria-dialog-footer">
             <Button className="min-h-11 sm:min-h-9" variant="outline" onClick={() => setOpen(false)} disabled={busy}>
               {t("common.cancel")}

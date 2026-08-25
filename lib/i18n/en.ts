@@ -1141,6 +1141,7 @@ const en = {
   "customers.wishlistNoResults": "No matches. Try a name, set code, or card number.",
   "customers.criteria": "Wishlist criteria",
   "customers.criteriaAdd": "Add criterion",
+  "customers.criteriaSaveFailed": "Could not add this criterion: {detail}. Your entries are still here - review them and try again.",
   "customers.criteriaEmpty": "No criteria yet - customers often want \"SARs after M1\" or \"JP promos\" rather than specific cards.",
   "customers.criteriaUnlabeled": "(unlabeled)",
   "customers.criteriaNoFilters": "no filters set",

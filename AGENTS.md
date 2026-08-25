@@ -612,6 +612,7 @@ The operator must record deferred, unavailable, or out-of-scope outcomes when le
 - The review dialog calls database validation immediately before both the ready and ordered transitions.
 Blockers stop the transition, while warnings require explicit acknowledgement.
 - `CustomersView.tsx` captures quantity, intent, expiry, and grade bounds on exact wants and quantity, intent, and expiry on criteria wants.
+Rejected criterion inserts keep the Add criterion dialog and entered values open, announce an inline error, and allow retry; only a successful insert closes the dialog and refreshes the criteria list.
 - `lib/purchase-planning.ts` contains pure ordering and summary behavior covered by `lib/purchase-planning.test.ts`.
 - Backend architecture and invariants are documented in `docs/customer_purchase_planning.md` in the backend repository.
 
