@@ -28,5 +28,8 @@ describe("Japanese exclusivity master list download", () => {
     const link = screen.getByTestId("japan-exclusive-master-list-download");
     expect(link.getAttribute("href")).toBe("/pokemon-japan-exclusives-master-list.csv");
     expect(link.getAttribute("download")).toBe("pokemon-japan-exclusives-master-list.csv");
+    expect(screen.getByTestId("japan-exclusive-corpus-scope").textContent).toBe(
+      "cardBrowser.jpExclusiveCorpusScope",
+    );
   });
 });

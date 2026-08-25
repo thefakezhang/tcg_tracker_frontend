@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CriteriaAdd } from "@/app/dashboard/CustomersView";
 import { JapanExclusiveEvidence } from "@/app/dashboard/JapanExclusiveEvidence";
 import { JapanExclusiveMasterListDownload } from "@/app/dashboard/JapanExclusiveMasterListDownload";
 import { JapanExclusivityCriterionField, type JapanExclusivityCriterionMode } from "@/app/dashboard/JapanExclusivityCriterionField";
@@ -140,6 +141,9 @@ export function JapanExclusivityFixture() {
             value={criterion}
             onValueChange={setCriterion}
           />
+          <div className="mt-3">
+            <CriteriaAdd customerId={17} onAdded={() => {}} />
+          </div>
         </div>
         <div className="min-w-0 rounded-lg border p-3" data-testid="fixture-shopping-list">
           <h2 className="font-medium">Shopping candidates</h2>

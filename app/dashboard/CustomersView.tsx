@@ -1084,15 +1084,18 @@ export function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdd
 
   return (
     <>
-      <Button variant="outline" size="sm" className="w-fit" onClick={() => setOpen(true)}>
+      <Button variant="outline" size="sm" className="h-11 w-fit sm:h-8" onClick={() => setOpen(true)}>
         <Plus className="size-3.5" /> {t("customers.criteriaAdd")}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden sm:max-w-lg">
+          <DialogHeader className="shrink-0">
             <DialogTitle>{t("customers.criteriaAdd")}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
+          <div
+            className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1"
+            data-testid="criteria-dialog-scroll-area"
+          >
             {/* Name (label) on its own row so users can find it. Previous
                 layout hid it as a placeholder in a row of controls. */}
             <div>
@@ -1262,11 +1265,11 @@ export function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdd
               </label>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
+          <DialogFooter className="shrink-0 border-t pt-3" data-testid="criteria-dialog-footer">
+            <Button className="min-h-11 sm:min-h-9" variant="outline" onClick={() => setOpen(false)} disabled={busy}>
               {t("common.cancel")}
             </Button>
-            <Button onClick={add} disabled={busy}>
+            <Button className="min-h-11 sm:min-h-9" onClick={add} disabled={busy}>
               {busy ? t("common.saving") : t("common.save")}
             </Button>
           </DialogFooter>

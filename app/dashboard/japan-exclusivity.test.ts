@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import en from "@/lib/i18n/en";
+import ja from "@/lib/i18n/ja";
 import {
   japanExclusivityQueryFilter,
   matchesJapanExclusivity,
@@ -46,5 +48,16 @@ describe("Japanese exclusivity query contract", () => {
       equalsTrue: ["japan_exclusive_artwork", "japan_exclusive_stamps"],
       anyOfTrue: [],
     });
+  });
+
+  it("keeps reviewed version and evolving-corpus scope beside filters and customer criteria", () => {
+    for (const key of ["cardBrowser.jpExclusiveHint", "customers.japanExclusivity.hint"] as const) {
+      expect(en[key]).toContain("Reviewed through Aug 24, 2026");
+      expect(en[key]).toContain("v2026-08-25.2");
+      expect(en[key]).toContain("approvals evolve");
+      expect(ja[key]).toContain("2026年8月24日");
+      expect(ja[key]).toContain("v2026-08-25.2");
+      expect(ja[key]).toContain("承認リストは更新されます");
+    }
   });
 });

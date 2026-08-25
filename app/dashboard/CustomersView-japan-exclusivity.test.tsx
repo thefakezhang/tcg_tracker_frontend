@@ -38,6 +38,11 @@ describe("customer Japanese exclusivity criterion", () => {
     render(<CriteriaAdd customerId={17} onAdded={mocks.onAdded} />);
 
     fireEvent.click(screen.getByRole("button", { name: "customers.criteriaAdd" }));
+    const dialog = await screen.findByRole("dialog", { name: "customers.criteriaAdd" });
+    expect(dialog.className).toContain("max-h-[calc(100dvh-2rem)]");
+    expect(dialog.className).toContain("overflow-hidden");
+    expect(screen.getByTestId("criteria-dialog-scroll-area").className).toContain("overflow-y-auto");
+    expect(screen.getByTestId("criteria-dialog-footer").className).toContain("shrink-0");
     const select = await screen.findByLabelText("customers.japanExclusivity.label");
     expect(Array.from((select as HTMLSelectElement).options).map((option) => option.value)).toEqual([
       "", "artwork", "stamps", "either", "both",
@@ -46,7 +51,11 @@ describe("customer Japanese exclusivity criterion", () => {
     expect(screen.getByText("customers.japanExclusivity.hint")).toBeTruthy();
 
     fireEvent.change(select, { target: { value: "stamps" } });
-    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+    const cancel = screen.getByRole("button", { name: "common.cancel" });
+    const save = screen.getByRole("button", { name: "common.save" });
+    expect(cancel.className).toContain("min-h-11");
+    expect(save.className).toContain("min-h-11");
+    fireEvent.click(save);
 
     await waitFor(() => expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({
       customer_id: 17,

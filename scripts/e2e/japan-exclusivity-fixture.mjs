@@ -86,6 +86,22 @@ async function assertEvidencePopup(page, link, activation, label) {
 
 async function runViewport(browser, name, viewport) {
   const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
+  let criterionInsertCount = 0;
+  await context.route("http://127.0.0.1:54321/rest/v1/**", async (route) => {
+    const request = route.request();
+    const headers = {
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "apikey, authorization, content-type, prefer, x-client-info",
+      "access-control-allow-methods": "GET, HEAD, OPTIONS, POST",
+      "content-type": "application/json",
+    };
+    if (request.method() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers });
+      return;
+    }
+    if (request.method() === "POST") criterionInsertCount += 1;
+    await route.fulfill({ status: request.method() === "POST" ? 201 : 200, headers, body: "[]" });
+  });
   await context.route("https://**/*", (route) => route.fulfill({
     status: 200,
     contentType: "text/html",
@@ -97,6 +113,7 @@ async function runViewport(browser, name, viewport) {
   await page.goto(`${appUrl}/e2e/japan-exclusivity`, { waitUntil: "networkidle" });
   assert(await page.getByRole("heading", { name: "Japanese-exclusive printing evidence" }).isVisible(), `${name} fixture heading missing`);
   assert((await page.getByText(/Both requires independent evidence/).count()) >= 1, `${name} typed-category copy missing`);
+  assert((await page.getByText(/Reviewed through Aug 24, 2026/).count()) >= 1, `${name} reviewed corpus scope missing`);
   const masterDownload = page.getByTestId("japan-exclusive-master-list-download");
   assert(await masterDownload.getAttribute("download") === "pokemon-japan-exclusives-master-list.csv", `${name} master list is not a download`);
   const masterHref = await masterDownload.getAttribute("href");
@@ -137,6 +154,39 @@ async function runViewport(browser, name, viewport) {
     assert(text.startsWith(String(count)), `${name} customer ${value} produced ${text}, want ${count}`);
   }
 
+  const addCriterion = page.getByRole("button", { name: "Add criterion" });
+  if (viewport.width < 640) {
+    await assertTapTarget(addCriterion, "phone Add criterion trigger");
+  }
+  await addCriterion.click();
+  const criterionDialog = page.getByRole("dialog", { name: "Add criterion" });
+  await criterionDialog.waitFor({ state: "visible" });
+  const dialogBounds = await criterionDialog.boundingBox();
+  const cancelCriterion = criterionDialog.getByRole("button", { name: "Cancel" });
+  const saveCriterion = criterionDialog.getByRole("button", { name: "Save" });
+  const cancelBounds = await cancelCriterion.boundingBox();
+  const saveBounds = await saveCriterion.boundingBox();
+  assert(dialogBounds, `${name} Add criterion dialog has no bounds`);
+  assert(cancelBounds && saveBounds, `${name} Add criterion actions are clipped or unavailable`);
+  assert(dialogBounds.y >= 0 && dialogBounds.y + dialogBounds.height <= viewport.height,
+    `${name} Add criterion dialog escapes viewport: ${JSON.stringify(dialogBounds)}`);
+  assert(cancelBounds.y >= 0 && cancelBounds.y + cancelBounds.height <= viewport.height,
+    `${name} Add criterion Cancel is clipped: ${JSON.stringify(cancelBounds)}`);
+  assert(saveBounds.y >= 0 && saveBounds.y + saveBounds.height <= viewport.height,
+    `${name} Add criterion Save is clipped: ${JSON.stringify(saveBounds)}`);
+  if (viewport.width < 640) {
+    await assertTapTarget(cancelCriterion, "phone Add criterion Cancel");
+    await assertTapTarget(saveCriterion, "phone Add criterion Save");
+  }
+  await criterionDialog.getByLabel("Japanese exclusivity").selectOption("both");
+  await saveCriterion.click();
+  await criterionDialog.waitFor({ state: "hidden" });
+  assert(criterionInsertCount === 1, `${name} Add criterion Save sent ${criterionInsertCount} writes, want 1`);
+  await addCriterion.click();
+  await criterionDialog.waitFor({ state: "visible" });
+  await criterionDialog.getByRole("button", { name: "Cancel" }).click();
+  await criterionDialog.waitFor({ state: "hidden" });
+
   if (viewport.width < 640) {
     await assertTapTarget(page.getByTestId("japan-exclusivity-filter-trigger"), "phone filter trigger");
     await assertTapTarget(search, "phone search");
@@ -152,14 +202,32 @@ async function runViewport(browser, name, viewport) {
       await assertTapTarget(menuItems.nth(index), `phone filter option ${index + 1}`);
     }
     await page.keyboard.press("Escape");
+    await menuItems.first().waitFor({ state: "hidden" });
   }
 
   await assertNoOverflow(page, `${name} final`);
   assert(pageErrors.length === 0, `${name} page errors: ${pageErrors.join(" | ")}`);
+  await page.waitForFunction(() =>
+    !document.querySelector('[role="dialog"]') &&
+    !document.querySelector('[role="menuitemradio"]'),
+  );
+  await page.evaluate(() => new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve)),
+  ));
   const screenshot = `${artifactRoot}/japan-exclusivity-${name}.png`;
   await page.screenshot({ path: screenshot, fullPage: true });
   await context.close();
-  return { name, viewport, screenshot, filters: 5, customerModes: 4, masterRows: 366, pageErrors };
+  return {
+    name,
+    viewport,
+    screenshot,
+    filters: 5,
+    customerModes: 4,
+    criterionActions: 2,
+    criterionDialog: { dialogBounds, cancelBounds, saveBounds },
+    masterRows: 366,
+    pageErrors,
+  };
 }
 
 const browser = await chromium.launch();
@@ -175,6 +243,7 @@ try {
       "search empty state and reset",
       "independent keyboard and pointer evidence-link popups without parent navigation",
       "customer and shopping artwork/stamps/either/both semantics",
+      "real Add criterion dialog Save and Cancel remain reachable inside 390x844",
       "366-row buyer-readable master CSV download",
       "44px phone trigger, options, fields, actions, download, and evidence links",
       "no page-level horizontal overflow",
