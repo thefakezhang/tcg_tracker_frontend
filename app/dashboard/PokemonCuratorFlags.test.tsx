@@ -22,20 +22,16 @@ function withLanguage(ui: React.ReactElement) {
 }
 
 describe("Pokémon curator flags", () => {
-  it("defines exactly the two flags, each with its own RPC", () => {
+  it("defines only the Cute curator flag", () => {
     expect(POKEMON_CURATOR_FLAGS.map((f) => [f.key, f.rpc])).toEqual([
-      ["is_japan_exclusive", "set_pokemon_japan_exclusive"],
       ["is_cute", "set_pokemon_cute"],
     ]);
   });
 
   it("normalises null, undefined and partial rows to booleans", () => {
-    expect(pokemonCuratorFlagValues(null)).toEqual({ is_japan_exclusive: false, is_cute: false });
-    expect(pokemonCuratorFlagValues({ is_cute: true })).toEqual({ is_japan_exclusive: false, is_cute: true });
-    expect(pokemonCuratorFlagValues({ is_japan_exclusive: null, is_cute: null })).toEqual({
-      is_japan_exclusive: false,
-      is_cute: false,
-    });
+    expect(pokemonCuratorFlagValues(null)).toEqual({ is_cute: false });
+    expect(pokemonCuratorFlagValues({ is_cute: true })).toEqual({ is_cute: true });
+    expect(pokemonCuratorFlagValues({ is_cute: null })).toEqual({ is_cute: false });
   });
 
   it("writes a flag through its RPC and reports the error message, if any", async () => {
@@ -44,21 +40,19 @@ describe("Pokémon curator flags", () => {
     expect(mocks.rpc).toHaveBeenCalledWith("set_pokemon_cute", { p_card_id: 1995087, p_value: true });
 
     mocks.rpc.mockResolvedValueOnce({ error: { message: "permission denied" } });
-    expect(await setPokemonCuratorFlag("is_japan_exclusive", 7, false)).toBe("permission denied");
-    expect(mocks.rpc).toHaveBeenLastCalledWith("set_pokemon_japan_exclusive", { p_card_id: 7, p_value: false });
+    expect(await setPokemonCuratorFlag("is_cute", 7, false)).toBe("permission denied");
+    expect(mocks.rpc).toHaveBeenLastCalledWith("set_pokemon_cute", { p_card_id: 7, p_value: false });
   });
 
-  it("renders no chip for an unflagged card and one labelled chip per set flag", () => {
-    const { container, rerender } = withLanguage(<PokemonCuratorFlagChips card={{ is_japan_exclusive: false, is_cute: null }} />);
+  it("renders no chip when Cute is unset and one labelled chip when set", () => {
+    const { container, rerender } = withLanguage(<PokemonCuratorFlagChips card={{ is_cute: null }} />);
     expect(container.textContent).toBe("");
 
     rerender(
       <LanguageProvider>
-        <PokemonCuratorFlagChips card={{ is_japan_exclusive: true, is_cute: true }} />
+        <PokemonCuratorFlagChips card={{ is_cute: true }} />
       </LanguageProvider>,
     );
-    expect(screen.getByTestId("curator-flag-is_japan_exclusive").textContent).toContain("Legacy JP review");
-    expect(screen.getByTestId("curator-flag-is_japan_exclusive").getAttribute("title")).toBe("Legacy JP-exclusive review");
     expect(screen.getByTestId("curator-flag-is_cute").textContent).toContain("Cute");
   });
 
@@ -68,13 +62,13 @@ describe("Pokémon curator flags", () => {
     withLanguage(
       <PokemonCuratorFlagSwitches
         cardId={1995087}
-        values={{ is_japan_exclusive: false, is_cute: false }}
+        values={{ is_cute: false }}
         onChange={onChange}
       />,
     );
 
     const switches = screen.getAllByRole("switch");
-    expect(switches).toHaveLength(2);
+    expect(switches).toHaveLength(1);
     expect(screen.getByText("🩷 Cute")).toBeTruthy();
 
     fireEvent.click(screen.getByText("🩷 Cute"));
@@ -84,20 +78,20 @@ describe("Pokémon curator flags", () => {
   });
 
   it("keeps the switch where it was and shows the RPC error when the save fails", async () => {
-    mocks.rpc.mockResolvedValueOnce({ error: { message: "permission denied for function set_pokemon_japan_exclusive" } });
+    mocks.rpc.mockResolvedValueOnce({ error: { message: "permission denied for function set_pokemon_cute" } });
     const onChange = vi.fn();
     withLanguage(
       <PokemonCuratorFlagSwitches
         cardId={7}
-        values={{ is_japan_exclusive: true, is_cute: false }}
+        values={{ is_cute: true }}
         onChange={onChange}
       />,
     );
 
-    fireEvent.click(screen.getByText("🇯🇵 Legacy JP-exclusive review"));
+    fireEvent.click(screen.getByText("🩷 Cute"));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("permission denied");
-    expect(mocks.rpc).toHaveBeenCalledWith("set_pokemon_japan_exclusive", { p_card_id: 7, p_value: false });
+    expect(mocks.rpc).toHaveBeenCalledWith("set_pokemon_cute", { p_card_id: 7, p_value: false });
     expect(onChange).not.toHaveBeenCalled();
   });
 });

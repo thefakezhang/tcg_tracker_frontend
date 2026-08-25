@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { JapanExclusiveEvidence } from "@/app/dashboard/JapanExclusiveEvidence";
+import { JapanExclusiveMasterListDownload } from "@/app/dashboard/JapanExclusiveMasterListDownload";
 import { JapanExclusivityCriterionField, type JapanExclusivityCriterionMode } from "@/app/dashboard/JapanExclusivityCriterionField";
 import { JapanExclusivityFilter } from "@/app/dashboard/JapanExclusivityFilter";
 import { matchesJapanExclusivity, type JapanExclusivityMode } from "@/app/dashboard/japan-exclusivity";
@@ -13,7 +14,6 @@ interface FixtureCard {
   id: string;
   name: string;
   number: string;
-  is_japan_exclusive?: boolean;
   japan_exclusive_artwork?: boolean;
   japan_exclusive_artwork_reason?: string;
   japan_exclusive_artwork_evidence_url?: string;
@@ -51,12 +51,6 @@ const CARDS: FixtureCard[] = [
     japan_exclusive_stamps_evidence_url: "https://www.pokumon.com/card/masters-key-068-l-p-japanese-promo/",
   },
   {
-    id: "legacy",
-    name: "Legacy trophy review row",
-    number: "No. 1/OLD-UPC",
-    is_japan_exclusive: true,
-  },
-  {
     id: "neither",
     name: "Pokemon Web reprint",
     number: "001/048",
@@ -89,8 +83,11 @@ export function JapanExclusivityFixture() {
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Controlled browser fixture</p>
         <h1 className="break-words text-2xl font-semibold sm:text-3xl">Japanese-exclusive printing evidence</h1>
         <p className="mt-2 max-w-3xl break-words text-sm text-muted-foreground">
-          Either means verified exclusive artwork or a verified exclusive stamp / marking. Legacy review is separate and excluded from Artwork, Stamp / marking, Either, and Both.
+          Either means verified exclusive artwork or a verified exclusive stamp / marking. Both requires independent evidence for both categories.
         </p>
+        <div className="mt-3">
+          <JapanExclusiveMasterListDownload />
+        </div>
       </header>
 
       <section className="mb-6 rounded-xl border bg-card p-3 sm:p-4" aria-label="Inventory filter fixture">
@@ -124,10 +121,9 @@ export function JapanExclusivityFixture() {
                 <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2">
                   <h2 className="min-w-0 break-words font-medium">{card.name}</h2>
                   <Badge variant="secondary" className="shrink-0">{card.number}</Badge>
-                  {card.is_japan_exclusive && <Badge variant="outline">Legacy JP-exclusive review</Badge>}
                 </div>
                 <JapanExclusiveEvidence card={card} />
-                {!card.japan_exclusive_artwork && !card.japan_exclusive_stamps && !card.is_japan_exclusive && (
+                {!card.japan_exclusive_artwork && !card.japan_exclusive_stamps && (
                   <p className="text-xs text-muted-foreground">Reviewed reprint or unclassified printing.</p>
                 )}
               </article>

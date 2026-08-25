@@ -11,7 +11,6 @@ export const JAPAN_EXCLUSIVITY_LABELS: Record<JapanExclusivityCriterionMode, Tra
   stamps: "customers.japanExclusivity.stamps",
   either: "customers.japanExclusivity.either",
   both: "customers.japanExclusivity.both",
-  legacy: "customers.japanExclusivity.legacy",
 };
 
 export function JapanExclusivityCriterionField({

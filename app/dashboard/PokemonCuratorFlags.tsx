@@ -6,24 +6,15 @@ import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 
-// The two manual curator flags on Pokémon cards: legacy JP-exclusive review
-// (000093) and Cute (000293). The legacy flag is not researched artwork or stamp
-// evidence and never participates in the typed Either filter. Each is one
-// boolean column on pokemon_card_definitions written
-// through its own narrow SECURITY DEFINER RPC, so any authenticated surface that
-// knows a card_id can flip it. Two surfaces do: the Card Detail Modal (reached
+// The manual Cute curator flag on Pokémon cards is independent of the
+// evidence-backed artwork and stamp classification. It is written through a
+// narrow SECURITY DEFINER RPC, so any authenticated surface that knows a
+// card_id can flip it. Two surfaces do: the Card Detail Modal (reached
 // from the Card Browser, which only lists cards that HAVE a price summary) and
 // the Card Index editor (the whole catalog, including the ~quarter of cards with
 // no comp data that the browser can never show). Both render the same switches
 // from this one definition so the flags cannot drift apart between surfaces.
 export const POKEMON_CURATOR_FLAGS = [
-  {
-    key: "is_japan_exclusive",
-    rpc: "set_pokemon_japan_exclusive",
-    emoji: "🇯🇵",
-    labelKey: "modal.jpExclusive",
-    chipKey: "cardIndex.flagJpExclusive",
-  },
   {
     key: "is_cute",
     rpc: "set_pokemon_cute",
@@ -48,7 +39,6 @@ export function pokemonCuratorFlagValues(
   card: Partial<Record<PokemonCuratorFlagKey, boolean | null>> | null | undefined,
 ): PokemonCuratorFlagValues {
   return {
-    is_japan_exclusive: !!card?.is_japan_exclusive,
     is_cute: !!card?.is_cute,
   };
 }
@@ -67,7 +57,7 @@ export async function setPokemonCuratorFlag(
   return error ? error.message : null;
 }
 
-// The two labelled switches. Each saves the moment it is toggled (there is no
+// The labelled switch saves the moment it is toggled (there is no
 // form to submit - the flag IS the whole write), reports success through
 // `onChange` so the caller can keep its own row in sync, and shows the RPC's
 // error inline instead of silently leaving the switch where it was.
@@ -125,8 +115,8 @@ export function PokemonCuratorFlagSwitches({
   );
 }
 
-// Read-only chips for list rows: one compact badge per flag that is set, the
-// full label on the tooltip. Renders nothing when neither flag is set so
+// Read-only chips for list rows: one compact badge per flag that is set, with
+// the full label on the tooltip. Renders nothing when the flag is unset so
 // unflagged rows carry no extra weight.
 export function PokemonCuratorFlagChips({
   card,

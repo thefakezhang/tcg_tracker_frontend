@@ -35,7 +35,7 @@ describe("JapanExclusiveEvidence", () => {
     expect(document.activeElement).toBe(stamps);
   });
 
-  it("renders nothing for a legacy-only or unclassified card", () => {
+  it("renders nothing for an unclassified card", () => {
     const { container } = render(<JapanExclusiveEvidence card={{}} />);
     expect(container.textContent).toBe("");
   });

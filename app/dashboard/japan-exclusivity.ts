@@ -1,15 +1,13 @@
-export type JapanExclusivityMode = "all" | "artwork" | "stamps" | "either" | "both" | "legacy";
+export type JapanExclusivityMode = "all" | "artwork" | "stamps" | "either" | "both";
 
 export interface JapanExclusivityFlags {
   japan_exclusive_artwork?: boolean | null;
   japan_exclusive_stamps?: boolean | null;
-  is_japan_exclusive?: boolean | null;
 }
 
 export type JapanExclusivityColumn =
   | "japan_exclusive_artwork"
-  | "japan_exclusive_stamps"
-  | "is_japan_exclusive";
+  | "japan_exclusive_stamps";
 
 export interface JapanExclusivityQueryFilter {
   equalsTrue: JapanExclusivityColumn[];
@@ -31,7 +29,6 @@ export function japanExclusivityQueryFilter(
       equalsTrue: ["japan_exclusive_artwork", "japan_exclusive_stamps"],
       anyOfTrue: [],
     };
-    case "legacy": return { equalsTrue: ["is_japan_exclusive"], anyOfTrue: [] };
   }
 }
 
@@ -47,6 +44,5 @@ export function matchesJapanExclusivity(
     case "stamps": return stamps;
     case "either": return artwork || stamps;
     case "both": return artwork && stamps;
-    case "legacy": return card.is_japan_exclusive === true;
   }
 }

@@ -86,7 +86,6 @@ interface WishCriteria {
   set_before_code: string | null;
   set_codes: string[] | null;
   languages: string[] | null;
-  is_japan_exclusive: boolean | null;
   japan_exclusivity_mode: JapanExclusivityCriterionMode | null;
   is_promo: boolean | null;
   price_min_usd: number | null;
@@ -906,9 +905,7 @@ function CustomerDetail({
                         c.languages?.length ? c.languages.join("/") : null,
                         c.japan_exclusivity_mode
                           ? t(JAPAN_EXCLUSIVITY_LABELS[c.japan_exclusivity_mode])
-                          : c.is_japan_exclusive
-                            ? t("customers.japanExclusivity.legacy")
-                            : null,
+                          : null,
                         c.is_promo ? "promo" : null,
                         c.price_min_usd != null || c.price_max_usd != null
                           ? `$${c.price_min_usd ?? 0}-${c.price_max_usd ?? "∞"}`
@@ -1068,7 +1065,6 @@ export function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdd
       set_before_code: setBefore.trim() || null,
       languages: game === "pokemon" || game === "pokemon_sealed" ? ["jp"] : null,
       japan_exclusivity_mode: game === "pokemon" && japanExclusivityMode ? japanExclusivityMode : null,
-      is_japan_exclusive: game === "pokemon" && japanExclusivityMode === "legacy" ? true : null,
       is_promo: promoOnly ? true : null,
       price_min_usd: priceMin ? Number(priceMin) : null,
       price_max_usd: priceMax ? Number(priceMax) : null,

@@ -127,9 +127,11 @@ describe("CardBrowser surfaces", () => {
       "cardBrowser.jpExclusiveStamps",
       "cardBrowser.jpExclusiveEither",
       "cardBrowser.jpExclusiveBoth",
-      "cardBrowser.jpExclusiveLegacy",
     ]);
     expect(options.every((option) => option.className.includes("min-h-11"))).toBe(true);
+    const masterDownload = screen.getByTestId("japan-exclusive-master-list-download");
+    expect(masterDownload.getAttribute("href")).toBe("/pokemon-japan-exclusives-master-list.csv");
+    expect(masterDownload.getAttribute("download")).toBe("pokemon-japan-exclusives-master-list.csv");
   });
 
   it("defaults the opportunity display to highest ROI first", () => {

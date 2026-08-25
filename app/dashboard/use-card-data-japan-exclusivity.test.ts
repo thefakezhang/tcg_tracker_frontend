@@ -23,7 +23,6 @@ describe("use-card-data Japanese exclusivity query builder", () => {
       ],
       or: [],
     },
-    { mode: "legacy", eq: [["pokemon_card_definitions.is_japan_exclusive", true]], or: [] },
   ] satisfies { mode: JapanExclusivityMode; eq: unknown[][]; or: unknown[][] }[]) {
     it(`applies ${test.mode} to the real hook builder contract`, () => {
       const builder = {

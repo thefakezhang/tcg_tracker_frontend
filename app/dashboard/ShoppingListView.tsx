@@ -32,7 +32,6 @@ interface ShoppingRow {
   card_number: string | null;
   misc_info: string | null;
   rarity: string | null;
-  is_japan_exclusive: boolean | null;
   japan_exclusive_artwork: boolean | null;
   japan_exclusive_artwork_reason: string | null;
   japan_exclusive_artwork_evidence_url: string | null;
@@ -138,11 +137,6 @@ export default function ShoppingListView() {
                   <td className="px-3 py-1.5">
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                       <span className="min-w-0 truncate">{r.english_name || r.item_name}</span>
-                      {r.is_japan_exclusive && (
-                        <Badge variant="outline" className="shrink-0 text-[10px]">
-                          {t("customers.japanExclusivity.legacy")}
-                        </Badge>
-                      )}
                     </div>
                     {r.english_name && r.item_name !== r.english_name && (
                       <div className="truncate text-xs text-muted-foreground">{r.item_name}</div>

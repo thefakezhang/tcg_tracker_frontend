@@ -17,12 +17,11 @@ function assert(condition, message) {
 }
 
 const modes = [
-  ["JP type: All cards", ["artwork", "both", "legacy", "neither", "stamps"]],
+  ["JP type: All cards", ["artwork", "both", "neither", "stamps"]],
   ["JP type: Artwork", ["artwork", "both"]],
   ["JP type: Stamp / marking", ["both", "stamps"]],
   ["JP type: Either", ["artwork", "both", "stamps"]],
   ["JP type: Both", ["both"]],
-  ["Legacy JP-exclusive review", ["legacy"]],
 ];
 
 async function visibleCardIDs(page) {
@@ -97,7 +96,16 @@ async function runViewport(browser, name, viewport) {
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto(`${appUrl}/e2e/japan-exclusivity`, { waitUntil: "networkidle" });
   assert(await page.getByRole("heading", { name: "Japanese-exclusive printing evidence" }).isVisible(), `${name} fixture heading missing`);
-  assert((await page.getByText(/Legacy review is separate and excluded/).count()) >= 1, `${name} exclusion copy missing`);
+  assert((await page.getByText(/Both requires independent evidence/).count()) >= 1, `${name} typed-category copy missing`);
+  const masterDownload = page.getByTestId("japan-exclusive-master-list-download");
+  assert(await masterDownload.getAttribute("download") === "pokemon-japan-exclusives-master-list.csv", `${name} master list is not a download`);
+  const masterHref = await masterDownload.getAttribute("href");
+  assert(masterHref === "/pokemon-japan-exclusives-master-list.csv", `${name} master list href is ${masterHref}`);
+  const masterResponse = await page.request.get(`${appUrl}${masterHref}`);
+  assert(masterResponse.ok(), `${name} master list request failed: ${masterResponse.status()}`);
+  const masterCSV = await masterResponse.text();
+  assert(masterCSV.startsWith("era,release_date,set_name,set_code,card_number"), `${name} master list header changed`);
+  assert(masterCSV.trimEnd().split("\n").length === 367, `${name} master list does not contain 366 approved rows`);
 
   for (const [label, expected] of modes) {
     await selectMode(page, label, expected);
@@ -109,7 +117,7 @@ async function runViewport(browser, name, viewport) {
   await search.fill("no such printing");
   await page.getByTestId("fixture-empty-state").waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Reset" }).click();
-  assert((await visibleCardIDs(page)).length === 5, `${name} reset did not restore all cards`);
+  assert((await visibleCardIDs(page)).length === 4, `${name} reset did not restore all cards`);
 
   await selectMode(page, "JP type: Both", ["both"]);
   const artworkLink = page.getByTestId("fixture-card-both").getByTestId("japan-exclusive-artwork");
@@ -123,7 +131,7 @@ async function runViewport(browser, name, viewport) {
   await assertEvidencePopup(page, stampsLink, "click", `${name} stamp evidence`);
 
   const criterion = page.getByLabel("Japanese exclusivity");
-  for (const [value, count] of [["artwork", 2], ["stamps", 2], ["either", 3], ["both", 1], ["legacy", 1]]) {
+  for (const [value, count] of [["artwork", 2], ["stamps", 2], ["either", 3], ["both", 1]]) {
     await criterion.selectOption(value);
     const text = await page.getByTestId("fixture-shopping-count").textContent();
     assert(text.startsWith(String(count)), `${name} customer ${value} produced ${text}, want ${count}`);
@@ -133,6 +141,7 @@ async function runViewport(browser, name, viewport) {
     await assertTapTarget(page.getByTestId("japan-exclusivity-filter-trigger"), "phone filter trigger");
     await assertTapTarget(search, "phone search");
     await assertTapTarget(page.getByRole("button", { name: "Reset" }), "phone reset");
+    await assertTapTarget(masterDownload, "phone master list download");
     await assertTapTarget(criterion, "phone customer criterion");
     await assertTapTarget(artworkLink, "phone artwork evidence");
     await assertTapTarget(stampsLink, "phone stamp evidence");
@@ -150,7 +159,7 @@ async function runViewport(browser, name, viewport) {
   const screenshot = `${artifactRoot}/japan-exclusivity-${name}.png`;
   await page.screenshot({ path: screenshot, fullPage: true });
   await context.close();
-  return { name, viewport, screenshot, filters: 6, customerModes: 5, pageErrors };
+  return { name, viewport, screenshot, filters: 5, customerModes: 4, masterRows: 366, pageErrors };
 }
 
 const browser = await chromium.launch();
@@ -162,11 +171,12 @@ try {
     route: "/e2e/japan-exclusivity",
     databaseAccess: false,
     assertions: [
-      "all/artwork/stamps/either/both/legacy exact result sets",
+      "all/artwork/stamps/either/both exact result sets",
       "search empty state and reset",
       "independent keyboard and pointer evidence-link popups without parent navigation",
-      "customer and shopping artwork/stamps/either/both/legacy semantics",
-      "44px phone trigger, options, fields, actions, and evidence links",
+      "customer and shopping artwork/stamps/either/both semantics",
+      "366-row buyer-readable master CSV download",
+      "44px phone trigger, options, fields, actions, download, and evidence links",
       "no page-level horizontal overflow",
     ],
     results,

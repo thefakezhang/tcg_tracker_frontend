@@ -88,10 +88,9 @@ export interface IndexCard {
   language: string;
   misc_info: string;
   image_url: string | null;
-  // Manual curator flags (000093 / 000293). The Card Index is the one surface
+  // The Cute curator flag (000293). The Card Index is the one surface
   // that lists the WHOLE catalog, so a card with no price summary (and hence
   // invisible to the Card Browser) can still be marked here.
-  is_japan_exclusive: boolean | null;
   is_cute: boolean | null;
   japan_exclusive_artwork: boolean;
   japan_exclusive_artwork_reason: string | null;
@@ -111,7 +110,7 @@ export function pokemonEditActionLabel(
 
 export const pokemonEditActionClassName = "size-11 shrink-0 sm:size-7";
 
-const COLS = "card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, image_url, is_japan_exclusive, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url";
+const COLS = "card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, image_url, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url";
 const PLATFORMS = pokemonSinglePlatforms;
 const PLATFORM_SHORT: Record<string, string> = Object.fromEntries(pokemonSinglePlatforms.map((p) => [p, platformShort(p)]));
 const PLATFORM_HINT_KEYS: Record<string, TranslationKey> = {
@@ -387,7 +386,7 @@ function CardsTab() {
                   <td className="block p-0 py-1 sm:table-cell sm:px-3 sm:py-2">
                     {/* Variant badge plus the curator flags that are set on this
                         printing; an unflagged base printing keeps the bare dash. */}
-                    {(c.misc_info && c.misc_info !== "UNKNOWN") || c.is_japan_exclusive || c.is_cute || c.japan_exclusive_artwork || c.japan_exclusive_stamps ? (
+                    {(c.misc_info && c.misc_info !== "UNKNOWN") || c.is_cute || c.japan_exclusive_artwork || c.japan_exclusive_stamps ? (
                       <div className="min-w-0 space-y-1">
                         <div className="flex flex-wrap gap-1">
                           {c.misc_info && c.misc_info !== "UNKNOWN" && <Badge variant="outline">{c.misc_info}</Badge>}

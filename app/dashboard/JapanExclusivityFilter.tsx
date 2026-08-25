@@ -26,7 +26,6 @@ export function JapanExclusivityFilter({
     stamps: t("cardBrowser.jpExclusiveStamps"),
     either: t("cardBrowser.jpExclusiveEither"),
     both: t("cardBrowser.jpExclusiveBoth"),
-    legacy: t("cardBrowser.jpExclusiveLegacy"),
   };
 
   return (
