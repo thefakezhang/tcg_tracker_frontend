@@ -17,11 +17,11 @@ function assert(condition, message) {
 }
 
 const modes = [
-  ["JP type: All cards", ["artwork", "both", "neither", "stamps"]],
-  ["JP type: Artwork", ["artwork", "both"]],
-  ["JP type: Stamp / marking", ["both", "stamps"]],
-  ["JP type: Either", ["artwork", "both", "stamps"]],
-  ["JP type: Both", ["both"]],
+  ["All cards", ["artwork", "both", "neither", "stamps"]],
+  ["Artwork", ["artwork", "both"]],
+  ["Stamp / marking", ["both", "stamps"]],
+  ["Either category", ["artwork", "both", "stamps"]],
+  ["Both categories", ["both"]],
 ];
 
 async function visibleCardIDs(page) {
@@ -91,6 +91,49 @@ async function assertEvidencePopup(page, link, activation, label) {
   await popup.close();
 }
 
+async function evidenceAlignment(link, label) {
+  const measurement = await link.evaluate((row) => {
+    const badge = row.querySelector('[data-slot="badge"]');
+    if (!(badge instanceof HTMLElement)) return null;
+    const rowBox = row.getBoundingClientRect();
+    const badgeBox = badge.getBoundingClientRect();
+    return {
+      rowCenter: rowBox.top + rowBox.height / 2,
+      badgeCenter: badgeBox.top + badgeBox.height / 2,
+    };
+  });
+  assert(measurement, `${label} badge has no measurable bounds`);
+  const offset = Math.abs(measurement.rowCenter - measurement.badgeCenter);
+  assert(offset <= 2, `${label} badge center is ${offset.toFixed(2)}px from its row center`);
+  return { ...measurement, offset };
+}
+
+async function captureCompactMenu(page, name, viewport) {
+  await page.getByTestId("japan-exclusivity-filter-trigger").click();
+  const menu = page.locator('[role="menu"]:visible');
+  await menu.waitFor({ state: "visible" });
+  await waitForSubtreeAnimations(menu);
+  const menuItems = menu.getByRole("menuitemradio");
+  assert(await menuItems.count() === 5, `${name} menu does not expose exactly five modes`);
+  const text = await menu.textContent();
+  assert((text.match(/JP exclusive/g) ?? []).length === 1, `${name} repeats the filter prefix in its options`);
+  const bounds = await menu.boundingBox();
+  assert(bounds, `${name} filter menu has no bounds`);
+  assert(bounds.width <= 256 && bounds.height <= 280, `${name} filter menu is not compact: ${JSON.stringify(bounds)}`);
+  assert(bounds.x >= 0 && bounds.x + bounds.width <= viewport.width, `${name} filter menu escapes horizontally: ${JSON.stringify(bounds)}`);
+  assert(bounds.y >= 0 && bounds.y + bounds.height <= viewport.height, `${name} filter menu escapes vertically: ${JSON.stringify(bounds)}`);
+  if (viewport.width < 640) {
+    for (let index = 0; index < await menuItems.count(); index += 1) {
+      await assertTapTarget(menuItems.nth(index), `phone filter option ${index + 1}`);
+    }
+  }
+  const screenshot = `${artifactRoot}/japan-exclusivity-${name}-menu.png`;
+  await page.screenshot({ path: screenshot, fullPage: true });
+  await page.keyboard.press("Escape");
+  await menu.waitFor({ state: "hidden" });
+  return { bounds, screenshot };
+}
+
 async function runViewport(browser, name, viewport) {
   const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
   let criterionInsertCount = 0;
@@ -121,29 +164,21 @@ async function runViewport(browser, name, viewport) {
   assert(await page.getByRole("heading", { name: "Japanese-exclusive printing evidence" }).isVisible(), `${name} fixture heading missing`);
   assert((await page.getByText(/Both requires independent evidence/).count()) >= 1, `${name} typed-category copy missing`);
   assert((await page.getByText(/Reviewed through Aug 24, 2026/).count()) >= 1, `${name} reviewed corpus scope missing`);
-  const masterDownload = page.getByTestId("japan-exclusive-master-list-download");
-  assert(await masterDownload.getAttribute("download") === "pokemon-japan-exclusives-master-list.csv", `${name} master list is not a download`);
-  const masterHref = await masterDownload.getAttribute("href");
-  assert(masterHref === "/pokemon-japan-exclusives-master-list.csv", `${name} master list href is ${masterHref}`);
-  const masterResponse = await page.request.get(`${appUrl}${masterHref}`);
-  assert(masterResponse.ok(), `${name} master list request failed: ${masterResponse.status()}`);
-  const masterCSV = await masterResponse.text();
-  assert(masterCSV.startsWith("era,release_date,set_name,set_code,card_number"), `${name} master list header changed`);
-  assert(masterCSV.trimEnd().split("\n").length === 964, `${name} master list does not contain 963 approved rows`);
+  assert(await page.getByTestId("japan-exclusive-master-list-download").count() === 0, `${name} still exposes the removed CSV download`);
 
   for (const [label, expected] of modes) {
     await selectMode(page, label, expected);
     await assertNoOverflow(page, `${name} ${label}`);
   }
 
-  await selectMode(page, "JP type: Either", ["artwork", "both", "stamps"]);
+  await selectMode(page, "Either category", ["artwork", "both", "stamps"]);
   const search = page.getByLabel("Search fixture cards");
   await search.fill("no such printing");
   await page.getByTestId("fixture-empty-state").waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Reset" }).click();
   assert((await visibleCardIDs(page)).length === 4, `${name} reset did not restore all cards`);
 
-  await selectMode(page, "JP type: Both", ["both"]);
+  await selectMode(page, "Both categories", ["both"]);
   const artworkLink = page.getByTestId("fixture-card-both").getByTestId("japan-exclusive-artwork");
   const stampsLink = page.getByTestId("fixture-card-both").getByTestId("japan-exclusive-stamps");
   assert(await artworkLink.getAttribute("href") !== await stampsLink.getAttribute("href"), `${name} evidence links are not independent`);
@@ -153,6 +188,10 @@ async function runViewport(browser, name, viewport) {
   assert(await stampsLink.evaluate((node) => document.activeElement === node), `${name} stamp evidence is not keyboard focusable`);
   await assertEvidencePopup(page, artworkLink, "keyboard", `${name} artwork evidence`);
   await assertEvidencePopup(page, stampsLink, "click", `${name} stamp evidence`);
+  const evidenceAlignmentResult = {
+    artwork: await evidenceAlignment(artworkLink, `${name} artwork evidence`),
+    stamps: await evidenceAlignment(stampsLink, `${name} stamp evidence`),
+  };
 
   const criterion = page.getByLabel("Japanese exclusivity");
   for (const [value, count] of [["artwork", 2], ["stamps", 2], ["either", 3], ["both", 1]]) {
@@ -199,19 +238,12 @@ async function runViewport(browser, name, viewport) {
     await assertTapTarget(page.getByTestId("japan-exclusivity-filter-trigger"), "phone filter trigger");
     await assertTapTarget(search, "phone search");
     await assertTapTarget(page.getByRole("button", { name: "Reset" }), "phone reset");
-    await assertTapTarget(masterDownload, "phone master list download");
     await assertTapTarget(criterion, "phone customer criterion");
     await assertTapTarget(artworkLink, "phone artwork evidence");
     await assertTapTarget(stampsLink, "phone stamp evidence");
-    await page.getByTestId("japan-exclusivity-filter-trigger").click();
-    await page.waitForTimeout(300);
-    const menuItems = page.locator('[role="menuitemradio"]:visible');
-    for (let index = 0; index < await menuItems.count(); index += 1) {
-      await assertTapTarget(menuItems.nth(index), `phone filter option ${index + 1}`);
-    }
-    await page.keyboard.press("Escape");
-    await menuItems.first().waitFor({ state: "hidden" });
   }
+
+  const compactMenu = await captureCompactMenu(page, name, viewport);
 
   await assertNoOverflow(page, `${name} final`);
   assert(pageErrors.length === 0, `${name} page errors: ${pageErrors.join(" | ")}`);
@@ -233,7 +265,8 @@ async function runViewport(browser, name, viewport) {
     customerModes: 4,
     criterionActions: 2,
     criterionDialog: { dialogBounds, cancelBounds, saveBounds },
-    masterRows: 963,
+    compactMenu,
+    evidenceAlignment: evidenceAlignmentResult,
     pageErrors,
   };
 }
@@ -252,8 +285,10 @@ try {
       "independent keyboard and pointer evidence-link popups without parent navigation",
       "customer and shopping artwork/stamps/either/both semantics",
       "real Add criterion dialog Save and Cancel remain reachable inside 390x844",
-      "963-row buyer-readable master CSV download",
-      "44px phone trigger, options, fields, actions, download, and evidence links",
+      "CSV download is absent",
+      "compact five-option menu with one shared filter label",
+      "artwork and stamp badges are vertically centered in their evidence rows",
+      "44px phone trigger, options, fields, actions, and evidence links",
       "no page-level horizontal overflow",
     ],
     results,

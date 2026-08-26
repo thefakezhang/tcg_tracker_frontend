@@ -29,6 +29,8 @@ describe("JapanExclusiveEvidence", () => {
     expect(stamps.textContent).toContain("Campaign logo appears only on the Japanese printing.");
     expect(artwork.className).toContain("min-h-11");
     expect(stamps.className).toContain("min-h-11");
+    expect(artwork.className).toContain("items-center");
+    expect(stamps.className).toContain("items-center");
     artwork.focus();
     expect(document.activeElement).toBe(artwork);
     stamps.focus();

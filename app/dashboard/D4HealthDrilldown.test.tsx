@@ -40,10 +40,10 @@ vi.mock("@/lib/supabase/client", () => ({
       select: () => query,
       order: () => query,
       limit: async () => ({
-        data: [{
+        data: ["big_tcg", "identity", "aop"].map((source) => ({
           run_date: "2026-07-20",
           computed_at: "2026-07-20T04:36:57Z",
-          source: "big_tcg",
+          source,
           rows_written: 100,
           match_rate: 0.95,
           unmatched_queue_depth: 7,
@@ -53,7 +53,7 @@ vi.mock("@/lib/supabase/client", () => ({
           freshness_p50_hours: 2,
           table_bytes: 1000,
           notes: {},
-        }],
+        })),
         error: null,
       }),
     };
@@ -109,6 +109,18 @@ afterEach(() => {
 });
 
 describe("D4 source-health drill-down", () => {
+  it("omits internal identity and aop bookkeeping rows from source health", async () => {
+    render(
+      <ReviewQueueNavigationProvider>
+        <Harness />
+      </ReviewQueueNavigationProvider>,
+    );
+
+    expect(await screen.findByRole("cell", { name: "big_tcg" })).toBeTruthy();
+    expect(screen.queryByRole("cell", { name: "identity" })).toBeNull();
+    expect(screen.queryByRole("cell", { name: "aop" })).toBeNull();
+  });
+
   it("shows when the materialized snapshot was actually computed", async () => {
     render(
       <ReviewQueueNavigationProvider>

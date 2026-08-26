@@ -59,7 +59,7 @@ export function JapanExclusiveEvidence({
             href={dimension.url}
             target="_blank"
             rel="noreferrer"
-            className="flex min-h-11 min-w-0 max-w-full items-start gap-1.5 overflow-hidden rounded-md border bg-muted/20 px-2 py-1 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0"
+            className="flex min-h-11 min-w-0 max-w-full items-center gap-1.5 overflow-hidden rounded-md border bg-muted/20 px-2 py-1 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0"
             aria-label={`${dimension.label}: ${dimension.reason || t("japanExclusive.evidenceUnavailable")}`}
             data-testid={`japan-exclusive-${dimension.key}`}
             onClick={(event) => event.stopPropagation()}
@@ -68,7 +68,7 @@ export function JapanExclusiveEvidence({
             {content}
           </a>
         ) : (
-          <div key={dimension.key} className="flex min-w-0 items-start gap-1.5" data-testid={`japan-exclusive-${dimension.key}`}>
+          <div key={dimension.key} className="flex min-w-0 items-center gap-1.5" data-testid={`japan-exclusive-${dimension.key}`}>
             {content}
           </div>
         );

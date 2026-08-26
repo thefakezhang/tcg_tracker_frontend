@@ -56,7 +56,6 @@ import type { SourceSide } from "./source-availability";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
 import type { JapanExclusivityMode } from "./japan-exclusivity";
 import { JapanExclusivityFilter } from "./JapanExclusivityFilter";
-import { JapanExclusiveMasterListDownload } from "./JapanExclusiveMasterListDownload";
 import {
   ownedInventoryKey,
   useOwnedInventoryCounts,
@@ -537,9 +536,6 @@ export default function CardBrowser() {
         )}
         {activeGame === "pokemon" && (
           <JapanExclusivityFilter value={japanExclusivity} onValueChange={setJapanExclusivity} />
-        )}
-        {activeGame === "pokemon" && (
-          <JapanExclusiveMasterListDownload />
         )}
         {activeGame === "pokemon" && (
           <Button

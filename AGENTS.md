@@ -423,7 +423,9 @@ Never render a lease token, raw log, credential, arbitrary heartbeat failure sum
 - The manual **Cute** curator flag remains editable as a `Switch` control (`is_cute`, RPC `set_pokemon_cute`, 000293 - the "cute" market segment the operator buys and sells by).
 `use-card-data.ts` selects the evidence-backed `artwork` and `stamps` dimensions with their short reason and primary evidence URL, applies the `all`, `artwork`, `stamps`, `either`, or `both` query mode server-side, and filters Cute independently.
 Typed evidence is read-only in the browser and card index because it is projected from the versioned backend manifest, while the Cute curator write updates the row immediately without a refetch.
-The browser also exposes the generated 922-row buyer-readable master CSV through `JapanExclusiveMasterListDownload.tsx`.
+The Japanese-exclusivity filter uses one compact shared label with five short mode choices, and the browser does not publish a separate master CSV that could drift from the database.
+Artwork and stamp or marking evidence rows vertically center their badges while retaining independent reasons and links.
+See `docs/japanese_exclusivity.md` for the UI contract and browser acceptance evidence.
 - The switch, the read-only row chip, and the RPC writer live in `PokemonCuratorFlags.tsx` and are shared with the Card Index editor.
 The Card Browser only lists cards that have a `pokemon_price_summaries` row (its query is an `!inner` join from the summary table), so roughly a quarter of the catalog can never open this modal; those cards are flagged from the Card Index instead (see Card Index curator flags below).
 A failed flag write now shows the RPC error inline next to the switches instead of silently leaving the switch unmoved.
@@ -555,6 +557,7 @@ Batch-accept controls are suppressed there (the batch RPC only accepts pending/n
 It reads the same `source_health` snapshot as the board, renders nothing on a fetch failure, and is absent (never disabled) when everything is fresh.
 
 - Every red metric in `SourceHealthView` is a button that opens the Pokémon Match Review queue with that health row's exact source filter.
+- `identity` and `aop` remain database health snapshots but are omitted from the operator-facing source comparison because they are internal bookkeeping labels rather than actionable market sources.
 - Freshness has a headline and a secondary signal.
 `freshness_p50_hours` (median listing age) is the honest "how stale is what you see"; `notes.last_run_hours` (newest successful `source_run_requests` completion) and `notes.last_write_hours` (newest listing write) tell "dead" from "alive but incremental" - a source that only re-stamps changed rows (tcgplayer) shows a p50 of weeks while it ran days ago.
 The board renders the secondary line under the p50 and downgrades a bad p50 to warn when the source ran inside the window; `SourceStalenessBadge` (`isStaleSource`) fires only when BOTH the p50 and the last run are past the threshold.
