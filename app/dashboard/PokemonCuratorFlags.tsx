@@ -6,8 +6,8 @@ import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 
-// The manual Cute curator flag on Pokémon cards is independent of the
-// evidence-backed artwork and stamp classification. It is written through a
+// The manual Cute curator flag on Pokémon cards is independent of the typed
+// Artwork and Stamp / marking editor. It is written through a
 // narrow SECURITY DEFINER RPC, so any authenticated surface that knows a
 // card_id can flip it. Two surfaces do: the Card Detail Modal (reached
 // from the Card Browser, which only lists cards that HAVE a price summary) and

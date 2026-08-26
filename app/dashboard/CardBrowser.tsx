@@ -54,7 +54,7 @@ import { browserOpportunityPayloads, recordOpportunityExposures } from "./opport
 import { sourceLabel } from "@/lib/source-labels";
 import type { SourceSide } from "./source-availability";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
-import type { JapanExclusivityMode } from "./japan-exclusivity";
+import type { JapanExclusivityDimension } from "./japan-exclusivity";
 import { JapanExclusivityFilter } from "./JapanExclusivityFilter";
 import {
   ownedInventoryKey,
@@ -128,7 +128,7 @@ export default function CardBrowser() {
   const [sourceSide, setSourceSide] = useState<SourceSide>("buy");
   const [rarity, setRarity] = useState<string>("");          // "" = all (Pokémon only)
   const [promosOnly, setPromosOnly] = useState(false);       // Pokémon promotional cards
-  const [japanExclusivity, setJapanExclusivity] = useState<JapanExclusivityMode>("all");
+  const [japanExclusivity, setJapanExclusivity] = useState<Set<JapanExclusivityDimension>>(() => new Set());
   const [cuteOnly, setCuteOnly] = useState(false); // manual "cute" flag (293)
   const [minBuyPrice, setMinBuyPrice] = useState<string>("");
   const [minSellPrice, setMinSellPrice] = useState<string>("");
@@ -305,7 +305,7 @@ export default function CardBrowser() {
     setSourceSide("buy");
     setRarity("");
     setPromosOnly(false);
-    setJapanExclusivity("all");
+    setJapanExclusivity((current) => current.size === 0 ? current : new Set());
     setWeakEvidenceOnly(false);
     setMinBuyPrice("");
     setMinSellPrice("");
@@ -535,7 +535,15 @@ export default function CardBrowser() {
           </DropdownMenu>
         )}
         {activeGame === "pokemon" && (
-          <JapanExclusivityFilter value={japanExclusivity} onValueChange={setJapanExclusivity} />
+          <JapanExclusivityFilter
+            selected={japanExclusivity}
+            onToggle={(dimension) => setJapanExclusivity((current) => {
+              const next = new Set(current);
+              if (next.has(dimension)) next.delete(dimension);
+              else next.add(dimension);
+              return next;
+            })}
+          />
         )}
         {activeGame === "pokemon" && (
           <Button

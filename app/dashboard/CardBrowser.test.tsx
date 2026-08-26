@@ -112,23 +112,25 @@ beforeEach(() => {
 });
 
 describe("CardBrowser surfaces", () => {
-  it("exposes every Japanese-exclusivity mode and defaults the data query to all cards", async () => {
+  it("exposes independent inclusive Japanese-exclusivity toggles and defaults to all cards", () => {
     render(<CardBrowser />);
 
     expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
-      japanExclusivity: "all",
+      japanExclusivity: new Set(),
     }));
-    fireEvent.click(screen.getByRole("button", { name: /cardBrowser\.jpExclusiveAll/ }));
-    expect(await screen.findByText("cardBrowser.jpExclusiveHint")).toBeTruthy();
-    const options = await screen.findAllByRole("menuitemradio");
-    expect(options.map((option) => option.textContent)).toEqual([
-      "cardBrowser.jpExclusiveAll",
-      "cardBrowser.jpExclusiveArtwork",
-      "cardBrowser.jpExclusiveStamps",
-      "cardBrowser.jpExclusiveEither",
-      "cardBrowser.jpExclusiveBoth",
-    ]);
-    expect(options.every((option) => option.className.includes("min-h-11"))).toBe(true);
+    const artwork = screen.getByRole("button", { name: "cardBrowser.jpExclusiveArtwork" });
+    const stamps = screen.getByRole("button", { name: "cardBrowser.jpExclusiveStamps" });
+    expect(artwork.getAttribute("aria-pressed")).toBe("false");
+    expect(stamps.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(artwork);
+    expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      japanExclusivity: new Set(["artwork"]),
+    }));
+    fireEvent.click(stamps);
+    expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      japanExclusivity: new Set(["artwork", "stamps"]),
+    }));
     expect(screen.queryByTestId("japan-exclusive-master-list-download")).toBeNull();
   });
 

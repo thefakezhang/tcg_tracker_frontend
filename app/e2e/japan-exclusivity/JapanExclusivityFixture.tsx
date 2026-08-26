@@ -8,7 +8,11 @@ import { CriteriaAdd } from "@/app/dashboard/CustomersView";
 import { JapanExclusiveEvidence } from "@/app/dashboard/JapanExclusiveEvidence";
 import { JapanExclusivityCriterionField, type JapanExclusivityCriterionMode } from "@/app/dashboard/JapanExclusivityCriterionField";
 import { JapanExclusivityFilter } from "@/app/dashboard/JapanExclusivityFilter";
-import { matchesJapanExclusivity, type JapanExclusivityMode } from "@/app/dashboard/japan-exclusivity";
+import {
+  matchesJapanExclusivity,
+  matchesJapanExclusivitySelection,
+  type JapanExclusivityDimension,
+} from "@/app/dashboard/japan-exclusivity";
 
 interface FixtureCard {
   id: string;
@@ -58,23 +62,32 @@ const CARDS: FixtureCard[] = [
 ];
 
 export function JapanExclusivityFixture() {
-  const [mode, setMode] = useState<JapanExclusivityMode>("all");
+  const [selected, setSelected] = useState<Set<JapanExclusivityDimension>>(() => new Set());
   const [search, setSearch] = useState("");
   const [criterion, setCriterion] = useState<"" | JapanExclusivityCriterionMode>("");
   const filtered = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
     return CARDS.filter((card) =>
-      matchesJapanExclusivity(card, mode) &&
+      matchesJapanExclusivitySelection(card, selected) &&
       (!needle || `${card.name} ${card.number}`.toLocaleLowerCase().includes(needle)),
     );
-  }, [mode, search]);
+  }, [selected, search]);
   const shoppingCandidates = criterion
     ? CARDS.filter((card) => matchesJapanExclusivity(card, criterion))
     : CARDS;
 
   const reset = () => {
-    setMode("all");
+    setSelected(new Set());
     setSearch("");
+  };
+
+  const toggle = (dimension: JapanExclusivityDimension) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(dimension)) next.delete(dimension);
+      else next.add(dimension);
+      return next;
+    });
   };
 
   return (
@@ -83,13 +96,13 @@ export function JapanExclusivityFixture() {
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Controlled browser fixture</p>
         <h1 className="break-words text-2xl font-semibold sm:text-3xl">Japanese-exclusive printing evidence</h1>
         <p className="mt-2 max-w-3xl break-words text-sm text-muted-foreground">
-          Either means verified exclusive artwork or a verified exclusive stamp / marking. Both requires independent evidence for both categories.
+          Artwork and Stamp / marking are independent inclusive toggles. Select either one or combine both categories.
         </p>
       </header>
 
       <section className="mb-6 rounded-xl border bg-card p-3 sm:p-4" aria-label="Inventory filter fixture">
         <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
-          <JapanExclusivityFilter value={mode} onValueChange={setMode} />
+          <JapanExclusivityFilter selected={selected} onToggle={toggle} />
           <Input
             aria-label="Search fixture cards"
             className="h-11 min-h-[44px] min-w-0 flex-1 sm:h-9 sm:min-h-0"
