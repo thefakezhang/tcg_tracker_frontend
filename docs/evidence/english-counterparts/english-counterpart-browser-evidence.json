@@ -1,0 +1,91 @@
+{
+  "generatedAt": "2026-08-26T20:21:15.926Z",
+  "fixtureOnly": true,
+  "externalRequests": 0,
+  "databaseRequests": 0,
+  "states": [
+    "mapped",
+    "unknown",
+    "review"
+  ],
+  "results": [
+    {
+      "viewportName": "desktop-1440x900",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "mapped": {
+        "overflow": {
+          "viewport": 1440,
+          "document": 1440,
+          "body": 1440
+        },
+        "screenshot": "english-counterpart-desktop-1440x900-mapped.png"
+      },
+      "unknown": {
+        "overflow": {
+          "viewport": 1440,
+          "document": 1440,
+          "body": 1440
+        },
+        "screenshot": "english-counterpart-desktop-1440x900-unknown.png"
+      },
+      "review": {
+        "topOverflow": {
+          "viewport": 1440,
+          "document": 1440,
+          "body": 1440
+        },
+        "actionOverflow": {
+          "viewport": 1440,
+          "document": 1440,
+          "body": 1440
+        },
+        "topScreenshot": "english-counterpart-desktop-1440x900-review-top.png",
+        "actionScreenshot": "english-counterpart-desktop-1440x900-review-actions.png"
+      },
+      "unexpectedDatabaseRequests": 0,
+      "pageErrors": []
+    },
+    {
+      "viewportName": "phone-390x844",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "mapped": {
+        "overflow": {
+          "viewport": 390,
+          "document": 390,
+          "body": 390
+        },
+        "screenshot": "english-counterpart-phone-390x844-mapped.png"
+      },
+      "unknown": {
+        "overflow": {
+          "viewport": 390,
+          "document": 390,
+          "body": 390
+        },
+        "screenshot": "english-counterpart-phone-390x844-unknown.png"
+      },
+      "review": {
+        "topOverflow": {
+          "viewport": 390,
+          "document": 390,
+          "body": 390
+        },
+        "actionOverflow": {
+          "viewport": 390,
+          "document": 390,
+          "body": 390
+        },
+        "topScreenshot": "english-counterpart-phone-390x844-review-top.png",
+        "actionScreenshot": "english-counterpart-phone-390x844-review-actions.png"
+      },
+      "unexpectedDatabaseRequests": 0,
+      "pageErrors": []
+    }
+  ]
+}

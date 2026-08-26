@@ -45,3 +45,14 @@ The modal also associates a completed comparison with the exact opened card so a
 - This feature does not claim that either source is correct when they disagree.
 - This feature does not compare graded Collectr values with raw TCGPlayer values.
 - This feature does not make Collectr target-refreshable because its input still comes from an exported portfolio file.
+
+## English counterpart evidence
+
+The Pokemon browser and detail modal add an exact-printing counterpart panel beside the existing raw market-source evidence.
+It shows retained mapping evidence separately from price-source evidence, then compares only equal raw tiers or equal PSA grades.
+Within each axis, normalized current-market asks and realized individual sold comps are different labeled signal classes and are never averaged or presented as one generic US price.
+The current class exposes the selected ask source, same-row observation time, and eligible listing count.
+The realized class exposes 130point or Card Ladder provenance, a 90-day window, latest-sale time, sample count, and explicit missing, insufficient, stale, or complete posture.
+The panel also exposes the conservative decision basis, liquidity penalty, acquisition denominator, and profitability completeness so an operator can distinguish weak liquidity from missing data.
+The dedicated Counterparts review queue shows name-only proposals as unresolved and requires printing-level evidence before an exact decision.
+See [Pokemon English counterpart review](english_counterparts.md) for the complete operator contract.
