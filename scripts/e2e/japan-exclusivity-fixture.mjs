@@ -16,36 +16,24 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-const modes = [
-  ["All cards", ["artwork", "both", "neither", "stamps"]],
-  ["Artwork", ["artwork", "both"]],
-  ["Stamp / marking", ["both", "stamps"]],
-  ["Either category", ["artwork", "both", "stamps"]],
-  ["Both categories", ["both"]],
-];
-
 async function visibleCardIDs(page) {
   return page.locator('[data-testid^="fixture-card-"]').evaluateAll((nodes) =>
     nodes.map((node) => node.getAttribute("data-testid").replace("fixture-card-", "")).sort(),
   );
 }
 
-async function selectMode(page, label, expectedIDs) {
-  const trigger = page.getByTestId("japan-exclusivity-filter-trigger");
-  await trigger.click();
-  const option = page.locator('[role="menuitemradio"]:visible').filter({ hasText: label }).first();
-  await option.waitFor({ state: "visible" });
-  await page.waitForTimeout(300);
-  await option.click();
-  await page.keyboard.press("Escape");
-  await page.waitForFunction(() =>
-    document.querySelector('[data-testid="japan-exclusivity-filter-trigger"]')?.getAttribute("aria-expanded") !== "true",
-  );
+async function selectDimensions(page, dimensions, expectedIDs) {
+  for (const dimension of ["artwork", "stamps"]) {
+    const button = page.getByTestId(`japan-exclusivity-${dimension}`);
+    const active = (await button.getAttribute("aria-pressed")) === "true";
+    if (active !== dimensions.includes(dimension)) await button.click();
+  }
   await page.waitForFunction(
     ({ count }) => document.querySelectorAll('[data-testid^="fixture-card-"]').length === count,
     { count: expectedIDs.length },
   );
   const actual = await visibleCardIDs(page);
+  const label = dimensions.length ? dimensions.join("+") : "all";
   assert(JSON.stringify(actual) === JSON.stringify([...expectedIDs].sort()), `${label} returned ${actual}, want ${expectedIDs}`);
 }
 
@@ -108,29 +96,24 @@ async function evidenceAlignment(link, label) {
   return { ...measurement, offset };
 }
 
-async function captureCompactMenu(page, name, viewport) {
-  await page.getByTestId("japan-exclusivity-filter-trigger").click();
-  const menu = page.locator('[role="menu"]:visible');
-  await menu.waitFor({ state: "visible" });
-  await waitForSubtreeAnimations(menu);
-  const menuItems = menu.getByRole("menuitemradio");
-  assert(await menuItems.count() === 5, `${name} menu does not expose exactly five modes`);
-  const text = await menu.textContent();
-  assert((text.match(/JP exclusive/g) ?? []).length === 1, `${name} repeats the filter prefix in its options`);
-  const bounds = await menu.boundingBox();
-  assert(bounds, `${name} filter menu has no bounds`);
-  assert(bounds.width <= 256 && bounds.height <= 280, `${name} filter menu is not compact: ${JSON.stringify(bounds)}`);
-  assert(bounds.x >= 0 && bounds.x + bounds.width <= viewport.width, `${name} filter menu escapes horizontally: ${JSON.stringify(bounds)}`);
-  assert(bounds.y >= 0 && bounds.y + bounds.height <= viewport.height, `${name} filter menu escapes vertically: ${JSON.stringify(bounds)}`);
+async function captureCompactToggles(page, name, viewport) {
+  const group = page.getByTestId("japan-exclusivity-filter");
+  await group.scrollIntoViewIfNeeded();
+  await waitForSubtreeAnimations(group);
+  const buttons = group.getByRole("button");
+  assert(await buttons.count() === 2, `${name} filter does not expose exactly two dimension toggles`);
+  const bounds = await group.boundingBox();
+  assert(bounds, `${name} filter toggles have no bounds`);
+  assert(bounds.width <= 300 && bounds.height <= 56, `${name} filter toggles are not compact: ${JSON.stringify(bounds)}`);
+  assert(bounds.x >= 0 && bounds.x + bounds.width <= viewport.width, `${name} filter toggles escape horizontally: ${JSON.stringify(bounds)}`);
+  assert(bounds.y >= 0 && bounds.y + bounds.height <= viewport.height, `${name} filter toggles escape vertically: ${JSON.stringify(bounds)}`);
   if (viewport.width < 640) {
-    for (let index = 0; index < await menuItems.count(); index += 1) {
-      await assertTapTarget(menuItems.nth(index), `phone filter option ${index + 1}`);
+    for (let index = 0; index < await buttons.count(); index += 1) {
+      await assertTapTarget(buttons.nth(index), `phone filter toggle ${index + 1}`);
     }
   }
-  const screenshot = `${artifactRoot}/japan-exclusivity-${name}-menu.png`;
+  const screenshot = `${artifactRoot}/japan-exclusivity-${name}-toggles.png`;
   await page.screenshot({ path: screenshot, fullPage: true });
-  await page.keyboard.press("Escape");
-  await menu.waitFor({ state: "hidden" });
   return { bounds, screenshot };
 }
 
@@ -163,22 +146,28 @@ async function runViewport(browser, name, viewport) {
   await page.goto(`${appUrl}/e2e/japan-exclusivity`, { waitUntil: "networkidle" });
   assert(await page.getByRole("heading", { name: "Japanese-exclusive printing evidence" }).isVisible(), `${name} fixture heading missing`);
   assert((await page.getByText(/Both requires independent evidence/).count()) >= 1, `${name} typed-category copy missing`);
-  assert((await page.getByText(/Reviewed through Aug 24, 2026/).count()) >= 1, `${name} reviewed corpus scope missing`);
+  assert((await page.getByText(/Reviewed through Aug 26, 2026/).count()) >= 1, `${name} reviewed corpus scope missing`);
   assert(await page.getByTestId("japan-exclusive-master-list-download").count() === 0, `${name} still exposes the removed CSV download`);
 
-  for (const [label, expected] of modes) {
-    await selectMode(page, label, expected);
-    await assertNoOverflow(page, `${name} ${label}`);
+  const selections = [
+    [[], ["artwork", "both", "neither", "stamps"]],
+    [["artwork"], ["artwork", "both"]],
+    [["artwork", "stamps"], ["artwork", "both", "stamps"]],
+    [["stamps"], ["both", "stamps"]],
+  ];
+  for (const [dimensions, expected] of selections) {
+    await selectDimensions(page, dimensions, expected);
+    await assertNoOverflow(page, `${name} ${dimensions.join("+") || "all"}`);
   }
 
-  await selectMode(page, "Either category", ["artwork", "both", "stamps"]);
+  await selectDimensions(page, ["artwork", "stamps"], ["artwork", "both", "stamps"]);
   const search = page.getByLabel("Search fixture cards");
   await search.fill("no such printing");
   await page.getByTestId("fixture-empty-state").waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Reset" }).click();
   assert((await visibleCardIDs(page)).length === 4, `${name} reset did not restore all cards`);
 
-  await selectMode(page, "Both categories", ["both"]);
+  await selectDimensions(page, ["artwork", "stamps"], ["artwork", "both", "stamps"]);
   const artworkLink = page.getByTestId("fixture-card-both").getByTestId("japan-exclusive-artwork");
   const stampsLink = page.getByTestId("fixture-card-both").getByTestId("japan-exclusive-stamps");
   assert(await artworkLink.getAttribute("href") !== await stampsLink.getAttribute("href"), `${name} evidence links are not independent`);
@@ -235,7 +224,8 @@ async function runViewport(browser, name, viewport) {
   await criterionDialog.waitFor({ state: "hidden" });
 
   if (viewport.width < 640) {
-    await assertTapTarget(page.getByTestId("japan-exclusivity-filter-trigger"), "phone filter trigger");
+    await assertTapTarget(page.getByTestId("japan-exclusivity-artwork"), "phone artwork filter toggle");
+    await assertTapTarget(page.getByTestId("japan-exclusivity-stamps"), "phone stamp filter toggle");
     await assertTapTarget(search, "phone search");
     await assertTapTarget(page.getByRole("button", { name: "Reset" }), "phone reset");
     await assertTapTarget(criterion, "phone customer criterion");
@@ -243,13 +233,12 @@ async function runViewport(browser, name, viewport) {
     await assertTapTarget(stampsLink, "phone stamp evidence");
   }
 
-  const compactMenu = await captureCompactMenu(page, name, viewport);
+  const compactToggles = await captureCompactToggles(page, name, viewport);
 
   await assertNoOverflow(page, `${name} final`);
   assert(pageErrors.length === 0, `${name} page errors: ${pageErrors.join(" | ")}`);
   await page.waitForFunction(() =>
-    !document.querySelector('[role="dialog"]') &&
-    !document.querySelector('[role="menuitemradio"]'),
+    !document.querySelector('[role="dialog"]'),
   );
   await page.evaluate(() => new Promise((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(resolve)),
@@ -261,11 +250,11 @@ async function runViewport(browser, name, viewport) {
     name,
     viewport,
     screenshot,
-    filters: 5,
+    filters: 2,
     customerModes: 4,
     criterionActions: 2,
     criterionDialog: { dialogBounds, cancelBounds, saveBounds },
-    compactMenu,
+    compactToggles,
     evidenceAlignment: evidenceAlignmentResult,
     pageErrors,
   };
@@ -280,15 +269,15 @@ try {
     route: "/e2e/japan-exclusivity",
     databaseAccess: false,
     assertions: [
-      "all/artwork/stamps/either/both exact result sets",
+      "all/artwork/stamps/inclusive-union exact result sets",
       "search empty state and reset",
       "independent keyboard and pointer evidence-link popups without parent navigation",
       "customer and shopping artwork/stamps/either/both semantics",
       "real Add criterion dialog Save and Cancel remain reachable inside 390x844",
       "CSV download is absent",
-      "compact five-option menu with one shared filter label",
+      "compact two-button Artwork and Stamp / marking filter",
       "artwork and stamp badges are vertically centered in their evidence rows",
-      "44px phone trigger, options, fields, actions, and evidence links",
+      "44px phone toggles, fields, actions, and evidence links",
       "no page-level horizontal overflow",
     ],
     results,

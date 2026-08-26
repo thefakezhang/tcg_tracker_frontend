@@ -107,6 +107,35 @@ describe("Pokemon Card Index query boundary", () => {
     ]);
   });
 
+  it("applies Cute and both inclusive exclusivity toggles to count and result queries", async () => {
+    const lookup = queryBuilder({ data: [], error: null });
+    const count = queryBuilder({ count: 0, error: null });
+    const definitions = queryBuilder({ data: [], error: null });
+    let definitionQueries = 0;
+    mocks.createClient.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === "pokemon_external_identifiers") return lookup;
+        if (table === "pokemon_card_definitions") {
+          definitionQueries += 1;
+          return definitionQueries === 1 ? count : definitions;
+        }
+        throw new Error(`unexpected table ${table}`);
+      }),
+    });
+
+    await fetchIndex("", 500, [], {
+      cuteOnly: true,
+      japanExclusivity: new Set(["artwork", "stamps"]),
+    });
+
+    for (const query of [count, definitions]) {
+      expect(query.eq).toHaveBeenCalledWith("is_cute", true);
+      expect(query.or).toHaveBeenCalledWith(
+        "japan_exclusive_artwork.eq.true,japan_exclusive_stamps.eq.true",
+      );
+    }
+  });
+
   it("sends the current English-name version on every edit RPC payload", () => {
     const form = {
       regional_name: "ナンジャモ",

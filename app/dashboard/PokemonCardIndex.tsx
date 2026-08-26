@@ -33,6 +33,16 @@ import {
 import PokemonMatchesTab from "./PokemonMatchesTab";
 import CardLinksTab from "./CardLinksTab";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
+import {
+  PokemonJapanExclusivityEditor,
+  pokemonJapanExclusivityValues,
+  type PokemonJapanExclusivityValues,
+} from "./PokemonJapanExclusivityEditor";
+import { JapanExclusivityFilter } from "./JapanExclusivityFilter";
+import {
+  japanExclusivitySelectionQueryFilter,
+  type JapanExclusivityDimension,
+} from "./japan-exclusivity";
 
 // Card Index editor for pokemon SINGLES (Stage 2-A). Mirrors the sealed catalog
 // surface over the card_index_*_pokemon_* RPCs so variant adds + TCGID links go
@@ -135,6 +145,10 @@ export async function fetchIndex(
   search: string,
   limit: number,
   platforms: string[],
+  filters: {
+    cuteOnly: boolean;
+    japanExclusivity: ReadonlySet<JapanExclusivityDimension>;
+  } = { cuteOnly: false, japanExclusivity: new Set() },
 ): Promise<{ cards: IndexCard[]; total: number }> {
   const supabase = createClient();
   const s = search.trim();
@@ -167,15 +181,31 @@ export async function fetchIndex(
   const gateSelect = gated ? ", pokemon_external_identifiers!inner(platform_name)" : "";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const applyGate = (q: any) => (gated ? q.in("pokemon_external_identifiers.platform_name", platforms) : q);
+  // Cuteness and Japanese exclusivity are card-definition fields, so both the
+  // count and result queries must receive the same predicates. Two selected
+  // exclusivity buttons are inclusive: Artwork OR Stamp / marking.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const applyCurationFilters = (q: any) => {
+    let filtered = q;
+    if (filters.cuteOnly) filtered = filtered.eq("is_cute", true);
+    const exclusivity = japanExclusivitySelectionQueryFilter(filters.japanExclusivity);
+    for (const column of exclusivity.equalsTrue) filtered = filtered.eq(column, true);
+    if (exclusivity.anyOfTrue.length > 0) {
+      filtered = filtered.or(exclusivity.anyOfTrue.map((column) => `${column}.eq.true`).join(","));
+    }
+    return filtered;
+  };
 
   let cq = supabase.from("pokemon_card_definitions").select(`card_id${gateSelect}`, { count: "exact", head: true });
   if (s) for (const f of orFilters) cq = cq.or(f);
   cq = applyGate(cq);
+  cq = applyCurationFilters(cq);
   const { count: total, error: countError } = await cq;
   if (countError) throw countError;
   let q = supabase.from("pokemon_card_definitions").select(`${COLS}${gateSelect}`).order("regional_name").limit(limit);
   if (s) for (const f of orFilters) q = q.or(f);
   q = applyGate(q);
+  q = applyCurationFilters(q);
   const { data, error } = await q;
   if (error) throw error;
   // Drop the join-only embed so it can't leak into the rendered card object.
@@ -288,11 +318,14 @@ function CardsTab() {
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(CATALOG_PAGE);
   const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
+  const [cuteOnly, setCuteOnly] = useState(false);
+  const [japanExclusivity, setJapanExclusivity] = useState<Set<JapanExclusivityDimension>>(() => new Set());
   const debounced = useDebouncedValue(search, 300);
   const platformsKey = Array.from(selectedPlatforms).sort().join(",");
+  const exclusivityKey = Array.from(japanExclusivity).sort().join(",");
   const { data, error, isLoading, retry } = useSupabaseQuery(
-    ["card-index-pokemon", debounced, String(limit), platformsKey],
-    () => fetchIndex(debounced, limit, Array.from(selectedPlatforms)),
+    ["card-index-pokemon", debounced, String(limit), platformsKey, String(cuteOnly), exclusivityKey],
+    () => fetchIndex(debounced, limit, Array.from(selectedPlatforms), { cuteOnly, japanExclusivity }),
   );
   const cards = data?.cards ?? [];
   const total = data?.total ?? 0;
@@ -332,7 +365,7 @@ function CardsTab() {
           </Button>
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <MultiSelectFilter
           options={FILTERABLE_PLATFORMS}
           labels={PLATFORM_SHORT}
@@ -341,6 +374,25 @@ function CardsTab() {
           onClear={() => setSelectedPlatforms(new Set())}
           allLabel={t("cardIndex.sourceAll")}
           clearLabel={t("cardIndex.clearFilter")}
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant={cuteOnly ? "default" : "outline"}
+          className="h-11 sm:h-8"
+          aria-pressed={cuteOnly}
+          onClick={() => setCuteOnly((value) => !value)}
+        >
+          {t("cardBrowser.cuteOnly")}
+        </Button>
+        <JapanExclusivityFilter
+          selected={japanExclusivity}
+          onToggle={(dimension) => setJapanExclusivity((current) => {
+            const next = new Set(current);
+            if (next.has(dimension)) next.delete(dimension);
+            else next.add(dimension);
+            return next;
+          })}
         />
       </div>
       <p className="text-xs text-muted-foreground">{t("cardIndex.hintPokemon")}</p>
@@ -531,6 +583,7 @@ function PokemonCardModal({
   // above which wait for Save - so the local mirror is what the modal renders
   // and `onSaved` refreshes the list's chips behind it.
   const [flags, setFlags] = useState<PokemonCuratorFlagValues>(pokemonCuratorFlagValues(card));
+  const [exclusivity, setExclusivity] = useState<PokemonJapanExclusivityValues>(pokemonJapanExclusivityValues(card));
   const set = (k: keyof typeof BLANK, v: string) => setForm((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
@@ -559,6 +612,7 @@ function PokemonCardModal({
     setConfirmDelete(false);
     setVariantMisc("");
     setFlags(pokemonCuratorFlagValues(isCreate ? null : card));
+    setExclusivity(pokemonJapanExclusivityValues(isCreate ? null : card));
   }, [card, isCreate, open]);
 
   // Debounced search for a merge target (any card but this one).
@@ -838,6 +892,19 @@ function PokemonCardModal({
               />
             </div>
             <p className="text-xs text-muted-foreground">{t("cardIndex.flagsHint")}</p>
+          </div>
+        )}
+
+        {!isCreate && card && (
+          <div className="border-t pt-3">
+            <PokemonJapanExclusivityEditor
+              cardId={card.card_id}
+              values={exclusivity}
+              onChange={(next) => {
+                setExclusivity(next);
+                onSaved();
+              }}
+            />
           </div>
         )}
 

@@ -18,7 +18,10 @@ import {
   summaryTableForSource,
   type SourceSide,
 } from "./source-availability";
-import { japanExclusivityQueryFilter, type JapanExclusivityMode } from "./japan-exclusivity";
+import {
+  japanExclusivitySelectionQueryFilter,
+  type JapanExclusivityDimension,
+} from "./japan-exclusivity";
 
 interface JapanExclusivityQueryBuilder {
   eq(column: string, value: boolean): unknown;
@@ -28,10 +31,10 @@ interface JapanExclusivityQueryBuilder {
 export function applyJapanExclusivityQuery<T>(
   query: T,
   cardDefinitionTable: string,
-  mode: JapanExclusivityMode,
+  selected: ReadonlySet<JapanExclusivityDimension>,
 ): T {
   let filtered = query as T & JapanExclusivityQueryBuilder;
-  const filter = japanExclusivityQueryFilter(mode);
+  const filter = japanExclusivitySelectionQueryFilter(selected);
   for (const column of filter.equalsTrue) {
     filtered = filtered.eq(`${cardDefinitionTable}.${column}`, true) as T & JapanExclusivityQueryBuilder;
   }
@@ -487,7 +490,7 @@ export function useCardData(options: {
   sourceSide: SourceSide;
   rarity: string | null;
   promosOnly: boolean;
-  japanExclusivity: JapanExclusivityMode;
+  japanExclusivity: ReadonlySet<JapanExclusivityDimension>;
   cuteOnly: boolean;
   minBuyPrice: number | null;
   minSellPrice: number | null;

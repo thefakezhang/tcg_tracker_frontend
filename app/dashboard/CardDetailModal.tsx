@@ -80,6 +80,11 @@ import { formatRoiPct, roiToneClass } from "./theoretical-roi";
 import { MarketEvidenceCallout } from "./MarketEvidenceCallout";
 import { compareMarketEstimates, type MarketEvidence } from "./market-evidence";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
+import {
+  PokemonJapanExclusivityEditor,
+  pokemonJapanExclusivityValues,
+  type PokemonJapanExclusivityValues,
+} from "./PokemonJapanExclusivityEditor";
 
 import { formatUsd } from "@/lib/money";
 import { formatDate } from "@/lib/dates";
@@ -255,9 +260,10 @@ export default function CardDetailModal({
   const [targetPrice, setTargetPrice] = useState<string>("");
   const [savingTargetPrice, setSavingTargetPrice] = useState(false);
   const [targetPriceError, setTargetPriceError] = useState<string | null>(null);
-  // Manual curator flags (JP exclusive / cute) - shared switches + RPCs with
-  // the Card Index editor (PokemonCuratorFlags.tsx).
+  // Manual Cute curator flag shared with the Card Index. Typed Japanese
+  // exclusivity uses the evidence-required editor below.
   const [curatorFlags, setCuratorFlags] = useState<PokemonCuratorFlagValues>(pokemonCuratorFlagValues(null));
+  const [japanExclusivity, setJapanExclusivity] = useState<PokemonJapanExclusivityValues>(pokemonJapanExclusivityValues(null));
   const [askingPrice, setAskingPrice] = useState("");
   const [askingCurrency, setAskingCurrency] = useState<"JPY" | "USD">("JPY");
   const [sightingGrade, setSightingGrade] = useState(0);
@@ -277,6 +283,7 @@ export default function CardDetailModal({
   // Sync the manual curator flags from the opened card.
   useEffect(() => {
     setCuratorFlags(pokemonCuratorFlagValues(card?.card));
+    setJapanExclusivity(pokemonJapanExclusivityValues(card?.card));
     setAskingPrice("");
     setAskingCurrency("JPY");
   }, [card]);
@@ -660,6 +667,21 @@ export default function CardDetailModal({
               {activeGame === "pokemon" && (
                 <div className="mt-2 max-w-2xl">
                   <JapanExclusiveEvidence card={def} />
+                  <details className="mt-2 rounded-md border p-2">
+                    <summary className="min-h-11 cursor-pointer text-xs font-medium sm:min-h-0">
+                      {t("cardIndex.exclusivityTitle")}
+                    </summary>
+                    <div className="mt-3">
+                      <PokemonJapanExclusivityEditor
+                        cardId={Number(def.card_id)}
+                        values={japanExclusivity}
+                        onChange={(next) => {
+                          setJapanExclusivity(next);
+                          Object.assign(def, next);
+                        }}
+                      />
+                    </div>
+                  </details>
                 </div>
               )}
               <div className="mt-1 text-xs">
