@@ -231,6 +231,17 @@ export interface LocationInfo {
 
 let locationMapCache: Map<number, LocationInfo> | null = null;
 
+// Drop the session cache and re-read locations. Needed when a location_id
+// appears that the cached map has never seen: locations are added while
+// dashboard sessions stay open (2026-08-26: the new 130point source rendered
+// price points with empty shop text for every session older than the row).
+export async function refreshLocationMap(
+  supabase: ReturnType<typeof createClient>
+): Promise<Map<number, LocationInfo>> {
+  locationMapCache = null;
+  return fetchLocationMap(supabase);
+}
+
 export async function fetchLocationMap(
   supabase: ReturnType<typeof createClient>
 ): Promise<Map<number, LocationInfo>> {
