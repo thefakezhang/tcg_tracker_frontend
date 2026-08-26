@@ -58,6 +58,7 @@ import {
   LISTINGS_TABLE_MAP,
   fetchRateMap,
   fetchLocationMap,
+  refreshLocationMap,
   fetchConditionsCache,
   getCardDisplayName,
 } from "./use-card-data";
@@ -475,7 +476,14 @@ export default function CardDetailModal({
           .reduce((sum, row) => sum + Number(row.qty_incoming ?? 0), 0),
       );
       setRateMap(rates);
-      setLocationMap(locations);
+      // A listing pointing at a location the session cache has never seen
+      // means the cache is stale (a source was added mid-session): refresh
+      // once so its rows are labeled instead of silently blank.
+      let resolvedLocations = locations;
+      if ((raw ?? []).some((l) => !locations.has(l.location_id))) {
+        resolvedLocations = await refreshLocationMap(supabase);
+      }
+      setLocationMap(resolvedLocations);
       setConditionsMap(conditionsData.map);
       setAvailableTiers(conditionsData.tiers);
       setLoading(false);

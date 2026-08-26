@@ -621,6 +621,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.tcgCsvColCard": "CSV行",
   "trips.tcgCsvColPrice": "価格",
   "trips.tcgCsvColMatch": "在庫との一致",
+  "trips.tcgCsvPickCandidate": "対象の在庫を選択...",
+  "trips.tcgCsvQtyUnmapped": "数量列が見つかりません。全行が数量1になります。CSVに数量列がある場合は上で割り当ててください。",
   "trips.tcgCsvAmbiguousRow": "{n} 件が同じ番号です。手動で選択してください",
   "trips.tcgCsvNoMatch": "在庫になし",
   "trips.tcgCsvTruncated": "{total} 行のうち {shown} 行を表示。",

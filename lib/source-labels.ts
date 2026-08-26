@@ -1,4 +1,5 @@
 const SOURCE_LABELS: Record<string, string> = {
+  "130point": "130point (eBay sold)",
   avereel: "Avereel",
   big_tcg: "BIG TCG",
   cardkingdom: "Card Kingdom",

@@ -619,6 +619,8 @@ const en = {
   "trips.tcgCsvColCard": "CSV row",
   "trips.tcgCsvColPrice": "Price",
   "trips.tcgCsvColMatch": "Inventory match",
+  "trips.tcgCsvPickCandidate": "Select the holding...",
+  "trips.tcgCsvQtyUnmapped": "No quantity column detected - every row defaults to 1. Map it above if your CSV has one.",
   "trips.tcgCsvAmbiguousRow": "{n} holdings share this number - pick it manually",
   "trips.tcgCsvNoMatch": "Not in inventory",
   "trips.tcgCsvTruncated": "Showing {shown} of {total} rows.",

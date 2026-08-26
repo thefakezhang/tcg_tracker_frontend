@@ -47,9 +47,11 @@ export default function TcgplayerImportDialog({ open, onOpenChange, holdings, on
   const [matrix, setMatrix] = useState<string[][]>([]);
   const [map, setMap] = useState<ColumnMap | null>(null);
   const [excluded, setExcluded] = useState<Set<number>>(new Set());
+  // rowIndex -> holdingKey chosen by the operator for an ambiguous row.
+  const [chosen, setChosen] = useState<Record<number, string>>({});
   const [error, setError] = useState<string | null>(null);
 
-  const reset = () => { setHeader([]); setMatrix([]); setMap(null); setExcluded(new Set()); setError(null); };
+  const reset = () => { setHeader([]); setMatrix([]); setMap(null); setExcluded(new Set()); setChosen({}); setError(null); };
 
   const handleFile = async (file: File) => {
     try {
@@ -59,6 +61,7 @@ export default function TcgplayerImportDialog({ open, onOpenChange, holdings, on
       setHeader(parsed[0]);
       setMap(detectColumns(parsed[0]));
       setExcluded(new Set());
+      setChosen({});
       setError(null);
     } catch {
       setError(t("trips.tcgCsvUnreadable"));
@@ -76,14 +79,35 @@ export default function TcgplayerImportDialog({ open, onOpenChange, holdings, on
     none: previews.filter((p) => p.match.status === "none").length,
   }), [previews]);
 
-  const includable = previews.filter((p) => p.match.status === "matched" && !excluded.has(p.row.rowIndex));
+  // An ambiguous row participates once the operator picks its holding.
+  const resolvedHolding = (p: (typeof previews)[number]) =>
+    p.match.status === "matched"
+      ? p.match.holding!
+      : p.match.status === "ambiguous"
+        ? p.match.candidates.find((c) => c.key === chosen[p.row.rowIndex]) ?? null
+        : null;
+
+  const includable = previews.filter((p) => resolvedHolding(p) !== null && !excluded.has(p.row.rowIndex));
 
   const confirm = () => {
-    const entries: TcgImportEntry[] = includable.map((p) => ({
-      holdingKey: p.match.holding!.key,
-      qty: Math.max(1, Math.min(p.row.quantity, p.match.holding!.qty_on_hand)),
-      priceUsd: p.row.priceUsd,
-    }));
+    // Merge rows that resolve to the same holding (multiple printings or
+    // conditions of one card collapse to one holding): sum quantities and
+    // carry a quantity-weighted price so the staged gross stays exact.
+    // Overwriting instead of merging is how CSV quantities silently vanished
+    // for duplicated cards (observed 2026-08-26).
+    const merged = new Map<string, { qty: number; gross: number; priced: boolean; onHand: number }>();
+    for (const p of includable) {
+      const holding = resolvedHolding(p)!;
+      const cur = merged.get(holding.key) ?? { qty: 0, gross: 0, priced: true, onHand: holding.qty_on_hand };
+      cur.qty += Math.max(1, p.row.quantity);
+      if (p.row.priceUsd == null) cur.priced = false;
+      else cur.gross += p.row.priceUsd * Math.max(1, p.row.quantity);
+      merged.set(holding.key, cur);
+    }
+    const entries: TcgImportEntry[] = [...merged.entries()].map(([holdingKey, m]) => {
+      const qty = Math.max(1, Math.min(m.qty, m.onHand));
+      return { holdingKey, qty, priceUsd: m.priced && m.qty > 0 ? m.gross / m.qty : null };
+    });
     onImport(entries);
     reset();
     onOpenChange(false);
@@ -131,27 +155,34 @@ export default function TcgplayerImportDialog({ open, onOpenChange, holdings, on
               <span>{t("trips.tcgCsvUnmatched", { n: counts.none })}</span>
             </div>
 
-            <div className="max-h-80 overflow-auto rounded-md border">
-              <Table>
+            {map.quantity < 0 && (
+              <p className="rounded-md border border-amber-500/50 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400">
+                {t("trips.tcgCsvQtyUnmapped")}
+              </p>
+            )}
+            <div className="max-h-80 overflow-x-auto overflow-y-auto rounded-md border">
+              <Table className="w-full table-fixed">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-8" />
-                    <TableHead>{t("trips.tcgCsvColCard")}</TableHead>
-                    <TableHead className="w-16">{t("trips.saleQty")}</TableHead>
-                    <TableHead className="w-20">{t("trips.tcgCsvColPrice")}</TableHead>
+                    <TableHead className="w-[30%]">{t("trips.tcgCsvColCard")}</TableHead>
+                    <TableHead className="w-12">{t("trips.saleQty")}</TableHead>
+                    <TableHead className="w-16">{t("trips.tcgCsvColPrice")}</TableHead>
                     <TableHead>{t("trips.tcgCsvColMatch")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {previews.slice(0, MAX_RENDER).map(({ row, match }) => {
-                    const on = match.status === "matched" && !excluded.has(row.rowIndex);
+                  {previews.slice(0, MAX_RENDER).map((p) => {
+                    const { row, match } = p;
+                    const resolved = resolvedHolding(p);
+                    const on = resolved !== null && !excluded.has(row.rowIndex);
                     return (
-                      <TableRow key={row.rowIndex} className={match.status !== "matched" ? "opacity-60" : undefined}>
+                      <TableRow key={row.rowIndex} className={resolved === null ? "opacity-60" : undefined}>
                         <TableCell>
                           <input
                             type="checkbox"
                             className="size-4"
-                            disabled={match.status !== "matched"}
+                            disabled={resolved === null}
                             checked={on}
                             onChange={(e) => setExcluded((prev) => {
                               const next = new Set(prev);
@@ -160,20 +191,37 @@ export default function TcgplayerImportDialog({ open, onOpenChange, holdings, on
                             })}
                           />
                         </TableCell>
-                        <TableCell className="text-xs">
-                          <div className="font-medium">{row.name}</div>
-                          <div className="text-muted-foreground">{[row.set, row.number, row.condition].filter(Boolean).join(" · ")}</div>
+                        <TableCell className="min-w-0 text-xs">
+                          <div className="break-words font-medium">{row.name}</div>
+                          <div className="break-words text-muted-foreground">{[row.set, row.number, row.condition].filter(Boolean).join(" · ")}</div>
                         </TableCell>
                         <TableCell className="tabular-nums">{row.quantity}</TableCell>
                         <TableCell className="tabular-nums">{row.priceUsd == null ? "-" : formatUsd(row.priceUsd)}</TableCell>
-                        <TableCell className="text-xs">
+                        <TableCell className="min-w-0 text-xs">
                           {match.status === "matched" && (
                             <span className="text-emerald-600 dark:text-emerald-400">
                               {match.holding!.englishName || match.holding!.name}
                               <span className="block text-muted-foreground">{match.holding!.set_code} {match.holding!.card_number} · {t(match.holding!.leg === "export" ? "trips.legExport" : "trips.legImport")} · {t("inventory.ownedQty")} {match.holding!.qty_on_hand}</span>
                             </span>
                           )}
-                          {match.status === "ambiguous" && <span className="text-amber-600 dark:text-amber-400">{t("trips.tcgCsvAmbiguousRow", { n: match.candidates.length })}</span>}
+                          {match.status === "ambiguous" && (
+                            <span className="block min-w-0">
+                              <span className="text-amber-600 dark:text-amber-400">{t("trips.tcgCsvAmbiguousRow", { n: match.candidates.length })}</span>
+                              <select
+                                className="mt-1 block w-full max-w-full truncate rounded-md border bg-background px-1 py-1 text-xs"
+                                value={chosen[row.rowIndex] ?? ""}
+                                onChange={(e) => setChosen((prev) => ({ ...prev, [row.rowIndex]: e.target.value }))}
+                              >
+                                <option value="">{t("trips.tcgCsvPickCandidate")}</option>
+                                {match.candidates.map((c) => (
+                                  <option key={c.key} value={c.key}>
+                                    {(c.englishName || c.name) ?? ""} · {c.set_code} {c.card_number} · {t(c.leg === "export" ? "trips.legExport" : "trips.legImport")} · {t("inventory.ownedQty")} {c.qty_on_hand}
+                                  </option>
+                                ))}
+                              </select>
+                              {resolved && <span className="mt-0.5 block text-emerald-600 dark:text-emerald-400">{resolved.englishName || resolved.name}</span>}
+                            </span>
+                          )}
                           {match.status === "none" && <span className="text-muted-foreground">{t("trips.tcgCsvNoMatch")}</span>}
                         </TableCell>
                       </TableRow>

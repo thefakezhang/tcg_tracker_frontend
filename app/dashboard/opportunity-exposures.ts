@@ -14,7 +14,7 @@ export interface OpportunityExposurePayload {
   candidate_snapshot: object;
 }
 
-const INDICATOR_SOURCES = new Set(["cardladder", "collectr", "pricecharting"]);
+const INDICATOR_SOURCES = new Set(["130point", "cardladder", "collectr", "pricecharting"]);
 
 export function isPurchasableOpportunitySource(sourceName: string | null | undefined): boolean {
   return !INDICATOR_SOURCES.has((sourceName ?? "").trim().toLowerCase());
