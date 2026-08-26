@@ -9,6 +9,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:e2e:lot-economics": "bash scripts/e2e/run-lot-economics-browser.sh",
+    "test:e2e:japan-exclusivity": "bash scripts/e2e/run-japan-exclusivity-fixture.sh",
     "test:e2e:pos-camera": "bash scripts/e2e/run-pos-camera-phone.sh"
   },
   "dependencies": {

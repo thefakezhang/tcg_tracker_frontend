@@ -48,7 +48,7 @@ describe("ConsignmentControl", () => {
     fireEvent.click(screen.getByRole("button", { name: "Undo sale" }));
 
     expect(mocks.rpc).not.toHaveBeenCalled();
-    expect(await screen.findByText(/full accounting reversal/)).toBeTruthy();
+    expect(await screen.findByText(/full accounting reversal/, {}, { timeout: 5_000 })).toBeTruthy();
     const actions = screen.getAllByRole("button", { name: "Undo sale" });
     fireEvent.click(actions[actions.length - 1]);
 

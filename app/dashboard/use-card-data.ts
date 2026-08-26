@@ -18,6 +18,31 @@ import {
   summaryTableForSource,
   type SourceSide,
 } from "./source-availability";
+import { japanExclusivityQueryFilter, type JapanExclusivityMode } from "./japan-exclusivity";
+
+interface JapanExclusivityQueryBuilder {
+  eq(column: string, value: boolean): unknown;
+  or(filters: string, options: { referencedTable: string }): unknown;
+}
+
+export function applyJapanExclusivityQuery<T>(
+  query: T,
+  cardDefinitionTable: string,
+  mode: JapanExclusivityMode,
+): T {
+  let filtered = query as T & JapanExclusivityQueryBuilder;
+  const filter = japanExclusivityQueryFilter(mode);
+  for (const column of filter.equalsTrue) {
+    filtered = filtered.eq(`${cardDefinitionTable}.${column}`, true) as T & JapanExclusivityQueryBuilder;
+  }
+  if (filter.anyOfTrue.length > 0) {
+    filtered = filtered.or(
+      filter.anyOfTrue.map((column) => `${column}.eq.true`).join(","),
+      { referencedTable: cardDefinitionTable },
+    ) as T & JapanExclusivityQueryBuilder;
+  }
+  return filtered as T;
+}
 
 // Sealed entries point at the sealed tables/views for type-exhaustiveness; the
 // sealed tab uses its own hook (use-sealed-data.ts), so the card path here never
@@ -44,8 +69,13 @@ export interface CardDefinition {
   misc_info: string | null;
   image_url: string | null;
   rarity?: string | null; // Pokémon only (from TCGPlayer); undefined for MTG
-  is_japan_exclusive?: boolean | null; // Pokémon only; manual curator flag (093)
   is_cute?: boolean | null; // Pokémon only; manual curator flag (293)
+  japan_exclusive_artwork?: boolean | null;
+  japan_exclusive_artwork_reason?: string | null;
+  japan_exclusive_artwork_evidence_url?: string | null;
+  japan_exclusive_stamps?: boolean | null;
+  japan_exclusive_stamps_reason?: string | null;
+  japan_exclusive_stamps_evidence_url?: string | null;
   // MTG-only (from mtg_card_definitions_v); undefined for Pokémon.
   is_foil?: boolean | null;
   foil_type?: string | null;
@@ -74,7 +104,7 @@ export function cardMeta(setCode?: string | null, cardNumber?: string | null, mi
 }
 
 export const POKEMON_CARD_DEF_COLS =
-  "card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, image_url, rarity, is_japan_exclusive, is_cute";
+  "card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, image_url, rarity, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url";
 export const MTG_CARD_DEF_COLS =
   "card_id, card_uid, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language";
 
@@ -457,7 +487,7 @@ export function useCardData(options: {
   sourceSide: SourceSide;
   rarity: string | null;
   promosOnly: boolean;
-  jpExclusiveOnly: boolean;
+  japanExclusivity: JapanExclusivityMode;
   cuteOnly: boolean;
   minBuyPrice: number | null;
   minSellPrice: number | null;
@@ -489,7 +519,7 @@ export function useCardData(options: {
     sourceSide,
     rarity,
     promosOnly,
-    jpExclusiveOnly,
+    japanExclusivity,
     cuteOnly,
     minBuyPrice,
     minSellPrice,
@@ -520,7 +550,7 @@ export function useCardData(options: {
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, jpExclusiveOnly, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, japanExclusivity, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -610,8 +640,8 @@ export function useCardData(options: {
     if (promosOnly && activeGame === "pokemon") {
       query = query.or(POKEMON_PROMO_OR, { referencedTable: cardDefTable });
     }
-    if (jpExclusiveOnly && activeGame === "pokemon") {
-      query = query.eq(`${cardDefTable}.is_japan_exclusive`, true);
+    if (activeGame === "pokemon") {
+      query = applyJapanExclusivityQuery(query, cardDefTable, japanExclusivity);
     }
     if (cuteOnly && activeGame === "pokemon") {
       query = query.eq(`${cardDefTable}.is_cute`, true);

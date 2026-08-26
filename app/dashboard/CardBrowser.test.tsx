@@ -112,6 +112,28 @@ beforeEach(() => {
 });
 
 describe("CardBrowser surfaces", () => {
+  it("exposes every Japanese-exclusivity mode and defaults the data query to all cards", async () => {
+    render(<CardBrowser />);
+
+    expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      japanExclusivity: "all",
+    }));
+    fireEvent.click(screen.getByRole("button", { name: /cardBrowser\.jpExclusiveAll/ }));
+    expect(await screen.findByText("cardBrowser.jpExclusiveHint")).toBeTruthy();
+    const options = await screen.findAllByRole("menuitemradio");
+    expect(options.map((option) => option.textContent)).toEqual([
+      "cardBrowser.jpExclusiveAll",
+      "cardBrowser.jpExclusiveArtwork",
+      "cardBrowser.jpExclusiveStamps",
+      "cardBrowser.jpExclusiveEither",
+      "cardBrowser.jpExclusiveBoth",
+    ]);
+    expect(options.every((option) => option.className.includes("min-h-11"))).toBe(true);
+    const masterDownload = screen.getByTestId("japan-exclusive-master-list-download");
+    expect(masterDownload.getAttribute("href")).toBe("/pokemon-japan-exclusives-master-list.csv");
+    expect(masterDownload.getAttribute("download")).toBe("pokemon-japan-exclusives-master-list.csv");
+  });
+
   it("defaults the opportunity display to highest ROI first", () => {
     render(<CardBrowser />);
 

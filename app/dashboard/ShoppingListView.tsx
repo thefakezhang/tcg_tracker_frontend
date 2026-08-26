@@ -8,6 +8,8 @@ import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
+import type { JapanExclusivityMode } from "./japan-exclusivity";
 
 import { formatUsdWhole } from "@/lib/money";
 // Pre-trip shopping list (docs/customers_crm.md, Phase 5): the "what should I
@@ -30,7 +32,13 @@ interface ShoppingRow {
   card_number: string | null;
   misc_info: string | null;
   rarity: string | null;
-  is_japan_exclusive: boolean | null;
+  japan_exclusive_artwork: boolean | null;
+  japan_exclusive_artwork_reason: string | null;
+  japan_exclusive_artwork_evidence_url: string | null;
+  japan_exclusive_stamps: boolean | null;
+  japan_exclusive_stamps_reason: string | null;
+  japan_exclusive_stamps_evidence_url: string | null;
+  japan_exclusivity_modes: Exclude<JapanExclusivityMode, "all">[] | null;
   release_date: string | null;
   interested_customers: number;
   top_priority: number;
@@ -127,14 +135,19 @@ export default function ShoppingListView() {
               {rows.map((r) => (
                 <tr key={`${r.game}-${r.card_id ?? r.product_id}`} className="border-t hover:bg-muted/30">
                   <td className="px-3 py-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate">{r.english_name || r.item_name}</span>
-                      {r.is_japan_exclusive && (
-                        <Badge variant="outline" className="shrink-0 text-[10px]">JP</Badge>
-                      )}
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span className="min-w-0 truncate">{r.english_name || r.item_name}</span>
                     </div>
                     {r.english_name && r.item_name !== r.english_name && (
                       <div className="truncate text-xs text-muted-foreground">{r.item_name}</div>
+                    )}
+                    <JapanExclusiveEvidence card={r} compact />
+                    {r.japan_exclusivity_modes && r.japan_exclusivity_modes.length > 0 && (
+                      <div className="mt-1 min-w-0 break-words text-[10px] text-muted-foreground [overflow-wrap:anywhere]">
+                        {t("shoppingList.criteriaModes")}: {r.japan_exclusivity_modes.map((mode) =>
+                          t(`customers.japanExclusivity.${mode}` as never),
+                        ).join(", ")}
+                      </div>
                     )}
                   </td>
                   <td className="whitespace-nowrap px-3 py-1.5 text-xs text-muted-foreground">

@@ -15,6 +15,7 @@ import { OwnedCountLine, ObservedLine } from "./OwnedCountLine";
 import { UidChip } from "./UidChip";
 import { MarketEvidenceBadge } from "./MarketEvidenceCallout";
 import type { MarketEvidence } from "./market-evidence";
+import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
 
 import { formatJpy, formatRoi, formatUsd, formatUsdCompact } from "@/lib/money";
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
@@ -218,6 +219,7 @@ export function createColumns(
           <div className="min-w-0 whitespace-normal">
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
+            <JapanExclusiveEvidence card={card} compact />
             <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} consigned={row.original.ownedConsigned} availableOnly={availableOnly} />
             <ObservedLine observed={row.original.observed} />
           </div>

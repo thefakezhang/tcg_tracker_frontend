@@ -420,9 +420,11 @@ Never render a lease token, raw log, credential, arbitrary heartbeat failure sum
 - Has its own tier filter dropdown.
 - Uses `useCurrency()` for price conversion in `ListingTable`.
 - "Add to Buy List" button (popover) lets users save cards to any buy list.
-- Two manual curator flags on Pokémon cards, each a `Switch` in the header and a filter button in `CardBrowser`: **Japanese exclusive** (`is_japan_exclusive`, RPC `set_pokemon_japan_exclusive`, 000093) and **Cute** (`is_cute`, RPC `set_pokemon_cute`, 000293 - the "cute" market segment the operator buys and sells by).
-Both are selected in `use-card-data.ts`'s definition columns, filtered server-side (`jpExclusiveOnly` / `cuteOnly`), and written straight back onto the row so the list reflects the toggle without a refetch.
-- The switches, the read-only row chips, and the RPC writer live in `PokemonCuratorFlags.tsx` (`POKEMON_CURATOR_FLAGS` is the single definition of key, RPC, emoji, and labels) and are shared with the Card Index editor.
+- The manual **Cute** curator flag remains editable as a `Switch` control (`is_cute`, RPC `set_pokemon_cute`, 000293 - the "cute" market segment the operator buys and sells by).
+`use-card-data.ts` selects the evidence-backed `artwork` and `stamps` dimensions with their short reason and primary evidence URL, applies the `all`, `artwork`, `stamps`, `either`, or `both` query mode server-side, and filters Cute independently.
+Typed evidence is read-only in the browser and card index because it is projected from the versioned backend manifest, while the Cute curator write updates the row immediately without a refetch.
+The browser also exposes the generated 922-row buyer-readable master CSV through `JapanExclusiveMasterListDownload.tsx`.
+- The switch, the read-only row chip, and the RPC writer live in `PokemonCuratorFlags.tsx` and are shared with the Card Index editor.
 The Card Browser only lists cards that have a `pokemon_price_summaries` row (its query is an `!inner` join from the summary table), so roughly a quarter of the catalog can never open this modal; those cards are flagged from the Card Index instead (see Card Index curator flags below).
 A failed flag write now shows the RPC error inline next to the switches instead of silently leaving the switch unmoved.
 ### Per-grade evidence panel (S3)
@@ -500,14 +502,15 @@ Non-goals: it does not decide what an id should be (that is the operator, or the
 - It replaced a **Needs review** tab that reviewed rows from the artofpkm catalog feed, which is retired.
 That feed's evidence tables remain queryable in the backend, so "which cards do we not hold" is still answerable; only the crawl and its review surface are gone.
 
-### Card Index curator flags
+### Card Index curator flag
 
 - The Pokémon Card Index is the one surface that reaches the whole singles catalog: `fetchIndex` reads `pokemon_card_definitions` directly, with no price-summary join, so cards that have no comp data (8,943 of 32,484 definitions in Aug 2026) are listed here and nowhere else.
-- The edit modal therefore carries the same two curator switches as the Card Detail Modal (`PokemonCuratorFlagSwitches` from `PokemonCuratorFlags.tsx`), under a "Curator flags" heading between the identity fields and Links.
-Like link attach, each switch saves the moment it is toggled through its own RPC (`set_pokemon_japan_exclusive` / `set_pokemon_cute`) and calls `onSaved` so the list behind the modal refetches; the identity fields still wait for Save.
-- Each index row shows a compact chip per set flag (`PokemonCuratorFlagChips`) in the Variant column, next to the misc badge, with the full label on the tooltip; unflagged rows render nothing extra.
-- Goals: every catalog card can be marked, from the surface that can find it, with one shared definition so the two surfaces cannot drift.
-Non-goals: flag filters on the Card Index (the Card Browser's JP-exclusive / Cute filter buttons remain the way to list flagged cards), and a flag-aware Card Browser for cards without price data (the browser is a market view; its summary-first query is deliberate).
+- The edit modal therefore carries the same Cute switch as the Card Detail Modal (`PokemonCuratorFlagSwitches` from `PokemonCuratorFlags.tsx`), under a "Curator flags" heading between the identity fields and Links.
+Like link attach, the switch saves the moment it is toggled through `set_pokemon_cute` and calls `onSaved` so the list behind the modal refetches; the identity fields still wait for Save.
+- Each index row shows a compact Cute chip (`PokemonCuratorFlagChips`) in the Variant column, next to the misc badge, with the full label on the tooltip; unflagged rows render nothing extra.
+- Evidence-backed Japanese-exclusive artwork and stamp / marking classifications render independently in index rows and card details, including a short reason and an independently focusable source link for each qualifying dimension.
+- Goals: every catalog card can retain the Cute curator flag from the surface that can find it, while researched Japanese exclusivity stays a reproducible typed read contract.
+Non-goals: typed filter controls on the Card Index, and a flag-aware Card Browser for cards without price data (the browser is a market view; its summary-first query is deliberate).
 
 ### Camera POS
 
@@ -609,6 +612,7 @@ The operator must record deferred, unavailable, or out-of-scope outcomes when le
 - The review dialog calls database validation immediately before both the ready and ordered transitions.
 Blockers stop the transition, while warnings require explicit acknowledgement.
 - `CustomersView.tsx` captures quantity, intent, expiry, and grade bounds on exact wants and quantity, intent, and expiry on criteria wants.
+Rejected criterion inserts keep the Add criterion dialog and entered values open, announce an inline error, and allow retry; only a successful insert closes the dialog and refreshes the criteria list.
 - `lib/purchase-planning.ts` contains pure ordering and summary behavior covered by `lib/purchase-planning.test.ts`.
 - Backend architecture and invariants are documented in `docs/customer_purchase_planning.md` in the backend repository.
 
