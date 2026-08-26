@@ -56,6 +56,11 @@ type CalibrationRun = {
 
 type Level = "ok" | "warn" | "bad";
 
+// These are internal pipeline bookkeeping labels, not price sources an operator
+// can inspect or act on. Keep their snapshots in the database while omitting
+// them from the operator-facing source comparison.
+const HIDDEN_HEALTH_SOURCES = new Set(["identity", "aop"]);
+
 /**
  * Thresholds are deliberately explicit rather than clever: the board's job is to
  * be readable at a glance before acting on a price, so each column states what
@@ -191,7 +196,9 @@ export default function SourceHealthView() {
       setError(qErr.message);
       return;
     }
-    const all = (data ?? []) as HealthRow[];
+    const all = ((data ?? []) as HealthRow[]).filter(
+      (row) => !HIDDEN_HEALTH_SOURCES.has(row.source.toLowerCase()),
+    );
     if (all.length === 0) {
       setRows([]);
       setRunDate(null);

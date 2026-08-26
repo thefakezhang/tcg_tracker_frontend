@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CriteriaAdd } from "@/app/dashboard/CustomersView";
 import { JapanExclusiveEvidence } from "@/app/dashboard/JapanExclusiveEvidence";
-import { JapanExclusiveMasterListDownload } from "@/app/dashboard/JapanExclusiveMasterListDownload";
 import { JapanExclusivityCriterionField, type JapanExclusivityCriterionMode } from "@/app/dashboard/JapanExclusivityCriterionField";
 import { JapanExclusivityFilter } from "@/app/dashboard/JapanExclusivityFilter";
 import { matchesJapanExclusivity, type JapanExclusivityMode } from "@/app/dashboard/japan-exclusivity";
@@ -86,9 +85,6 @@ export function JapanExclusivityFixture() {
         <p className="mt-2 max-w-3xl break-words text-sm text-muted-foreground">
           Either means verified exclusive artwork or a verified exclusive stamp / marking. Both requires independent evidence for both categories.
         </p>
-        <div className="mt-3">
-          <JapanExclusiveMasterListDownload />
-        </div>
       </header>
 
       <section className="mb-6 rounded-xl border bg-card p-3 sm:p-4" aria-label="Inventory filter fixture">
