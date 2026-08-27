@@ -48,6 +48,8 @@ import {
 } from "@/components/ui/table";
 
 
+const HISTORY_OPEN_KEY = "tripSalesHistoryOpen";
+
 // inventory_holdings_v rows now carry item_type + leg + sealed keys.
 interface Holding {
   game: string; // 'pokemon' | 'mtg' | 'pokemon_sealed'
@@ -183,6 +185,24 @@ export default function SalesTab({ tripId }: { tripId: number }) {
   }, []);
   const [sortCol, setSortCol] = useState<"name" | "leg" | "qty" | "avg" | null>(null);
   const [hSearch, setHSearch] = useState("");
+  // Inventory search. Until now the only search box on this tab was the sales
+  // history one further down, so finding a card to put in a sale lot meant
+  // either scrolling the whole holdings list or typing into the history box -
+  // which filters the wrong list and drags you down to the wrong section.
+  const [iSearch, setISearch] = useState("");
+  // Sales history collapses, and the choice sticks, so the history stops
+  // sitting between you and the inventory every time you open the tab.
+  const [histOpen, setHistOpen] = useState(true);
+  useEffect(() => {
+    if (localStorage.getItem(HISTORY_OPEN_KEY) === "0") setHistOpen(false);
+  }, []);
+  function toggleHistory() {
+    setHistOpen((open) => {
+      const next = !open;
+      localStorage.setItem(HISTORY_OPEN_KEY, next ? "1" : "0");
+      return next;
+    });
+  }
   const [hSortCol, setHSortCol] = useState<"name" | "date" | "qty" | "gross" | "cogs" | "margin" | "marginPct" | null>("date");
   const [sortAsc, setSortAsc] = useState(true);
   const [hSortAsc, setHSortAsc] = useState(false);
@@ -600,15 +620,34 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     </TableHead>
   );
   const sorted = useMemo(() => {
-    if (!sortCol) return holdings;
+    // Match the same axes the row renders - display name, set, number, misc -
+    // so what you type is what you can see.
+    const q = iSearch.trim().toLowerCase();
+    const base = q
+      ? holdings.filter((h) =>
+          [
+            getCardDisplayName({ regional_name: h.name, english_name: h.englishName }, language),
+            h.name,
+            h.englishName,
+            h.set_code,
+            h.card_number,
+            h.misc_info,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(q),
+        )
+      : holdings;
+    if (!sortCol) return base;
     const dir = sortAsc ? 1 : -1;
     const val = (h: Holding): string | number =>
       sortCol === "name" ? getCardDisplayName({ regional_name: h.name, english_name: h.englishName }, language).toLowerCase()
       : sortCol === "leg" ? h.leg
       : sortCol === "qty" ? h.qty_on_hand
       : Number(h.avg_cost_usd);
-    return [...holdings].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
-  }, [holdings, sortCol, sortAsc, language]);
+    return [...base].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
+  }, [holdings, sortCol, sortAsc, language, iSearch]);
 
   type HCol = "name" | "date" | "qty" | "gross" | "cogs" | "margin" | "marginPct";
   function setHSort(col: HCol) {
@@ -899,10 +938,14 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     <div className="min-w-0 space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-base font-semibold">{t("trips.recordSale")}</h2>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto">
           {selected.size > 0 && (
             <Button size="sm" onClick={openLot}>{t("trips.sellLot", { n: selected.size })}</Button>
           )}
+          <Input value={iSearch} onChange={(e) => setISearch(e.target.value)}
+            placeholder={t("trips.searchInventory")}
+            aria-label={t("trips.searchInventory")}
+            className="min-h-11 w-full sm:min-h-8 sm:w-56" />
           <Button size="sm" variant="outline" onClick={() => setTcgImportOpen(true)}>{t("trips.tcgCsvImport")}</Button>
           <div className="flex items-center gap-1">
             <select value={sortCol ?? ""} onChange={(e) => setSortCol((e.target.value || null) as typeof sortCol)}
@@ -1007,8 +1050,13 @@ export default function SalesTab({ tripId }: { tripId: number }) {
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold">{t("trips.salesHistory")}</h3>
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <button type="button" onClick={toggleHistory}
+          className="flex min-h-11 items-center gap-1 text-sm font-semibold hover:text-foreground sm:min-h-0"
+          aria-expanded={histOpen}>
+          {histOpen ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+          {t("trips.salesHistory")}
+        </button>
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto">
           <Input value={hSearch} onChange={(e) => setHSearch(e.target.value)}
             placeholder={t("sales.searchPlaceholder")} className="min-h-11 w-full sm:min-h-8 sm:w-44" />
           <Tabs value={groupBy} onValueChange={(v) => setGroupBy(String(v) as "sale" | "card")}>
@@ -1040,7 +1088,8 @@ export default function SalesTab({ tripId }: { tripId: number }) {
           </Tabs>
         </div>
       </div>
-      {groupBy === "sale" && viewMode === "grid" ? (
+      {histOpen && (
+      groupBy === "sale" && viewMode === "grid" ? (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {saleEvents.map((ev) => (
             <Card key={ev.gid} size="sm" className={`gap-0 overflow-hidden ${ev.reverted ? "opacity-50" : ""}`}>
@@ -1233,6 +1282,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
           )}
         </TableBody>
       </Table>
+      )
       )}
 
       <Dialog open={!!sel} onOpenChange={(o) => !o && setSel(null)}>

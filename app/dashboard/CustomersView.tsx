@@ -1262,7 +1262,11 @@ export function CriteriaAdd({ customerId, onAdded }: { customerId: number; onAdd
               </div>
             </div>
 
-            <div className="space-y-2">
+            {/* min-w-0: a grid item defaults to min-width:auto and a native
+                select's intrinsic minimum is its LONGEST option, so
+                "Exclusive stamp / marking" widened this track past the card
+                and squeezed the neighbouring columns into dead space. */}
+            <div className="min-w-0 space-y-2">
               {game === "pokemon" && (
                 <JapanExclusivityCriterionField
                   value={japanExclusivityMode}

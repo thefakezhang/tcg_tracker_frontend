@@ -662,6 +662,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.revertLot": "売却を取消",
   "trips.revertLotConfirm": "この売却の全カードを取り消しますか？在庫に戻ります。",
   "trips.salesHistory": "販売履歴",
+  "trips.searchInventory": "販売する在庫を検索…",
   "trips.goodCategory": "カテゴリ",
   "trips.goodQty": "数量",
   "trips.goodUnitCost": "単価原価",

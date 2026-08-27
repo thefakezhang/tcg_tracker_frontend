@@ -660,6 +660,7 @@ const en = {
   "trips.revertLot": "Revert sale",
   "trips.revertLotConfirm": "Revert every card in this sale? This restores them to inventory.",
   "trips.salesHistory": "Sales",
+  "trips.searchInventory": "Search inventory to sell…",
   "trips.goodCategory": "Category",
   "trips.goodQty": "Quantity",
   "trips.goodUnitCost": "Unit cost",
