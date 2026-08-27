@@ -11,7 +11,7 @@ It replaces an Artifact that could not be shared because it exceeded the sharing
   It imports `lib/wantlist/cards.json` at build time and renders the client component.
 - `app/wantlist/WantList.tsx` - client component holding the three interactive pieces: search, the per-viewer check-off tracker, and the image lightbox.
 - `app/wantlist/wantlist.module.css` - the page's own palette, scoped to its wrapper.
-- `lib/wantlist/cards.json` - the data (1,569 rows).
+- `lib/wantlist/cards.json` - the data (683 rows).
 - `public/wantlist/wl-NNNN.webp` - one image per card, served as static files.
 
 The page makes **no runtime database call** and uses **no Supabase key**.
@@ -49,7 +49,16 @@ Three supporting changes ship with it, because a public page changes their risk:
 Replace `lib/wantlist/cards.json` (see the `Card` type in `WantList.tsx`) and the images in `public/wantlist/`, then update `UPDATED` in `app/wantlist/page.tsx`.
 Image files are referenced by the `img` field on each row; a row with `img: null` renders the hatched placeholder.
 
+## What the page publishes, and what it does not
+
+The page carries a **subset** of the internal want list, not all of it.
+The list is ranked on a combined score of realised margin percentage and liquidity (TCGplayer 60-day sales and listing counts, plus 130point realised US sales), pinned to the JP-acquire / US-exit leg.
+The better-scoring half is withheld and never reaches the page; what publishes is the remainder, above a $4 minimum US sale value, plus the vintage `OLD-*` and Pokekyun `CP3` blocks in full.
+
+This is deliberate. The full list encodes which cards are worth arbitraging and is competitively sensitive; the published subset is the part where a better acquisition price, not a private edge, decides the trade.
+Regenerating the page from the full list is a one-file change, so the split has to be re-applied whenever the data is refreshed.
+
 ## Known limitation
 
-176 vintage rows have no orderable card number - the vending-machine series prints none, so the source list carries `旧裏` as a placeholder.
+Vintage rows from the vending-machine series have no orderable card number - the series prints none, so the source list carries `旧裏` as a placeholder.
 Those rows are identifiable by set, name and image only.
