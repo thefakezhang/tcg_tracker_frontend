@@ -18,8 +18,11 @@ import type { MarketEvidence } from "./market-evidence";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
 
 import { formatJpy, formatRoi, formatUsd, formatUsdCompact } from "@/lib/money";
+import { priceKindMarkerKey, priceKindTitleKey } from "@/lib/price-kind";
+
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
   const { displayCurrency, convertPrice } = useCurrency();
+  const { t } = useTranslation();
   if (!entry) return <span>{"\u2014"}</span>;
 
   let symbol = entry.symbol;
@@ -30,9 +33,26 @@ export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }:
     price = converted.price;
   }
 
+  // One word beside the number says what it is - a sale, a shop's offer, or
+  // an estimate - so the operator never mistakes a guess for evidence. An ask
+  // carries no marker (lib/price-kind.ts).
+  const kindKey = priceKindMarkerKey(entry.kind);
+  const kindTitle = priceKindTitleKey(entry.kind);
+
   return (
     <div>
-      <div>{symbol}{price}</div>
+      <div className={`flex items-center gap-1 ${align === "right" ? "justify-end" : ""}`}>
+        <span>{symbol}{price}</span>
+        {kindKey && (
+          <Badge
+            variant="outline"
+            className="h-auto px-1 py-px text-[10px] font-normal"
+            title={kindTitle ? t(kindTitle) : undefined}
+          >
+            {t(kindKey)}
+          </Badge>
+        )}
+      </div>
       {entry.locationName && (
         <div className={`flex items-center gap-1 text-xs text-muted-foreground ${align === "right" ? "justify-end" : ""}`}>
           <span className="truncate">{entry.locationName}</span>

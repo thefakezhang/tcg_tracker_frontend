@@ -3,9 +3,39 @@ import { Pool } from "https://deno.land/x/postgres@v0.17.0/mod.ts";
 
 const GAMES = ["pokemon", "mtg"] as const;
 
+// The summary exposes exactly ONE lane: buy at the lowest Japanese ask, exit at
+// the best North American realizable price. That is the operator's trade. The
+// reverse direction is never scored: when an arbitrage exists one way it is a
+// wash the other way, so a second lane could only ever display
+// non-opportunities. A negative ROI therefore means "no arbitrage", never
+// "arbitrage the other way", and a card with no exit evidence shows no exit
+// rather than a made-up one.
+//
+// Until 2026-08-27 the pairing was direction-agnostic (any two regions, best
+// ROI wins). Whenever a card lacked US exit evidence that fell back to scoring
+// the export trade - a US ask as the entry against a Japanese buylist bid as
+// the exit - and reported real import opportunities as heavy losses (6,920 of
+// 13,251 priced raw Pokemon rows were inverted that way; 201/SV-P showed
+// -86.8% while importing it worked). See docs/realized_sale_comps.md in the
+// backend repo for the design and the evidence.
+const ENTRY_REGION = "JP";
+const EXIT_REGION = "NA";
+
+// Exit precedence, by what the number IS (market_listings.price_kind, derived
+// per source by the backend's price_kind_for_source()): a completed sale beats
+// a standing offer beats a third-party estimate. An unclassified source (NULL)
+// ranks last so a new feed is visible rather than silently winning. Within one
+// kind the highest price wins, as before. SQL fragment used as an ORDER BY key.
+const EXIT_KIND_RANK =
+  "CASE price_kind WHEN 'sold' THEN 0 WHEN 'bid' THEN 1 WHEN 'valuation' THEN 2 ELSE 3 END";
+
 // Indicator sources: price guides and sold-comp trackers, not shops the
-// operator can transact with. Excluded from every summaries pass (same list
-// the decision journal uses for opportunity exposures). SQL fragment.
+// operator can transact with. They no longer need excluding from the summary
+// itself - with the lane pinned an estimate can only ever be the EXIT, it ranks
+// below every transacted price, and best_buy_kind labels it. The per-source
+// availability snapshot still leaves them out: its Buylist / For-sale toggle
+// answers "which shops carry this", and an estimate is not a shop. Widening
+// that filter to price kinds is the next increment. SQL fragment.
 const INDICATOR_LOCATIONS = "'collectr', 'cardladder', 'pricecharting'";
 
 serve(async () => {
@@ -103,6 +133,17 @@ serve(async () => {
   }
 });
 
+// computeAndInsert writes one summary row per (card, grade group) that has any
+// listing in this slice, carrying the lane's two sides:
+//   best_sell_* - the ENTRY: the cheapest live ask in ENTRY_REGION
+//   best_buy_*  - the EXIT:  the best realizable price in EXIT_REGION, ranked
+//                 by EXIT_KIND_RANK and then by price
+//   roi         - (exit - entry) / entry, only when both sides exist
+//
+// The column names read backwards because price_type is named from the SHOP's
+// point of view: a shop's "Buy" price is what it pays you, i.e. your exit.
+// best_buy_kind / best_sell_kind record what each side actually is so the UI
+// can label an estimate as one.
 async function computeAndInsert(
   // deno-lint-ignore no-explicit-any
   conn: any,
@@ -116,13 +157,12 @@ async function computeAndInsert(
     WITH filtered_listings AS (
       SELECT
         ml.card_id,
+        CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE ml.psa_grade END AS group_grade,
         ml.price_type,
+        ml.price_kind,
         ml.price,
         ml.currency,
         c.symbol AS currency_symbol,
-        ml.psa_grade,
-        ml.condition,
-        ml.location_id,
         l.name AS location_name,
         l.market_region,
         ml.price * COALESCE(er.rate, 1) AS normalized_price
@@ -131,14 +171,7 @@ async function computeAndInsert(
       JOIN locations l ON l.location_id = ml.location_id
       LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
       WHERE
-        -- Indicator sources (price guides / sold-comp trackers, not shops you
-        -- can transact with) must not mint best-buy/best-sell pairs: a single
-        -- wrong-card estimate otherwise lands on BOTH sides of the pairing and
-        -- produces five-digit junk ROI at the top of the default browse sort.
-        -- Their prices stay visible as evidence (detail modal, market-evidence
-        -- callout); they just don't drive the actionable summary columns.
-        l.name NOT IN (${INDICATOR_LOCATIONS})
-        AND CASE
+        CASE
           WHEN '${psaMode}' = 'non-psa' THEN ml.psa_grade = 0
           ELSE ml.psa_grade > 0
         END
@@ -152,121 +185,56 @@ async function computeAndInsert(
           ELSE TRUE
         END
     ),
-    buys AS (
+    -- Exit: what you could realize in ${EXIT_REGION}, best kind first.
+    exits AS (
       SELECT *,
         ROW_NUMBER() OVER (
-          PARTITION BY card_id, CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE psa_grade END
-          ORDER BY normalized_price DESC
-        ) AS buy_rank
+          PARTITION BY card_id, group_grade
+          ORDER BY ${EXIT_KIND_RANK}, normalized_price DESC
+        ) AS rn
       FROM filtered_listings
-      WHERE price_type = 'Buy'
+      WHERE price_type = 'Buy' AND market_region = '${EXIT_REGION}'
     ),
-    sells AS (
+    -- Entry: the cheapest live ask in ${ENTRY_REGION}.
+    entries AS (
       SELECT *,
         ROW_NUMBER() OVER (
-          PARTITION BY card_id, CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE psa_grade END
+          PARTITION BY card_id, group_grade
           ORDER BY normalized_price ASC
-        ) AS sell_rank
+        ) AS rn
       FROM filtered_listings
-      WHERE price_type = 'Sell'
+      WHERE price_type = 'Sell' AND market_region = '${ENTRY_REGION}'
+        AND normalized_price > 0
     ),
-    cross_region_pairs AS (
-      SELECT DISTINCT ON (
-        b.card_id,
-        CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE b.psa_grade END
-      )
-        b.card_id,
-        CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE b.psa_grade END AS group_grade,
-        b.price AS buy_price,
-        b.currency AS buy_currency,
-        b.currency_symbol AS buy_symbol,
-        b.location_name AS buy_location,
-        b.market_region AS buy_region,
-        b.normalized_price AS buy_normalized,
-        s.price AS sell_price,
-        s.currency AS sell_currency,
-        s.currency_symbol AS sell_symbol,
-        s.location_name AS sell_location,
-        s.market_region AS sell_region,
-        s.normalized_price AS sell_normalized
-      FROM buys b
-      JOIN sells s ON s.card_id = b.card_id
-        AND (CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE s.psa_grade END) =
-            (CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE b.psa_grade END)
-      WHERE b.market_region IS DISTINCT FROM s.market_region
-        AND s.normalized_price > 0
-      ORDER BY
-        b.card_id,
-        CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE b.psa_grade END,
-        (b.normalized_price - s.normalized_price) / s.normalized_price DESC
-    ),
-    best_buys AS (
-      SELECT * FROM buys WHERE buy_rank = 1
-    ),
-    best_sells AS (
-      SELECT * FROM sells WHERE sell_rank = 1
-    ),
+    -- One summary row per card with ANY listing in this slice. The browser
+    -- lists summary rows, so a card must not vanish merely because the lane
+    -- has no side for it yet; both sides are simply NULL then.
     all_groups AS (
-      SELECT DISTINCT
-        card_id,
-        CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE psa_grade END AS group_grade
-      FROM filtered_listings
-    ),
-    final AS (
-      SELECT
-        g.card_id,
-        g.group_grade AS psa_grade,
-        COALESCE(cr.buy_price, bb.price) AS best_buy_price,
-        COALESCE(cr.buy_currency, bb.currency) AS best_buy_currency,
-        COALESCE(cr.buy_symbol, bb.currency_symbol) AS best_buy_symbol,
-        COALESCE(cr.buy_location, bb.location_name) AS best_buy_location,
-        COALESCE(cr.buy_region, bb.market_region) AS best_buy_region,
-        COALESCE(cr.buy_normalized, bb.normalized_price) AS best_buy_normalized,
-        COALESCE(cr.sell_price, bs.price) AS best_sell_price,
-        COALESCE(cr.sell_currency, bs.currency) AS best_sell_currency,
-        COALESCE(cr.sell_symbol, bs.currency_symbol) AS best_sell_symbol,
-        COALESCE(cr.sell_location, bs.location_name) AS best_sell_location,
-        COALESCE(cr.sell_region, bs.market_region) AS best_sell_region,
-        COALESCE(cr.sell_normalized, bs.normalized_price) AS best_sell_normalized
-      FROM all_groups g
-      LEFT JOIN cross_region_pairs cr ON cr.card_id = g.card_id AND cr.group_grade = g.group_grade
-      LEFT JOIN best_buys bb ON bb.card_id = g.card_id
-        AND (CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE bb.psa_grade END) = g.group_grade
-      LEFT JOIN best_sells bs ON bs.card_id = g.card_id
-        AND (CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE bs.psa_grade END) = g.group_grade
+      SELECT DISTINCT card_id, group_grade FROM filtered_listings
     )
     INSERT INTO ${summariesTable} (
       card_id, tier, psa_grade,
-      best_buy_price, best_buy_currency, best_buy_symbol, best_buy_location, best_buy_region, best_buy_normalized,
-      best_sell_price, best_sell_currency, best_sell_symbol, best_sell_location, best_sell_region, best_sell_normalized,
+      best_buy_price, best_buy_currency, best_buy_symbol, best_buy_location, best_buy_region, best_buy_normalized, best_buy_kind,
+      best_sell_price, best_sell_currency, best_sell_symbol, best_sell_location, best_sell_region, best_sell_normalized, best_sell_kind,
       roi, updated_at
     )
     SELECT
-      f.card_id,
+      g.card_id,
       ${outputTier},
-      f.psa_grade,
-      f.best_buy_price,
-      f.best_buy_currency,
-      f.best_buy_symbol,
-      f.best_buy_location,
-      f.best_buy_region,
-      f.best_buy_normalized,
-      f.best_sell_price,
-      f.best_sell_currency,
-      f.best_sell_symbol,
-      f.best_sell_location,
-      f.best_sell_region,
-      f.best_sell_normalized,
+      g.group_grade,
+      x.price, x.currency, x.currency_symbol, x.location_name, x.market_region, x.normalized_price, x.price_kind,
+      e.price, e.currency, e.currency_symbol, e.location_name, e.market_region, e.normalized_price, e.price_kind,
       CASE
-        WHEN f.best_buy_normalized IS NOT NULL
-          AND f.best_sell_normalized IS NOT NULL
-          AND f.best_sell_normalized > 0
-          AND COALESCE(f.best_buy_region, '') IS DISTINCT FROM COALESCE(f.best_sell_region, '')
-        THEN (f.best_buy_normalized - f.best_sell_normalized) / f.best_sell_normalized * 100
+        WHEN x.normalized_price IS NOT NULL AND e.normalized_price > 0
+        THEN (x.normalized_price - e.normalized_price) / e.normalized_price * 100
         ELSE NULL
       END,
       now()
-    FROM final f
+    FROM all_groups g
+    LEFT JOIN exits x
+      ON x.card_id = g.card_id AND x.group_grade = g.group_grade AND x.rn = 1
+    LEFT JOIN entries e
+      ON e.card_id = g.card_id AND e.group_grade = g.group_grade AND e.rn = 1
     ON CONFLICT (card_id, tier, psa_grade) DO UPDATE SET
       best_buy_price = EXCLUDED.best_buy_price,
       best_buy_currency = EXCLUDED.best_buy_currency,
@@ -274,12 +242,14 @@ async function computeAndInsert(
       best_buy_location = EXCLUDED.best_buy_location,
       best_buy_region = EXCLUDED.best_buy_region,
       best_buy_normalized = EXCLUDED.best_buy_normalized,
+      best_buy_kind = EXCLUDED.best_buy_kind,
       best_sell_price = EXCLUDED.best_sell_price,
       best_sell_currency = EXCLUDED.best_sell_currency,
       best_sell_symbol = EXCLUDED.best_sell_symbol,
       best_sell_location = EXCLUDED.best_sell_location,
       best_sell_region = EXCLUDED.best_sell_region,
       best_sell_normalized = EXCLUDED.best_sell_normalized,
+      best_sell_kind = EXCLUDED.best_sell_kind,
       roi = EXCLUDED.roi,
       updated_at = EXCLUDED.updated_at;
   `;
@@ -288,15 +258,15 @@ async function computeAndInsert(
   return result.rowCount ?? 0;
 }
 
+// computeAndInsertSealed is the same lane for sealed products. Identity is
+// (product_id, sealed_condition, variant_edition); there is no PSA grade and no
+// condition tier, so no slice filtering.
 async function computeAndInsertSealed(
   // deno-lint-ignore no-explicit-any
   conn: any,
   listingsTable: string,
   summariesTable: string
 ): Promise<number> {
-  // Sealed products have no PSA grade or condition tier; identity is
-  // (product_id, sealed_condition, variant_edition). Mirror the card pipeline
-  // with that 3-column grouping key and no tier/PSA filtering.
   await conn.queryObject(`TRUNCATE ${summariesTable}`);
 
   const query = `
@@ -306,10 +276,10 @@ async function computeAndInsertSealed(
         ml.sealed_condition,
         ml.variant_edition,
         ml.price_type,
+        ml.price_kind,
         ml.price,
         ml.currency,
         c.symbol AS currency_symbol,
-        ml.location_id,
         l.name AS location_name,
         l.market_region,
         ml.price * COALESCE(er.rate, 1) AS normalized_price
@@ -317,126 +287,59 @@ async function computeAndInsertSealed(
       JOIN currencies c ON c.code = ml.currency
       JOIN locations l ON l.location_id = ml.location_id
       LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
-      -- Same indicator exclusion as the singles pass (see comment there).
-      WHERE l.name NOT IN (${INDICATOR_LOCATIONS})
     ),
-    buys AS (
+    exits AS (
       SELECT *,
         ROW_NUMBER() OVER (
           PARTITION BY product_id, sealed_condition, variant_edition
-          ORDER BY normalized_price DESC
-        ) AS buy_rank
+          ORDER BY ${EXIT_KIND_RANK}, normalized_price DESC
+        ) AS rn
       FROM filtered_listings
-      WHERE price_type = 'Buy'
+      WHERE price_type = 'Buy' AND market_region = '${EXIT_REGION}'
     ),
-    sells AS (
+    entries AS (
       SELECT *,
         ROW_NUMBER() OVER (
           PARTITION BY product_id, sealed_condition, variant_edition
           ORDER BY normalized_price ASC
-        ) AS sell_rank
+        ) AS rn
       FROM filtered_listings
-      WHERE price_type = 'Sell'
-    ),
-    cross_region_pairs AS (
-      SELECT DISTINCT ON (b.product_id, b.sealed_condition, b.variant_edition)
-        b.product_id,
-        b.sealed_condition,
-        b.variant_edition,
-        b.price AS buy_price,
-        b.currency AS buy_currency,
-        b.currency_symbol AS buy_symbol,
-        b.location_name AS buy_location,
-        b.market_region AS buy_region,
-        b.normalized_price AS buy_normalized,
-        s.price AS sell_price,
-        s.currency AS sell_currency,
-        s.currency_symbol AS sell_symbol,
-        s.location_name AS sell_location,
-        s.market_region AS sell_region,
-        s.normalized_price AS sell_normalized
-      FROM buys b
-      JOIN sells s ON s.product_id = b.product_id
-        AND s.sealed_condition = b.sealed_condition
-        AND s.variant_edition = b.variant_edition
-      WHERE b.market_region IS DISTINCT FROM s.market_region
-        AND s.normalized_price > 0
-      ORDER BY
-        b.product_id,
-        b.sealed_condition,
-        b.variant_edition,
-        (b.normalized_price - s.normalized_price) / s.normalized_price DESC
-    ),
-    best_buys AS (
-      SELECT * FROM buys WHERE buy_rank = 1
-    ),
-    best_sells AS (
-      SELECT * FROM sells WHERE sell_rank = 1
+      WHERE price_type = 'Sell' AND market_region = '${ENTRY_REGION}'
+        AND normalized_price > 0
     ),
     all_groups AS (
       SELECT DISTINCT product_id, sealed_condition, variant_edition
       FROM filtered_listings
-    ),
-    final AS (
-      SELECT
-        g.product_id,
-        g.sealed_condition,
-        g.variant_edition,
-        COALESCE(cr.buy_price, bb.price) AS best_buy_price,
-        COALESCE(cr.buy_currency, bb.currency) AS best_buy_currency,
-        COALESCE(cr.buy_symbol, bb.currency_symbol) AS best_buy_symbol,
-        COALESCE(cr.buy_location, bb.location_name) AS best_buy_location,
-        COALESCE(cr.buy_region, bb.market_region) AS best_buy_region,
-        COALESCE(cr.buy_normalized, bb.normalized_price) AS best_buy_normalized,
-        COALESCE(cr.sell_price, bs.price) AS best_sell_price,
-        COALESCE(cr.sell_currency, bs.currency) AS best_sell_currency,
-        COALESCE(cr.sell_symbol, bs.currency_symbol) AS best_sell_symbol,
-        COALESCE(cr.sell_location, bs.location_name) AS best_sell_location,
-        COALESCE(cr.sell_region, bs.market_region) AS best_sell_region,
-        COALESCE(cr.sell_normalized, bs.normalized_price) AS best_sell_normalized
-      FROM all_groups g
-      LEFT JOIN cross_region_pairs cr ON cr.product_id = g.product_id
-        AND cr.sealed_condition = g.sealed_condition
-        AND cr.variant_edition = g.variant_edition
-      LEFT JOIN best_buys bb ON bb.product_id = g.product_id
-        AND bb.sealed_condition = g.sealed_condition
-        AND bb.variant_edition = g.variant_edition
-      LEFT JOIN best_sells bs ON bs.product_id = g.product_id
-        AND bs.sealed_condition = g.sealed_condition
-        AND bs.variant_edition = g.variant_edition
     )
     INSERT INTO ${summariesTable} (
       product_id, sealed_condition, variant_edition,
-      best_buy_price, best_buy_currency, best_buy_symbol, best_buy_location, best_buy_region, best_buy_normalized,
-      best_sell_price, best_sell_currency, best_sell_symbol, best_sell_location, best_sell_region, best_sell_normalized,
+      best_buy_price, best_buy_currency, best_buy_symbol, best_buy_location, best_buy_region, best_buy_normalized, best_buy_kind,
+      best_sell_price, best_sell_currency, best_sell_symbol, best_sell_location, best_sell_region, best_sell_normalized, best_sell_kind,
       roi, updated_at
     )
     SELECT
-      f.product_id,
-      f.sealed_condition,
-      f.variant_edition,
-      f.best_buy_price,
-      f.best_buy_currency,
-      f.best_buy_symbol,
-      f.best_buy_location,
-      f.best_buy_region,
-      f.best_buy_normalized,
-      f.best_sell_price,
-      f.best_sell_currency,
-      f.best_sell_symbol,
-      f.best_sell_location,
-      f.best_sell_region,
-      f.best_sell_normalized,
+      g.product_id,
+      g.sealed_condition,
+      g.variant_edition,
+      x.price, x.currency, x.currency_symbol, x.location_name, x.market_region, x.normalized_price, x.price_kind,
+      e.price, e.currency, e.currency_symbol, e.location_name, e.market_region, e.normalized_price, e.price_kind,
       CASE
-        WHEN f.best_buy_normalized IS NOT NULL
-          AND f.best_sell_normalized IS NOT NULL
-          AND f.best_sell_normalized > 0
-          AND COALESCE(f.best_buy_region, '') IS DISTINCT FROM COALESCE(f.best_sell_region, '')
-        THEN (f.best_buy_normalized - f.best_sell_normalized) / f.best_sell_normalized * 100
+        WHEN x.normalized_price IS NOT NULL AND e.normalized_price > 0
+        THEN (x.normalized_price - e.normalized_price) / e.normalized_price * 100
         ELSE NULL
       END,
       now()
-    FROM final f
+    FROM all_groups g
+    LEFT JOIN exits x
+      ON x.product_id = g.product_id
+      AND x.sealed_condition = g.sealed_condition
+      AND x.variant_edition = g.variant_edition
+      AND x.rn = 1
+    LEFT JOIN entries e
+      ON e.product_id = g.product_id
+      AND e.sealed_condition = g.sealed_condition
+      AND e.variant_edition = g.variant_edition
+      AND e.rn = 1
     ON CONFLICT (product_id, sealed_condition, variant_edition) DO UPDATE SET
       best_buy_price = EXCLUDED.best_buy_price,
       best_buy_currency = EXCLUDED.best_buy_currency,
@@ -444,12 +347,14 @@ async function computeAndInsertSealed(
       best_buy_location = EXCLUDED.best_buy_location,
       best_buy_region = EXCLUDED.best_buy_region,
       best_buy_normalized = EXCLUDED.best_buy_normalized,
+      best_buy_kind = EXCLUDED.best_buy_kind,
       best_sell_price = EXCLUDED.best_sell_price,
       best_sell_currency = EXCLUDED.best_sell_currency,
       best_sell_symbol = EXCLUDED.best_sell_symbol,
       best_sell_location = EXCLUDED.best_sell_location,
       best_sell_region = EXCLUDED.best_sell_region,
       best_sell_normalized = EXCLUDED.best_sell_normalized,
+      best_sell_kind = EXCLUDED.best_sell_kind,
       roi = EXCLUDED.roi,
       updated_at = EXCLUDED.updated_at;
   `;
@@ -501,12 +406,8 @@ async function insertBySourceCards(
       JOIN locations l ON l.location_id = ml.location_id
       LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
       WHERE
-        -- Indicator sources (price guides / sold-comp trackers, not shops you
-        -- can transact with) must not mint best-buy/best-sell pairs: a single
-        -- wrong-card estimate otherwise lands on BOTH sides of the pairing and
-        -- produces five-digit junk ROI at the top of the default browse sort.
-        -- Their prices stay visible as evidence (detail modal, market-evidence
-        -- callout); they just don't drive the actionable summary columns.
+        -- The source toggle answers "which shops carry this"; an estimate is
+        -- not a shop (see INDICATOR_LOCATIONS).
         l.name NOT IN (${INDICATOR_LOCATIONS})
         AND CASE
           WHEN '${psaMode}' = 'non-psa' THEN ml.psa_grade = 0

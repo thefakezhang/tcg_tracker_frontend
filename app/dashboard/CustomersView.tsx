@@ -28,6 +28,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { isPriceKind, type PriceKind } from "@/lib/price-kind";
 
 // Customers - lightweight CRM (docs/customers_crm.md), Phase 1: rolodex + wishlist.
 // Handles is a free-form platform->handle map so a customer can carry any set of
@@ -73,6 +74,7 @@ interface MarketRow {
   psa_grade?: number | null;
   listing_url: string | null;
   last_updated?: string | null;
+  price_kind?: PriceKind | null;
 }
 // Stable key so listings line up with their wishlist item across games.
 const wishKey = (w: { game: string; card_id: number | null; product_id: number | null }) =>
@@ -309,8 +311,9 @@ async function fetchWishlistListings(items: WishlistItem[]): Promise<Map<string,
     psa_grade: (r.psa_grade as number | null) ?? null,
     listing_url: (r.listing_url as string | null) ?? null,
     last_updated: (r.last_updated as string | null) ?? null,
+    price_kind: isPriceKind(r.price_kind) ? r.price_kind : null,
   });
-  const cardCols = "card_id, location_id, price_type, price, currency, condition, psa_grade, listing_url, last_updated, currencies(symbol)";
+  const cardCols = "card_id, location_id, price_type, price_kind, price, currency, condition, psa_grade, listing_url, last_updated, currencies(symbol)";
   // One wishlist item fans out to every listing of that card (up to ~50 today),
   // so these reads page past the PostgREST cap; a truncated read would show a
   // wanted card as "no market" when it has one.
@@ -330,7 +333,7 @@ async function fetchWishlistListings(items: WishlistItem[]): Promise<Map<string,
     const rows = await selectAllByIds<Record<string, unknown>>(
       sealed, ["listing_id"], (chunk) => supabase
         .from("pokemon_sealed_market_listings")
-        .select("product_id, location_id, price_type, price, currency, listing_url, last_updated, currencies(symbol)")
+        .select("product_id, location_id, price_type, price_kind, price, currency, listing_url, last_updated, currencies(symbol)")
         .in("product_id", chunk),
     );
     for (const r of rows) add(`pokemon_sealed:${r.product_id}`, toRow(r));
@@ -361,6 +364,7 @@ function toDetailListing(
     conditionId: l.condition ?? null,
     listingUrl: l.listing_url,
     lastUpdated: l.last_updated ?? null,
+    kind: l.price_kind ?? null,
   };
 }
 

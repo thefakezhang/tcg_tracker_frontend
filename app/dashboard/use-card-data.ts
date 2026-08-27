@@ -22,6 +22,7 @@ import {
   japanExclusivitySelectionQueryFilter,
   type JapanExclusivityDimension,
 } from "./japan-exclusivity";
+import type { PriceKind } from "@/lib/price-kind";
 
 interface JapanExclusivityQueryBuilder {
   eq(column: string, value: boolean): unknown;
@@ -134,6 +135,9 @@ export interface MarketListing {
   location_id: number;
   listing_url: string | null;
   last_updated: string | null;
+  // What the price IS (sold / bid / ask / valuation); see lib/price-kind.ts.
+  // Optional because not every fetch selects it.
+  price_kind?: PriceKind | null;
 }
 
 export interface PriceEntry {
@@ -143,6 +147,10 @@ export interface PriceEntry {
   normalizedPrice: number;
   locationName: string;
   marketRegion: string | null;
+  // What this price is; drives the sold / offer / est. marker beside it.
+  // Optional so callers that build entries by hand (tests, fixtures) need
+  // not know; absent means "no marker".
+  kind?: PriceKind | null;
 }
 
 export interface PriceSummary {
@@ -283,12 +291,14 @@ interface SummaryRow {
   best_buy_location: string | null;
   best_buy_region: string | null;
   best_buy_normalized: number | null;
+  best_buy_kind: PriceKind | null;
   best_sell_price: number | null;
   best_sell_currency: string | null;
   best_sell_symbol: string | null;
   best_sell_location: string | null;
   best_sell_region: string | null;
   best_sell_normalized: number | null;
+  best_sell_kind: PriceKind | null;
   roi: number | null;
   best_opportunity_grade: number | null;
   deal_net_usd: number | null;
@@ -312,6 +322,7 @@ function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRowData {
           normalizedPrice: row.best_buy_normalized ?? 0,
           locationName: row.best_buy_location ?? "",
           marketRegion: row.best_buy_region ?? null,
+          kind: row.best_buy_kind ?? null,
         }
       : null;
 
@@ -324,6 +335,7 @@ function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRowData {
           normalizedPrice: row.best_sell_normalized ?? 0,
           locationName: row.best_sell_location ?? "",
           marketRegion: row.best_sell_region ?? null,
+          kind: row.best_sell_kind ?? null,
         }
       : null;
 

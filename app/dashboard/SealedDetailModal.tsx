@@ -65,6 +65,7 @@ import { useLanguage } from "./LanguageContext";
 import { FreshnessChip } from "./FreshnessChip";
 import { UidChip } from "./UidChip";
 import { useOwnedInventoryVersion } from "./owned-inventory";
+import { isPriceKind, priceKindMarkerKey, priceKindTitleKey, type PriceKind } from "@/lib/price-kind";
 
 const SEALED_ENTRY_TABLE = "pokemon_sealed_buylist_entries";
 
@@ -89,6 +90,7 @@ interface SealedListing {
   listingUrl: string | null;
   priceType: "Buy" | "Sell";
   lastUpdated: string | null;
+  priceKind: PriceKind | null;
 }
 
 interface DetailListing {
@@ -103,6 +105,8 @@ interface DetailListing {
   // chip next to the location. null when the row predates the column
   // being populated.
   lastUpdated: string | null;
+  // What the price is (sold / bid / ask / valuation); see lib/price-kind.ts.
+  kind: PriceKind | null;
 }
 
 interface SealedDetailModalProps {
@@ -185,7 +189,7 @@ export default function SealedDetailModal({
         supabase
           .from("pokemon_sealed_market_listings")
           .select(
-            "product_id, price_type, price, currency, sealed_condition, variant_edition, location_id, listing_url, last_updated, currencies(symbol)"
+            "product_id, price_type, price_kind, price, currency, sealed_condition, variant_edition, location_id, listing_url, last_updated, currencies(symbol)"
           )
           .eq("product_id", card!.card.card_id),
         fetchRateMap(supabase),
@@ -211,6 +215,7 @@ export default function SealedDetailModal({
           listingUrl: (l.listing_url as string | null) ?? null,
           priceType: l.price_type as "Buy" | "Sell",
           lastUpdated: (l.last_updated as string | null) ?? null,
+          priceKind: isPriceKind(l.price_kind) ? l.price_kind : null,
         })
       );
 
@@ -242,6 +247,7 @@ export default function SealedDetailModal({
         conditionLabel: `${editionLabel(t, l.variantEdition)} · ${conditionLabel(t, l.sealedCondition)}`,
         listingUrl: l.listingUrl,
         lastUpdated: l.lastUpdated,
+        kind: l.priceKind,
       };
     };
 
@@ -563,6 +569,8 @@ function ListingTable({
               symbol = converted.symbol;
               price = converted.price;
             }
+            const kindKey = priceKindMarkerKey(l.kind);
+            const kindTitle = priceKindTitleKey(l.kind);
             return (
               <TableRow key={i}>
                 <TableCell>
@@ -588,6 +596,15 @@ function ListingTable({
                     {l.marketRegion && (
                       <Badge variant="secondary" className="h-auto px-1.5 py-px text-xs">
                         {l.marketRegion}
+                      </Badge>
+                    )}
+                    {kindKey && (
+                      <Badge
+                        variant="outline"
+                        className="h-auto px-1.5 py-px text-xs font-normal"
+                        title={kindTitle ? t(kindTitle) : undefined}
+                      >
+                        {t(kindKey)}
                       </Badge>
                     )}
                   </div>
