@@ -67,7 +67,7 @@ async function runViewport(browser, viewportName, viewport) {
   );
 
   const stateButtons = page.getByRole("group", { name: "Fixture state" }).getByRole("button");
-  assert(await stateButtons.count() === 3, `${viewportName} fixture has the wrong state count`);
+  assert(await stateButtons.count() === 6, `${viewportName} fixture has the wrong state count`);
   for (let index = 0; index < await stateButtons.count(); index += 1) {
     const button = stateButtons.nth(index);
     await button.focus();
@@ -99,8 +99,20 @@ async function runViewport(browser, viewportName, viewport) {
   assert(await evidence.getAttribute("href") === "https://example.test/releases/svp-101", `${viewportName} mapping evidence link wrong`);
   await evidence.focus();
   assert(await evidence.evaluate((node) => document.activeElement === node), `${viewportName} mapping evidence is not focusable`);
+  const validatedEvidence = page.getByTestId("validated-counterpart-evidence");
+  assert((await validatedEvidence.textContent()).includes("JP productId 568125"), `${viewportName} validated Japanese productId missing`);
+  assert((await validatedEvidence.textContent()).includes("EN productId 509665"), `${viewportName} validated English productId missing`);
   const mappedOverflow = await assertNoOverflow(page, `${viewportName} mapped`);
   const mappedScreenshot = await capture(page, viewportName, "mapped");
+
+  await page.getByTestId("fixture-state-mapped-price-empty").click();
+  await page.getByTestId("fixture-panel-mapped-price-empty").waitFor({ state: "visible" });
+  assert(await page.getByText("The exact mapping is ready, but prices are absent. Profit stays unknown until the enrolled refresh completes.").isVisible(), `${viewportName} price-empty refresh gate missing`);
+  assert(await page.getByText("Profit gate: refresh_required").isVisible(), `${viewportName} refresh-required status missing`);
+  assert((await page.getByText(/unprofitable/i).count()) === 0, `${viewportName} price-empty exact mapping was labeled unprofitable`);
+  assert(await page.getByTestId("validated-counterpart-evidence").isVisible(), `${viewportName} price-empty mapping lost retained proof`);
+  const mappedPriceEmptyOverflow = await assertNoOverflow(page, `${viewportName} mapped price empty`);
+  const mappedPriceEmptyScreenshot = await capture(page, viewportName, "mapped-price-empty");
 
   await page.getByTestId("fixture-state-unknown").click();
   await page.getByTestId("fixture-panel-unknown").waitFor({ state: "visible" });
@@ -150,6 +162,41 @@ async function runViewport(browser, viewportName, viewport) {
   const reviewActionOverflow = await assertNoOverflow(page, `${viewportName} review actions`);
   const reviewActionScreenshot = await capture(page, viewportName, "review-actions");
 
+  await page.getByTestId("fixture-state-catalog-review").click();
+  await page.getByTestId("fixture-panel-catalog-review").waitFor({ state: "visible" });
+  assert(await page.getByText("Latest retained-feed coverage and load").isVisible(), `${viewportName} catalog load report missing`);
+  assert(await page.getByText("14000 / 500 / 4").isVisible(), `${viewportName} catalog partition missing`);
+  assert(await page.getByText("0 requests performed by import").isVisible(), `${viewportName} catalog request accounting missing`);
+  assert(await page.getByText("Operator review required").isVisible(), `${viewportName} catalog ambiguity state missing`);
+  assert((await page.getByText("BS · 14/102", { exact: true }).count()) === 2, `${viewportName} catalog exact identity missing`);
+  const productLink = page.getByRole("link", { name: /11/ });
+  assert(await productLink.getAttribute("href") === "https://www.tcgplayer.com/product/11", `${viewportName} productId link wrong`);
+  assert((await page.getByText(/tcgplayer_SKU/).count()) === 0, `${viewportName} SKU appeared as catalog identity`);
+  const catalogConfirm = page.getByRole("button", { name: "Confirm exact product" });
+  const catalogReject = page.getByRole("button", { name: "Reject product" });
+  assert(await catalogConfirm.isDisabled(), `${viewportName} catalog confirm enabled without evidence`);
+  assert(await catalogReject.isDisabled(), `${viewportName} catalog reject enabled without evidence`);
+  await page.getByLabel("HTTPS evidence URL").fill("https://example.test/base-set/raichu");
+  await page.getByLabel("Evidence note").fill("Exact set, number, image, rarity, and variant confirmed.");
+  assert(!(await catalogConfirm.isDisabled()), `${viewportName} catalog confirm stayed disabled with evidence`);
+  if (viewport.width < 640) {
+    await assertTapTarget(catalogConfirm, `${viewportName} catalog confirm`);
+    await assertTapTarget(catalogReject, `${viewportName} catalog reject`);
+  }
+  const catalogReviewOverflow = await assertNoOverflow(page, `${viewportName} catalog review`);
+  const catalogReviewScreenshot = await capture(page, viewportName, "catalog-review");
+
+  await page.getByTestId("fixture-state-catalog-no-product").click();
+  await page.getByTestId("fixture-panel-catalog-no-product").waitFor({ state: "visible" });
+  assert(await page.getByText("No product observed").isVisible(), `${viewportName} no-product status missing`);
+  assert(await page.getByText("No exact product").isVisible(), `${viewportName} absent productId is not explicit`);
+  const noProductHelp = page.getByText(/This is unknown coverage, not a rejection/);
+  assert(await noProductHelp.isVisible(), `${viewportName} no-product unknown posture missing`);
+  assert((await page.getByText(/^unprofitable$/i).count()) === 0, `${viewportName} no-product state was labeled unprofitable`);
+  await noProductHelp.scrollIntoViewIfNeeded();
+  const catalogNoProductOverflow = await assertNoOverflow(page, `${viewportName} catalog no product`);
+  const catalogNoProductScreenshot = await capture(page, viewportName, "catalog-no-product");
+
   assert(unexpectedDatabaseRequests === 0, `${viewportName} fixture made ${unexpectedDatabaseRequests} database request(s)`);
   assert(pageErrors.length === 0, `${viewportName} page errors: ${pageErrors.join(" | ")}`);
   await context.close();
@@ -157,12 +204,19 @@ async function runViewport(browser, viewportName, viewport) {
     viewportName,
     viewport,
     mapped: { overflow: mappedOverflow, screenshot: mappedScreenshot },
+    mappedPriceEmpty: { overflow: mappedPriceEmptyOverflow, screenshot: mappedPriceEmptyScreenshot },
     unknown: { overflow: unknownOverflow, screenshot: unknownScreenshot },
     review: {
       topOverflow: reviewTopOverflow,
       actionOverflow: reviewActionOverflow,
       topScreenshot: reviewTopScreenshot,
       actionScreenshot: reviewActionScreenshot,
+    },
+    catalog: {
+      reviewOverflow: catalogReviewOverflow,
+      noProductOverflow: catalogNoProductOverflow,
+      reviewScreenshot: catalogReviewScreenshot,
+      noProductScreenshot: catalogNoProductScreenshot,
     },
     unexpectedDatabaseRequests,
     pageErrors,
@@ -179,7 +233,7 @@ try {
     fixtureOnly: true,
     externalRequests: 0,
     databaseRequests: 0,
-    states: ["mapped", "unknown", "review"],
+    states: ["mapped", "mapped-price-empty", "unknown", "review", "catalog-review", "catalog-no-product"],
     results,
   };
   writeFileSync(`${artifactRoot}/english-counterpart-browser-evidence.json`, `${JSON.stringify(report, null, 2)}\n`);

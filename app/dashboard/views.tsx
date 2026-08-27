@@ -21,6 +21,7 @@ import FinancesView from "./FinancesView";
 import ExpensesTab from "./trip/ExpensesTab";
 import POSView from "./POSView";
 import EnglishCounterpartReviewView from "./EnglishCounterpartReviewView";
+import EnglishCatalogReviewView from "./EnglishCatalogReviewView";
 import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNavigationContext";
 
 function RoutedMatchReviewView() {
@@ -61,6 +62,7 @@ export const VIEWS: ViewDef[] = [
   { sentinel: -5, slug: "index", group: "catalog.section", icon: Library, sidebarKey: "catalog.index", titleKey: "catalog.index", render: () => <CardIndexView key="card-index" /> },
   { sentinel: MATCH_REVIEW_SENTINEL, slug: "review", group: "catalog.section", icon: ClipboardCheck, sidebarKey: "review.title", titleKey: "review.title", render: () => <RoutedMatchReviewView key="match-review" /> },
   { sentinel: -17, slug: "counterparts", group: "catalog.section", icon: Languages, sidebarKey: "counterpart.queueNav", titleKey: "counterpart.queueTitle", render: () => <EnglishCounterpartReviewView key="counterpart-review" /> },
+  { sentinel: -18, slug: "english-catalog", group: "catalog.section", icon: Library, sidebarKey: "englishCatalog.nav", titleKey: "englishCatalog.title", render: () => <EnglishCatalogReviewView key="english-catalog-review" /> },
   { sentinel: -12, slug: "health", group: "catalog.section", icon: Activity, sidebarKey: "sidebar.sourceHealth", titleKey: "health.title", render: () => <SourceHealthView key="source-health" /> },
   { sentinel: -13, slug: "events", group: "catalog.section", icon: CalendarDays, sidebarKey: "events.title", titleKey: "events.title", render: () => <EventsCalendarView key="events-calendar" /> },
   // Lives with the curation surfaces: it governs what the image-curation

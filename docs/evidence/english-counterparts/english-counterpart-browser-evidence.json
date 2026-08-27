@@ -1,12 +1,15 @@
 {
-  "generatedAt": "2026-08-26T20:21:15.926Z",
+  "generatedAt": "2026-08-27T12:34:03.950Z",
   "fixtureOnly": true,
   "externalRequests": 0,
   "databaseRequests": 0,
   "states": [
     "mapped",
+    "mapped-price-empty",
     "unknown",
-    "review"
+    "review",
+    "catalog-review",
+    "catalog-no-product"
   ],
   "results": [
     {
@@ -22,6 +25,14 @@
           "body": 1440
         },
         "screenshot": "english-counterpart-desktop-1440x900-mapped.png"
+      },
+      "mappedPriceEmpty": {
+        "overflow": {
+          "viewport": 1440,
+          "document": 1440,
+          "body": 1440
+        },
+        "screenshot": "english-counterpart-desktop-1440x900-mapped-price-empty.png"
       },
       "unknown": {
         "overflow": {
@@ -45,6 +56,20 @@
         "topScreenshot": "english-counterpart-desktop-1440x900-review-top.png",
         "actionScreenshot": "english-counterpart-desktop-1440x900-review-actions.png"
       },
+      "catalog": {
+        "reviewOverflow": {
+          "viewport": 1440,
+          "document": 1440,
+          "body": 1440
+        },
+        "noProductOverflow": {
+          "viewport": 1440,
+          "document": 1440,
+          "body": 1440
+        },
+        "reviewScreenshot": "english-counterpart-desktop-1440x900-catalog-review.png",
+        "noProductScreenshot": "english-counterpart-desktop-1440x900-catalog-no-product.png"
+      },
       "unexpectedDatabaseRequests": 0,
       "pageErrors": []
     },
@@ -61,6 +86,14 @@
           "body": 390
         },
         "screenshot": "english-counterpart-phone-390x844-mapped.png"
+      },
+      "mappedPriceEmpty": {
+        "overflow": {
+          "viewport": 390,
+          "document": 390,
+          "body": 390
+        },
+        "screenshot": "english-counterpart-phone-390x844-mapped-price-empty.png"
       },
       "unknown": {
         "overflow": {
@@ -83,6 +116,20 @@
         },
         "topScreenshot": "english-counterpart-phone-390x844-review-top.png",
         "actionScreenshot": "english-counterpart-phone-390x844-review-actions.png"
+      },
+      "catalog": {
+        "reviewOverflow": {
+          "viewport": 390,
+          "document": 390,
+          "body": 390
+        },
+        "noProductOverflow": {
+          "viewport": 390,
+          "document": 390,
+          "body": 390
+        },
+        "reviewScreenshot": "english-counterpart-phone-390x844-catalog-review.png",
+        "noProductScreenshot": "english-counterpart-phone-390x844-catalog-no-product.png"
       },
       "unexpectedDatabaseRequests": 0,
       "pageErrors": []

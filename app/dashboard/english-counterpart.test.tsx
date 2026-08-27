@@ -177,6 +177,46 @@ describe("EnglishCounterpartPanel", () => {
     expect(screen.getByText("counterpart.psaUnknown")).toBeTruthy();
   });
 
+  it("surfaces validated retained mapping evidence and the price-empty refresh gate", () => {
+    render(<EnglishCounterpartPanel row={mappedRow({
+      gate_status: "refresh_required",
+      completeness: "missing_us_price",
+      comparison_rows: 0,
+      complete_rows: 0,
+      best_raw: null,
+      best_psa: null,
+      evidence: {
+        candidate_evidence: {
+          evidence_kind: "validated_automatic_english_counterpart",
+          release_report_sha256: "1".repeat(64),
+          candidate_artifact_sha256: "2".repeat(64),
+          automatic_evidence_manifest_sha256: "3".repeat(64),
+          image_pair_review_manifest_sha256: "4".repeat(64),
+          automatic_proof_evidence_sha256: "5".repeat(64),
+          japanese: {
+            tcgplayer_product_id: 568125,
+            tcgplayer_group_id: 24701,
+            printed_number: "001/073",
+          },
+          english: {
+            tcgplayer_product_id: 509665,
+            tcgplayer_group_id: 23432,
+            printed_number: "108/162",
+          },
+        },
+      },
+    })} />);
+
+    expect(screen.getByTestId("validated-counterpart-evidence").textContent)
+      .toContain("counterpart.validatedAutomaticEvidence");
+    expect(screen.getByTestId("validated-counterpart-evidence").textContent)
+      .toContain("568125");
+    expect(screen.getByTestId("validated-counterpart-evidence").textContent)
+      .toContain("509665");
+    expect(screen.getByText("counterpart.priceRefreshRequired")).toBeTruthy();
+    expect(screen.queryByText(/unprofitable/i)).toBeNull();
+  });
+
   it("shows an incomplete realized sample separately from the current ask and keeps profit unknown", () => {
     const row = mappedRow({
       completeness: "insufficient_realized_comps",

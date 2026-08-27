@@ -149,6 +149,48 @@ function numeric(value: number | string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+interface ValidatedAutomaticCounterpartEvidence {
+  releaseReportSha256: string;
+  candidateArtifactSha256: string;
+  automaticEvidenceManifestSha256: string;
+  imagePairReviewManifestSha256: string;
+  automaticProofEvidenceSha256: string;
+  japaneseProductId: string;
+  englishProductId: string;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return String(value);
+  return null;
+}
+
+function validatedAutomaticCounterpartEvidence(
+  evidence: Record<string, unknown> | null,
+): ValidatedAutomaticCounterpartEvidence | null {
+  const candidate = objectValue(evidence?.candidate_evidence);
+  if (!candidate || candidate.evidence_kind !== "validated_automatic_english_counterpart") return null;
+  const japanese = objectValue(candidate.japanese);
+  const english = objectValue(candidate.english);
+  const parsed = {
+    releaseReportSha256: nonEmptyString(candidate.release_report_sha256),
+    candidateArtifactSha256: nonEmptyString(candidate.candidate_artifact_sha256),
+    automaticEvidenceManifestSha256: nonEmptyString(candidate.automatic_evidence_manifest_sha256),
+    imagePairReviewManifestSha256: nonEmptyString(candidate.image_pair_review_manifest_sha256),
+    automaticProofEvidenceSha256: nonEmptyString(candidate.automatic_proof_evidence_sha256),
+    japaneseProductId: nonEmptyString(japanese?.tcgplayer_product_id),
+    englishProductId: nonEmptyString(english?.tcgplayer_product_id),
+  };
+  if (Object.values(parsed).some((value) => value == null)) return null;
+  return parsed as ValidatedAutomaticCounterpartEvidence;
+}
+
 export function formatCounterpartRoi(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
@@ -351,6 +393,7 @@ export function EnglishCounterpartPanel({
         row.english_foil_treatment,
       ].filter(Boolean).join(" · ")
     : null;
+  const validatedEvidence = validatedAutomaticCounterpartEvidence(row?.evidence ?? null);
 
   return (
     <section
@@ -420,6 +463,29 @@ export function EnglishCounterpartPanel({
 
       {!compact && row && (
         <div className="mt-2 min-w-0 border-t border-foreground/10 pt-2 text-xs text-muted-foreground">
+          {row.gate_status === "refresh_required" && row.comparison_rows === 0 && (
+            <p className="mb-2 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-amber-900 dark:text-amber-200">
+              {t("counterpart.priceRefreshRequired")}
+            </p>
+          )}
+          {validatedEvidence && (
+            <details
+              data-testid="validated-counterpart-evidence"
+              className="mb-2 min-w-0 rounded border border-emerald-500/30 bg-emerald-500/5 p-2"
+            >
+              <summary className="cursor-pointer font-medium text-foreground">
+                {t("counterpart.validatedAutomaticEvidence")}
+                {` · JP productId ${validatedEvidence.japaneseProductId} → EN productId ${validatedEvidence.englishProductId}`}
+              </summary>
+              <div className="mt-1 space-y-0.5 break-all text-[11px]">
+                <p>{t("counterpart.releaseReportDigest")}: {validatedEvidence.releaseReportSha256}</p>
+                <p>{t("counterpart.candidateArtifactDigest")}: {validatedEvidence.candidateArtifactSha256}</p>
+                <p>{t("counterpart.automaticEvidenceDigest")}: {validatedEvidence.automaticEvidenceManifestSha256}</p>
+                <p>{t("counterpart.imageReviewDigest")}: {validatedEvidence.imagePairReviewManifestSha256}</p>
+                <p>{t("counterpart.mappingProofDigest")}: {validatedEvidence.automaticProofEvidenceSha256}</p>
+              </div>
+            </details>
+          )}
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
             <span>
               {t("counterpart.coverage")}: {row.complete_rows}/{row.comparison_rows}

@@ -8,14 +8,19 @@ The interface keeps unknown data visible and routes ambiguous candidates to revi
 ## Architecture
 
 `app/dashboard/english-counterpart.tsx` defines the PostgREST read model, paginated loader, SWR hook, review RPC helper, and compact mapped-state panel.
+The expanded mapped panel recognizes the immutable validated automatic evidence envelope and shows both productIds plus the release report, candidate artifact, automatic evidence, artwork-review, and row-proof digests.
+An exact mapping with no current prices shows `refresh_required` and keeps profit unknown while its enrolled refresh is pending.
 `CardBrowser.tsx` fetches counterpart rows for each visible page of Japanese Pokemon cards.
 `columns.tsx` renders the compact panel in the desktop table, and `CardDetailModal.tsx` renders the complete panel in card detail.
 `app/dashboard/EnglishCounterpartReviewView.tsx` paginates the unbounded review view and owns the operator form.
 `views.tsx` exposes the review queue as the Pokemon Catalog `Counterparts` view.
+`app/dashboard/EnglishCatalogReviewView.tsx` paginates catalog candidates and import receipts, renders exact coverage and load, and owns versioned catalog decisions.
+`views.tsx` exposes that queue separately as `English catalog intake` so product admission is not confused with Japanese-to-English release mapping.
 
 Both loaders use the shared PostgREST pagination helpers, so neither assumes the default response cap is the complete result set.
 The browser never writes counterpart base tables directly.
 Exact, no-counterpart, reject, and retry decisions call `review_pokemon_english_counterpart` with the candidate UID and current review version.
+Catalog confirm and reject decisions call `review_pokemon_english_catalog_candidate` with the exact candidate key, current review version, HTTPS evidence, and note.
 
 ## Operator states
 
@@ -41,23 +46,42 @@ Stamp-only cards explain that an exact mapping remains possible when evidence pr
 Exact and no-counterpart actions stay disabled until the operator supplies a valid HTTPS evidence URL and a decision note.
 An exact action also requires an English card ID and cannot silently accept an alternate name-only guess.
 
+## English catalog intake states
+
+The catalog-intake surface presents imported, ambiguous, no-product, and rejected states separately.
+Every row shows the reviewed TCGplayer group, canonical English set code, complete normalized collector number, raw source number, exact TCGplayer productId, imported card ID, reason, source and crosswalk evidence, and evidence digest.
+The productId link is the canonical external identity.
+SKU is deliberately absent because condition and finish SKUs are attached later by the existing registrar.
+
+Ambiguous products stay in operator review for same-number siblings, reverse holos, stamps, multiple images, rarity or variant uncertainty, name disagreement, or other exact-product conflicts.
+Confirm and reject actions remain disabled until a valid HTTPS evidence URL and note exist.
+No-product rows explicitly say that a reviewed group has unknown retained coverage and is neither rejected nor unprofitable.
+No durable import receipt displays coverage as unknown rather than zero.
+
+The latest receipt panel keeps auto-import, review, and no-product counts separate.
+It also displays source group and product counts, reviewed groups, external requests performed by import, estimated manual feed requests, retained bytes, and estimated definition, TCGplayer identifier, candidate, and event rows.
+Both candidate and receipt reads page past the PostgREST cap.
+
 ## Responsive and accessibility contract
 
 The mapped and unknown panels wrap long identity and evidence content without widening the page.
 The review card switches from a two-column comparison to a stacked phone layout and keeps all controls at least 44 pixels high.
 State buttons, evidence links, fields, and decision actions are keyboard focusable and have accessible labels.
 The controlled browser fixture checks 1440 by 900 and 390 by 844 viewports, no horizontal overflow, zero page errors, and no database or external request.
+It also checks 44-pixel catalog review actions on phone, exact product links, source/load labels, disabled actions without evidence, enabled actions with evidence, and explicit no-product unknown posture.
 
 ## Validation
 
-Component tests cover exact mapping, separate current-ask and realized-sold-comparable panels, exact raw and PSA axes, missing or insufficient realized evidence as unknown, conservative decision basis, ambiguity without a guess, read failures, pagination past the PostgREST cap, versioned RPC arguments, artwork and stamp posture, failed retry, and decision validation.
+Component tests cover exact mapping, separate current-ask and realized-sold-comparable panels, exact raw and PSA axes, missing or insufficient realized evidence as unknown, conservative decision basis, ambiguity without a guess, read failures, pagination past the PostgREST cap, versioned RPC arguments, artwork and stamp posture, failed retry, catalog partition and load, no-product unknown state, catalog pagination, and catalog decision validation.
 The controlled browser journey is invoked with:
 
 ```bash
 npm run test:e2e:english-counterparts
 ```
 
-Durable result JSON and screenshots are stored under `docs/evidence/english-counterparts/` for desktop and phone mapped, unknown, review-top, and review-action states.
+Durable result JSON and screenshots are stored under `docs/evidence/english-counterparts/` for desktop and phone mapped, unknown, counterpart review, catalog review, and catalog no-product states.
+The retained mapping partition currently contains 64 validated mappings and 30,095 review-only rows.
+The UI reads those rows through paginated PostgREST helpers so the server row cap cannot silently truncate either operator surface.
 The fixture route is enabled only when `E2E_FIXTURES_ENABLED=1` and returns not found otherwise.
 
 ## Non-goals

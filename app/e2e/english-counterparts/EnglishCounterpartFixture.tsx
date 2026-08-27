@@ -10,8 +10,35 @@ import {
   EnglishCounterpartCandidateCard,
   type EnglishCounterpartReviewRow,
 } from "@/app/dashboard/EnglishCounterpartReviewView";
+import {
+  CatalogCandidateCard,
+  CatalogRunSummary,
+  type EnglishCatalogCandidateRow,
+  type EnglishCatalogImportRun,
+} from "@/app/dashboard/EnglishCatalogReviewView";
 
-type FixtureState = "mapped" | "unknown" | "review";
+type FixtureState = "mapped" | "mapped-price-empty" | "unknown" | "review" | "catalog-review" | "catalog-no-product";
+
+const validatedMappingEvidence = {
+  candidate_evidence: {
+    evidence_kind: "validated_automatic_english_counterpart",
+    release_report_sha256: "0d86103ad97111792c5eedd6c75d28dc48de62b85fd5087a7b4f1070c3b92303",
+    candidate_artifact_sha256: "204397c1565d01068ced2240eb7f1163e7116e572918e86327fb6c0d0d1685eb",
+    automatic_evidence_manifest_sha256: "53e2046a19b7d8ac17a9a03f859df14cbf50b294c85f2cc1e4d90f8804e9a8af",
+    image_pair_review_manifest_sha256: "9bb28610d7fec0f386216036cd06581b9d7f08a70bb789cf2652ce45b72ed43c",
+    automatic_proof_evidence_sha256: "5".repeat(64),
+    japanese: {
+      tcgplayer_product_id: 568125,
+      tcgplayer_group_id: 24701,
+      printed_number: "001/073",
+    },
+    english: {
+      tcgplayer_product_id: 509665,
+      tcgplayer_group_id: 23432,
+      printed_number: "108/162",
+    },
+  },
+};
 
 const mapped: EnglishCounterpartCardRow = {
   card_id: 42,
@@ -28,7 +55,7 @@ const mapped: EnglishCounterpartCardRow = {
   english_foil_treatment: "other",
   confidence: 1,
   identity_basis: "operator_reference",
-  evidence: { source: "official release checklist" },
+  evidence: validatedMappingEvidence,
   provenance: "operator_review",
   review_posture: "operator_confirmed",
   decision_note: "Official checklist establishes the exact printing.",
@@ -110,6 +137,23 @@ const mapped: EnglishCounterpartCardRow = {
   candidate_updated_at: "2026-08-26T12:20:00Z",
 };
 
+const mappedPriceEmpty: EnglishCounterpartCardRow = {
+  ...mapped,
+  card_id: 45,
+  card_uid: "77777777-7777-4777-8777-777777777777",
+  gate_status: "refresh_required",
+  completeness: "missing_us_price",
+  best_net_profit_usd: null,
+  best_roi_ratio: null,
+  profit_denominator_usd: null,
+  comparison_rows: 0,
+  complete_rows: 0,
+  coverage_ratio: 0,
+  best_raw: null,
+  best_psa: null,
+  prices_computed_at: null,
+};
+
 const unknown: EnglishCounterpartCardRow = {
   ...mapped,
   card_id: 43,
@@ -180,6 +224,89 @@ const review: EnglishCounterpartReviewRow = {
   profit_denominator_usd: null,
 };
 
+const catalogRun: EnglishCatalogImportRun = {
+  run_uid: "66666666-6666-4666-8666-666666666666",
+  snapshot_sha256: "a".repeat(64),
+  crosswalk_sha256: "b".repeat(64),
+  actor: "service_role",
+  completed_at: "2026-08-26T12:30:00Z",
+  report: {
+    snapshot_groups: 200,
+    snapshot_products: 18000,
+    reviewed_groups: 150,
+    unmapped_groups: 50,
+    auto_import_products: 14000,
+    review_products: 500,
+    no_product_groups: 4,
+    external_requests_performed: 0,
+    estimated_feed_requests: 201,
+    snapshot_bytes: 9000000,
+    crosswalk_bytes: 100000,
+    estimated_definition_rows: 14000,
+    estimated_tcgplayer_identifier_rows: 14000,
+    estimated_durable_candidate_rows: 14504,
+    estimated_durable_event_rows: 14505,
+  },
+};
+
+const catalogReview: EnglishCatalogCandidateRow = {
+  candidate_key: "tcgplayer:3:100:11",
+  tcgplayer_group_id: 100,
+  tcgplayer_product_id: 11,
+  tcgplayer_group_name: "Base Set",
+  set_code: "BS",
+  raw_collector_number: "14/102",
+  card_number: "14/102",
+  regional_name: "Raichu",
+  clean_name: "Raichu",
+  rarity: "Rare Holo",
+  image_url: null,
+  outcome: "review_required",
+  reason: "same_number_products_ambiguous",
+  evidence: {
+    matcher: "shared_pokemon_identity_v1",
+    category_id: 3,
+    tcgplayer_group_id: 100,
+    tcgplayer_product_id: 11,
+    raw_collector_number: "14/102",
+    canonical_set_code: "BS",
+    competing_product_ids: [11, 12],
+  },
+  evidence_sha256: "c".repeat(64),
+  imported_card_uid: null,
+  imported_card_id: null,
+  review_version: 3,
+  first_seen_at: "2026-08-26T12:00:00Z",
+  last_seen_at: "2026-08-26T12:15:00Z",
+  reviewed_by: null,
+  reviewed_at: null,
+  review_note: null,
+  review_evidence_url: null,
+};
+
+const catalogNoProduct: EnglishCatalogCandidateRow = {
+  ...catalogReview,
+  candidate_key: "tcgplayer:3:200:no-product",
+  tcgplayer_group_id: 200,
+  tcgplayer_product_id: null,
+  tcgplayer_group_name: "Reviewed Promo Group",
+  set_code: "SWSH",
+  raw_collector_number: null,
+  card_number: null,
+  regional_name: null,
+  clean_name: null,
+  rarity: null,
+  outcome: "no_product",
+  reason: "reviewed_group_missing_from_snapshot",
+  evidence: {
+    matcher: "shared_pokemon_identity_v1",
+    category_id: 3,
+    tcgplayer_group_id: 200,
+    outcome: "no_product",
+    reason: "reviewed_group_missing_from_snapshot",
+  },
+};
+
 export function EnglishCounterpartFixture() {
   const [state, setState] = useState<FixtureState>("mapped");
   return (
@@ -192,7 +319,7 @@ export function EnglishCounterpartFixture() {
           </p>
         </div>
         <div role="group" aria-label="Fixture state" className="flex min-w-0 flex-wrap gap-2">
-          {(["mapped", "unknown", "review"] as const).map((value) => (
+          {(["mapped", "mapped-price-empty", "unknown", "review", "catalog-review", "catalog-no-product"] as const).map((value) => (
             <Button
               key={value}
               data-testid={`fixture-state-${value}`}
@@ -201,15 +328,38 @@ export function EnglishCounterpartFixture() {
               aria-pressed={state === value}
               onClick={() => setState(value)}
             >
-              {value === "mapped" ? "Mapped" : value === "unknown" ? "Unknown price" : "Ambiguous review"}
+              {value === "mapped"
+                ? "Mapped"
+                : value === "mapped-price-empty"
+                  ? "Mapped, refresh required"
+                : value === "unknown"
+                  ? "Unknown price"
+                  : value === "review"
+                    ? "Ambiguous counterpart"
+                    : value === "catalog-review"
+                      ? "Ambiguous product"
+                      : "No product"}
             </Button>
           ))}
         </div>
         <section data-testid={`fixture-panel-${state}`} aria-label={`${state} counterpart state`} className="min-w-0">
           {state === "mapped" && <EnglishCounterpartPanel row={mapped} />}
+          {state === "mapped-price-empty" && <EnglishCounterpartPanel row={mappedPriceEmpty} />}
           {state === "unknown" && <EnglishCounterpartPanel row={unknown} />}
           {state === "review" && (
             <EnglishCounterpartCandidateCard row={review} onSaved={async () => undefined} />
+          )}
+          {state === "catalog-review" && (
+            <div className="min-w-0 space-y-4">
+              <CatalogRunSummary run={catalogRun} />
+              <CatalogCandidateCard row={catalogReview} onSaved={async () => undefined} />
+            </div>
+          )}
+          {state === "catalog-no-product" && (
+            <div className="min-w-0 space-y-4">
+              <CatalogRunSummary run={catalogRun} />
+              <CatalogCandidateCard row={catalogNoProduct} onSaved={async () => undefined} />
+            </div>
           )}
         </section>
       </div>
