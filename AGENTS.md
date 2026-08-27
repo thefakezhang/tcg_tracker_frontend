@@ -84,6 +84,10 @@ app/
   auth/
     callback/route.ts     # Google OAuth callback
     e2e/route.ts          # Local-only guarded browser-auth seam for E2E runs (lib/e2e-auth-guard.ts)
+  wantlist/               # PUBLIC static want list page - no auth, no runtime DB (wantlist_page.md)
+    page.tsx              # force-static; reads lib/wantlist/cards.json at build time
+    WantList.tsx          # client: search, localStorage check-off, image lightbox
+    wantlist.module.css   # self-scoped palette (root layout forces `dark`)
   api/
     aggregate-prices/route.ts # Authenticated proxy that invokes the aggregate-prices edge function
     build-revision/route.ts   # Reports the deployed git commit SHA (used by E2E revision checks)
@@ -212,6 +216,8 @@ app/
 components/ui/            # shadcn/ui primitives (do not edit directly unless customizing)
 lib/
   utils.ts                # cn() utility (clsx + tailwind-merge)
+  export/sheet.ts         # dependency-free CSV + XLSX writers (store-mode ZIP); sheet.test.ts guards it
+  wantlist/cards.json     # build-time data for /wantlist (swap this file to change the list)
   purchase-planning.ts    # Planner read-model types, demand ordering, and summary calculations
   pos-camera.ts            # Recognizer contracts, capture normalization, durable retry, and media keys
   card-search.ts          # Shared search-term semantics for every curator card search
@@ -704,6 +710,22 @@ The authoritative schema is `docs/schema.md` in the backend repository; this tab
 Sealed enums: `sealed_condition_enum` (shrink/no_shrink/standard), `sealed_edition_enum` (1ed/unlimited/standard).
 
 The listings tables have a foreign key to `currencies` — queries join via `currencies(symbol)`.
+
+## Public surface (read before adding a route or an API handler)
+
+`middleware.ts` only redirects unauthenticated users away from `/dashboard`.
+**Every other route, including everything under `/api`, is reachable anonymously** unless the handler checks the session itself.
+`/api/aggregate-prices` and `/api/proxy-image` both do; a new handler must too.
+
+- `/wantlist` is public by design and statically generated - see `wantlist_page.md`.
+It is excluded from the middleware matcher so anonymous hits skip the Supabase `getUser()` round trip.
+- `next.config.ts` sets the security headers (CSP `frame-ancestors`, `X-Frame-Options`, `Referrer-Policy`, `X-Content-Type-Options`, `Permissions-Policy`, HSTS) on every route.
+Do not drop them.
+- **Never render `card_uid` on a public page.**
+`card_index_merge_pokemon_unlinked_refs` is `SECURITY DEFINER`, anon-executable, and defaults to `p_dry_run => false`.
+It takes two `card_uid`s, and those uuids are the only thing between the public anon key and a destructive merge.
+- The `anon` role holds **zero** table and view privileges, so a public page cannot query Supabase from the browser.
+Bake its data in at build time rather than adding anon grants.
 
 ## Conventions
 

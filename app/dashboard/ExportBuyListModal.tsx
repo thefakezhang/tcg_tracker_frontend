@@ -26,6 +26,7 @@ import { useLanguage, type Language } from "./LanguageContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatUsd } from "@/lib/money";
+import { toCsv, toXlsx, downloadBlob, type Row } from "@/lib/export/sheet";
 import {
   Card,
   CardAction,
@@ -395,6 +396,51 @@ export default function ExportBuyListModal({
     [displayCurrency, convertPrice]
   );
 
+  // Spreadsheet export: the same ordered cards the PDF uses, as rows a
+  // supplier can fill in and send back. Blank trailing columns are deliberate.
+  const buildRows = useCallback((): Row[] => {
+    const header = [
+      "No.",
+      "Set",
+      "Card no.",
+      "Name (JP)",
+      "Name (EN)",
+      "PSA",
+      "Target price",
+      "In stock",
+      "Qty",
+      "Unit price",
+      "Notes",
+    ];
+    const body = orderedCards.map((c, i) => {
+      const def = c.card;
+      return [
+        i + 1,
+        def.set_code ?? "",
+        def.card_number && def.card_number !== "UNKNOWN" ? def.card_number : "",
+        def.regional_name ?? "",
+        def.english_name ?? "",
+        c.psaGrade ? `PSA ${c.psaGrade}` : "",
+        formatTargetPrice((c as PdfCard).targetPriceUsd) ?? "",
+        "",
+        "",
+        "",
+        "",
+      ];
+    });
+    return [header, ...body];
+  }, [orderedCards, formatTargetPrice]);
+
+  const safeName = (buylistName || "buylist").replace(/[^\w.-]+/g, "_").slice(0, 60);
+
+  const handleExportCsv = useCallback(() => {
+    downloadBlob(toCsv(buildRows()), `${safeName}.csv`);
+  }, [buildRows, safeName]);
+
+  const handleExportXlsx = useCallback(() => {
+    downloadBlob(toXlsx(buildRows(), buylistName || "Buy List"), `${safeName}.xlsx`);
+  }, [buildRows, safeName, buylistName]);
+
   const handleExport = useCallback(async () => {
     setGenerating(true);
     try {
@@ -440,6 +486,14 @@ export default function ExportBuyListModal({
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             {t("buyList.cancel")}
+          </Button>
+          <Button variant="outline" onClick={handleExportCsv}>
+            <Download className="size-4 mr-1" />
+            {t("buyList.exportCsv")}
+          </Button>
+          <Button variant="outline" onClick={handleExportXlsx}>
+            <Download className="size-4 mr-1" />
+            {t("buyList.exportXlsx")}
           </Button>
           <Button onClick={handleExport} disabled={generating}>
             <Download className="size-4 mr-1" />

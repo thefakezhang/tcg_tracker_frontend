@@ -1,19 +1,15 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
 export async function middleware(request: NextRequest) {
-  if (
-    process.env.NODE_ENV !== "production" &&
-    process.env.E2E_FIXTURES_ENABLED === "1" &&
-    request.nextUrl.pathname.startsWith("/e2e/")
-  ) {
-    return NextResponse.next({ request });
-  }
   return await updateSession(request);
 }
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // /wantlist is a public, statically generated page with no auth context.
+    // Running the session refresh on it would add a Supabase getUser() round
+    // trip to every anonymous hit and defeat static delivery.
+    "/((?!_next/static|_next/image|favicon.ico|wantlist|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

@@ -1,0 +1,80 @@
+/* Self-contained palette. The root layout forces `dark` on <html>, so every
+   colour here is set on the page wrapper rather than inherited. */
+.page {
+  --paper: #f5f7fa; --surface: #fff; --ink: #16233b; --ink2: #44546e; --ink3: #7c899d;
+  --rule: #dce2ec; --rule2: #b8c2d3; --shu: #c2412b; --indigo: #2c4577; --onIndigo: #fff;
+  --band: #eef2f8;
+  background: var(--paper); color: var(--ink);
+  font-family: var(--font-noto-jp), -apple-system, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+  font-size: 15px; line-height: 1.7; min-height: 100vh;
+}
+.wrap { max-width: 1020px; margin: 0 auto; padding: 0 20px 96px; }
+.mast { padding: 56px 0 32px; border-bottom: 2px solid var(--ink); }
+.kicker { font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--shu); margin: 0 0 14px; }
+.title { font-weight: 700; font-size: clamp(30px, 5.4vw, 52px); line-height: 1.15; margin: 0; text-wrap: balance; }
+.titleEn { display: block; font-size: clamp(13px, 1.7vw, 17px); font-weight: 400; color: var(--ink3);
+  letter-spacing: .16em; text-transform: uppercase; margin-top: 12px; }
+.lede { margin: 18px 0 0; max-width: 62ch; color: var(--ink2); }
+.stats { display: flex; flex-wrap: wrap; margin: 30px 0 0; border: 1px solid var(--rule); background: var(--surface); border-radius: 2px; }
+.stat { flex: 1 1 150px; padding: 16px 20px; border-right: 1px solid var(--rule); }
+.stat:last-child { border-right: 0; }
+.stat b { display: block; font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 11px; letter-spacing: .18em; color: var(--ink3); text-transform: uppercase; }
+.cond { margin: 24px 0 0; padding: 14px 18px; border: 1px solid var(--indigo); border-radius: 2px; background: var(--band); font-size: 14px; }
+.cond b { display: block; font-size: 13px; letter-spacing: .08em; margin-bottom: 4px; }
+.condTag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 2px; background: var(--indigo); color: var(--onIndigo); }
+.note { margin: 20px 0 0; }
+.note h3 { font-size: 14px; margin: 0 0 8px; }
+.note ul { margin: 0; padding-left: 20px; color: var(--ink2); font-size: 14px;
+  /* Tailwind preflight strips list markers globally; restore them here. */
+  list-style: disc; }
+.note li { margin: 4px 0; }
+.bar { position: sticky; top: 0; z-index: 20; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  padding: 12px 0; background: var(--paper); border-bottom: 1px solid var(--rule); }
+.bar input { flex: 1 1 260px; font: inherit; font-size: 14px; padding: 9px 12px; border: 1px solid var(--rule2);
+  border-radius: 2px; background: var(--surface); color: var(--ink); }
+.bar input:focus-visible { outline: 2px solid var(--shu); outline-offset: 1px; }
+.prog { font-size: 12px; color: var(--ink3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.prog b { color: var(--shu); }
+.bar button { font: inherit; font-size: 12px; padding: 9px 14px; cursor: pointer; color: var(--ink2);
+  background: transparent; border: 1px solid var(--rule2); border-radius: 2px; }
+.bar button:hover { color: var(--ink); border-color: var(--ink3); }
+.set { margin: 38px 0 0; }
+.sethead { display: flex; align-items: baseline; gap: 14px; margin: 0 0 2px; padding: 9px 14px;
+  background: var(--band); border: 1px solid var(--rule); border-bottom: 0; border-radius: 2px 2px 0 0; }
+.code { font-size: 12px; font-weight: 500; letter-spacing: .06em; color: var(--onIndigo);
+  background: var(--indigo); padding: 3px 8px; border-radius: 2px; white-space: nowrap; }
+.setname { font-size: 17px; font-weight: 700; flex: 1; min-width: 0; }
+.setyear, .setqty { font-size: 11px; color: var(--ink3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rows { border: 1px solid var(--rule); border-radius: 0 0 2px 2px; background: var(--surface); overflow: hidden; }
+.row { display: grid; grid-template-columns: 30px 58px 1fr; align-items: center; gap: 14px;
+  padding: 10px 14px; border-top: 1px solid var(--rule); }
+.row:first-child { border-top: 0; }
+.row:hover { background: var(--band); }
+.done { opacity: .45; }
+.tick { display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.chk { width: 16px; height: 16px; accent-color: var(--shu); cursor: pointer; margin: 0; }
+.zoom { padding: 0; border: 0; background: none; cursor: zoom-in; display: block; width: 58px; }
+.zoom:focus-visible { outline: 2px solid var(--shu); outline-offset: 2px; }
+.pic { width: 58px; aspect-ratio: 63/88; object-fit: cover; object-position: center top;
+  border-radius: 3px; display: block; background: var(--band); border: 1px solid var(--rule2); }
+.picNone { width: 58px; aspect-ratio: 63/88; border-radius: 3px; border: 1px solid var(--rule);
+  background: repeating-linear-gradient(45deg, var(--band), var(--band) 4px, transparent 4px, transparent 8px); }
+.meta { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 12px; min-width: 0; cursor: pointer; }
+.num { font-size: 13px; color: var(--ink2); font-variant-numeric: tabular-nums; }
+.nm { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
+.jp { font-weight: 500; }
+.en { font-size: 12px; color: var(--ink3); }
+.played { font-size: 10px; color: var(--onIndigo); background: var(--indigo); padding: 1px 6px; border-radius: 2px; white-space: nowrap; }
+.rar { font-size: 10px; color: var(--ink3); border: 1px solid var(--rule2); padding: 1px 5px; border-radius: 2px; white-space: nowrap; }
+.empty { padding: 40px 0; text-align: center; color: var(--ink3); }
+.footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--rule);
+  display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--ink3); flex-wrap: wrap; }
+.lb { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 16, 28, .82); padding: 24px; }
+.lb figure { margin: 0; max-width: 420px; text-align: center; }
+.lb img { width: min(78vw, 300px); aspect-ratio: 63/88; object-fit: cover; border-radius: 6px; }
+.lb figcaption { margin-top: 14px; color: #f2f5fa; font-size: 14px; }
+.lb figcaption b { display: block; font-size: 19px; margin-bottom: 4px; }
+.lbClose { position: absolute; top: 18px; right: 22px; font-size: 26px; line-height: 1; color: #f2f5fa;
+  background: none; border: 0; cursor: pointer; }
