@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/table";
 import BalanceSheetCard from "./BalanceSheetCard";
 import AccountingRollupView from "./AccountingRollupView";
+import BusinessHealthSection from "./BusinessHealthSection";
 import JournalEntryDialog, { type GlAccount } from "./JournalEntryDialog";
 import AccountRegisterModal from "./AccountRegisterModal";
 import { formatUsd as usd } from "@/lib/money";
@@ -50,7 +51,7 @@ export default function FinancesView() {
   const [entryOpen, setEntryOpen] = useState(false);
   const [register, setRegister] = useState<GlAccount | null>(null);
   const [section, setSection] =
-    useState<"overview" | "economics" | "exit-costs">("overview");
+    useState<"overview" | "health" | "economics" | "exit-costs">("overview");
 
   const fetchAll = useCallback(async () => {
     const supabase = createClient();
@@ -95,14 +96,15 @@ export default function FinancesView() {
 
   return (
     <div className="min-w-0 space-y-6">
-      <Tabs value={section} onValueChange={(value) => setSection(value as "overview" | "economics" | "exit-costs")}>
+      <Tabs value={section} onValueChange={(value) => setSection(value as "overview" | "health" | "economics" | "exit-costs")}>
         <TabsList className="max-w-full justify-start overflow-x-auto">
           <TabsTrigger className="shrink-0" value="overview">{t("finances.overview")}</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="health">{t("finances.healthTitle")}</TabsTrigger>
           <TabsTrigger className="shrink-0" value="economics">{t("inventoryEconomics.title")}</TabsTrigger>
           <TabsTrigger className="shrink-0" value="exit-costs">{t("economics.costProfiles")}</TabsTrigger>
         </TabsList>
       </Tabs>
-      {section === "exit-costs" ? <ExitCostSettings /> : section === "economics" ? <InventoryEconomics /> : <>
+      {section === "exit-costs" ? <ExitCostSettings /> : section === "economics" ? <InventoryEconomics /> : section === "health" ? <BusinessHealthSection /> : <>
       <div className="flex justify-end">
         <Button size="sm" onClick={() => setEntryOpen(true)}><Plus className="size-4 mr-1" />{t("gl.newEntry")}</Button>
       </div>
