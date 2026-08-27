@@ -75,21 +75,28 @@ export default function BusinessHealthSection() {
   const [segments, setSegments] = useState<SegmentRow[]>([]);
   const [velocity, setVelocity] = useState<VelocityRow[]>([]);
   const [aging, setAging] = useState<AgingRow[]>([]);
+  const [capitalContributed, setCapitalContributed] = useState<number | null>(null);
 
   const fetchAll = useCallback(async () => {
     const supabase = createClient();
-    const [pos, mon, seg, vel, age] = await Promise.all([
+    const [pos, mon, seg, vel, age, trial] = await Promise.all([
       supabase.from("business_cash_position_v").select("*").single(),
       supabase.from("business_monthly_cashflow_v").select("*").order("period_month"),
       supabase.from("business_segment_economics_v").select("*").order("trip_id", { ascending: true, nullsFirst: false }),
       supabase.from("business_velocity_v").select("*").order("trip_id", { ascending: true, nullsFirst: false }),
       supabase.from("business_inventory_aging_v").select("*").order("age_bucket"),
+      supabase.rpc("get_trial_balance"),
     ]);
     setPosition((pos.data as CashPosition | null) ?? null);
     setMonths((mon.data as MonthRow[]) ?? []);
     setSegments((seg.data as SegmentRow[]) ?? []);
     setVelocity((vel.data as VelocityRow[]) ?? []);
     setAging((age.data as AgingRow[]) ?? []);
+    // Owner capital is an equity credit (negative balance) in the GL; show
+    // the contributed total as a positive number.
+    const equity = ((trial.data as { code: string; balance_usd: number }[] | null) ?? [])
+      .find((r) => r.code === "3000");
+    setCapitalContributed(equity ? -Number(equity.balance_usd) : null);
   }, []);
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -101,7 +108,11 @@ export default function BusinessHealthSection() {
   return (
     <div className="space-y-4">
       {/* Headline cards */}
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+        <Card>
+          <CardHeader className="pb-1"><CardTitle className="text-xs text-muted-foreground">{t("finances.healthContributed")}</CardTitle></CardHeader>
+          <CardContent className="text-xl font-semibold tabular-nums">{usd(capitalContributed)}</CardContent>
+        </Card>
         <Card>
           <CardHeader className="pb-1"><CardTitle className="text-xs text-muted-foreground">{t("finances.healthDeployed")}</CardTitle></CardHeader>
           <CardContent className="text-xl font-semibold tabular-nums">{usd(deployed)}</CardContent>
