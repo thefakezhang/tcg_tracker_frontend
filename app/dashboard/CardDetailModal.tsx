@@ -77,6 +77,7 @@ import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
 import GradeEvidencePanel from "./GradeEvidencePanel";
 import { decisionSnapshot } from "./DecisionActions";
 import { detailOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
+import { isPriceKind, priceKindMarkerKey, priceKindTitleKey, type PriceKind } from "@/lib/price-kind";
 import { formatRoiPct, roiToneClass } from "./theoretical-roi";
 import { MarketEvidenceCallout } from "./MarketEvidenceCallout";
 import { compareMarketEstimates, type MarketEvidence } from "./market-evidence";
@@ -112,6 +113,8 @@ export interface DetailListing {
   // pokemon_market_listings.last_updated; drives the freshness chip next
   // to the location. null when the row predates the column being populated.
   lastUpdated: string | null;
+  // What the price is (sold / bid / ask / valuation); see lib/price-kind.ts.
+  kind: PriceKind | null;
 }
 
 // TCGplayer's product page accepts query params to preselect a specific SKU
@@ -347,7 +350,7 @@ export default function CardDetailModal({
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
             .select(
-              "card_id, price_type, price, currency, psa_grade, condition, location_id, listing_url, last_updated, currencies(symbol)"
+              "card_id, price_type, price_kind, price, currency, psa_grade, condition, location_id, listing_url, last_updated, currencies(symbol)"
             )
             .eq("card_id", card!.card.card_id),
           fetchRateMap(supabase),
@@ -421,6 +424,7 @@ export default function CardDetailModal({
           location_id: l.location_id as number,
           listing_url: (l.listing_url as string | null) ?? null,
           last_updated: (l.last_updated as string | null) ?? null,
+          price_kind: isPriceKind(l.price_kind) ? l.price_kind : null,
         })
       );
 
@@ -538,6 +542,7 @@ export default function CardDetailModal({
           ? enhanceTCGplayerURL(l.listing_url, card.card, l.condition)
           : l.listing_url,
         lastUpdated: l.last_updated,
+        kind: l.price_kind ?? null,
       };
     };
 
@@ -1240,6 +1245,8 @@ export function ListingTable({
               symbol = converted.symbol;
               price = converted.price;
             }
+            const kindKey = priceKindMarkerKey(l.kind);
+            const kindTitle = priceKindTitleKey(l.kind);
             return (
               <TableRow key={i}>
                 <TableCell>
@@ -1266,6 +1273,15 @@ export function ListingTable({
                     {l.marketRegion && (
                       <Badge variant="secondary" className="h-auto px-1.5 py-px text-xs">
                         {l.marketRegion}
+                      </Badge>
+                    )}
+                    {kindKey && (
+                      <Badge
+                        variant="outline"
+                        className="h-auto px-1.5 py-px text-xs font-normal"
+                        title={kindTitle ? t(kindTitle) : undefined}
+                      >
+                        {t(kindKey)}
                       </Badge>
                     )}
                   </div>

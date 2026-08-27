@@ -23,8 +23,12 @@ import {
 } from "./english-counterpart";
 
 import { formatJpy, formatRoi, formatUsd, formatUsdCompact } from "@/lib/money";
+import { priceKindMarkerKey, priceKindTitleKey } from "@/lib/price-kind";
+import { laneLabel } from "@/lib/lane";
+
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
   const { displayCurrency, convertPrice } = useCurrency();
+  const { t } = useTranslation();
   if (!entry) return <span>{"\u2014"}</span>;
 
   let symbol = entry.symbol;
@@ -35,9 +39,26 @@ export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }:
     price = converted.price;
   }
 
+  // One word beside the number says what it is - a sale, a shop's offer, or
+  // an estimate - so the operator never mistakes a guess for evidence. An ask
+  // carries no marker (lib/price-kind.ts).
+  const kindKey = priceKindMarkerKey(entry.kind);
+  const kindTitle = priceKindTitleKey(entry.kind);
+
   return (
     <div>
-      <div>{symbol}{price}</div>
+      <div className={`flex items-center gap-1 ${align === "right" ? "justify-end" : ""}`}>
+        <span>{symbol}{price}</span>
+        {kindKey && (
+          <Badge
+            variant="outline"
+            className="h-auto px-1 py-px text-[10px] font-normal"
+            title={kindTitle ? t(kindTitle) : undefined}
+          >
+            {t(kindKey)}
+          </Badge>
+        )}
+      </div>
       {entry.locationName && (
         <div className={`flex items-center gap-1 text-xs text-muted-foreground ${align === "right" ? "justify-end" : ""}`}>
           <span className="truncate">{entry.locationName}</span>
@@ -52,6 +73,23 @@ export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }:
   );
 }
 
+
+// The ROI and, under it, the lane it was scored on (entry region -> exit
+// region). aggregate-prices scores both directions per card and keeps the
+// better one, so a row's direction is data: JP→NA is the import trade, NA→JP
+// the export trade. No lane means the row has no cross-region pair and the
+// two prices are informational.
+export function RoiCell({ row }: { row: CardRowData }) {
+  const lane = row.roi == null
+    ? null
+    : laneLabel(row.prices.lowestSell?.marketRegion, row.prices.highestBuy?.marketRegion);
+  return (
+    <div>
+      <div>{formatRoi(row.roi ?? null)}</div>
+      {lane && <div className="text-[10px] text-muted-foreground">{lane}</div>}
+    </div>
+  );
+}
 
 // Null-tolerant wrappers over the shared formatters: the browse tables show
 // "-" for a value the pipeline has not produced.
@@ -303,7 +341,7 @@ export function createColumns(
       id: "roi",
       accessorFn: (row) => row.roi ?? undefined,
       header: ({ column }) => <SortableHeader column={column} label={t("column.roi")} />,
-      cell: ({ getValue }) => formatRoi((getValue() as number | undefined) ?? null),
+      cell: ({ row }) => <RoiCell row={row.original} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
       meta: { className: "hidden xl:table-cell" },
@@ -486,7 +524,7 @@ export function createMtgColumns(
       id: "roi",
       accessorFn: (row) => row.roi ?? undefined,
       header: ({ column }) => <SortableHeader column={column} label={t("column.roi")} />,
-      cell: ({ getValue }) => formatRoi((getValue() as number | undefined) ?? null),
+      cell: ({ row }) => <RoiCell row={row.original} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
     },
@@ -593,7 +631,7 @@ export function createSealedColumns(
       id: "roi",
       accessorFn: (row) => row.roi ?? undefined,
       header: ({ column }) => <SortableHeader column={column} label={t("column.roi")} />,
-      cell: ({ getValue }) => formatRoi((getValue() as number | undefined) ?? null),
+      cell: ({ row }) => <RoiCell row={row.original} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
     },

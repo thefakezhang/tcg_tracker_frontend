@@ -289,6 +289,10 @@ The set box resolves typed text through `pokemon_set_search_v` (our set names pl
 - External-identifier lookup failures use a typed safe error, keep the last successful page visible, and expose an accessible Retry action without rendering database details.
 - AbortController cancels stale requests. No client-side caching needed (queries are fast paginated reads).
 - The `aggregate-prices` edge function pre-computes summaries from raw listings into `pokemon_price_summaries` / `mtg_price_summaries`. Invoke it to refresh data.
+  Each row carries exactly one lane: entry = the cheapest live ask in one region (`best_sell_*`, kind `ask` only), exit = the best realizable price in the other region (`best_buy_*`, ranked sold > bid > valuation by the listing's `price_kind`); both directions are scored per card and the better ROI is kept, so `best_sell_region -> best_buy_region` is the lane (JP->NA import, NA->JP export) and `best_buy_kind` / `best_sell_kind` say what each side is.
+  A card with no cross-region lane keeps the informational fallback (best entry and exit from anywhere, `roi` NULL).
+  `lib/price-kind.ts` maps a kind to the one-word marker `PriceCell` and the detail modals show beside a price (sold / offer / est.; an ask has none); `lib/lane.ts` names the lane `RoiCell` shows under the ROI.
+  Design and evidence: `docs/realized_sale_comps.md` in the backend repo.
 - Three caches still exist for `CardDetailModal` use:
   - `rateMapCache` — exchange rates (currency → USD rate)
   - `conditionsCache` — condition_id → tier mapping + available tiers
@@ -449,7 +453,7 @@ Non-goals: S3 does not calculate costs, annualized returns, raw-to-grade EV, or 
 
 - `CardBrowser` records the actual purchasable opportunity on each visible Pokémon row, and `CardDetailModal` records each actual Sell listing when opened.
 `opportunity-exposures.ts` builds stable candidate keys and sends batches to `record_deal_opportunity_exposures`.
-Card Ladder, Collectr, and PriceCharting are excluded because they are indicator sources rather than inventory the operator can buy.
+Card Ladder, Collectr, and PriceCharting are excluded because they are indicator sources rather than inventory the operator can buy (they can still be a summary row's exit, labelled `est.`; they are never its entry).
 - `DecisionActions` is the one Watch and optional Dismiss control used by Card Browser rows and every grade card in `GradeEvidencePanel`.
 There is no routine Pass action.
 - The `price_below_exit` watch is evaluated client-side on the watchlist: a watch has fired when the current price sits at or below the flagged price (fired count banner + per-card badge in `DecisionWatchlist`).
@@ -640,7 +644,7 @@ own data hook and modal, because sealed products differ structurally from cards:
 - The Sealed browser has parity with the card browser for the shared inventory signal: the same `Available only` toggle, landed cost and consigned counts on rows and tiles, phone-height inputs, and the phone card-grid default.
 `createMtgColumns` / `createSealedColumns` defer their secondary columns behind breakpoints like `createColumns` does (`columns-responsive.test.ts` pins all three), and `createBuylistColumns` drops the columns buy-list rows can never fill.
 - The `aggregate-prices` edge function's `computeAndInsertSealed()` populates
-  `pokemon_sealed_price_summaries` (same buy/sell/ROI + cross-region logic as cards).
+  `pokemon_sealed_price_summaries` (the same one-lane JP-entry / NA-exit rule and kind precedence as cards).
 - **RLS note:** the views run as their owner and bypass base-table RLS, so browse works regardless. But
   `SealedDetailModal`/buy-list features read the **raw** `pokemon_sealed_market_listings` /
   `pokemon_sealed_products` / `pokemon_sealed_buylist_entries` tables, which need permissive policies

@@ -10,6 +10,7 @@ import {
   type RegionFilter,
   useDebouncedValue,
 } from "./use-card-data";
+import type { PriceKind } from "@/lib/price-kind";
 
 export const SEALED_SUMMARY_VIEW = "pokemon_sealed_summaries_v";
 export const SEALED_SUMMARY_BEST_VIEW = "pokemon_sealed_summaries_best_v";
@@ -67,6 +68,8 @@ export interface SealedSummaryRow {
   best_sell_normalized: number | null;
   roi: number | null;
   product_uid?: string | null; // appended by 000216 (H3)
+  best_buy_kind?: PriceKind | null; // appended by 000359
+  best_sell_kind?: PriceKind | null;
 }
 
 function toPrice(row: SealedSummaryRow, side: "buy" | "sell"): PriceEntry | null {
@@ -83,6 +86,7 @@ function toPrice(row: SealedSummaryRow, side: "buy" | "sell"): PriceEntry | null
       (side === "buy" ? row.best_buy_location : row.best_sell_location) ?? "",
     marketRegion:
       (side === "buy" ? row.best_buy_region : row.best_sell_region) ?? null,
+    kind: (side === "buy" ? row.best_buy_kind : row.best_sell_kind) ?? null,
   };
 }
 

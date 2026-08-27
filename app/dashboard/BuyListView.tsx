@@ -30,6 +30,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatRoi } from "@/lib/money";
+import type { PriceKind } from "@/lib/price-kind";
 import {
   Card,
   CardAction,
@@ -81,6 +82,8 @@ interface SummaryRow {
   best_sell_location: string | null;
   best_sell_region: string | null;
   best_sell_normalized: number | null;
+  best_buy_kind?: PriceKind | null;
+  best_sell_kind?: PriceKind | null;
   roi: number | null;
   [key: string]: unknown;
 }
@@ -102,6 +105,7 @@ function summaryToPrice(
       (side === "buy" ? row.best_buy_location : row.best_sell_location) ?? "",
     marketRegion:
       (side === "buy" ? row.best_buy_region : row.best_sell_region) ?? null,
+    kind: (side === "buy" ? row.best_buy_kind : row.best_sell_kind) ?? null,
   };
 }
 
