@@ -268,7 +268,6 @@ const SORT_COLUMN_MAP: Record<string, string> = {
   lowestSell: "best_sell_normalized",
   highestBuy: "best_buy_normalized",
   psa_grade: "psa_grade",
-  annualized: "deal_annualized",
   dealNet: "deal_net_usd",
   rawToGrade: "raw_to_grade_ev_usd",
   relativeValue: "deal_relative_value_pct",
@@ -778,14 +777,14 @@ export function useCardData(options: {
             changepoint: deal?.signal.cohort ? changepoints.get(deal.signal.cohort) ?? null : null,
           };
         });
-        if (sortColumn === "conservativeExit" || (exitPercentile !== 25 && ["annualized", "dealNet"].includes(sortColumn))) {
+        if (sortColumn === "conservativeExit" || (exitPercentile !== 25 && sortColumn === "dealNet")) {
           cardRows.sort((a, b) => {
             const av = sortColumn === "conservativeExit"
               ? exitValue(a.signal, exitPercentile)
-              : sortColumn === "annualized" ? a.deal?.annualized ?? null : a.deal?.netPnlUsd ?? null;
+              : a.deal?.netPnlUsd ?? null;
             const bv = sortColumn === "conservativeExit"
               ? exitValue(b.signal, exitPercentile)
-              : sortColumn === "annualized" ? b.deal?.annualized ?? null : b.deal?.netPnlUsd ?? null;
+              : b.deal?.netPnlUsd ?? null;
             if (av == null && bv == null) return 0;
             if (av == null) return 1;
             if (bv == null) return -1;

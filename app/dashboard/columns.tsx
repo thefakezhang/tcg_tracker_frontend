@@ -334,25 +334,6 @@ export function createColumns(
       meta: { className: "hidden lg:table-cell" },
     },
     {
-      id: "annualized",
-      accessorFn: (row) => row.deal?.annualized ?? undefined,
-      header: ({ column }) => <SortableHeader column={column} label={t("column.annualized")} />,
-      cell: ({ row }) => {
-        const deal = row.original.deal;
-        if (!deal || deal.annualized == null) return <span className="text-muted-foreground">-</span>;
-        return (
-          <div className="min-w-24">
-            <div className={`font-semibold tabular-nums ${deal.annualized < 0 ? "text-destructive" : "text-emerald-600"}`}>{signedPercent(deal.annualized)}</div>
-            <div className="text-[10px] text-muted-foreground">PSA {deal.signal.psaGrade} · {Math.round(deal.signal.daysToExitEst ?? 0)}d</div>
-            {row.original.changepoint && <Badge variant="outline" className="mt-1 h-auto border-amber-500/60 px-1 py-0 text-[9px] text-amber-700">{row.original.changepoint.unexplained ? t("economics.unexplainedBreak") : row.original.changepoint.eventTitle ?? t("economics.regimeBreak")}</Badge>}
-          </div>
-        );
-      },
-      sortUndefined: "last",
-      sortingFn: nullsLastNumber,
-      meta: { className: "hidden xl:table-cell" },
-    },
-    {
       id: "dealNet",
       accessorFn: (row) => row.deal?.netPnlUsd ?? undefined,
       header: ({ column }) => <SortableHeader column={column} label={t("column.dealNet")} />,
@@ -608,7 +589,7 @@ export function createSealedColumns(
 // a Decision control acting on a null snapshot). Dropped rather than shown
 // empty.
 const BUYLIST_UNFILLABLE = new Set([
-  "psa_grade", "conservativeExit", "annualized", "dealNet", "rawToGrade", "relativeValue", "decision",
+  "psa_grade", "conservativeExit", "dealNet", "rawToGrade", "relativeValue", "decision",
 ]);
 
 export function createBuylistColumns(t: TranslateFn, language: Language = "en"): ColumnDef<CardRowData>[] {

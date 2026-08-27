@@ -9,7 +9,6 @@ describe("Card Browser responsive columns", () => {
     expect(byId.get("lowestSell")?.meta).toBeUndefined();
     expect(byId.get("highestBuy")?.meta).toBeUndefined();
     expect(byId.get("conservativeExit")?.meta).toBeUndefined();
-    expect(byId.get("annualized")?.meta).toEqual({ className: "hidden xl:table-cell" });
     expect(byId.get("rawToGrade")?.meta).toEqual({ className: "hidden 2xl:table-cell" });
     expect(byId.get("decision")?.meta).toEqual(expect.objectContaining({ className: expect.stringContaining("sticky right-0") }));
   });
@@ -34,7 +33,7 @@ describe("MTG and Sealed factories defer secondary columns like the Pokemon one"
   it("Buy list drops the columns its rows can never fill", async () => {
     const { createBuylistColumns } = await import("./columns");
     const ids = new Set(createBuylistColumns((key) => key).map((c) => c.id));
-    for (const gone of ["psa_grade", "conservativeExit", "annualized", "dealNet", "rawToGrade", "relativeValue", "decision"]) {
+    for (const gone of ["psa_grade", "conservativeExit", "dealNet", "rawToGrade", "relativeValue", "decision"]) {
       expect(ids.has(gone)).toBe(false);
     }
     expect(ids.has("targetPrice")).toBe(true);
