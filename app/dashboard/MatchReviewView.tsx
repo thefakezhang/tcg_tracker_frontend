@@ -730,6 +730,28 @@ export default function MatchReviewView({
   function toggle(id: number) {
     setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }
+  // A "family" is every visible candidate sharing one identity slot - same
+  // set, number, and variant - differing only by name: the nine basic
+  // energies of one promo design, the trainers of one deck kit. They are one
+  // curation decision (create all / reject all), not nine; before this the
+  // queue made the operator tick them one by one.
+  const familyKey = (c: Candidate) => {
+    const f = c.source_fields ?? {};
+    return [c.source_platform, f.set_code ?? "", f.card_number ?? "", f.misc_info ?? "", f.language ?? ""].join("|");
+  };
+  const familySizes = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of candidates) { const k = familyKey(c); m.set(k, (m.get(k) ?? 0) + 1); }
+    return m;
+  }, [candidates]);
+  function selectFamily(c: Candidate) {
+    const k = familyKey(c);
+    setSelected((prev) => {
+      const n = new Set(prev);
+      for (const other of candidates) if (familyKey(other) === k) n.add(other.candidate_id);
+      return n;
+    });
+  }
   function toggleAll() {
     setSelected((prev) => (prev.size === candidates.length ? new Set() : new Set(candidates.map((c) => c.candidate_id))));
   }
@@ -1023,6 +1045,16 @@ export default function MatchReviewView({
                   <tr key={c.candidate_id} className="border-b align-top last:border-0">
                     <td className="px-2 py-2">
                       <input type="checkbox" checked={selected.has(c.candidate_id)} onChange={() => toggle(c.candidate_id)} />
+                      {(familySizes.get(familyKey(c)) ?? 1) > 1 && (
+                        <button
+                          type="button"
+                          className="mt-1 block whitespace-nowrap text-[10px] text-primary underline-offset-2 hover:underline"
+                          title={t("review.selectFamilyHint")}
+                          onClick={() => selectFamily(c)}
+                        >
+                          {t("review.selectFamily", { n: familySizes.get(familyKey(c)) ?? 1 })}
+                        </button>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-start gap-2">
