@@ -1322,7 +1322,6 @@ const ja: { [K in keyof typeof en]: string } = {
   "inventory.consignedN": "委託 {n}",
   "inventory.availableN": "販売可能 {n}",
   "inventory.consigned": "委託",
-  "inventory.excludeConsigned": "販売可能のみ",
   "inventory.consignQty": "委託中",
   "inventory.manage": "管理",
   "inventory.manageInventory": "在庫を管理",

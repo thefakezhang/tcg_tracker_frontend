@@ -1326,7 +1326,6 @@ const en = {
   "inventory.consignedN": "{n} consigned",
   "inventory.availableN": "{n} available",
   "inventory.consigned": "Consigned",
-  "inventory.excludeConsigned": "Available only",
   "inventory.consignQty": "On consignment",
   "inventory.manage": "Manage",
   "inventory.manageInventory": "Manage inventory",

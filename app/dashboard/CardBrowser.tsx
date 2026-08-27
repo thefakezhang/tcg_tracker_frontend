@@ -148,7 +148,6 @@ export default function CardBrowser() {
   const [marketEvidence, setMarketEvidence] = useState<Map<number, MarketEvidence>>(() => new Map());
   const [weakEvidenceOnly, setWeakEvidenceOnly] = useState(false);
   // Tally the copies you can actually sell: owned minus consignment.
-  const [availableOnly, setAvailableOnly] = useState(false);
   const [surface, setSurface] = useState<"browse" | "watchlist" | "outcomes">("browse");
 
   useEffect(() => {
@@ -554,14 +553,6 @@ export default function CardBrowser() {
             {t("cardBrowser.cuteOnly")}
           </Button>
         )}
-        <Button
-          variant={availableOnly ? "default" : "outline"}
-          className="h-11 shrink-0 sm:h-8"
-          onClick={() => setAvailableOnly((v) => !v)}
-          title={t("inventory.excludeConsigned")}
-        >
-          {t("inventory.excludeConsigned")}
-        </Button>
         <div
           data-testid="browser-price-filters"
           className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:w-auto xl:flex-1 xl:grid-cols-4"
@@ -737,8 +728,8 @@ export default function CardBrowser() {
 
       {(!error || visibleData.length > 0) && <DataTable
         columns={activeGame === "mtg"
-          ? createMtgColumns(t, language, availableOnly)
-          : [selectColumn, ...createColumns(t, language, availableOnly, tcgMarket, marketEvidence)]}
+          ? createMtgColumns(t, language)
+          : [selectColumn, ...createColumns(t, language, tcgMarket, marketEvidence)]}
         data={visibleData}
         loading={loading}
         sorting={sorting}
@@ -826,7 +817,7 @@ export default function CardBrowser() {
                     </CardDescription>
                   )}
                   <JapanExclusiveEvidence card={row.card} compact />
-                  <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} avgCost={row.ownedAvgCostUsd} totalCost={row.ownedCostBasisUsd} consigned={row.ownedConsigned} availableOnly={availableOnly} />
+                  <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} avgCost={row.ownedAvgCostUsd} totalCost={row.ownedCostBasisUsd} consigned={row.ownedConsigned} />
                   <ObservedLine observed={row.observed} />
                 </CardHeader>
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">

@@ -203,7 +203,6 @@ export const selectColumn: ColumnDef<CardRowData> = {
 export function createColumns(
   t: TranslateFn,
   language: Language = "en",
-  availableOnly = false,
   tcgMarket?: Map<number, number>,
   marketEvidence?: Map<number, MarketEvidence>,
 ): ColumnDef<CardRowData>[] {
@@ -220,7 +219,7 @@ export function createColumns(
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
             <JapanExclusiveEvidence card={card} compact />
-            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} consigned={row.original.ownedConsigned} availableOnly={availableOnly} />
+            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} consigned={row.original.ownedConsigned} />
             <ObservedLine observed={row.original.observed} />
           </div>
         );
@@ -409,7 +408,6 @@ function mtgFoilLabel(card: CardRowData["card"], t: TranslateFn): string {
 export function createMtgColumns(
   t: TranslateFn,
   language: Language = "en",
-  availableOnly = false,
 ): ColumnDef<CardRowData>[] {
   return [
     {
@@ -423,7 +421,7 @@ export function createMtgColumns(
           <div>
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
-            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} consigned={row.original.ownedConsigned} availableOnly={availableOnly} />
+            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} consigned={row.original.ownedConsigned} />
             <ObservedLine observed={row.original.observed} />
           </div>
         );
@@ -515,7 +513,6 @@ type SealedExtras = {
 export function createSealedColumns(
   t: TranslateFn,
   language: Language = "en",
-  availableOnly = false,
 ): ColumnDef<CardRowData>[] {
   return [
     {
@@ -529,7 +526,7 @@ export function createSealedColumns(
           <div>
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
-            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} consigned={row.original.ownedConsigned} availableOnly={availableOnly} />
+            <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} consigned={row.original.ownedConsigned} />
             <ObservedLine observed={row.original.observed} />
           </div>
         );
