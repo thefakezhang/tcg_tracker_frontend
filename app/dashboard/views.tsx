@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import {
   Boxes, CalendarDays, ClipboardCheck, DollarSign, Filter, Landmark, Library,
-  Map as MapIcon, Receipt, ScanLine, ScanSearch, Send, ShieldCheck, ShoppingBasket, Users, Activity, type LucideIcon } from "lucide-react";
+  Languages, Map as MapIcon, Receipt, ScanLine, ScanSearch, Send, ShieldCheck, ShoppingBasket, Users, Activity, type LucideIcon } from "lucide-react";
 import type { TranslationKey } from "@/lib/i18n";
 import TripsOverview from "./TripsOverview";
 import InventoryView from "./InventoryView";
@@ -20,6 +20,8 @@ import PurchasePlannerView from "./PurchasePlannerView";
 import FinancesView from "./FinancesView";
 import ExpensesTab from "./trip/ExpensesTab";
 import POSView from "./POSView";
+import EnglishCounterpartReviewView from "./EnglishCounterpartReviewView";
+import EnglishCatalogReviewView from "./EnglishCatalogReviewView";
 import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNavigationContext";
 
 function RoutedMatchReviewView() {
@@ -59,6 +61,8 @@ export const VIEWS: ViewDef[] = [
   { sentinel: -9, slug: "sealed-curation", group: "curation.title", icon: ScanSearch, sidebarKey: "curation.titleSealed", titleKey: "curation.titleSealed", render: () => <SealedCurationView key="sealed-curation" /> },
   { sentinel: -5, slug: "index", group: "catalog.section", icon: Library, sidebarKey: "catalog.index", titleKey: "catalog.index", render: () => <CardIndexView key="card-index" /> },
   { sentinel: MATCH_REVIEW_SENTINEL, slug: "review", group: "catalog.section", icon: ClipboardCheck, sidebarKey: "review.title", titleKey: "review.title", render: () => <RoutedMatchReviewView key="match-review" /> },
+  { sentinel: -17, slug: "counterparts", group: "catalog.section", icon: Languages, sidebarKey: "counterpart.queueNav", titleKey: "counterpart.queueTitle", render: () => <EnglishCounterpartReviewView key="counterpart-review" /> },
+  { sentinel: -18, slug: "english-catalog", group: "catalog.section", icon: Library, sidebarKey: "englishCatalog.nav", titleKey: "englishCatalog.title", render: () => <EnglishCatalogReviewView key="english-catalog-review" /> },
   { sentinel: -12, slug: "health", group: "catalog.section", icon: Activity, sidebarKey: "sidebar.sourceHealth", titleKey: "health.title", render: () => <SourceHealthView key="source-health" /> },
   { sentinel: -13, slug: "events", group: "catalog.section", icon: CalendarDays, sidebarKey: "events.title", titleKey: "events.title", render: () => <EventsCalendarView key="events-calendar" /> },
   // Lives with the curation surfaces: it governs what the image-curation

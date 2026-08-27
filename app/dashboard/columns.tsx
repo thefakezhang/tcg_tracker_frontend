@@ -16,6 +16,11 @@ import { UidChip } from "./UidChip";
 import { MarketEvidenceBadge } from "./MarketEvidenceCallout";
 import type { MarketEvidence } from "./market-evidence";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
+import {
+  EnglishCounterpartPanel,
+  isJapanesePokemonCard,
+  type EnglishCounterpartCardRow,
+} from "./english-counterpart";
 
 import { formatJpy, formatRoi, formatUsd, formatUsdCompact } from "@/lib/money";
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
@@ -206,6 +211,9 @@ export function createColumns(
   availableOnly = false,
   tcgMarket?: Map<number, number>,
   marketEvidence?: Map<number, MarketEvidence>,
+  englishCounterparts?: Map<number, EnglishCounterpartCardRow>,
+  englishCounterpartsLoading = false,
+  englishCounterpartsError?: unknown,
 ): ColumnDef<CardRowData>[] {
   return [
     {
@@ -220,6 +228,14 @@ export function createColumns(
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
             <JapanExclusiveEvidence card={card} compact />
+            {isJapanesePokemonCard(card) && (
+              <EnglishCounterpartPanel
+                row={englishCounterparts?.get(Number(card.card_id))}
+                compact
+                loading={englishCounterpartsLoading}
+                error={englishCounterpartsError}
+              />
+            )}
             <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} consigned={row.original.ownedConsigned} availableOnly={availableOnly} />
             <ObservedLine observed={row.original.observed} />
           </div>

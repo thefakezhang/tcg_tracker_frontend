@@ -107,7 +107,7 @@ export function cardMeta(setCode?: string | null, cardNumber?: string | null, mi
 }
 
 export const POKEMON_CARD_DEF_COLS =
-  "card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, image_url, rarity, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url";
+  "card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, image_url, rarity, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url, language";
 export const MTG_CARD_DEF_COLS =
   "card_id, card_uid, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language";
 
