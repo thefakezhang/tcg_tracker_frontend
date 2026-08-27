@@ -68,7 +68,7 @@ export interface SealedSummaryRow {
   best_sell_normalized: number | null;
   roi: number | null;
   product_uid?: string | null; // appended by 000216 (H3)
-  best_buy_kind?: PriceKind | null; // appended by 000359
+  best_buy_kind?: PriceKind | null; // appended by 000363
   best_sell_kind?: PriceKind | null;
 }
 

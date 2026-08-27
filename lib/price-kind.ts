@@ -3,7 +3,7 @@ import type { TranslationKey } from "@/lib/i18n";
 // What a price IS, from the operator's side. Mirrors the backend's
 // price_kind_enum (migration 000355), derived per source by
 // price_kind_for_source() and carried on every market listing and on both
-// sides of every price summary (best_buy_kind / best_sell_kind, 000359).
+// sides of every price summary (best_buy_kind / best_sell_kind, 000363).
 //
 //   sold      - a completed transaction, or a statistic over completed ones:
 //               evidence of what you would realize, gross of selling fees
