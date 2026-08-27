@@ -73,6 +73,50 @@ describe("GradeEvidencePanel", () => {
       ]);
   });
 
+  it("surfaces market-condition flags the series already computes", async () => {
+    // stale_market, volatile_market and regime_change are written by
+    // internal/signals/series.go and were persisted but never rendered. They
+    // qualify whether the number means anything at all, so they belong beside
+    // it: every stuck slab in the operator's inventory carried a market flag
+    // and none of it was visible at the moment of purchase.
+    vi.mocked(selectAll)
+      .mockReset()
+      .mockResolvedValueOnce([{
+        ...signal,
+        flags: { stale_market: true, volatile_market: true, regime_change: "downward" },
+      }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    render(
+      <LanguageProvider>
+        <ExitBasisProvider>
+          <GradeEvidencePanel
+            card={{
+              key: "42:10",
+              card: { card_id: "42", regional_name: "Test", set_code: "M6", card_number: "1", misc_info: null, image_url: null },
+              psaGrade: 10,
+              prices: { highestBuy: null, lowestSell: null },
+              roi: null,
+            }}
+            cardId={42}
+            setCode="M6"
+            listingFreshnessLabel="Listing freshness lives below"
+            sightingGrade={10}
+            onSightingGradeChange={vi.fn()}
+          />
+        </ExitBasisProvider>
+      </LanguageProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByText("PSA 10")).toBeTruthy());
+    expect(screen.getByText(/No recent sales/)).toBeTruthy();
+    expect(screen.getByText(/Wide sale spread/)).toBeTruthy();
+    expect(screen.getByText(/Market shifted down/)).toBeTruthy();
+    // The upward variant must not appear when the shift was downward.
+    expect(screen.queryByText(/Market shifted up/)).toBeNull();
+  });
+
   it("renders the grade basis, caveats, demand, bid age, and distinct freshness labels", async () => {
     render(
       <LanguageProvider>

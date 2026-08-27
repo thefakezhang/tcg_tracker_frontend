@@ -69,6 +69,11 @@ export function ConservativeExitCell({ row }: { row: CardRowData }) {
   const value = exitValue(signal, exitPercentile);
   if (!signal || value == null) return <span className="text-muted-foreground">-</span>;
   const flags = [
+    // Market condition qualifies the number itself, so it leads.
+    signal.flags.stale_market ? t("evidence.staleShort") : null,
+    signal.flags.regime_change === "downward" ? t("evidence.regimeDownShort") : null,
+    signal.flags.regime_change === "upward" ? t("evidence.regimeUpShort") : null,
+    signal.flags.volatile_market ? t("evidence.volatileMarketShort") : null,
     signal.flags.thin_evidence ? t("evidence.thinShort") : null,
     signal.flags.cohort_derived ? t("evidence.cohortShort") : null,
     signal.flags.inversion_derived ? t("evidence.inversionShort") : null,
