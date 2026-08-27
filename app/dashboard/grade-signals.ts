@@ -3,6 +3,12 @@ import type { ExitPercentile } from "./ExitBasisContext";
 
 export interface GradeSignalFlags {
   thin_evidence?: boolean;
+  // Series-level market flags from internal/signals/series.go. Distinct from
+  // the slab-confidence flags below: volatile_market is P25/P75 dispersion on
+  // the comp series, high_volatility is the confidence model's own read.
+  volatile_market?: boolean;
+  stale_market?: boolean;
+  regime_change?: "upward" | "downward" | string;
   cohort_derived?: boolean;
   cohort_own_weight?: number;
   cohort_level?: string;

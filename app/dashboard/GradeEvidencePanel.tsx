@@ -69,6 +69,12 @@ function trendIcon(direction: string | null) {
 function flagLabels(signal: GradeSignal, t: TranslateFn): string[] {
   const labels: string[] = [];
   // #3 slab-buying concerns first - these are the reasons behind the grade.
+  // Market condition before model opinion: a stale or shifting market changes
+  // whether the number means anything, not merely how confident it is.
+  if (signal.flags.stale_market) labels.push(t("evidence.staleMarket"));
+  if (signal.flags.regime_change === "downward") labels.push(t("evidence.regimeDown"));
+  if (signal.flags.regime_change === "upward") labels.push(t("evidence.regimeUp"));
+  if (signal.flags.volatile_market) labels.push(t("evidence.volatileMarket"));
   if (signal.flags.high_volatility) labels.push(t("evidence.highVolatility"));
   if (signal.flags.downtrend) labels.push(t("evidence.downtrend"));
   if (signal.flags.high_pop_supply) labels.push(t("evidence.highPopSupply"));

@@ -30,7 +30,7 @@ export function JapanExclusivityCriterionField({
       </Label>
       <select
         id={id}
-        className="h-11 w-full rounded-md border bg-transparent px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring sm:h-9"
+        className="h-11 w-full min-w-0 rounded-md border bg-transparent px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring sm:h-9"
         value={value}
         onChange={(event) => onValueChange(event.target.value as "" | JapanExclusivityCriterionMode)}
       >
