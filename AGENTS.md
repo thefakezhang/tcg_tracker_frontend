@@ -289,9 +289,9 @@ The set box resolves typed text through `pokemon_set_search_v` (our set names pl
 - External-identifier lookup failures use a typed safe error, keep the last successful page visible, and expose an accessible Retry action without rendering database details.
 - AbortController cancels stale requests. No client-side caching needed (queries are fast paginated reads).
 - The `aggregate-prices` edge function pre-computes summaries from raw listings into `pokemon_price_summaries` / `mtg_price_summaries`. Invoke it to refresh data.
-  It scores exactly one lane: entry = the lowest JP ask (`best_sell_*`), exit = the best NA realizable price (`best_buy_*`) ranked sold > bid > valuation by the listing's `price_kind`, and records which kind won each side in `best_buy_kind` / `best_sell_kind`.
-  ROI exists only for that lane, so a negative ROI means "no arbitrage", never the reverse trade, and a side the lane cannot fill is NULL rather than a best-of-any-region fallback.
-  `lib/price-kind.ts` maps a kind to the one-word marker `PriceCell` and the detail modals show beside a price (sold / offer / est.; an ask has none).
+  Each row carries exactly one lane: entry = the cheapest live ask in one region (`best_sell_*`, kind `ask` only), exit = the best realizable price in the other region (`best_buy_*`, ranked sold > bid > valuation by the listing's `price_kind`); both directions are scored per card and the better ROI is kept, so `best_sell_region -> best_buy_region` is the lane (JP->NA import, NA->JP export) and `best_buy_kind` / `best_sell_kind` say what each side is.
+  A card with no cross-region lane keeps the informational fallback (best entry and exit from anywhere, `roi` NULL).
+  `lib/price-kind.ts` maps a kind to the one-word marker `PriceCell` and the detail modals show beside a price (sold / offer / est.; an ask has none); `lib/lane.ts` names the lane `RoiCell` shows under the ROI.
   Design and evidence: `docs/realized_sale_comps.md` in the backend repo.
 - Three caches still exist for `CardDetailModal` use:
   - `rateMapCache` — exchange rates (currency → USD rate)

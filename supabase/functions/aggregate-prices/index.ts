@@ -3,39 +3,36 @@ import { Pool } from "https://deno.land/x/postgres@v0.17.0/mod.ts";
 
 const GAMES = ["pokemon", "mtg"] as const;
 
-// The summary exposes exactly ONE lane: buy at the lowest Japanese ask, exit at
-// the best North American realizable price. That is the operator's trade. The
-// reverse direction is never scored: when an arbitrage exists one way it is a
-// wash the other way, so a second lane could only ever display
-// non-opportunities. A negative ROI therefore means "no arbitrage", never
-// "arbitrage the other way", and a card with no exit evidence shows no exit
-// rather than a made-up one.
+// Every summary row carries exactly ONE lane: an entry (the cheapest live ask
+// in one region) and an exit (the best realizable price in the OTHER region),
+// with the ROI of that trade. Both directions are scored for every card and
+// the better ROI is kept; the row's best_sell_region -> best_buy_region says
+// which way it runs (JP->NA for the import trade, NA->JP for the export trade
+// the operator runs on old-back cards). Only one direction is ever shown
+// because an arbitrage that exists one way is a wash the other way, so a
+// second lane per card could only display a non-opportunity.
 //
-// Until 2026-08-27 the pairing was direction-agnostic (any two regions, best
-// ROI wins). Whenever a card lacked US exit evidence that fell back to scoring
-// the export trade - a US ask as the entry against a Japanese buylist bid as
-// the exit - and reported real import opportunities as heavy losses (6,920 of
-// 13,251 priced raw Pokemon rows were inverted that way; 201/SV-P showed
-// -86.8% while importing it worked). See docs/realized_sale_comps.md in the
-// backend repo for the design and the evidence.
-const ENTRY_REGION = "JP";
-const EXIT_REGION = "NA";
-
-// Exit precedence, by what the number IS (market_listings.price_kind, derived
-// per source by the backend's price_kind_for_source()): a completed sale beats
-// a standing offer beats a third-party estimate. An unclassified source (NULL)
-// ranks last so a new feed is visible rather than silently winning. Within one
-// kind the highest price wins, as before. SQL fragment used as an ORDER BY key.
+// The exit on each side is ranked by what the number IS
+// (market_listings.price_kind, derived per source by the backend's
+// price_kind_for_source()): a completed sale beats a standing offer beats a
+// third-party estimate; an unclassified source (NULL) ranks last so a new feed
+// is visible rather than silently winning. Within one kind the highest price
+// wins. Before 2026-08-27 estimates were excluded outright and the exit was
+// simply the highest Buy row; for a card whose only US exit evidence was an
+// estimate that left no US exit at all, so the only pair left was the export
+// trade scored against a Japanese buylist bid - 201/SV-P read -86.8% while
+// importing it worked. See docs/realized_sale_comps.md in the backend repo.
 const EXIT_KIND_RANK =
   "CASE price_kind WHEN 'sold' THEN 0 WHEN 'bid' THEN 1 WHEN 'valuation' THEN 2 ELSE 3 END";
 
 // Indicator sources: price guides and sold-comp trackers, not shops the
 // operator can transact with. They no longer need excluding from the summary
-// itself - with the lane pinned an estimate can only ever be the EXIT, it ranks
-// below every transacted price, and best_buy_kind labels it. The per-source
-// availability snapshot still leaves them out: its Buylist / For-sale toggle
-// answers "which shops carry this", and an estimate is not a shop. Widening
-// that filter to price kinds is the next increment. SQL fragment.
+// itself - an estimate can only ever be an EXIT (they write no asks the lane
+// would use as an entry), it ranks below every transacted price, and
+// best_buy_kind labels it. The per-source availability snapshot still leaves
+// them out: its Buylist / For-sale toggle answers "which shops carry this",
+// and an estimate is not a shop. Widening that filter to price kinds is the
+// next increment. SQL fragment.
 const INDICATOR_LOCATIONS = "'collectr', 'cardladder', 'pricecharting'";
 
 serve(async () => {
@@ -134,11 +131,16 @@ serve(async () => {
 });
 
 // computeAndInsert writes one summary row per (card, grade group) that has any
-// listing in this slice, carrying the lane's two sides:
-//   best_sell_* - the ENTRY: the cheapest live ask in ENTRY_REGION
-//   best_buy_*  - the EXIT:  the best realizable price in EXIT_REGION, ranked
-//                 by EXIT_KIND_RANK and then by price
-//   roi         - (exit - entry) / entry, only when both sides exist
+// listing in this slice:
+//   best_sell_* - the ENTRY: the cheapest live ask in the lane's entry region
+//   best_buy_*  - the EXIT:  the best realizable price in the other region,
+//                 ranked by EXIT_KIND_RANK and then by price
+//   roi         - (exit - entry) / entry for the better of the two directions
+//
+// A card with no cross-region lane at all still gets a row, because the
+// browser lists summary rows: it shows the best entry and the best exit from
+// anywhere (so the operator still sees what the card costs and fetches) with
+// roi NULL, exactly as it did before.
 //
 // The column names read backwards because price_type is named from the SHOP's
 // point of view: a shop's "Buy" price is what it pays you, i.e. your exit.
@@ -160,6 +162,7 @@ async function computeAndInsert(
         CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE ml.psa_grade END AS group_grade,
         ml.price_type,
         ml.price_kind,
+        ${EXIT_KIND_RANK} AS kind_rank,
         ml.price,
         ml.currency,
         c.symbol AS currency_symbol,
@@ -185,30 +188,84 @@ async function computeAndInsert(
           ELSE TRUE
         END
     ),
-    -- Exit: what you could realize in ${EXIT_REGION}, best kind first.
+    -- Best exit PER REGION: best kind first, then the highest price.
     exits AS (
       SELECT *,
         ROW_NUMBER() OVER (
-          PARTITION BY card_id, group_grade
-          ORDER BY ${EXIT_KIND_RANK}, normalized_price DESC
+          PARTITION BY card_id, group_grade, market_region
+          ORDER BY kind_rank, normalized_price DESC
         ) AS rn
       FROM filtered_listings
-      WHERE price_type = 'Buy' AND market_region = '${EXIT_REGION}'
+      WHERE price_type = 'Buy' AND market_region IS NOT NULL
     ),
-    -- Entry: the cheapest live ask in ${ENTRY_REGION}.
+    -- Best entry PER REGION: the cheapest live ask.
     entries AS (
       SELECT *,
         ROW_NUMBER() OVER (
-          PARTITION BY card_id, group_grade
+          PARTITION BY card_id, group_grade, market_region
           ORDER BY normalized_price ASC
         ) AS rn
       FROM filtered_listings
-      WHERE price_type = 'Sell' AND market_region = '${ENTRY_REGION}'
+      WHERE price_type = 'Sell' AND market_region IS NOT NULL
         AND normalized_price > 0
+        -- Only a live ask can be an entry. Indicator sources write their one
+        -- estimate to BOTH sides (collectr, pricecharting) and cardladder
+        -- writes its sold median to both, so without this a "Sell" row that
+        -- nobody can buy at would become the cheapest way in. An unclassified
+        -- source (NULL kind) on the Sell side is a shop listing until told
+        -- otherwise.
+        AND COALESCE(price_kind::text, 'ask') = 'ask'
     ),
-    -- One summary row per card with ANY listing in this slice. The browser
-    -- lists summary rows, so a card must not vanish merely because the lane
-    -- has no side for it yet; both sides are simply NULL then.
+    -- Every cross-region lane (entry region -> a different exit region),
+    -- keeping the best ROI per card. Ties go to the better exit kind, then
+    -- to the import direction.
+    lanes AS (
+      SELECT DISTINCT ON (e.card_id, e.group_grade)
+        e.card_id,
+        e.group_grade,
+        x.price AS buy_price,
+        x.currency AS buy_currency,
+        x.currency_symbol AS buy_symbol,
+        x.location_name AS buy_location,
+        x.market_region AS buy_region,
+        x.normalized_price AS buy_normalized,
+        x.price_kind AS buy_kind,
+        e.price AS sell_price,
+        e.currency AS sell_currency,
+        e.currency_symbol AS sell_symbol,
+        e.location_name AS sell_location,
+        e.market_region AS sell_region,
+        e.normalized_price AS sell_normalized,
+        e.price_kind AS sell_kind,
+        (x.normalized_price - e.normalized_price) / e.normalized_price * 100 AS roi
+      FROM entries e
+      JOIN exits x
+        ON x.card_id = e.card_id
+        AND x.group_grade = e.group_grade
+        AND x.market_region <> e.market_region
+        AND x.rn = 1
+      WHERE e.rn = 1
+      ORDER BY
+        e.card_id,
+        e.group_grade,
+        (x.normalized_price - e.normalized_price) / e.normalized_price DESC,
+        x.kind_rank ASC,
+        (e.market_region = 'JP') DESC
+    ),
+    -- Fallbacks for a card with no cross-region lane: best exit and best
+    -- entry from anywhere, shown without an ROI.
+    any_exit AS (
+      SELECT DISTINCT ON (card_id, group_grade) *
+      FROM exits
+      WHERE rn = 1
+      ORDER BY card_id, group_grade, kind_rank, normalized_price DESC
+    ),
+    any_entry AS (
+      SELECT DISTINCT ON (card_id, group_grade) *
+      FROM entries
+      WHERE rn = 1
+      ORDER BY card_id, group_grade, normalized_price ASC
+    ),
     all_groups AS (
       SELECT DISTINCT card_id, group_grade FROM filtered_listings
     )
@@ -222,19 +279,29 @@ async function computeAndInsert(
       g.card_id,
       ${outputTier},
       g.group_grade,
-      x.price, x.currency, x.currency_symbol, x.location_name, x.market_region, x.normalized_price, x.price_kind,
-      e.price, e.currency, e.currency_symbol, e.location_name, e.market_region, e.normalized_price, e.price_kind,
-      CASE
-        WHEN x.normalized_price IS NOT NULL AND e.normalized_price > 0
-        THEN (x.normalized_price - e.normalized_price) / e.normalized_price * 100
-        ELSE NULL
-      END,
+      COALESCE(ln.buy_price, ax.price),
+      COALESCE(ln.buy_currency, ax.currency),
+      COALESCE(ln.buy_symbol, ax.currency_symbol),
+      COALESCE(ln.buy_location, ax.location_name),
+      COALESCE(ln.buy_region, ax.market_region),
+      COALESCE(ln.buy_normalized, ax.normalized_price),
+      COALESCE(ln.buy_kind, ax.price_kind),
+      COALESCE(ln.sell_price, ae.price),
+      COALESCE(ln.sell_currency, ae.currency),
+      COALESCE(ln.sell_symbol, ae.currency_symbol),
+      COALESCE(ln.sell_location, ae.location_name),
+      COALESCE(ln.sell_region, ae.market_region),
+      COALESCE(ln.sell_normalized, ae.normalized_price),
+      COALESCE(ln.sell_kind, ae.price_kind),
+      ln.roi,
       now()
     FROM all_groups g
-    LEFT JOIN exits x
-      ON x.card_id = g.card_id AND x.group_grade = g.group_grade AND x.rn = 1
-    LEFT JOIN entries e
-      ON e.card_id = g.card_id AND e.group_grade = g.group_grade AND e.rn = 1
+    LEFT JOIN lanes ln
+      ON ln.card_id = g.card_id AND ln.group_grade = g.group_grade
+    LEFT JOIN any_exit ax
+      ON ax.card_id = g.card_id AND ax.group_grade = g.group_grade
+    LEFT JOIN any_entry ae
+      ON ae.card_id = g.card_id AND ae.group_grade = g.group_grade
     ON CONFLICT (card_id, tier, psa_grade) DO UPDATE SET
       best_buy_price = EXCLUDED.best_buy_price,
       best_buy_currency = EXCLUDED.best_buy_currency,
@@ -258,7 +325,7 @@ async function computeAndInsert(
   return result.rowCount ?? 0;
 }
 
-// computeAndInsertSealed is the same lane for sealed products. Identity is
+// computeAndInsertSealed is the same rule for sealed products. Identity is
 // (product_id, sealed_condition, variant_edition); there is no PSA grade and no
 // condition tier, so no slice filtering.
 async function computeAndInsertSealed(
@@ -277,6 +344,7 @@ async function computeAndInsertSealed(
         ml.variant_edition,
         ml.price_type,
         ml.price_kind,
+        ${EXIT_KIND_RANK} AS kind_rank,
         ml.price,
         ml.currency,
         c.symbol AS currency_symbol,
@@ -291,21 +359,76 @@ async function computeAndInsertSealed(
     exits AS (
       SELECT *,
         ROW_NUMBER() OVER (
-          PARTITION BY product_id, sealed_condition, variant_edition
-          ORDER BY ${EXIT_KIND_RANK}, normalized_price DESC
+          PARTITION BY product_id, sealed_condition, variant_edition, market_region
+          ORDER BY kind_rank, normalized_price DESC
         ) AS rn
       FROM filtered_listings
-      WHERE price_type = 'Buy' AND market_region = '${EXIT_REGION}'
+      WHERE price_type = 'Buy' AND market_region IS NOT NULL
     ),
     entries AS (
       SELECT *,
         ROW_NUMBER() OVER (
-          PARTITION BY product_id, sealed_condition, variant_edition
+          PARTITION BY product_id, sealed_condition, variant_edition, market_region
           ORDER BY normalized_price ASC
         ) AS rn
       FROM filtered_listings
-      WHERE price_type = 'Sell' AND market_region = '${ENTRY_REGION}'
+      WHERE price_type = 'Sell' AND market_region IS NOT NULL
         AND normalized_price > 0
+        -- Only a live ask can be an entry. Indicator sources write their one
+        -- estimate to BOTH sides (collectr, pricecharting) and cardladder
+        -- writes its sold median to both, so without this a "Sell" row that
+        -- nobody can buy at would become the cheapest way in. An unclassified
+        -- source (NULL kind) on the Sell side is a shop listing until told
+        -- otherwise.
+        AND COALESCE(price_kind::text, 'ask') = 'ask'
+    ),
+    lanes AS (
+      SELECT DISTINCT ON (e.product_id, e.sealed_condition, e.variant_edition)
+        e.product_id,
+        e.sealed_condition,
+        e.variant_edition,
+        x.price AS buy_price,
+        x.currency AS buy_currency,
+        x.currency_symbol AS buy_symbol,
+        x.location_name AS buy_location,
+        x.market_region AS buy_region,
+        x.normalized_price AS buy_normalized,
+        x.price_kind AS buy_kind,
+        e.price AS sell_price,
+        e.currency AS sell_currency,
+        e.currency_symbol AS sell_symbol,
+        e.location_name AS sell_location,
+        e.market_region AS sell_region,
+        e.normalized_price AS sell_normalized,
+        e.price_kind AS sell_kind,
+        (x.normalized_price - e.normalized_price) / e.normalized_price * 100 AS roi
+      FROM entries e
+      JOIN exits x
+        ON x.product_id = e.product_id
+        AND x.sealed_condition = e.sealed_condition
+        AND x.variant_edition = e.variant_edition
+        AND x.market_region <> e.market_region
+        AND x.rn = 1
+      WHERE e.rn = 1
+      ORDER BY
+        e.product_id,
+        e.sealed_condition,
+        e.variant_edition,
+        (x.normalized_price - e.normalized_price) / e.normalized_price DESC,
+        x.kind_rank ASC,
+        (e.market_region = 'JP') DESC
+    ),
+    any_exit AS (
+      SELECT DISTINCT ON (product_id, sealed_condition, variant_edition) *
+      FROM exits
+      WHERE rn = 1
+      ORDER BY product_id, sealed_condition, variant_edition, kind_rank, normalized_price DESC
+    ),
+    any_entry AS (
+      SELECT DISTINCT ON (product_id, sealed_condition, variant_edition) *
+      FROM entries
+      WHERE rn = 1
+      ORDER BY product_id, sealed_condition, variant_edition, normalized_price ASC
     ),
     all_groups AS (
       SELECT DISTINCT product_id, sealed_condition, variant_edition
@@ -321,25 +444,35 @@ async function computeAndInsertSealed(
       g.product_id,
       g.sealed_condition,
       g.variant_edition,
-      x.price, x.currency, x.currency_symbol, x.location_name, x.market_region, x.normalized_price, x.price_kind,
-      e.price, e.currency, e.currency_symbol, e.location_name, e.market_region, e.normalized_price, e.price_kind,
-      CASE
-        WHEN x.normalized_price IS NOT NULL AND e.normalized_price > 0
-        THEN (x.normalized_price - e.normalized_price) / e.normalized_price * 100
-        ELSE NULL
-      END,
+      COALESCE(ln.buy_price, ax.price),
+      COALESCE(ln.buy_currency, ax.currency),
+      COALESCE(ln.buy_symbol, ax.currency_symbol),
+      COALESCE(ln.buy_location, ax.location_name),
+      COALESCE(ln.buy_region, ax.market_region),
+      COALESCE(ln.buy_normalized, ax.normalized_price),
+      COALESCE(ln.buy_kind, ax.price_kind),
+      COALESCE(ln.sell_price, ae.price),
+      COALESCE(ln.sell_currency, ae.currency),
+      COALESCE(ln.sell_symbol, ae.currency_symbol),
+      COALESCE(ln.sell_location, ae.location_name),
+      COALESCE(ln.sell_region, ae.market_region),
+      COALESCE(ln.sell_normalized, ae.normalized_price),
+      COALESCE(ln.sell_kind, ae.price_kind),
+      ln.roi,
       now()
     FROM all_groups g
-    LEFT JOIN exits x
-      ON x.product_id = g.product_id
-      AND x.sealed_condition = g.sealed_condition
-      AND x.variant_edition = g.variant_edition
-      AND x.rn = 1
-    LEFT JOIN entries e
-      ON e.product_id = g.product_id
-      AND e.sealed_condition = g.sealed_condition
-      AND e.variant_edition = g.variant_edition
-      AND e.rn = 1
+    LEFT JOIN lanes ln
+      ON ln.product_id = g.product_id
+      AND ln.sealed_condition = g.sealed_condition
+      AND ln.variant_edition = g.variant_edition
+    LEFT JOIN any_exit ax
+      ON ax.product_id = g.product_id
+      AND ax.sealed_condition = g.sealed_condition
+      AND ax.variant_edition = g.variant_edition
+    LEFT JOIN any_entry ae
+      ON ae.product_id = g.product_id
+      AND ae.sealed_condition = g.sealed_condition
+      AND ae.variant_edition = g.variant_edition
     ON CONFLICT (product_id, sealed_condition, variant_edition) DO UPDATE SET
       best_buy_price = EXCLUDED.best_buy_price,
       best_buy_currency = EXCLUDED.best_buy_currency,

@@ -19,6 +19,7 @@ import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
 
 import { formatJpy, formatRoi, formatUsd, formatUsdCompact } from "@/lib/money";
 import { priceKindMarkerKey, priceKindTitleKey } from "@/lib/price-kind";
+import { laneLabel } from "@/lib/lane";
 
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
   const { displayCurrency, convertPrice } = useCurrency();
@@ -67,6 +68,23 @@ export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }:
   );
 }
 
+
+// The ROI and, under it, the lane it was scored on (entry region -> exit
+// region). aggregate-prices scores both directions per card and keeps the
+// better one, so a row's direction is data: JP→NA is the import trade, NA→JP
+// the export trade. No lane means the row has no cross-region pair and the
+// two prices are informational.
+export function RoiCell({ row }: { row: CardRowData }) {
+  const lane = row.roi == null
+    ? null
+    : laneLabel(row.prices.lowestSell?.marketRegion, row.prices.highestBuy?.marketRegion);
+  return (
+    <div>
+      <div>{formatRoi(row.roi ?? null)}</div>
+      {lane && <div className="text-[10px] text-muted-foreground">{lane}</div>}
+    </div>
+  );
+}
 
 // Null-tolerant wrappers over the shared formatters: the browse tables show
 // "-" for a value the pipeline has not produced.
@@ -307,7 +325,7 @@ export function createColumns(
       id: "roi",
       accessorFn: (row) => row.roi ?? undefined,
       header: ({ column }) => <SortableHeader column={column} label={t("column.roi")} />,
-      cell: ({ getValue }) => formatRoi((getValue() as number | undefined) ?? null),
+      cell: ({ row }) => <RoiCell row={row.original} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
       meta: { className: "hidden xl:table-cell" },
@@ -490,7 +508,7 @@ export function createMtgColumns(
       id: "roi",
       accessorFn: (row) => row.roi ?? undefined,
       header: ({ column }) => <SortableHeader column={column} label={t("column.roi")} />,
-      cell: ({ getValue }) => formatRoi((getValue() as number | undefined) ?? null),
+      cell: ({ row }) => <RoiCell row={row.original} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
     },
@@ -597,7 +615,7 @@ export function createSealedColumns(
       id: "roi",
       accessorFn: (row) => row.roi ?? undefined,
       header: ({ column }) => <SortableHeader column={column} label={t("column.roi")} />,
-      cell: ({ getValue }) => formatRoi((getValue() as number | undefined) ?? null),
+      cell: ({ row }) => <RoiCell row={row.original} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
     },
