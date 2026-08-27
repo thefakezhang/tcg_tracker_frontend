@@ -1113,6 +1113,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "review.alias": "既存カードのエイリアスに",
   "review.selected": "{n}件選択中",
   "review.bulkConfirm": "{n}件を確定",
+  "review.selectFamily": "+{n} 同一グループ",
+  "review.selectFamilyHint": "同じセット・番号・バリアントの候補(例: 同一デザインの基本エネルギー9種)をまとめて選択し、一括作成/却下を1回の判断で行います。",
   "review.bulkCreate": "{n}件を新規作成",
   "review.bulkReject": "{n}件を却下",
   "review.acceptAll": "提案済み{n}件をすべて確定",

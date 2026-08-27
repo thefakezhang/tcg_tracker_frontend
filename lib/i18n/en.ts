@@ -1111,6 +1111,8 @@ const en = {
   "review.alias": "Alias to existing card",
   "review.selected": "{n} selected",
   "review.bulkConfirm": "Confirm {n} matched",
+  "review.selectFamily": "+{n} family",
+  "review.selectFamilyHint": "Select every visible candidate with the same set, number and variant (e.g. all nine energies of one promo design) so bulk create / reject handles them as one decision.",
   "review.bulkCreate": "Create {n} new",
   "review.bulkReject": "Reject {n}",
   "review.acceptAll": "Accept all {n} proposed",
