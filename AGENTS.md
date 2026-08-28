@@ -582,6 +582,7 @@ The board renders the secondary line under the p50 and downgrades a bad p50 to w
 `ReviewQueueNavigationContext` carries a one-shot `{ game, source }` target to `RoutedMatchReviewView`; the route captures and consumes it so a later ordinary sidebar visit starts unfiltered.
 - `MatchReviewView` accepts `initialGame` and `initialSource` props.
 Its source predicate remains server-side so the filtered count and pagination describe the same source slice.
+The Pokemon `Match existing` picker also scopes catalog results to the pending candidate's language, defaulting a missing language to `jp`, so counterpart-only English definitions never appear as Japanese match targets.
 - **Accept all** (`review.acceptAll`): the mass-accept for text-based curation.
 The toolbar button counts every row in the current bucket + source that carries a machine proposal (a server-side head count, so it describes the whole filter, not the loaded page), confirms the count in an `AlertDialog`, then lists the ids with `selectAll` and feeds `rpcBulkConfirm` in chunks of 100 (`ACCEPT_ALL_CHUNK`) with a running "Accepting n / of" label.
 Chunking exists because every bulk confirm RPC confirms row by row (links, memory, refresh) and one call over thousands of ids would outrun the 8s authenticated `statement_timeout`; each chunk commits on its own, so a failing chunk (an alias/definition contradiction from migration 000292, say) stops the run, keeps what already went through, and reports "stopped after n of N: <error>".
