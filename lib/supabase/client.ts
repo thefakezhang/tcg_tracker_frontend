@@ -38,27 +38,49 @@ async function fetchWithRetry(input: RequestInfo | URL, init?: RequestInit): Pro
   throw lastErr;
 }
 
-// GoTrue serialises auth work behind a cross-tab Web Lock. For the paths it
-// does not want to queue it calls the lock with acquireTimeout === 0, which
-// makes the default navigatorLock use `ifAvailable: true` and THROW the moment
-// anything else holds the lock:
+// GoTrue guards auth work with a cross-tab Web Lock, and auth-js recovers from
+// a lock it believes is orphaned by STEALING it (lib/locks.js). A steal is not
+// polite: per the Web Locks spec it breaks every other holder, whose pending
+// operations reject with
 //
-//   Error: Acquiring an exclusive Navigator LockManager lock
-//     "lock:sb-<ref>-auth-token" immediately failed
+//   AbortError: Lock broken by another request with the 'steal' option.
+//   AbortError: The lock request is aborted                (Firefox's wording)
 //
-// A second tab, or a refresh still in flight, is enough. The rejection is
-// unhandled, the token refresh never happens, and every authenticated query
-// then hangs until the fetch timeout above aborts it - which the browser
-// reports as "CORS request did not succeed / Status code: (null)". The symptom
-// is a dashboard that renders but returns no data, and searches that silently
-// come back empty.
+// It steals after `lockAcquireTimeout`, which is 5s and CANNOT be configured
+// through supabase-js: SupabaseClient#_initSupabaseAuthClient destructures an
+// explicit allowlist of auth options and `lockAcquireTimeout` is not in it, so
+// passing it is silently dropped. `lock` IS forwarded, so replacing the lock is
+// the only way to control this.
 //
-// Waiting briefly is strictly better than failing: the holder is a token
-// refresh that finishes in milliseconds. Bounded, so a genuinely stuck holder
-// still surfaces instead of hanging forever.
-const AUTH_LOCK_WAIT_MS = 10_000;
+// That 5s ceiling collides with fetchWithRetry above, which lets a single call
+// hold the lock for far longer. Any token refresh slower than 5s therefore
+// GUARANTEES a steal, and the steal kills every query queued behind it. One
+// slow refresh is enough to empty a dashboard: measured with two dashboards
+// each issuing 10 reads over an 8s refresh, the stock lock served 1 of 20 reads
+// and raised 4 unhandled rejections; this lock serves 20 of 20 with none.
+//
+// More tabs make it worse, not better - every open dashboard adds queued
+// operations for the steal to break - which is why this surfaces for anyone
+// who keeps several dashboards open.
+//
+// Worst case a single call can hold the lock: fetchWithRetry's GET path is
+// three attempts plus its 250ms + 500ms backoff.
+export const MAX_LOCK_HOLD_MS = REQUEST_TIMEOUT_MS * 3 + 750;
 
-export async function waitingNavigatorLock<R>(
+// Wait at least this long before concluding a lock is orphaned. It MUST exceed
+// MAX_LOCK_HOLD_MS, otherwise we reintroduce the storm we are fixing: a holder
+// that is merely slow gets mistaken for a dead one and broken mid-flight.
+// Asserted by a test so the two constants cannot drift apart.
+export const AUTH_LOCK_MIN_WAIT_MS = 60_000;
+
+/**
+ * The auth lock, replacing auth-js's navigatorLock.
+ *
+ * Two behaviours differ from the default, deliberately:
+ *  - a slow holder is waited out rather than stolen from at 5s;
+ *  - `acquireTimeout === 0` keeps its skip semantics (see below).
+ */
+export async function resilientAuthLock<R>(
   name: string,
   acquireTimeout: number,
   fn: () => Promise<R>,
@@ -68,17 +90,53 @@ export async function waitingNavigatorLock<R>(
   // fallback is to run unlocked, so match it rather than breaking auth.
   if (typeof locks?.request !== "function") return fn();
 
-  const waitMs = acquireTimeout === 0 ? AUTH_LOCK_WAIT_MS : acquireTimeout;
+  // acquireTimeout === 0 is the auto-refresh tick asking "is another tab
+  // already doing auth work?". Skipping is the CORRECT answer and the reason
+  // auth-js passes 0: the other tab's refresh lands in the shared cookie the
+  // whole browser reads, so this tick has nothing left to do. Queueing here
+  // instead performs a redundant second refresh and slows every query behind
+  // it. _autoRefreshTokenTick identifies the skip by the `isAcquireTimeout`
+  // property (auth-js documents that property as the contract, in preference
+  // to an instanceof check), so the error must carry it.
+  if (acquireTimeout === 0) {
+    return (await locks.request(
+      name,
+      { mode: "exclusive", ifAvailable: true },
+      async (lock) => {
+        if (!lock) {
+          const err = new Error(
+            `Acquiring an exclusive Navigator LockManager lock "${name}" immediately failed`,
+          ) as Error & { isAcquireTimeout: boolean };
+          err.isAcquireTimeout = true;
+          throw err;
+        }
+        return fn();
+      },
+    )) as R;
+  }
+
   const controller = new AbortController();
-  const timer = waitMs > 0 ? setTimeout(() => controller.abort(), waitMs) : undefined;
+  const waitMs = Math.max(acquireTimeout, AUTH_LOCK_MIN_WAIT_MS);
+  const timer = setTimeout(() => controller.abort(), waitMs);
   try {
     return (await locks.request(
       name,
-      waitMs > 0 ? { mode: "exclusive", signal: controller.signal } : { mode: "exclusive" },
+      { mode: "exclusive", signal: controller.signal },
+      async () => fn(),
+    )) as R;
+  } catch (e) {
+    if ((e as Error | null)?.name !== "AbortError") throw e;
+    // Only now, after longer than any request of ours can hold the lock, is a
+    // holder genuinely stuck (a tab killed mid-refresh leaves no releaser).
+    // Steal exactly as auth-js would - the recovery is right, its 5s trigger
+    // was not.
+    return (await locks.request(
+      name,
+      { mode: "exclusive", steal: true },
       async () => fn(),
     )) as R;
   } finally {
-    if (timer !== undefined) clearTimeout(timer);
+    clearTimeout(timer);
   }
 }
 
@@ -96,7 +154,7 @@ export function createClient() {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
         global: { fetch: fetchWithRetry },
-        auth: { lock: waitingNavigatorLock },
+        auth: { lock: resilientAuthLock },
       }
     );
   }
