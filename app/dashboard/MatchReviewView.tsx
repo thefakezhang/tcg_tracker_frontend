@@ -1332,6 +1332,10 @@ function MatchToExisting({
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<{ id: number; name: string; subtitle: string }[]>([]);
+  // A failed search used to render exactly like a search with no matches. That
+  // hid a GoTrue auth-lock failure in production: the picker sat empty and said
+  // "no results" while the real cause was an unhandled rejection.
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [seeded, setSeeded] = useState<number | null>(null);
@@ -1353,6 +1357,8 @@ function MatchToExisting({
     const num = f.card_number ?? "";
     const h = setTimeout(async () => {
       const client = createClient();
+      setSearchError(null);
+      try {
       let query = client.from(cfg.catalogTable).select(cfg.catalogSelect);
       const matchLanguage = cfg.matchLanguage?.(candidate);
       if (matchLanguage) query = query.eq("language", matchLanguage);
@@ -1375,10 +1381,17 @@ function MatchToExisting({
         setResults([]);
         return;
       }
-      const { data } = await query.limit(20);
+      const { data, error } = await query.limit(20);
+      if (error) throw new Error(error.message);
       setResults(((data ?? []) as Record<string, unknown>[]).map((r) => ({
         id: r[cfg.idCol] as number, name: (r[cfg.nameCol] as string) ?? "", subtitle: cfg.subtitle(r),
       })));
+      } catch (err) {
+        // Surface it. Silently empty results are indistinguishable from "no
+        // match", which is what made the auth-lock failure so hard to find.
+        setResults([]);
+        setSearchError(err instanceof Error ? err.message : String(err));
+      }
     }, 300);
     return () => clearTimeout(h);
   }, [search, cfg, candidate]);
@@ -1409,7 +1422,9 @@ function MatchToExisting({
         <p className="text-xs text-muted-foreground">{t("review.matchExistingHint")}</p>
         <Input placeholder={t("review.matchSearch")} value={search} onChange={(e) => setSearch(e.target.value)} />
         <div className="max-h-72 space-y-1 overflow-y-auto">
-          {results.length === 0 ? (
+          {searchError ? (
+            <p className="text-xs text-destructive">{searchError}</p>
+          ) : results.length === 0 ? (
             <p className="text-xs text-muted-foreground">{t("review.noResults")}</p>
           ) : (
             results.map((r) => (
