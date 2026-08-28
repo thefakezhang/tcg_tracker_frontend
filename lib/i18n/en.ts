@@ -473,6 +473,8 @@ const en = {
   "buyList.exportTitle": "Export Buy List",
   "buyList.exportDescription": "Drag cards to reorder, then export as PDF.",
   "buyList.exportConfirm": "Download PDF",
+  "buyList.exportCsv": "Export CSV",
+  "buyList.exportXlsx": "Export Excel",
   "column.targetPrice": "Target",
   "buyList.targetPrice": "Target Price (USD)",
   "sidebar.trips": "Trips",
