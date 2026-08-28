@@ -90,6 +90,24 @@ export function tokenizeSearchTerm(term: string): string[] {
 //   2. otherwise every whitespace token yields one or() spanning the caller's
 //      text columns, so "blastoise 009" means blastoise AND 009, each side
 //      free to hit the name, the number, the set, or the variant.
+// identifierOrParts returns the disjuncts for an IDENTIFIER paste - a uid (full
+// UUID or the displayed 8-hex prefix) or an exact external id - and an empty
+// list for anything else. Exported so callers can ask "is this a paste?" using
+// the same rule smartSearchFilters applies, rather than a second copy of it
+// that can drift out of step.
+export function identifierOrParts(
+  term: string,
+  uidCol: string,
+  idCol: string,
+  extIds: number[],
+): string[] {
+  const t = term.trim();
+  if (!t) return [];
+  const idParts = [...uidOrParts(t, uidCol)];
+  if (extIds.length) idParts.push(`${idCol}.in.(${extIds.join(",")})`);
+  return idParts;
+}
+
 export function smartSearchFilters(
   term: string,
   textCols: string[],
@@ -99,8 +117,7 @@ export function smartSearchFilters(
 ): string[] {
   const t = term.trim();
   if (!t) return [];
-  const idParts = [...uidOrParts(t, uidCol)];
-  if (extIds.length) idParts.push(`${idCol}.in.(${extIds.join(",")})`);
+  const idParts = identifierOrParts(t, uidCol, idCol, extIds);
   if (idParts.length) return [idParts.join(",")];
   return tokenizeSearchTerm(t).map(
     (token) => textCols.map((col) => `${col}.ilike.%${token}%`).join(","),
