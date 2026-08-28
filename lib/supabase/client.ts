@@ -38,6 +38,50 @@ async function fetchWithRetry(input: RequestInfo | URL, init?: RequestInit): Pro
   throw lastErr;
 }
 
+// GoTrue serialises auth work behind a cross-tab Web Lock. For the paths it
+// does not want to queue it calls the lock with acquireTimeout === 0, which
+// makes the default navigatorLock use `ifAvailable: true` and THROW the moment
+// anything else holds the lock:
+//
+//   Error: Acquiring an exclusive Navigator LockManager lock
+//     "lock:sb-<ref>-auth-token" immediately failed
+//
+// A second tab, or a refresh still in flight, is enough. The rejection is
+// unhandled, the token refresh never happens, and every authenticated query
+// then hangs until the fetch timeout above aborts it - which the browser
+// reports as "CORS request did not succeed / Status code: (null)". The symptom
+// is a dashboard that renders but returns no data, and searches that silently
+// come back empty.
+//
+// Waiting briefly is strictly better than failing: the holder is a token
+// refresh that finishes in milliseconds. Bounded, so a genuinely stuck holder
+// still surfaces instead of hanging forever.
+const AUTH_LOCK_WAIT_MS = 10_000;
+
+export async function waitingNavigatorLock<R>(
+  name: string,
+  acquireTimeout: number,
+  fn: () => Promise<R>,
+): Promise<R> {
+  const locks = globalThis.navigator?.locks;
+  // Non-secure contexts and older browsers have no LockManager. GoTrue's own
+  // fallback is to run unlocked, so match it rather than breaking auth.
+  if (typeof locks?.request !== "function") return fn();
+
+  const waitMs = acquireTimeout === 0 ? AUTH_LOCK_WAIT_MS : acquireTimeout;
+  const controller = new AbortController();
+  const timer = waitMs > 0 ? setTimeout(() => controller.abort(), waitMs) : undefined;
+  try {
+    return (await locks.request(
+      name,
+      waitMs > 0 ? { mode: "exclusive", signal: controller.signal } : { mode: "exclusive" },
+      async () => fn(),
+    )) as R;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 // Single shared browser client. createClient() is called from dozens of places;
 // returning a NEW client each time spins up multiple GoTrue auth instances that
 // race to refresh the (single-use) token, invalidating it and causing
@@ -50,7 +94,10 @@ export function createClient() {
     client = createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      { global: { fetch: fetchWithRetry } }
+      {
+        global: { fetch: fetchWithRetry },
+        auth: { lock: waitingNavigatorLock },
+      }
     );
   }
   return client;
