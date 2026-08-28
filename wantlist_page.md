@@ -11,8 +11,9 @@ It replaces an Artifact that could not be shared because it exceeded the sharing
   It imports `lib/wantlist/cards.json` at build time and renders the client component.
 - `app/wantlist/WantList.tsx` - client component holding the three interactive pieces: search, the per-viewer check-off tracker, and the image lightbox.
 - `app/wantlist/wantlist.module.css` - the page's own palette, scoped to its wrapper.
-- `lib/wantlist/cards.json` - the data (683 rows).
-- `public/wantlist/wl-NNNN.webp` - one image per card, served as static files.
+- `lib/wantlist/cards.json` - the data (688 rows). It carries **no set code**: that is an internal identifier, so it is stripped from the published data rather than merely hidden, and sets are grouped by name and year instead.
+- `public/wantlist/wl-NNNN.webp` - a 420px rendition the lightbox opens on demand.
+- `public/wantlist/wl-NNNN-t.webp` - a 128px thumbnail for the grid. 660 of these load on one page, so the grid never pays for the full-size copies.
 
 The page makes **no runtime database call** and uses **no Supabase key**.
 Everything is baked at build time, so an anonymous visitor gets static HTML plus static images and nothing else.
@@ -57,6 +58,18 @@ The better-scoring half is withheld and never reaches the page; what publishes i
 
 This is deliberate. The full list encodes which cards are worth arbitraging and is competitively sensitive; the published subset is the part where a better acquisition price, not a private edge, decides the trade.
 Regenerating the page from the full list is a one-file change, so the split has to be re-applied whenever the data is refreshed.
+
+## Image pipeline
+
+Images come from the R2 mirror of snkrdunk scans recorded on `pokemon_card_definitions.image_url`, refetched at source resolution (421-868px, median 437).
+Two bugs shaped this pipeline and both are guarded against:
+
+- **The identity key is ambiguous.** `(set_code, card_number, regional_name)` is not unique - foil and printing variants share it and differ only by `misc_info`, and 131 of 1,558 want-list keys resolved to multiple definitions with conflicting `image_url`s.
+The fetch orders candidates so the base printing (`misc_info` NULL or `UNKNOWN`) is preferred, and falls through to the next candidate when one is unusable.
+- **Some variant images are screenshot captures, not scans.** They arrive as 1000x730 landscape frames with 35-63% black padding, which `object-fit: cover` crops into a slab of black.
+The fetch rejects any candidate that is landscape, more than 30% black, or near-uniform; 26 cards ended up with no usable candidate and render the hatched placeholder, which is the honest result rather than a black tile.
+
+Do not reintroduce a single-size image set: an earlier cut inlined 118px thumbnails, which the lightbox then upscaled 2.5x.
 
 ## Known limitation
 
