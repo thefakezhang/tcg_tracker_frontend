@@ -16,6 +16,8 @@ An exact mapping with no current prices shows `refresh_required` and keeps profi
 `views.tsx` exposes the review queue as the Pokemon Catalog `Counterparts` view.
 `app/dashboard/EnglishCatalogReviewView.tsx` paginates catalog candidates and import receipts, renders exact coverage and load, and owns versioned catalog decisions.
 `views.tsx` exposes that queue separately as `English catalog intake` so product admission is not confused with Japanese-to-English release mapping.
+English definitions remain available to these counterpart surfaces without becoming ordinary Japanese match targets.
+The Pokemon Match Review `Match existing` picker constrains results to the pending candidate's language, defaulting a missing Pokemon language to `jp`, so TCGCSV English definitions cannot be attached to Japanese source identities.
 
 Both loaders use the shared PostgREST pagination helpers, so neither assumes the default response cap is the complete result set.
 The browser never writes counterpart base tables directly.
@@ -72,7 +74,7 @@ It also checks 44-pixel catalog review actions on phone, exact product links, so
 
 ## Validation
 
-Component tests cover exact mapping, separate current-ask and realized-sold-comparable panels, exact raw and PSA axes, missing or insufficient realized evidence as unknown, conservative decision basis, ambiguity without a guess, read failures, pagination past the PostgREST cap, versioned RPC arguments, artwork and stamp posture, failed retry, catalog partition and load, no-product unknown state, catalog pagination, and catalog decision validation.
+Component tests cover exact mapping, separate current-ask and realized-sold-comparable panels, exact raw and PSA axes, missing or insufficient realized evidence as unknown, conservative decision basis, ambiguity without a guess, read failures, pagination past the PostgREST cap, versioned RPC arguments, artwork and stamp posture, failed retry, catalog partition and load, no-product unknown state, catalog pagination, catalog decision validation, and exclusion of English definitions from a Japanese Match Review picker.
 The controlled browser journey is invoked with:
 
 ```bash

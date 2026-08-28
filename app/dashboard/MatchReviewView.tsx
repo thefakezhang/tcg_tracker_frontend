@@ -79,6 +79,7 @@ interface GameConfig {
   uidCol: string;
   nameCol: string; // search + display column on the catalog table
   numberCol?: string; // card-number column, if the catalog has one (singles/mtg, not sealed)
+  matchLanguage?: (candidate: Candidate) => string; // keep language-specific catalog partitions out of each other's picker
   unified?: boolean; // identity-keyed queue with a matched-links set (pokemon, 000131)
   subtitle: (row: Record<string, unknown>) => string;
   rpcConfirm: string;
@@ -174,6 +175,7 @@ const CONFIGS: Record<Game, GameConfig> = {
     uidCol: "card_uid",
     nameCol: "regional_name",
     numberCol: "card_number",
+    matchLanguage: (c) => c.source_fields?.language || "jp",
     unified: true,
     subtitle: (r) => joinParts([r.set_code as string, r.card_number as string, r.misc_info as string, r.language as string]),
     rpcConfirm: "card_index_resolve_pokemon_candidate_confirm",
@@ -1352,6 +1354,8 @@ function MatchToExisting({
     const h = setTimeout(async () => {
       const client = createClient();
       let query = client.from(cfg.catalogTable).select(cfg.catalogSelect);
+      const matchLanguage = cfg.matchLanguage?.(candidate);
+      if (matchLanguage) query = query.eq("language", matchLanguage);
       if (q) {
         // Free search across name + set code + card number, plus the card's
         // uid (full or displayed 8-hex prefix) and an exact platform external

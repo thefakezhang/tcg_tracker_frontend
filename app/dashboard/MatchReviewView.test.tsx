@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   rpc: vi.fn(),
   retry: vi.fn(),
   pages: [] as unknown[][],
+  catalogRows: [] as Record<string, unknown>[],
 }));
 
 vi.mock("@/lib/i18n", () => ({
@@ -32,13 +33,24 @@ vi.mock("@/lib/i18n", () => ({
 // A chainable stand-in for the PostgREST builder: every filter returns the
 // builder, and `range` resolves to the page mocks.pages hands out. Only what
 // proposedIdsInFilter touches (select / eq / gte / or / not / order / range).
-function fakeBuilder() {
+function fakeBuilder(table: string) {
   const b: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "gte", "or", "not", "order", "in"]) b[m] = () => b;
+  const equals: [string, unknown][] = [];
+  for (const m of ["select", "gte", "or", "not", "order", "in"]) b[m] = () => b;
+  b.eq = (column: string, value: unknown) => {
+    equals.push([column, value]);
+    return b;
+  };
+  b.limit = () => Promise.resolve({
+    data: table === "pokemon_card_definitions"
+      ? mocks.catalogRows.filter((row) => equals.every(([column, value]) => row[column] === value))
+      : [],
+    error: null,
+  });
   b.range = (from: number) => Promise.resolve({ data: mocks.pages.shift() ?? [], error: null, from });
   return b;
 }
-vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc: mocks.rpc, from: () => fakeBuilder() }) }));
+vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc: mocks.rpc, from: (table: string) => fakeBuilder(table) }) }));
 
 vi.mock("./use-query", () => ({
   useSupabaseQuery: (key: unknown[]) => {
@@ -60,6 +72,59 @@ afterEach(() => {
   mocks.rpc.mockReset();
   mocks.retry.mockReset();
   mocks.pages.length = 0;
+  mocks.catalogRows.length = 0;
+});
+
+describe("Pokemon match target catalog", () => {
+  it("does not offer English counterpart definitions as Japanese match targets", async () => {
+    mocks.data = {
+      candidates: [{
+        candidate_id: 7001,
+        source_platform: "identity",
+        source_key: "",
+        source_name: "ピカチュウ",
+        source_raw: null,
+        source_fields: { source: "snkrdunk", set_code: "SV-P", card_number: "001/SV-P", language: "jp" },
+        source_image_url: null,
+        proposed_id: null,
+        candidate_ids: [],
+        confidence: 0.5,
+        reason: "review",
+        matched: [],
+      }],
+      items: new Map(),
+      total: 1,
+    };
+    mocks.catalogRows = [
+      {
+        card_id: 100,
+        card_uid: "00000000-0000-0000-0000-000000000100",
+        regional_name: "ピカチュウ",
+        english_name: "Pikachu",
+        set_code: "SV-P",
+        card_number: "001/SV-P",
+        language: "jp",
+        misc_info: "",
+      },
+      {
+        card_id: 200,
+        card_uid: "00000000-0000-0000-0000-000000000200",
+        regional_name: "Pikachu - English catalog card",
+        english_name: "Pikachu",
+        set_code: "SV-P",
+        card_number: "001/SV-P",
+        language: "en",
+        misc_info: "TCGCSV counterpart",
+      },
+    ];
+
+    render(<MatchReviewView initialGame="pokemon" initialSource="snkrdunk" />);
+    fireEvent.click(screen.getByTitle("review.matchExistingTitle"));
+    fireEvent.change(screen.getByPlaceholderText("review.matchSearch"), { target: { value: "Pikachu" } });
+
+    await waitFor(() => expect(screen.getAllByText("ピカチュウ")).toHaveLength(2));
+    expect(screen.queryByText("Pikachu - English catalog card")).toBeNull();
+  });
 });
 
 describe("accept all proposals", () => {
