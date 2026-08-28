@@ -11,7 +11,7 @@ It replaces an Artifact that could not be shared because it exceeded the sharing
   It imports `lib/wantlist/cards.json` at build time and renders the client component.
 - `app/wantlist/WantList.tsx` - client component holding the three interactive pieces: search, the per-viewer check-off tracker, and the image lightbox.
 - `app/wantlist/wantlist.module.css` - the page's own palette, scoped to its wrapper.
-- `lib/wantlist/cards.json` - the data (688 rows). It carries **no set code**: that is an internal identifier, so it is stripped from the published data rather than merely hidden, and sets are grouped by name and year instead.
+- `lib/wantlist/cards.json` - the data (766 rows). It carries **no set code**: that is an internal identifier, so it is stripped from the published data rather than merely hidden, and sets are grouped by name and year instead.
 - `public/wantlist/wl-NNNN.webp` - a 420px rendition the lightbox opens on demand.
 - `public/wantlist/wl-NNNN-t.webp` - a 128px thumbnail for the grid. 660 of these load on one page, so the grid never pays for the full-size copies.
 
@@ -55,6 +55,10 @@ Image files are referenced by the `img` field on each row; a row with `img: null
 The page carries a **subset** of the internal want list, not all of it.
 The list is ranked on a combined score of realised margin percentage and liquidity (TCGplayer 60-day sales and listing counts, plus 130point realised US sales), pinned to the JP-acquire / US-exit leg.
 The better-scoring half is withheld and never reaches the page; what publishes is the remainder, above a $4 minimum US sale value, plus the vintage `OLD-*` and Pokekyun `CP3` blocks in full.
+
+Curated additions sit alongside that rule rather than under it.
+Alt-art rarities requested by name (Art Rare, Character Rare, Character Super Rare, Shiny) are admitted on their own bar - a positive JP-to-US margin, a US sale value of at least $4, and at least five TCGplayer sales in 60 days.
+They score like the withheld half rather than the published half, so adding them is a deliberate choice to publish strong cards, not an output of the ranking.
 
 This is deliberate. The full list encodes which cards are worth arbitraging and is competitively sensitive; the published subset is the part where a better acquisition price, not a private edge, decides the trade.
 Regenerating the page from the full list is a one-file change, so the split has to be re-applied whenever the data is refreshed.
