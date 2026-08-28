@@ -1,81 +1,102 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { waitingNavigatorLock } from "./client";
+import { resilientAuthLock, AUTH_LOCK_MIN_WAIT_MS, MAX_LOCK_HOLD_MS } from "./client";
 
 /**
- * GoTrue's default lock throws the instant another holder exists:
+ * auth-js recovers a seemingly-orphaned auth lock by STEALING it, which breaks
+ * every other holder:
  *
- *   Error: Acquiring an exclusive Navigator LockManager lock
- *     "lock:sb-<ref>-auth-token" immediately failed
+ *   AbortError: Lock broken by another request with the 'steal' option.
  *
- * A second tab is enough. The rejection is unhandled, the token refresh never
- * runs, and every authenticated query then hangs until the fetch timeout - a
- * dashboard that renders but shows no data. These pin the waiting behaviour.
+ * It steals after 5s, but one of our requests may legitimately hold the lock for
+ * far longer, so a merely-slow token refresh is mistaken for a dead one and every
+ * query queued behind it dies. Measured in a real browser with two dashboards
+ * issuing 10 reads each across an 8s refresh: stock auth-js served 1 of 20 reads,
+ * this lock serves 20 of 20. These pin the behaviours that produce that.
  */
 
 const realNavigator = globalThis.navigator;
-
 function installLockManager(impl: unknown) {
-  Object.defineProperty(globalThis, "navigator", {
-    value: { locks: impl },
-    configurable: true,
-    writable: true,
-  });
+  Object.defineProperty(globalThis, "navigator", { value: { locks: impl }, configurable: true, writable: true });
 }
-
 afterEach(() => {
-  Object.defineProperty(globalThis, "navigator", {
-    value: realNavigator,
-    configurable: true,
-    writable: true,
-  });
+  Object.defineProperty(globalThis, "navigator", { value: realNavigator, configurable: true, writable: true });
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
-describe("waitingNavigatorLock", () => {
-  it("never asks for ifAvailable, which is what fails instantly under contention", async () => {
-    const request = vi.fn(async (_name: string, opts: Record<string, unknown>, cb: () => Promise<unknown>) => {
-      expect(opts.ifAvailable).toBeUndefined();
-      expect(opts.mode).toBe("exclusive");
-      return cb();
-    });
-    installLockManager({ request });
-    // acquireTimeout 0 is the exact call GoTrue makes on its no-queue paths.
-    await expect(waitingNavigatorLock("auth", 0, async () => "ran")).resolves.toBe("ran");
-    expect(request).toHaveBeenCalledTimes(1);
+describe("resilientAuthLock", () => {
+  it("waits far longer than auth-js's 5s before suspecting an orphaned lock", () => {
+    // The whole bug in one assertion: the steal trigger must outlast the longest
+    // time fetchWithRetry can legitimately hold the lock, or slow == dead.
+    expect(AUTH_LOCK_MIN_WAIT_MS).toBeGreaterThan(MAX_LOCK_HOLD_MS);
+    expect(MAX_LOCK_HOLD_MS).toBeGreaterThan(5_000); // ...which auth-js's default is not
   });
 
-  it("waits for a holder to release instead of throwing", async () => {
+  it("does not steal from a holder that is merely slow", async () => {
+    vi.useFakeTimers();
     let release: (() => void) | undefined;
     const held = new Promise<void>((r) => (release = r));
-    const request = vi.fn(async (_n: string, _o: unknown, cb: () => Promise<unknown>) => {
-      await held; // simulate another tab holding the auth lock
-      return cb();
+    const request = vi.fn(async (_n: string, opts: Record<string, unknown>, cb: (l: unknown) => Promise<unknown>) => {
+      expect(opts.steal).toBeUndefined();
+      await held;
+      return cb({});
     });
     installLockManager({ request });
 
-    let settled = false;
-    const p = waitingNavigatorLock("auth", 0, async () => "ran").then((v) => {
-      settled = true;
-      return v;
-    });
-    await Promise.resolve();
-    expect(settled).toBe(false); // must not have failed immediately
+    const p = resilientAuthLock("auth", 5_000, async () => "ran");
+    // Well past auth-js's 5s steal point, still no steal attempt.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(request).toHaveBeenCalledTimes(1);
     release!();
     await expect(p).resolves.toBe("ran");
   });
 
-  it("passes an abort signal so a stuck holder cannot hang forever", async () => {
-    const request = vi.fn(async (_n: string, opts: Record<string, unknown>) => {
-      expect(opts.signal).toBeInstanceOf(AbortSignal);
-      return undefined;
+  it("raises the acquire wait to the floor even when auth-js asks for 5s", async () => {
+    let captured: AbortSignal | undefined;
+    const request = vi.fn(async (_n: string, opts: Record<string, unknown>, cb: (l: unknown) => Promise<unknown>) => {
+      captured = opts.signal as AbortSignal;
+      return cb({});
     });
     installLockManager({ request });
-    await waitingNavigatorLock("auth", 50, async () => "ran");
-    expect(request).toHaveBeenCalledTimes(1);
+    await resilientAuthLock("auth", 5_000, async () => "ran");
+    expect(captured).toBeInstanceOf(AbortSignal);
+    expect(captured!.aborted).toBe(false);
+  });
+
+  it("steals only once the floor has genuinely elapsed", async () => {
+    const calls: Record<string, unknown>[] = [];
+    const request = vi.fn(async (_n: string, opts: Record<string, unknown>, cb: (l: unknown) => Promise<unknown>) => {
+      calls.push(opts);
+      if (calls.length === 1) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+      return cb({});
+    });
+    installLockManager({ request });
+    await expect(resilientAuthLock("auth", 5_000, async () => "recovered")).resolves.toBe("recovered");
+    expect(calls[1].steal).toBe(true); // recovery preserved, just not at 5s
+  });
+
+  it("lets the auto-refresh tick SKIP when another tab holds the lock", async () => {
+    // acquireTimeout 0 is the tick asking "is anyone else doing auth work?".
+    // Skipping is correct - the other tab's refresh lands in the shared cookie.
+    // Queueing instead causes a redundant refresh and slows every query behind it.
+    const request = vi.fn(async (_n: string, opts: Record<string, unknown>, cb: (l: unknown) => Promise<unknown>) => {
+      expect(opts.ifAvailable).toBe(true);
+      return cb(null); // contended: LockManager hands back a null lock
+    });
+    installLockManager({ request });
+    const fn = vi.fn(async () => "ran");
+    await expect(resilientAuthLock("auth", 0, fn)).rejects.toMatchObject({ isAcquireTimeout: true });
+    expect(fn).not.toHaveBeenCalled(); // skipped, not queued
+  });
+
+  it("still runs the tick when the lock is free", async () => {
+    const request = vi.fn(async (_n: string, _o: unknown, cb: (l: unknown) => Promise<unknown>) => cb({}));
+    installLockManager({ request });
+    await expect(resilientAuthLock("auth", 0, async () => "ran")).resolves.toBe("ran");
   });
 
   it("runs unlocked where the browser has no LockManager", async () => {
     installLockManager(undefined);
-    await expect(waitingNavigatorLock("auth", 0, async () => "ran")).resolves.toBe("ran");
+    await expect(resilientAuthLock("auth", 0, async () => "ran")).resolves.toBe("ran");
   });
 });
