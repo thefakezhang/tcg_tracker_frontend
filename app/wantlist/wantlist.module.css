@@ -42,8 +42,6 @@
 .set { margin: 38px 0 0; }
 .sethead { display: flex; align-items: baseline; gap: 14px; margin: 0 0 2px; padding: 9px 14px;
   background: var(--band); border: 1px solid var(--rule); border-bottom: 0; border-radius: 2px 2px 0 0; }
-.code { font-size: 12px; font-weight: 500; letter-spacing: .06em; color: var(--onIndigo);
-  background: var(--indigo); padding: 3px 8px; border-radius: 2px; white-space: nowrap; }
 .setname { font-size: 17px; font-weight: 700; flex: 1; min-width: 0; }
 .setyear, .setqty { font-size: 11px; color: var(--ink3); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .rows { border: 1px solid var(--rule); border-radius: 0 0 2px 2px; background: var(--surface); overflow: hidden; }
@@ -73,7 +71,7 @@
 .lb { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
   background: rgba(10, 16, 28, .82); padding: 24px; }
 .lb figure { margin: 0; max-width: 420px; text-align: center; }
-.lb img { width: min(78vw, 300px); aspect-ratio: 63/88; object-fit: cover; border-radius: 6px; }
+.lb img { width: min(84vw, 380px); aspect-ratio: 63/88; object-fit: cover; border-radius: 6px; }
 .lb figcaption { margin-top: 14px; color: #f2f5fa; font-size: 14px; }
 .lb figcaption b { display: block; font-size: 19px; margin-bottom: 4px; }
 .lbClose { position: absolute; top: 18px; right: 22px; font-size: 26px; line-height: 1; color: #f2f5fa;

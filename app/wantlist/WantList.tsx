@@ -3,15 +3,23 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
 import styles from "./wantlist.module.css";
 
+// Note: the internal set code is deliberately NOT part of this shape. It is an
+// internal identifier, so it is stripped from the published data rather than
+// merely hidden - otherwise it would still be readable in the page source.
 export type Card = {
-  i: number; set: string; setName: string; year: string; num: string;
+  i: number; setName: string; year: string; num: string;
   jp: string; en: string; rar: string; c: boolean; img: string | null;
 };
 
 const STORE_KEY = "wantlist.checked.v1";
 
+// Two renditions per card: a 128px thumbnail for the grid (683 of them load on
+// one page, so weight matters) and a 420px copy the lightbox opens on demand.
+const full = (img: string) => `/wantlist/${img}`;
+const thumb = (img: string) => `/wantlist/${img.replace(/\.webp$/, "-t.webp")}`;
+
 function haystack(c: Card) {
-  return `${c.set} ${c.setName} ${c.num} ${c.jp} ${c.en} ${c.rar}`.toLowerCase();
+  return `${c.setName} ${c.num} ${c.jp} ${c.en} ${c.rar}`.toLowerCase();
 }
 
 export default function WantList({ cards, updated }: { cards: Card[]; updated: string }) {
@@ -46,18 +54,21 @@ export default function WantList({ cards, updated }: { cards: Card[]; updated: s
   }, [cards, index, term]);
 
   const groups = useMemo(() => {
-    const out: { set: string; setName: string; year: string; items: Card[] }[] = [];
+    const out: { setName: string; year: string; items: Card[] }[] = [];
     for (const c of visible) {
       const last = out[out.length - 1];
-      if (last && last.set === c.set) last.items.push(c);
-      else out.push({ set: c.set, setName: c.setName, year: c.year, items: [c] });
+      if (last && last.setName === c.setName && last.year === c.year) last.items.push(c);
+      else out.push({ setName: c.setName, year: c.year, items: [c] });
     }
     return out;
   }, [visible]);
 
   const doneCount = Object.keys(checked).length;
   const crank = useMemo(() => cards.filter((c) => c.c).length, [cards]);
-  const setCount = useMemo(() => new Set(cards.map((c) => c.set)).size, [cards]);
+  const setCount = useMemo(
+    () => new Set(cards.map((c) => `${c.setName}|${c.year}`)).size,
+    [cards],
+  );
 
   useEffect(() => {
     if (!zoom) return;
@@ -110,9 +121,8 @@ export default function WantList({ cards, updated }: { cards: Card[]; updated: s
 
         <main>
           {groups.map((g) => (
-            <section key={g.set} className={styles.set}>
+            <section key={`${g.setName}|${g.year}`} className={styles.set}>
               <h2 className={styles.sethead}>
-                <span className={styles.code}>{g.set}</span>
                 <span className={styles.setname}>{g.setName}</span>
                 <span className={styles.setyear}>{g.year}</span>
                 <span className={styles.setqty}>{g.items.length} 種</span>
@@ -137,7 +147,7 @@ export default function WantList({ cards, updated }: { cards: Card[]; updated: s
                     {c.img ? (
                       <button type="button" className={styles.zoom} onClick={() => setZoom(c)}
                         aria-label={`拡大 ${c.jp} ${c.en}`}>
-                        <img className={styles.pic} src={`/wantlist/${c.img}`} alt="" loading="lazy" decoding="async" />
+                        <img className={styles.pic} src={thumb(c.img)} alt="" loading="lazy" decoding="async" />
                       </button>
                     ) : (
                       <span className={styles.picNone} aria-hidden="true" />
@@ -170,10 +180,10 @@ export default function WantList({ cards, updated }: { cards: Card[]; updated: s
              onClick={(e) => { if (e.target === e.currentTarget) setZoom(null); }}>
           <button type="button" className={styles.lbClose} onClick={() => setZoom(null)} aria-label="閉じる">&times;</button>
           <figure>
-            <img src={`/wantlist/${zoom.img}`} alt={`${zoom.jp} ${zoom.en}`} />
+            <img src={full(zoom.img!)} alt={`${zoom.jp} ${zoom.en}`} />
             <figcaption>
               <b>{zoom.jp} {zoom.en}</b>
-              {zoom.set} {zoom.num}
+              {zoom.setName} {zoom.num}
             </figcaption>
           </figure>
         </div>
