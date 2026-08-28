@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ClipboardCheck, Check, X, Plus, Search, Link2, AlertTriangle, GitMerge, Move } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
+import { externalIdMatches, identifierOrParts, smartSearchFilters } from "@/lib/card-search";
 import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { isOpaqueLinkID, linkChipLabel, platformShort, sourceLabel } from "@/lib/source-labels";
@@ -1359,15 +1359,28 @@ function MatchToExisting({
       const client = createClient();
       setSearchError(null);
       try {
+      // Resolve identifier semantics BEFORE the language pin, because a paste
+      // must not be filtered by it (see below).
+      const extIds = q ? await externalIdMatches(client, cfg.extIdsTable, cfg.idCol, q) : [];
+      const pastedIdentifier = q
+        ? identifierOrParts(q, cfg.uidCol, cfg.idCol, extIds).length > 0
+        : false;
+
       let query = client.from(cfg.catalogTable).select(cfg.catalogSelect);
       const matchLanguage = cfg.matchLanguage?.(candidate);
-      if (matchLanguage) query = query.eq("language", matchLanguage);
+      // The language pin keeps the jp and en catalog partitions out of each
+      // other's picker, which is right for a TEXT search. It is wrong for an
+      // identifier: a uid or an exact external id already names one specific
+      // card, so the pin can only hide the row the curator explicitly asked
+      // for. It also silently broke every candidate in a language the catalog
+      // has no partition for - kr holds 1 card and cn/tw hold none, so those
+      // pickers returned nothing whatever was typed, including a correct uid.
+      if (matchLanguage && !pastedIdentifier) query = query.eq("language", matchLanguage);
       if (q) {
         // Free search across name + set code + card number, plus the card's
         // uid (full or displayed 8-hex prefix) and an exact platform external
         // id - shared semantics with the Card Index (lib/card-search).
         // Multi-word terms AND together via one chained or() per token.
-        const extIds = await externalIdMatches(client, cfg.extIdsTable, cfg.idCol, q);
         const cols = [cfg.nameCol, "set_code"];
         if (cfg.numberCol) cols.push(cfg.numberCol);
         for (const f of smartSearchFilters(q, cols, cfg.uidCol, cfg.idCol, extIds)) {

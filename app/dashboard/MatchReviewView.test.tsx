@@ -127,6 +127,81 @@ describe("Pokemon match target catalog", () => {
   });
 });
 
+// The language pin keeps jp and en catalog partitions apart, which is right for
+// a text search. It was also applied to an IDENTIFIER paste, and the catalog has
+// no partition for kr (1 card), cn or tw (none) - so for a Card Ladder Korean
+// slab the picker returned nothing whatever was typed, a correct uid included.
+describe("identifier paste vs the language pin", () => {
+  const KR_CANDIDATE = {
+    candidate_id: 7101,
+    source_platform: "identity",
+    source_key: "",
+    source_name: "Ancient Mew",
+    source_raw: null,
+    source_fields: {
+      source: "cardladder",
+      set_code: "Pokemon Korean Promo",
+      card_number: "UNKNOWN",
+      language: "kr",
+    },
+    source_image_url: null,
+    proposed_id: null,
+    candidate_ids: [],
+    confidence: 0.5,
+    reason: "review",
+    matched: [],
+  };
+  // A real catalog row, in a language the candidate is NOT in.
+  const JP_ROW = {
+    card_id: 2017644,
+    card_uid: "b2428328-7d5e-4284-939f-1ac12bfc0f77",
+    regional_name: "ミュウ",
+    english_name: "Mew",
+    set_code: "UNKNOWN",
+    card_number: "UNKNOWN",
+    language: "jp",
+    misc_info: "",
+  };
+
+  it("finds a card by its uid prefix even though the candidate's language has no catalog partition", async () => {
+    mocks.data = { candidates: [KR_CANDIDATE], items: new Map(), total: 1 };
+    mocks.catalogRows = [JP_ROW];
+
+    render(<MatchReviewView initialGame="pokemon" initialSource="cardladder" />);
+    fireEvent.click(screen.getByTitle("review.matchExistingTitle"));
+    // The 8-hex prefix the UI displays - what a curator actually pastes.
+    fireEvent.change(screen.getByPlaceholderText("review.matchSearch"), { target: { value: "b2428328" } });
+
+    await waitFor(() => expect(screen.getAllByText("ミュウ").length).toBeGreaterThan(0));
+  });
+
+  it("finds a card by its full uuid regardless of language", async () => {
+    mocks.data = { candidates: [KR_CANDIDATE], items: new Map(), total: 1 };
+    mocks.catalogRows = [JP_ROW];
+
+    render(<MatchReviewView initialGame="pokemon" initialSource="cardladder" />);
+    fireEvent.click(screen.getByTitle("review.matchExistingTitle"));
+    fireEvent.change(screen.getByPlaceholderText("review.matchSearch"), {
+      target: { value: "b2428328-7d5e-4284-939f-1ac12bfc0f77" },
+    });
+
+    await waitFor(() => expect(screen.getAllByText("ミュウ").length).toBeGreaterThan(0));
+  });
+
+  it("still pins a TEXT search to the candidate's language", async () => {
+    // The guard the pin exists for must survive: typing a name must not reach
+    // across partitions, only an explicit identifier may.
+    mocks.data = { candidates: [KR_CANDIDATE], items: new Map(), total: 1 };
+    mocks.catalogRows = [JP_ROW];
+
+    render(<MatchReviewView initialGame="pokemon" initialSource="cardladder" />);
+    fireEvent.click(screen.getByTitle("review.matchExistingTitle"));
+    fireEvent.change(screen.getByPlaceholderText("review.matchSearch"), { target: { value: "Mew" } });
+
+    await waitFor(() => expect(screen.queryByText("ミュウ")).toBeNull());
+  });
+});
+
 describe("accept all proposals", () => {
   function proposedRow(id: number) {
     return {
