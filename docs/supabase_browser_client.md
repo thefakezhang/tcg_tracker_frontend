@@ -42,10 +42,16 @@ The acquire wait is raised to `AUTH_LOCK_MIN_WAIT_MS` (60s), which must exceed `
 A test asserts that relationship so the two constants cannot drift apart and quietly reintroduce the bug.
 Stealing still happens after that floor elapses, because a tab killed mid-refresh really does leave a lock nobody will release; only the trigger moved.
 
-**`acquireTimeout === 0` keeps its skip semantics.**
+**`acquireTimeout === 0` skips quietly.**
 auth-js passes 0 from exactly one place, `_autoRefreshTokenTick`, which is asking "is another tab already doing auth work?".
-Skipping is the correct answer: the other tab's refresh lands in the cookie the whole browser shares, so this tick has nothing left to do, and `_autoRefreshTokenTick` catches the skip by the documented `isAcquireTimeout` property.
+Skipping is the correct answer: the other tab's refresh lands in the cookie the whole browser shares, so this tick has nothing left to do.
 Queueing instead performs a redundant refresh per tab and slows every query behind it.
+
+The skip resolves rather than throwing, and that distinction is load-bearing.
+auth-js's own lock throws a marker error here and depends on `_autoRefreshTokenTick` recognising it by `isAcquireTimeout` or an `instanceof` check.
+That recognition is version-dependent, and nothing in our code awaits the tick, so where it misses, the rejection is unhandled and every contended tick prints `Uncaught (in promise) Error: Acquiring an exclusive Navigator LockManager lock "lock:sb-<ref>-auth-token" immediately failed` into the operator's console.
+Reproducing that marker error was a regression shipped in #300 and removed in #301; the console filled with it on a dashboard that had been quiet the day before.
+Resolving is the same outcome without depending on a catch we do not control, the tick's return value is unused, and the next tick retries 30s later.
 
 ## Evidence
 

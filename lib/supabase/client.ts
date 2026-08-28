@@ -95,21 +95,27 @@ export async function resilientAuthLock<R>(
   // auth-js passes 0: the other tab's refresh lands in the shared cookie the
   // whole browser reads, so this tick has nothing left to do. Queueing here
   // instead performs a redundant second refresh and slows every query behind
-  // it. _autoRefreshTokenTick identifies the skip by the `isAcquireTimeout`
-  // property (auth-js documents that property as the contract, in preference
-  // to an instanceof check), so the error must carry it.
+  // it.
   if (acquireTimeout === 0) {
     return (await locks.request(
       name,
       { mode: "exclusive", ifAvailable: true },
       async (lock) => {
-        if (!lock) {
-          const err = new Error(
-            `Acquiring an exclusive Navigator LockManager lock "${name}" immediately failed`,
-          ) as Error & { isAcquireTimeout: boolean };
-          err.isAcquireTimeout = true;
-          throw err;
-        }
+        // Contended: another tab is already doing auth work, and its refresh
+        // lands in the cookie this whole browser shares, so this tick has
+        // nothing left to do. Resolve quietly.
+        //
+        // Do NOT throw a marker error here. auth-js's own lock does, and
+        // relies on _autoRefreshTokenTick recognising it by `isAcquireTimeout`
+        // or `instanceof LockAcquireTimeoutError`. That recognition is
+        // version-dependent, and when it misses, nothing catches the rejection
+        // and every contended tick prints
+        //   Uncaught (in promise) Error: Acquiring an exclusive Navigator
+        //   LockManager lock "lock:sb-<ref>-auth-token" immediately failed
+        // in the operator's console. Skipping silently is the same outcome
+        // without depending on a catch we do not control. The tick's return
+        // value is unused, and the next tick retries in 30s.
+        if (!lock) return undefined as R;
         return fn();
       },
     )) as R;

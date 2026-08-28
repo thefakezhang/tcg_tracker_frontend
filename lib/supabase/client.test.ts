@@ -75,18 +75,34 @@ describe("resilientAuthLock", () => {
     expect(calls[1].steal).toBe(true); // recovery preserved, just not at 5s
   });
 
-  it("lets the auto-refresh tick SKIP when another tab holds the lock", async () => {
+  it("lets the auto-refresh tick SKIP QUIETLY when another tab holds the lock", async () => {
     // acquireTimeout 0 is the tick asking "is anyone else doing auth work?".
     // Skipping is correct - the other tab's refresh lands in the shared cookie.
-    // Queueing instead causes a redundant refresh and slows every query behind it.
+    //
+    // It must skip WITHOUT throwing. auth-js's own lock throws a marker error
+    // and depends on _autoRefreshTokenTick recognising it; where that misses,
+    // the rejection is unhandled and the operator's console fills with
+    // "Uncaught (in promise) Error: Acquiring an exclusive Navigator
+    // LockManager lock ... immediately failed" on every contended tick.
     const request = vi.fn(async (_n: string, opts: Record<string, unknown>, cb: (l: unknown) => Promise<unknown>) => {
       expect(opts.ifAvailable).toBe(true);
       return cb(null); // contended: LockManager hands back a null lock
     });
     installLockManager({ request });
     const fn = vi.fn(async () => "ran");
-    await expect(resilientAuthLock("auth", 0, fn)).rejects.toMatchObject({ isAcquireTimeout: true });
+    await expect(resilientAuthLock("auth", 0, fn)).resolves.toBeUndefined();
     expect(fn).not.toHaveBeenCalled(); // skipped, not queued
+  });
+
+  it("never rejects on a contended tick, however many ticks contend", async () => {
+    // Guards the P0 directly: any rejection here is an unhandled rejection in
+    // the browser, because nothing in our code awaits the tick.
+    const request = vi.fn(async (_n: string, _o: unknown, cb: (l: unknown) => Promise<unknown>) => cb(null));
+    installLockManager({ request });
+    const results = await Promise.allSettled(
+      Array.from({ length: 25 }, () => resilientAuthLock("auth", 0, async () => "ran")),
+    );
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
   });
 
   it("still runs the tick when the lock is free", async () => {
