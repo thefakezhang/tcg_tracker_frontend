@@ -377,11 +377,13 @@ function CollisionPanel({
           coll.existing_set_code,
           coll.existing_card_number,
         ].filter(Boolean).join(" · ");
-        const canAct = proposedId != null && coll.existing_card_id != null && proposedId !== coll.existing_card_id;
+        const occupied = coll.kind === "occupied_slot";
+        const heldUrl = occupied && coll.held_id ? (coll.held_id_url ?? anchorURL(coll.platform, coll.held_id)) : undefined;
+        const canAct = !occupied && proposedId != null && coll.existing_card_id != null && proposedId !== coll.existing_card_id;
         return (
           <div key={`${coll.platform}:${coll.id}:${i}`} className="rounded border border-border/60 bg-background/60 p-1.5">
             <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
-              {t("review.collisionExisting")}
+              {occupied ? t("review.collisionOccupied") : t("review.collisionExisting")}
             </div>
             <div className="mt-0.5">
               {url ? (
@@ -391,7 +393,7 @@ function CollisionPanel({
               ) : (
                 <span className="font-medium">{platformLabel} #{coll.id}</span>
               )}
-              <span className="text-muted-foreground"> {t("review.collisionOwnedBy")} </span>
+              <span className="text-muted-foreground"> {occupied ? t("review.collisionOccupiedBy") : t("review.collisionOwnedBy")} </span>
               <span className="font-medium">
                 #{coll.existing_card_id ?? "?"}
                 {coll.existing_name ? ` 「${coll.existing_name}」` : ""}
@@ -399,6 +401,19 @@ function CollisionPanel({
             </div>
             {identityLine && (
               <div className="text-muted-foreground">{identityLine}</div>
+            )}
+            {occupied && coll.held_id && (
+              <div className="mt-0.5">
+                <span className="text-muted-foreground">{t("review.collisionOccupiedHolds")} </span>
+                {heldUrl ? (
+                  <a href={heldUrl} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2 hover:text-primary">
+                    {platformLabel} #{coll.held_id}
+                  </a>
+                ) : (
+                  <span className="font-medium">{platformLabel} #{coll.held_id}</span>
+                )}
+                <div className="text-[9px] text-muted-foreground">{t("review.collisionOccupiedHint")}</div>
+              </div>
             )}
             {canAct && (onMerge || onAttach) && (
               <div className="mt-1.5 flex flex-wrap gap-1">
@@ -456,6 +471,12 @@ interface CollisionEntry {
   existing_name?: string;
   existing_set_code?: string;
   existing_card_number?: string;
+  // kind === "occupied_slot": the id is free, but the resolved card already
+  // holds held_id on a single-slot platform (Card Ladder: one profile prices a
+  // card). Merge/move do not apply - moving the id would be the eviction.
+  kind?: string;
+  held_id?: string;
+  held_id_url?: string;
 }
 
 // parseCollisions extracts a structured list of colliding-platform-id records
