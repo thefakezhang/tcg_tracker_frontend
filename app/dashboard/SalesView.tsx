@@ -1,12 +1,13 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { ChevronRight, ChevronDown } from "lucide-react";
+import { ChevronRight, ChevronDown, Pencil } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { cardMeta } from "./use-card-data";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import ReceiptsDialog from "./Receipts";
+import { useSaleEditDialogs, type EditableSale } from "./SaleEditDialogs";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,34 +22,30 @@ import {
 // one place, read from sales_ledger_v (migration 085) — which resolves name,
 // the REAL leg (from the cost layers, not currency), and the reverted flag in
 // SQL. (The per-trip Sales tab is for RECORDING a sale; this is the history.)
+// Committed sales are editable in place from here too - the pencil opens the
+// shared SaleEditDialogs (edit_sale / edit_sealed_sale), single or whole lot.
 const PAGE = 300; // sales per fetch; "Load more" raises it
 
-interface Sale {
-  key: string;
-  game: string;
-  name: string;
+interface Sale extends EditableSale {
   search: string; // lowercased name+english+set+number for filtering
   leg: "import" | "export";
-  sold_at: string;
-  quantity: number;
-  gross_usd: number;
-  cogs_usd: number;
   margin_usd: number;
   sale_group: number | null;
 }
 
 type LedgerRow = {
-  sale_id: number; game: string; sale_group: number | null;
+  sale_id: number; kind: "single" | "sealed"; game: string; sale_group: number | null;
   regional_name: string; english_name: string | null; set_code: string; card_number: string | null; misc_info: string | null;
   leg: "import" | "export" | null; sold_at: string; quantity: number;
-  gross_usd: number; cogs_usd: number; margin_usd: number; is_reverted: boolean;
+  gross_usd: number; fees_usd: number; cogs_usd: number; margin_usd: number;
+  orig_currency: string; proceeds_orig: number; fx_rate_used: number; is_reverted: boolean;
 };
 
 async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncated: boolean }> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from("sales_ledger_v")
-    .select("sale_id, game, sale_group, regional_name, english_name, set_code, card_number, misc_info, leg, sold_at, quantity, gross_usd, cogs_usd, margin_usd, is_reverted")
+    .select("sale_id, kind, game, sale_group, regional_name, english_name, set_code, card_number, misc_info, leg, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted")
     .order("sold_at", { ascending: false })
     .limit(limit);
   if (error) throw error;
@@ -57,13 +54,15 @@ async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncat
     .filter((r) => !r.is_reverted) // reverted sales drop out (the revert undid them)
     .map((r) => ({
       key: `${r.game}-${r.sale_id}`,
-      game: r.game,
+      kind: r.kind, game: r.game, sale_id: r.sale_id,
       name: `${r.regional_name} · ${cardMeta(r.set_code, r.card_number, r.misc_info)}`.trim(),
       search: `${r.regional_name} ${r.english_name ?? ""} ${r.set_code} ${r.card_number ?? ""}`.toLowerCase(),
       leg: r.leg ?? "import",
       sold_at: r.sold_at, quantity: r.quantity,
-      gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd, sale_group: r.sale_group,
-    }));
+      gross_usd: r.gross_usd, fees_usd: r.fees_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
+      orig_currency: r.orig_currency, proceeds_orig: r.proceeds_orig, fx_rate_used: r.fx_rate_used,
+      sale_group: r.sale_group,
+    } satisfies Sale));
   return { sales, truncated: rows.length >= limit };
 }
 
@@ -78,6 +77,9 @@ export default function SalesView() {
   const { data, error, isLoading, retry } = useSupabaseQuery(
     ["global-sales", limit], () => fetchGlobalSales(limit));
   const sales = data?.sales ?? [];
+  // Edit a committed sale / lot in place - the same dialogs and RPC logic as
+  // the per-trip Sales tab (SaleEditDialogs); refetch the ledger on save.
+  const saleEdit = useSaleEditDialogs(async () => { await retry(); });
 
   // Collapse lot sales (shared sale_group) into one event row.
   type Event = { gid: string; items: Sale[]; game: string; sale_group: number | null; leg: "import" | "export"; sold_at: string; qty: number; gross: number; cogs: number; margin: number };
@@ -161,9 +163,16 @@ export default function SalesView() {
               <TableCell>{formatUsdWhole(e.cogs)}</TableCell>
               <TableCell className={e.margin < 0 ? "text-destructive" : ""}>{formatUsdWhole(e.margin)}</TableCell>
               <TableCell className="text-right">
-                {e.sale_group != null && (
-                  <ReceiptsDialog ownerType={`sale:${e.game}`} ownerId={e.sale_group} />
-                )}
+                <span className="inline-flex items-center gap-0.5">
+                  <Button variant="ghost" size="icon" className="size-7" disabled={saleEdit.saving}
+                    title={isLot ? t("trips.editLot") : t("trips.editSale")}
+                    onClick={(ev) => { ev.stopPropagation(); if (isLot) saleEdit.openEditLot(e.items); else saleEdit.openEdit(e.items[0]); }}>
+                    <Pencil className="size-4" />
+                  </Button>
+                  {e.sale_group != null && (
+                    <ReceiptsDialog ownerType={`sale:${e.game}`} ownerId={e.sale_group} />
+                  )}
+                </span>
               </TableCell>
             </TableRow>
             {isLot && open && e.items.map((s) => (
@@ -199,6 +208,8 @@ export default function SalesView() {
           </Button>
         )}
       </div>
+
+      {saleEdit.dialogs}
     </div>
   );
 }

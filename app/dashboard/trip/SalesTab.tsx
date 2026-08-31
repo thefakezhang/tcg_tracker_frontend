@@ -25,6 +25,7 @@ import {
 } from "./sale-lot-model";
 import { parseSaleQuantity } from "./sale-input";
 import ReceiptsDialog from "../Receipts";
+import { useSaleEditDialogs, allocate } from "../SaleEditDialogs";
 import TcgplayerImportDialog, { type TcgImportEntry } from "./TcgplayerImportDialog";
 import { type MatchableHolding } from "./tcgplayer-collection-match";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -136,20 +137,9 @@ export default function SalesTab({ tripId }: { tripId: number }) {
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [saleCustomerId, setSaleCustomerId] = useState<number | null>(null);
   const [lotCustomerId, setLotCustomerId] = useState<number | null>(null);
-  // Edit-a-sale dialog (correct proceeds/fees/date without revert + re-record).
-  const [editSel, setEditSel] = useState<SaleRow | null>(null);
-  const [eQty, setEQty] = useState("1");
-  const [eProceeds, setEProceeds] = useState("");
-  const [eFees, setEFees] = useState("0");
-  const [eFx, setEFx] = useState("1");
-  const [eDate, setEDate] = useState("");
-  // Edit-a-lot dialog: change the lot's TOTAL gross/fees and re-split across its
-  // member cards (by their current cost share), without revert + re-record.
-  const [eLotItems, setELotItems] = useState<SaleRow[] | null>(null);
-  const [eLotGross, setELotGross] = useState("");
-  const [eLotFees, setELotFees] = useState("0");
-  const [eLotFx, setELotFx] = useState("1");
-  const [eLotDate, setELotDate] = useState("");
+  // Edit a committed sale / lot in place - dialogs + RPC logic shared with the
+  // global sales ledger (SaleEditDialogs).
+  const saleEdit = useSaleEditDialogs(async () => { await fetchHoldings(); await fetchSales(); });
   // Lot sale: pick several holdings, enter one total.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lotOpen, setLotOpen] = useState(false);
@@ -475,84 +465,6 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     await fetchHoldings(); await fetchSales();
   }
 
-  function openEdit(s: SaleRow) {
-    const isNative = !!s.orig_currency && s.orig_currency.toUpperCase() !== "USD";
-    setEditSel(s);
-    setEQty(String(s.quantity));
-    setEProceeds(String(isNative ? s.proceeds_orig : s.gross_usd));
-    setEFees(String(s.fees_usd));
-    setEFx(String(s.fx_rate_used || 1));
-    setEDate(s.sold_at);
-  }
-
-  // Edit a confirmed sale in place (no revert + re-record). Editing quantity
-  // re-runs FIFO (edit_sale restores the old cost layers and re-consumes for the
-  // new qty), so COGS is recomputed.
-  async function editSale() {
-    if (!editSel || saving) return;
-    const s = editSel;
-    const supabase = createClient();
-    const isNative = !!s.orig_currency && s.orig_currency.toUpperCase() !== "USD";
-    const grossUsd = isNative ? Math.round(Number(eProceeds) * Number(eFx) * 100) / 100 : Number(eProceeds);
-    const common = {
-      p_quantity: Math.max(1, Math.floor(Number(eQty)) || 1),
-      p_gross_usd: isNative ? 0 : grossUsd, p_fees_usd: Number(eFees) || 0, p_sold_at: eDate,
-      p_orig_currency: isNative ? s.orig_currency : null,
-      p_proceeds_orig: isNative ? Number(eProceeds) : null,
-      p_fx_rate: isNative ? Number(eFx) : 1,
-    };
-    const ok = await save(() => s.kind === "sealed"
-      ? supabase.rpc("edit_sealed_sale", { p_sale_id: s.sale_id, ...common })
-      : supabase.rpc("edit_sale", { p_game: s.game, p_sale_id: s.sale_id, ...common }));
-    if (!ok) return;
-    setEditSel(null);
-    await fetchHoldings(); await fetchSales();
-  }
-  const eNative = !!editSel?.orig_currency && editSel.orig_currency.toUpperCase() !== "USD";
-
-  const eLotNative = !!eLotItems?.[0]?.orig_currency && eLotItems[0].orig_currency.toUpperCase() !== "USD";
-  function openEditLot(items: SaleRow[]) {
-    const native = !!items[0]?.orig_currency && items[0].orig_currency.toUpperCase() !== "USD";
-    setELotItems(items);
-    setELotGross(String(native ? items.reduce((a, s) => a + Number(s.proceeds_orig), 0) : items.reduce((a, s) => a + Number(s.gross_usd), 0)));
-    setELotFees(String(items.reduce((a, s) => a + Number(s.fees_usd), 0)));
-    setELotFx(String(items[0]?.fx_rate_used || 1));
-    setELotDate(items[0]?.sold_at ?? new Date().toISOString().slice(0, 10));
-  }
-  // Re-split the new lot total + fees across the members by their CURRENT cost
-  // share (gross → cogs → even fallback) and edit each member in place. Each
-  // edit_sale re-runs FIFO for the unchanged qty, so COGS is stable and only the
-  // revenue/fees re-allocate. Sequential (no lot-level RPC); stops on first error.
-  async function editLotSale() {
-    if (!eLotItems || saving) return;
-    const items = eLotItems;
-    let weights = items.map((s) => Number(s.gross_usd));
-    if (weights.reduce((a, b) => a + b, 0) <= 0) weights = items.map((s) => Number(s.cogs_usd));
-    const grossAlloc = allocate(Number(eLotGross), weights);
-    const feesAlloc = allocate(Number(eLotFees) || 0, weights);
-    const supabase = createClient();
-    const ok = await save(async () => {
-      for (let i = 0; i < items.length; i++) {
-        const s = items[i];
-        const common = {
-          p_quantity: s.quantity,
-          p_gross_usd: eLotNative ? 0 : grossAlloc[i],
-          p_fees_usd: feesAlloc[i], p_sold_at: eLotDate,
-          p_orig_currency: eLotNative ? s.orig_currency : null,
-          p_proceeds_orig: eLotNative ? grossAlloc[i] : null,
-          p_fx_rate: eLotNative ? Number(eLotFx) : 1,
-        };
-        const { error } = await (s.kind === "sealed"
-          ? supabase.rpc("edit_sealed_sale", { p_sale_id: s.sale_id, ...common })
-          : supabase.rpc("edit_sale", { p_game: s.game, p_sale_id: s.sale_id, ...common }));
-        if (error) throw error;
-      }
-    });
-    if (!ok) return;
-    setELotItems(null);
-    await fetchHoldings(); await fetchSales();
-  }
-
   const native = sel?.leg === "export" && currency.toUpperCase() !== "USD";
 
   // ---- lot sale ----
@@ -711,7 +623,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     return (
       <span className="flex items-center gap-0.5">
       {!s.sourceFactLot && (
-        <Button variant="ghost" size="icon" className="size-7" disabled={saving} onClick={() => openEdit(s)} title={t("trips.editSale")}>
+        <Button variant="ghost" size="icon" className="size-7" disabled={saving} onClick={() => saleEdit.openEdit(s)} title={t("trips.editSale")}>
           <Pencil className="size-4" />
         </Button>
       )}
@@ -802,18 +714,6 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     setLotOpen(true);
   }
 
-  // Split a total across items by weight, exact to the cent (largest remainder).
-  function allocate(total: number, weights: number[]): number[] {
-    const cents = Math.round((Number(total) || 0) * 100);
-    let ws = weights, tw = ws.reduce((a, b) => a + b, 0);
-    if (tw <= 0) { ws = weights.map(() => 1); tw = ws.length; }
-    const raw = ws.map((w) => (cents * w) / tw);
-    const base = raw.map(Math.floor);
-    const rem = cents - base.reduce((a, b) => a + b, 0);
-    const order = raw.map((r, i) => ({ i, frac: r - Math.floor(r) })).sort((a, b) => b.frac - a.frac);
-    for (let k = 0; k < rem; k++) base[order[k].i]++;
-    return base.map((c) => c / 100);
-  }
 
   async function recordLotSale() {
     const items = selectedHoldings;
@@ -1064,7 +964,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                   <div className="mt-1 flex items-center gap-1">
                     {!ev.reverted && !ev.sourceFactLot && (
                       <Button variant="ghost" size="sm" className="min-h-11 px-1 text-xs sm:min-h-7" disabled={saving}
-                        onClick={() => ev.isLot ? openEditLot(ev.items) : openEdit(ev.items[0])}>
+                        onClick={() => ev.isLot ? saleEdit.openEditLot(ev.items) : saleEdit.openEdit(ev.items[0])}>
                         <Pencil className="size-3 mr-1" />{ev.isLot ? t("trips.editLot") : t("trips.editSale")}
                       </Button>
                     )}
@@ -1113,7 +1013,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                       <>
                       {!ev.sourceFactLot && (
                         <Button variant="ghost" size="icon" className="size-7" disabled={saving}
-                          onClick={() => ev.isLot ? openEditLot(ev.items) : openEdit(ev.items[0])}
+                          onClick={() => ev.isLot ? saleEdit.openEditLot(ev.items) : saleEdit.openEdit(ev.items[0])}
                           title={ev.isLot ? t("trips.editLot") : t("trips.editSale")}>
                           <Pencil className="size-4" />
                         </Button>
@@ -1283,72 +1183,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!editSel} onOpenChange={(o) => !o && setEditSel(null)}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader><DialogTitle>{t("trips.editSale")} · {editSel?.name}</DialogTitle></DialogHeader>
-          <FieldGroup>
-            <Field><Label>{t("trips.saleQty")}</Label>
-              <Input type="number" min={1} value={eQty} onChange={(e) => setEQty(e.target.value)} /></Field>
-            <Field><Label>{eNative ? t("trips.saleProceedsOrig") : t("trips.saleGross")}</Label>
-              <Input type="number" value={eProceeds} onChange={(e) => setEProceeds(e.target.value)} autoFocus /></Field>
-            {eNative && (
-              <>
-                <Field><Label>{t("trips.saleFx")}</Label>
-                  <Input type="number" value={eFx} onChange={(e) => setEFx(e.target.value)} /></Field>
-                <p className="text-xs text-muted-foreground">
-                  {t("trips.usdComputed", { usd: formatUsd(Number(eProceeds) * Number(eFx) || 0) })}
-                </p>
-              </>
-            )}
-            <Field><Label>{t("trips.saleFees")}</Label>
-              <Input type="number" value={eFees} onChange={(e) => setEFees(e.target.value)} /></Field>
-            <Field><Label>{t("trips.date")}</Label>
-              <Input type="date" value={eDate} onChange={(e) => setEDate(e.target.value)} /></Field>
-            {Number(eQty) !== editSel?.quantity && (
-              <p className="text-xs text-muted-foreground">{t("trips.editSaleQtyNote")}</p>
-            )}
-          </FieldGroup>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditSel(null)}>{t("trips.cancel")}</Button>
-            <Button disabled={!eProceeds || saving} onClick={editSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.saveChanges")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!eLotItems} onOpenChange={(o) => !o && setELotItems(null)}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader><DialogTitle>{t("trips.editLot")} · {t("trips.lotItems", { n: eLotItems?.length ?? 0 })}</DialogTitle></DialogHeader>
-          <FieldGroup>
-            <Field><Label>{eLotNative ? t("trips.saleProceedsOrig") : t("trips.saleGross")}</Label>
-              <Input type="number" value={eLotGross} onChange={(e) => setELotGross(e.target.value)} autoFocus /></Field>
-            {eLotNative && (
-              <>
-                <Field><Label>{t("trips.saleFx")}</Label>
-                  <Input type="number" value={eLotFx} onChange={(e) => setELotFx(e.target.value)} /></Field>
-                <p className="text-xs text-muted-foreground">
-                  {t("trips.usdComputed", { usd: formatUsd(Number(eLotGross) * Number(eLotFx) || 0) })}
-                </p>
-              </>
-            )}
-            <Field><Label>{t("trips.saleFees")}</Label>
-              <Input type="number" value={eLotFees} onChange={(e) => setELotFees(e.target.value)} /></Field>
-            <Field><Label>{t("trips.date")}</Label>
-              <Input type="date" value={eLotDate} onChange={(e) => setELotDate(e.target.value)} /></Field>
-            <p className="text-xs text-muted-foreground">{t("trips.editLotNote")}</p>
-          </FieldGroup>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setELotItems(null)}>{t("trips.cancel")}</Button>
-            <Button disabled={!eLotGross || saving} onClick={editLotSale}>{saving ? <Loader2 className="size-4 animate-spin" /> : t("trips.saveChanges")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <TcgplayerImportDialog
-        open={tcgImportOpen}
-        onOpenChange={setTcgImportOpen}
-        holdings={matchableHoldings}
-        onImport={importFromTcg}
-      />
+      {saleEdit.dialogs}
 
       <Dialog open={lotOpen} onOpenChange={(o) => !o && setLotOpen(false)}>
         <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-xl">
