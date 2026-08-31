@@ -39,13 +39,14 @@ type LedgerRow = {
   leg: "import" | "export" | null; sold_at: string; quantity: number;
   gross_usd: number; fees_usd: number; cogs_usd: number; margin_usd: number;
   orig_currency: string; proceeds_orig: number; fx_rate_used: number; is_reverted: boolean;
+  lot_status: string | null;
 };
 
 async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncated: boolean }> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from("sales_ledger_v")
-    .select("sale_id, kind, game, sale_group, regional_name, english_name, set_code, card_number, misc_info, leg, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted")
+    .select("sale_id, kind, game, sale_group, regional_name, english_name, set_code, card_number, misc_info, leg, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted, lot_status")
     .order("sold_at", { ascending: false })
     .limit(limit);
   if (error) throw error;
@@ -61,7 +62,7 @@ async function fetchGlobalSales(limit: number): Promise<{ sales: Sale[]; truncat
       sold_at: r.sold_at, quantity: r.quantity,
       gross_usd: r.gross_usd, fees_usd: r.fees_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
       orig_currency: r.orig_currency, proceeds_orig: r.proceeds_orig, fx_rate_used: r.fx_rate_used,
-      sale_group: r.sale_group,
+      sale_group: r.sale_group, lot_status: r.lot_status,
     } satisfies Sale));
   return { sales, truncated: rows.length >= limit };
 }
@@ -166,7 +167,7 @@ export default function SalesView() {
                 <span className="inline-flex items-center gap-0.5">
                   <Button variant="ghost" size="icon" className="size-7" disabled={saleEdit.saving}
                     title={isLot ? t("trips.editLot") : t("trips.editSale")}
-                    onClick={(ev) => { ev.stopPropagation(); if (isLot) saleEdit.openEditLot(e.items); else saleEdit.openEdit(e.items[0]); }}>
+                    onClick={(ev) => { ev.stopPropagation(); if (isLot || e.items[0].lot_status === "finalized") saleEdit.openEditLot(e.items); else saleEdit.openEdit(e.items[0]); }}>
                     <Pencil className="size-4" />
                   </Button>
                   {e.sale_group != null && (
