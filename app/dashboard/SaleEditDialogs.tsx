@@ -34,6 +34,12 @@ export interface EditableSale {
   orig_currency: string; // 'USD' (import) or native e.g. 'JPY' (export)
   proceeds_orig: number;
   fx_rate_used: number;
+  sale_group: number | null;
+  // sale_lots.status when the group is a recorded lot (sales_ledger_v
+  // lot_status): 'finalized' routes edits through edit_lot_sale (atomic
+  // reverse + re-record), because finalized grouped sales are immutable
+  // row-by-row and per-member edit_sale is refused by design.
+  lot_status?: string | null;
 }
 
 // Split a total across items by weight, exact to the cent (largest remainder).
@@ -71,6 +77,13 @@ export function useSaleEditDialogs(onSaved: () => void | Promise<void>) {
   const [eLotDate, setELotDate] = useState("");
 
   function openEdit(s: EditableSale) {
+    if (s.lot_status === "finalized" && s.sale_group != null) {
+      // A member of a finalized lot cannot be edited alone - the lot's total
+      // re-allocates across every member. Callers with the siblings in hand
+      // pass them to openEditLot directly; this is the single-item fallback.
+      openEditLot([s]);
+      return;
+    }
     const native = isNativeCurrency(s);
     setEditSel(s);
     setEQty(String(s.quantity));
@@ -118,6 +131,23 @@ export function useSaleEditDialogs(onSaved: () => void | Promise<void>) {
     if (!eLotItems || saving) return;
     const items = eLotItems;
     const native = isNativeCurrency(items[0]);
+    if (items[0].lot_status === "finalized" && items[0].sale_group != null) {
+      // A finalized lot: one atomic RPC reverses and re-records the whole lot
+      // with the new totals (old proportions preserved server-side).
+      const supabase = createClient();
+      const ok = await save(() => supabase.rpc("edit_lot_sale", {
+        p_sale_group: items[0].sale_group,
+        p_gross_total: Number(eLotGross),
+        p_fees_total: Number(eLotFees) || 0,
+        p_sold_at: eLotDate,
+        p_orig_currency: native ? items[0].orig_currency : null,
+        p_fx_rate: native ? Number(eLotFx) : 1,
+      }));
+      if (!ok) return;
+      setELotItems(null);
+      await onSaved();
+      return;
+    }
     let weights = items.map((s) => Number(s.gross_usd));
     if (weights.reduce((a, b) => a + b, 0) <= 0) weights = items.map((s) => Number(s.cogs_usd));
     const grossAlloc = allocate(Number(eLotGross), weights);

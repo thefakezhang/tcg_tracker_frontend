@@ -98,6 +98,7 @@ interface SaleRow {
   fx_rate_used: number;
   customer_id: number | null; // buyer (CRM), null = unattributed
   sourceFactLot: boolean;
+  lot_status: string | null; // sale_lots.status: finalized lots edit via edit_lot_sale
 }
 
 // A row of sales_ledger_v (migration 085).
@@ -108,6 +109,7 @@ type LedgerSaleRow = {
   regional_name: string; set_code: string; card_number: string | null; misc_info: string | null; image_url: string | null;
   sold_at: string; quantity: number; gross_usd: number; fees_usd: number; cogs_usd: number; margin_usd: number;
   orig_currency: string; proceeds_orig: number; fx_rate_used: number; is_reverted: boolean; customer_id: number | null;
+  lot_status: string | null;
 };
 
 type CustomerLite = { customer_id: number; name: string };
@@ -243,7 +245,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
       rows = await selectAll<LedgerSaleRow>(
         () => supabase
           .from("sales_ledger_v")
-          .select("sale_id, kind, game, sale_group, card_id, product_id, condition_id, psa_grade, sealed_condition, variant_edition, regional_name, set_code, card_number, misc_info, image_url, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted, customer_id"),
+          .select("sale_id, kind, game, sale_group, card_id, product_id, condition_id, psa_grade, sealed_condition, variant_edition, regional_name, set_code, card_number, misc_info, image_url, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted, customer_id, lot_status"),
         ["game", "sale_id"],
       );
     } catch { setSales([]); return; }
@@ -274,6 +276,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
         fees_usd: r.fees_usd, orig_currency: r.orig_currency, proceeds_orig: r.proceeds_orig, fx_rate_used: r.fx_rate_used,
         customer_id: r.customer_id,
         sourceFactLot: r.sale_group != null && sourceFactGroups.has(Number(r.sale_group)),
+        lot_status: r.lot_status,
       }));
     live.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1));
     setSales(live);
@@ -622,11 +625,13 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     if (s.quantity <= 0) return null;
     return (
       <span className="flex items-center gap-0.5">
-      {!s.sourceFactLot && (
-        <Button variant="ghost" size="icon" className="size-7" disabled={saving} onClick={() => saleEdit.openEdit(s)} title={t("trips.editSale")}>
-          <Pencil className="size-4" />
-        </Button>
-      )}
+      <Button variant="ghost" size="icon" className="size-7" disabled={saving}
+        onClick={() => s.lot_status === "finalized" && s.sale_group != null
+          ? saleEdit.openEditLot(sales.filter((x) => x.sale_group === s.sale_group && x.game === s.game && !x.reverted))
+          : saleEdit.openEdit(s)}
+        title={s.lot_status === "finalized" ? t("trips.editLot") : t("trips.editSale")}>
+        <Pencil className="size-4" />
+      </Button>
       <AlertDialog>
         <AlertDialogTrigger render={<Button variant="ghost" size="icon" className="size-7" disabled={saving} />}><Undo2 className="size-4" /></AlertDialogTrigger>
         <AlertDialogContent>
@@ -962,9 +967,9 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                     <span className={ev.margin < 0 ? "text-destructive" : ""} title={t("trips.saleMargin")}>{formatUsdWhole(ev.margin)} · {ev.marginPct}%</span>
                   </div>
                   <div className="mt-1 flex items-center gap-1">
-                    {!ev.reverted && !ev.sourceFactLot && (
+                    {!ev.reverted && (
                       <Button variant="ghost" size="sm" className="min-h-11 px-1 text-xs sm:min-h-7" disabled={saving}
-                        onClick={() => ev.isLot ? saleEdit.openEditLot(ev.items) : saleEdit.openEdit(ev.items[0])}>
+                        onClick={() => (ev.isLot || ev.items[0].lot_status === "finalized") ? saleEdit.openEditLot(ev.items) : saleEdit.openEdit(ev.items[0])}>
                         <Pencil className="size-3 mr-1" />{ev.isLot ? t("trips.editLot") : t("trips.editSale")}
                       </Button>
                     )}
@@ -1011,13 +1016,11 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                       <span className="text-xs text-muted-foreground">{t("trips.reverted")}</span>
                     ) : (
                       <>
-                      {!ev.sourceFactLot && (
-                        <Button variant="ghost" size="icon" className="size-7" disabled={saving}
-                          onClick={() => ev.isLot ? saleEdit.openEditLot(ev.items) : saleEdit.openEdit(ev.items[0])}
-                          title={ev.isLot ? t("trips.editLot") : t("trips.editSale")}>
-                          <Pencil className="size-4" />
-                        </Button>
-                      )}
+                      <Button variant="ghost" size="icon" className="size-7" disabled={saving}
+                        onClick={() => (ev.isLot || ev.items[0].lot_status === "finalized") ? saleEdit.openEditLot(ev.items) : saleEdit.openEdit(ev.items[0])}
+                        title={ev.isLot ? t("trips.editLot") : t("trips.editSale")}>
+                        <Pencil className="size-4" />
+                      </Button>
                       <AlertDialog>
                         <AlertDialogTrigger render={<Button variant="ghost" size="sm" disabled={saving} />}>
                           <Undo2 className="size-4 mr-1" />{t("trips.revertLot")}
