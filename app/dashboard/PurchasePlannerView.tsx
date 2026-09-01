@@ -255,8 +255,18 @@ export default function PurchasePlannerView() {
               {plan.budget_amount != null && <span>{t("purchasePlanner.budget")}: {plan.budget_currency} {Number(plan.budget_amount).toFixed(2)}</span>}
               {plan.notes && <span className="hidden text-muted-foreground lg:inline">{plan.notes}</span>}
             </div>
-            {editable && (
+            {editable ? (
               <Button size="sm" onClick={() => setLineOpen(true)}><Plus className="size-4" /> {t("purchasePlanner.addLine")}</Button>
+            ) : (
+              // Hiding the button entirely read as a missing feature. The plan
+              // is frozen on purpose once ordered - the buyer is shopping
+              // against it, and adding lines underneath him would mean he is
+              // working from a list that changed - so say that instead.
+              <span className="text-xs text-muted-foreground">
+                {plan.status === "ordered"
+                  ? "Ordered - lines are frozen while the buyer is shopping"
+                  : `${plan.status} - lines are frozen`}
+              </span>
             )}
           </div>
 
@@ -465,13 +475,14 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
   const [results, setResults] = useState<CatalogResult[]>([]);
   const [chosen, setChosen] = useState<CatalogResult | null>(null);
   const [grade, setGrade] = useState("0");
-  const [quantity, setQuantity] = useState("1");
-  const [source, setSource] = useState("");
-  const [listingUrl, setListingUrl] = useState("");
-  const [available, setAvailable] = useState("");
-  const [unitPrice, setUnitPrice] = useState("");
-  const [currency, setCurrency] = useState("JPY");
-  const [landedCost, setLandedCost] = useState("");
+  const [candidates, setCandidates] = useState<CandidateListing[] | null>(null);
+  const [picked, setPicked] = useState<Map<string, number>>(new Map());
+  const [manual, setManual] = useState(false);
+  const [manualSource, setManualSource] = useState("");
+  const [manualUrl, setManualUrl] = useState("");
+  const [manualPrice, setManualPrice] = useState("");
+  const [manualCurrency, setManualCurrency] = useState("JPY");
+  const [manualQty, setManualQty] = useState("1");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -482,10 +493,57 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
     return () => clearTimeout(timer);
   }, [chosen, game, open, query]);
 
-  useEffect(() => { if (!open) { setQuery(""); setResults([]); setChosen(null); setError(null); } }, [open]);
+  // The whole point: once a card is chosen, offer the listings we already
+  // crawled instead of asking the operator to retype source, URL and price.
+  useEffect(() => {
+    if (!chosen || chosen.game !== "pokemon") { setCandidates(null); return; }
+    let live = true;
+    setCandidates(null);
+    void createClient()
+      .from("pokemon_purchase_candidate_listings_v")
+      .select("source,listing_url,asking_price,currency,observed_at,stale")
+      .eq("card_id", chosen.id)
+      .order("asking_price")
+      .then(({ data }) => { if (live) setCandidates((data ?? []) as CandidateListing[]); });
+    return () => { live = false; };
+  }, [chosen]);
 
-  async function add() {
-    if (!chosen || !unitPrice || Number(quantity) <= 0) return;
+  useEffect(() => {
+    if (!open) {
+      setQuery(""); setResults([]); setChosen(null); setError(null);
+      setCandidates(null); setPicked(new Map()); setManual(false);
+    }
+  }, [open]);
+
+  async function addPicked() {
+    if (!chosen) return;
+    const rows = (candidates ?? [])
+      .filter((c) => picked.has(c.listing_url))
+      .map((c) => ({
+        plan_id: planId,
+        game: chosen.game,
+        card_id: chosen.game === "pokemon_sealed" ? null : chosen.id,
+        product_id: chosen.game === "pokemon_sealed" ? chosen.id : null,
+        psa_grade: chosen.game === "pokemon_sealed" ? null : Number(grade),
+        planned_quantity: picked.get(c.listing_url) ?? 1,
+        source: c.source,
+        source_listing_url: c.listing_url,
+        unit_price_orig: c.asking_price,
+        currency: c.currency,
+        // The crawl time, not now: the operator should be able to see how old
+        // the price they committed to actually was.
+        source_observed_at: c.observed_at,
+      }));
+    if (!rows.length) return;
+    setBusy(true); setError(null);
+    const { error: insertError } = await createClient().from("purchase_plan_lines").insert(rows);
+    setBusy(false);
+    if (insertError) return setError(insertError.message);
+    onOpenChange(false); onAdded();
+  }
+
+  async function addManual() {
+    if (!chosen || !manualPrice) return;
     setBusy(true); setError(null);
     const { error: insertError } = await createClient().from("purchase_plan_lines").insert({
       plan_id: planId,
@@ -493,13 +551,11 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
       card_id: chosen.game === "pokemon_sealed" ? null : chosen.id,
       product_id: chosen.game === "pokemon_sealed" ? chosen.id : null,
       psa_grade: chosen.game === "pokemon_sealed" ? null : Number(grade),
-      planned_quantity: Number(quantity),
-      source: source.trim() || null,
-      source_listing_url: listingUrl.trim() || null,
-      source_available_quantity: available ? Number(available) : null,
-      unit_price_orig: Number(unitPrice),
-      currency,
-      landed_unit_cost_usd: landedCost ? Number(landedCost) : null,
+      planned_quantity: Number(manualQty),
+      source: manualSource.trim() || null,
+      source_listing_url: manualUrl.trim() || null,
+      unit_price_orig: Number(manualPrice),
+      currency: manualCurrency,
       source_observed_at: new Date().toISOString(),
     });
     setBusy(false);
@@ -507,10 +563,15 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
     onOpenChange(false); onAdded();
   }
 
+  const pickedCount = picked.size;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
-        <DialogHeader><DialogTitle>{t("purchasePlanner.addLine")}</DialogTitle><DialogDescription>{t("purchasePlanner.addLineDescription")}</DialogDescription></DialogHeader>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>{t("purchasePlanner.addLine")}</DialogTitle>
+          <DialogDescription>Search a card, then pick the listings to buy it from.</DialogDescription>
+        </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-[140px_1fr] gap-2">
             <select className={selectClass} value={game} onChange={(event) => { setGame(event.target.value as CatalogResult["game"]); setChosen(null); setQuery(""); }}>
@@ -519,23 +580,159 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
             <div className="relative"><Search className="absolute left-2 top-2.5 size-4 text-muted-foreground" /><Input className="pl-8" value={chosen?.label ?? query} onChange={(event) => { setChosen(null); setQuery(event.target.value); }} placeholder={t("purchasePlanner.searchCatalog")} /></div>
           </div>
           {!chosen && results.length > 0 && <div className="max-h-44 overflow-y-auto rounded-md border">{results.map((result) => <button key={result.id} type="button" className="block w-full border-b px-3 py-2 text-left text-xs last:border-0 hover:bg-muted" onClick={() => { setChosen(result); setQuery(result.label); }}>{result.label}</button>)}</div>}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {game !== "pokemon_sealed" && <div className="space-y-1"><Label>{t("purchasePlanner.grade")}</Label><select className={selectClass} value={grade} onChange={(event) => setGrade(event.target.value)}><option value="0">{t("purchasePlanner.raw")}</option>{Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>PSA {value}</option>)}</select></div>}
-            <div className="space-y-1"><Label>{t("purchasePlanner.quantity")}</Label><Input type="number" min="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></div>
-            <div className="space-y-1"><Label>{t("purchasePlanner.available")}</Label><Input type="number" min="0" value={available} onChange={(event) => setAvailable(event.target.value)} /></div>
-            <div className="space-y-1"><Label>{t("purchasePlanner.currency")}</Label><select className={selectClass} value={currency} onChange={(event) => setCurrency(event.target.value)}><option>JPY</option><option>USD</option></select></div>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="space-y-1"><Label>{t("purchasePlanner.source")}</Label><Input value={source} onChange={(event) => setSource(event.target.value)} /></div>
-            <div className="space-y-1"><Label>{t("purchasePlanner.unitPrice")}</Label><Input inputMode="decimal" value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} /></div>
-            <div className="space-y-1"><Label>{t("purchasePlanner.landedUnitUsd")}</Label><Input inputMode="decimal" value={landedCost} onChange={(event) => setLandedCost(event.target.value)} /></div>
-          </div>
-          <div className="space-y-1"><Label>{t("purchasePlanner.listingUrl")}</Label><Input value={listingUrl} onChange={(event) => setListingUrl(event.target.value)} /></div>
+
+          {chosen && game !== "pokemon_sealed" && (
+            <div className="flex items-center gap-2">
+              <Label className="text-xs">{t("purchasePlanner.grade")}</Label>
+              <select className={selectClass} value={grade} onChange={(event) => setGrade(event.target.value)}>
+                <option value="0">{t("purchasePlanner.raw")}</option>
+                {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>PSA {value}</option>)}
+              </select>
+            </div>
+          )}
+
+          {chosen && chosen.game === "pokemon" && (
+            <CandidatePicker
+              candidates={candidates}
+              picked={picked}
+              onToggle={(url, qty) => {
+                const next = new Map(picked);
+                if (next.has(url)) next.delete(url); else next.set(url, qty);
+                setPicked(next);
+              }}
+              onQuantity={(url, qty) => {
+                const next = new Map(picked);
+                next.set(url, qty);
+                setPicked(next);
+              }}
+            />
+          )}
+
+          <button type="button" className="text-xs underline underline-offset-2 text-muted-foreground" onClick={() => setManual((v) => !v)}>
+            {manual ? "Hide manual entry" : "Enter a listing manually (a shop we do not crawl)"}
+          </button>
+          {manual && (
+            <div className="grid grid-cols-2 gap-3 rounded-md border p-3 sm:grid-cols-5">
+              <div className="space-y-1"><Label>{t("purchasePlanner.source")}</Label><Input value={manualSource} onChange={(e) => setManualSource(e.target.value)} /></div>
+              <div className="space-y-1"><Label>{t("purchasePlanner.unitPrice")}</Label><Input inputMode="decimal" value={manualPrice} onChange={(e) => setManualPrice(e.target.value)} /></div>
+              <div className="space-y-1"><Label>{t("purchasePlanner.currency")}</Label><select className={selectClass} value={manualCurrency} onChange={(e) => setManualCurrency(e.target.value)}><option>JPY</option><option>USD</option></select></div>
+              <div className="space-y-1"><Label>{t("purchasePlanner.quantity")}</Label><Input type="number" min="1" value={manualQty} onChange={(e) => setManualQty(e.target.value)} /></div>
+              <div className="space-y-1 sm:col-span-5"><Label>{t("purchasePlanner.listingUrl")}</Label><Input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} /></div>
+            </div>
+          )}
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button><Button onClick={add} disabled={busy || !chosen || !unitPrice}>{busy ? t("common.saving") : t("purchasePlanner.addLine")}</Button></DialogFooter>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
+          {manual
+            ? <Button onClick={addManual} disabled={busy || !chosen || !manualPrice}>{busy ? t("common.saving") : t("purchasePlanner.addLine")}</Button>
+            : <Button onClick={addPicked} disabled={busy || pickedCount === 0}>{busy ? t("common.saving") : `Add ${pickedCount || ""} ${pickedCount === 1 ? "line" : "lines"}`.trim()}</Button>}
+        </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type CandidateListing = {
+  source: string;
+  listing_url: string;
+  asking_price: number;
+  currency: string;
+  observed_at: string;
+  stale: boolean;
+};
+
+// The buyer fees (3% handling + 100 JPY per purchased line) mean the cheapest
+// sticker price is not the cheapest landed cost, and that the flat line fee is
+// amortised by buying more copies from ONE listing. Showing per-card landed
+// cost makes that visible at the moment the choice is made, rather than at
+// reconciliation.
+export function landedPerCardJpy(price: number, qty: number): number {
+  if (qty <= 0) return 0;
+  return (price * qty * 1.03 + 100) / qty;
+}
+
+function CandidatePicker({
+  candidates, picked, onToggle, onQuantity,
+}: {
+  candidates: CandidateListing[] | null;
+  picked: Map<string, number>;
+  onToggle: (url: string, qty: number) => void;
+  onQuantity: (url: string, qty: number) => void;
+}) {
+  if (candidates === null) return <p className="text-sm text-muted-foreground">Loading listings…</p>;
+  if (!candidates.length) {
+    return (
+      <p className="rounded-md border p-3 text-sm text-muted-foreground">
+        No current listings for this card. Use manual entry below.
+      </p>
+    );
+  }
+  // JPY first: those are the ones the buying agent can actually order, and the
+  // fee model only applies to them. Ranking a USD listing against a JPY one by
+  // raw number would be meaningless.
+  const jpy = candidates.filter((c) => c.currency === "JPY");
+  const other = candidates.filter((c) => c.currency !== "JPY");
+
+  const row = (c: CandidateListing) => {
+    const qty = picked.get(c.listing_url) ?? 1;
+    const on = picked.has(c.listing_url);
+    return (
+      <tr key={c.listing_url + c.source} className="border-t">
+        <td className="px-2 py-1">
+          <input type="checkbox" checked={on} onChange={() => onToggle(c.listing_url, qty)} aria-label={`select ${c.source}`} />
+        </td>
+        <td className="px-2 py-1">{c.source}</td>
+        <td className="px-2 py-1 text-right tabular-nums">
+          {Math.round(c.asking_price).toLocaleString()} {c.currency}
+        </td>
+        <td className="px-2 py-1 text-right">
+          <input
+            type="number" min="1" value={qty} disabled={!on}
+            onChange={(e) => onQuantity(c.listing_url, Math.max(1, Number(e.target.value)))}
+            className="w-16 bg-transparent text-right tabular-nums disabled:text-muted-foreground/40"
+          />
+        </td>
+        <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">
+          {c.currency === "JPY" ? `${Math.round(landedPerCardJpy(c.asking_price, qty)).toLocaleString()} /card` : "-"}
+        </td>
+        <td className="px-2 py-1 text-xs text-muted-foreground">
+          {c.stale ? <span title={c.observed_at}>price may be stale</span> : new Date(c.observed_at).toLocaleDateString()}
+        </td>
+        <td className="px-2 py-1">
+          <a href={c.listing_url} target="_blank" rel="noreferrer" className="text-xs underline underline-offset-2 hover:text-primary">open</a>
+        </td>
+      </tr>
+    );
+  };
+
+  return (
+    <div className="max-h-72 overflow-y-auto rounded-md border">
+      <table className="w-full text-sm">
+        <thead className="text-xs text-muted-foreground">
+          <tr>
+            <th className="px-2 py-1"></th>
+            <th className="px-2 py-1 text-left font-normal">Source</th>
+            <th className="px-2 py-1 text-right font-normal">Asking</th>
+            <th className="px-2 py-1 text-right font-normal">Qty</th>
+            <th className="px-2 py-1 text-right font-normal">Landed w/ fees</th>
+            <th className="px-2 py-1 text-left font-normal">Seen</th>
+            <th className="px-2 py-1"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {jpy.map(row)}
+          {other.length > 0 && (
+            <tr className="border-t bg-muted/30">
+              <td colSpan={7} className="px-2 py-1 text-xs text-muted-foreground">
+                Not orderable through the JP buyer - the fee model does not apply
+              </td>
+            </tr>
+          )}
+          {other.map(row)}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
