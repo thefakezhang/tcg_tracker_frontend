@@ -749,6 +749,13 @@ function AllocationDialog({ line, allocations, editable, open, onOpenChange, onC
   const [salePrice, setSalePrice] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Custom order: a customer who asked for this card without ever putting it
+  // on a wishlist. They cannot appear as a candidate, because a candidate is
+  // derived from existing demand.
+  const [allCustomers, setAllCustomers] = useState<{ customer_id: number; name: string }[]>([]);
+  const [customOrderId, setCustomOrderId] = useState<number | null>(null);
+  const [customIntent, setCustomIntent] = useState<"requested" | "committed">("requested");
+  const [customerQuery, setCustomerQuery] = useState("");
   const active = allocations.filter((allocation) => allocation.plan_line_id === line?.plan_line_id && !["released", "cancelled"].includes(allocation.status));
   const primaries = active.filter((allocation) => allocation.role === "primary");
   const selected = candidates.find((candidate) => candidate.customer_id === candidateId) ?? null;
@@ -759,7 +766,31 @@ function AllocationDialog({ line, allocations, editable, open, onOpenChange, onC
     setBusy(true); setError(null); setCandidateId(null); setOriginKey("");
     createClient().from("customer_purchase_candidates_v").select("*").eq("plan_line_id", line.plan_line_id).order("top_priority")
       .then(({ data, error: queryError }) => { setBusy(false); if (queryError) setError(queryError.message); else setCandidates((data ?? []) as PurchaseCandidate[]); });
+    void createClient().from("customers").select("customer_id,name").order("name")
+      .then(({ data }) => setAllCustomers((data ?? []) as { customer_id: number; name: string }[]));
+    setCustomOrderId(null); setCustomerQuery("");
   }, [line, open]);
+
+  // Records the ask as real demand and allocates in one call, so the copy is
+  // never promised to somebody the rest of the system cannot see.
+  async function addCustomOrder() {
+    if (!line || customOrderId == null) return;
+    setBusy(true); setError(null);
+    const { error: rpcError } = await createClient().rpc("assign_plan_line_to_customer", {
+      p_plan_line_id: line.plan_line_id,
+      p_customer_id: customOrderId,
+      p_quantity: Number(quantity) || 1,
+      p_role: role,
+      p_intent: customIntent,
+      p_note: null,
+      p_agreed_sale_price_usd: salePrice ? Number(salePrice) : null,
+    });
+    setBusy(false);
+    if (rpcError) return setError(rpcError.message);
+    setCustomOrderId(null); setCustomerQuery(""); onChanged();
+    const { data } = await createClient().from("customer_purchase_candidates_v").select("*").eq("plan_line_id", line.plan_line_id).order("top_priority");
+    setCandidates((data ?? []) as PurchaseCandidate[]);
+  }
 
   async function add() {
     if (!line || !selected || !originKey) return;
@@ -809,6 +840,56 @@ function AllocationDialog({ line, allocations, editable, open, onOpenChange, onC
             <Label>{t("purchasePlanner.customerCandidates")}</Label>
             {!busy && candidates.length === 0 ? <p className="text-xs text-muted-foreground">{t("purchasePlanner.noCandidates")}</p> : <div className="grid gap-2 sm:grid-cols-2">{candidates.map((candidate) => <button type="button" key={candidate.customer_id} onClick={() => { setCandidateId(candidate.customer_id); const first = sortedOrigins(candidate.demand_origins)[0]; setOriginKey(first ? `${first.type}:${first.id}` : ""); }} className={`rounded-md border p-2 text-left ${candidateId === candidate.customer_id ? "border-primary bg-primary/5" : "hover:bg-muted"}`}><div className="flex items-center justify-between gap-2"><span className="font-medium">{candidate.customer_name}</span><Badge variant={candidate.strongest_intent === "committed" ? "default" : "secondary"}>{candidate.strongest_intent}</Badge></div><div className="text-xs text-muted-foreground">P{candidate.top_priority} | {candidate.remaining_demand_quantity} {t("purchasePlanner.remaining")}{candidate.top_customer_ceiling_usd != null ? ` | <=${money(candidate.top_customer_ceiling_usd)}` : ""}</div></button>)}</div>}
           </div>}
+          {editable && !selected && (
+            <div className="space-y-2 border-t pt-3">
+              <Label>Custom order - assign anyone</Label>
+              <p className="text-xs text-muted-foreground">
+                Not being on a customer&apos;s wishlist does not mean they did not ask for it.
+                Choosing someone here records the request as demand, so the copy shows up as
+                spoken for everywhere else.
+              </p>
+              <Input
+                value={customerQuery}
+                onChange={(e) => setCustomerQuery(e.target.value)}
+                placeholder="Search customers..."
+              />
+              <div className="max-h-40 overflow-y-auto rounded-md border">
+                {allCustomers
+                  .filter((c) => c.name.toLowerCase().includes(customerQuery.trim().toLowerCase()))
+                  .slice(0, 50)
+                  .map((c) => (
+                    <button
+                      key={c.customer_id}
+                      type="button"
+                      onClick={() => setCustomOrderId(c.customer_id)}
+                      className={`block w-full border-b px-3 py-1.5 text-left text-xs last:border-0 ${
+                        customOrderId === c.customer_id ? "bg-primary/10 font-medium" : "hover:bg-muted"
+                      }`}
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+              </div>
+              {customOrderId != null && (
+                <div className="grid gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-3">
+                  <div className="space-y-1">
+                    <Label>How firm</Label>
+                    <select className={selectClass} value={customIntent} onChange={(e) => setCustomIntent(e.target.value as "requested" | "committed")}>
+                      <option value="requested">Asked for it</option>
+                      <option value="committed">Committed to buy</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1"><Label>{t("purchasePlanner.quantity")}</Label><Input type="number" min="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} /></div>
+                  <div className="space-y-1"><Label>{t("purchasePlanner.proposedSale")}</Label><Input inputMode="decimal" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} /></div>
+                  <div className="sm:col-span-3">
+                    <Button size="sm" onClick={addCustomOrder} disabled={busy}>
+                      {busy ? t("common.saving") : "Record custom order and assign"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {editable && selected && <div className="grid gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
             <div className="space-y-1 sm:col-span-2"><Label>{t("purchasePlanner.demandOrigin")}</Label><select className={selectClass} value={originKey} onChange={(event) => setOriginKey(event.target.value)}>{origins.map((origin: DemandOrigin) => <option key={`${origin.type}:${origin.id}`} value={`${origin.type}:${origin.id}`}>{origin.intent} | P{origin.priority} | {origin.label} | {origin.remaining_quantity} {t("purchasePlanner.remaining")}</option>)}</select></div>
             <div className="space-y-1"><Label>{t("purchasePlanner.role")}</Label><select className={selectClass} value={role} onChange={(event) => setRole(event.target.value as "primary" | "backup")}><option value="primary">{t("purchasePlanner.primary")}</option><option value="backup" disabled={!primaries.length}>{t("purchasePlanner.backup")}</option></select></div>
