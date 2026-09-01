@@ -118,7 +118,29 @@ export default function BuyerOrderView() {
 
   const save = useCallback(
     async (line: Line, patch: Partial<Line>) => {
-      const next = { ...line, ...patch };
+      let next = { ...line, ...patch };
+
+      // Marking a line "Bought" is the common case, and it used to fail: the
+      // database (correctly) requires a purchase to carry a quantity AND a
+      // price, but the natural order is to choose the outcome first and type
+      // the numbers after - so the first save was always invalid.
+      //
+      // Selecting Bought now fills in what we already know: the quantity still
+      // wanted (capped by what this listing was planned for) and the asking
+      // price. That makes the record valid immediately and turns the common
+      // line into one click instead of three fields.
+      if (next.outcome === "purchased") {
+        const remaining =
+          next.want_max != null
+            ? Math.max(0, next.want_max - (next.want_filled ?? 0) + (line.purchased_quantity ?? 0))
+            : next.planned_quantity;
+        if (!next.purchased_quantity || next.purchased_quantity <= 0) {
+          next = { ...next, purchased_quantity: Math.min(next.planned_quantity, remaining || next.planned_quantity) || 1 };
+        }
+        if (next.unit_price_jpy == null && next.currency === "JPY" && next.unit_price_orig != null) {
+          next = { ...next, unit_price_jpy: Math.round(next.unit_price_orig) };
+        }
+      }
       const cell = String(line.plan_line_id);
       setSavingCells((s) => new Set(s).add(cell));
       // Optimistic: he keeps typing while this lands. A failure restores the
@@ -134,7 +156,12 @@ export default function BuyerOrderView() {
       });
       setSavingCells((s) => { const c = new Set(s); c.delete(cell); return c; });
       if (error) {
-        setError(formatMutationError(error));
+        const raw = formatMutationError(error);
+        setError(
+          raw.includes("purchase_complete")
+            ? "A purchase needs both a quantity and a price paid."
+            : raw,
+        );
         setLines((rows) => rows?.map((r) => (r.plan_line_id === line.plan_line_id ? line : r)) ?? rows);
         return false;
       }
