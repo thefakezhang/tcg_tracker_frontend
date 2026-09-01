@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { planState, planStateLabel } from "@/lib/plan-state";
+import { useTrips } from "./TripContext";
 import { useTranslation } from "@/lib/i18n";
 import {
   sortedOrigins,
@@ -168,6 +169,11 @@ export default function PurchasePlannerView() {
   const [lineOpen, setLineOpen] = useState(false);
   const [allocationLine, setAllocationLine] = useState<PurchasePlanLine | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  // Plans are bound to a trip. Without this the selector accumulates every
+  // plan ever made, and after a handful of trips it is unusable.
+  const { trips, activeTripId } = useTrips();
+  const [tripFilter, setTripFilter] = useState<number | "all" | null>(null);
+  const effectiveTrip = tripFilter ?? activeTripId ?? "all";
   const [disposition, setDisposition] = useState<DemandCoverage | null>(null);
   const [lineError, setLineError] = useState<string | null>(null);
   const { data, error, isLoading, retry } = useSupabaseQuery(["purchase-planner", planId], () => fetchPlannerData(planId));
@@ -176,7 +182,20 @@ export default function PurchasePlannerView() {
     if (planId == null && data?.plans[0]) setPlanId(data.plans[0].plan_id);
   }, [data?.plans, planId]);
 
+
+  const visiblePlans = (data?.plans ?? []).filter(
+    (p) => effectiveTrip === "all" || p.trip_id === effectiveTrip,
+  );
   const plan = data?.plans.find((candidate) => candidate.plan_id === planId) ?? null;
+  // Changing the trip must not leave a plan from another trip selected, which
+  // would show the operator a plan the filter says is not there.
+  useEffect(() => {
+    if (planId == null || !data) return;
+    const current = data.plans.find((p) => p.plan_id === planId);
+    if (current && effectiveTrip !== "all" && current.trip_id !== effectiveTrip) {
+      setPlanId(visiblePlans[0]?.plan_id ?? null);
+    }
+  }, [effectiveTrip, planId, data, visiblePlans]);
   const allocations = data?.allocations ?? [];
   const coverage = data?.coverage ?? [];
   const lines = data?.lines ?? [];
@@ -207,8 +226,10 @@ export default function PurchasePlannerView() {
             value={planId ?? ""}
             onChange={(event) => setPlanId(event.target.value ? Number(event.target.value) : null)}
           >
-            {(data?.plans ?? []).map((row) => (
-              <option key={row.plan_id} value={row.plan_id}>{row.name} [{row.status}]</option>
+            {visiblePlans.map((row) => (
+              <option key={row.plan_id} value={row.plan_id}>
+                {row.name} [{planStateLabel(planState({ status: row.status }))}]
+              </option>
             ))}
           </select>
           <Button variant="outline" onClick={() => setNewPlanOpen(true)}>
@@ -216,7 +237,8 @@ export default function PurchasePlannerView() {
           </Button>
           {plan && editable && (
             <Button onClick={() => setReviewOpen(true)}>
-              <ShieldCheck className="size-4" /> {plan.status === "ready" ? t("purchasePlanner.order") : t("purchasePlanner.review")}
+              <ShieldCheck className="size-4" />
+              {plan.status === "ready" ? "Mark as ordered" : "Review & send to buyer"}
             </Button>
           )}
         </div>
@@ -435,6 +457,8 @@ function CoverageTable({ coverage, onDisposition }: { coverage: DemandCoverage[]
 
 function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: (id: number) => void }) {
   const { t } = useTranslation();
+  const { trips, activeTripId } = useTrips();
+  const [tripId, setTripId] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [budget, setBudget] = useState("");
   // JPY by default: the buying agent pays Japanese shops in yen, and a budget
@@ -451,7 +475,8 @@ function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpe
     if (!open) return;
     void createClient().rpc("assignable_buyers")
       .then(({ data }) => setBuyers((data ?? []) as AssignableBuyer[]));
-  }, [open]);
+    setTripId(activeTripId);
+  }, [open, activeTripId]);
 
   async function create() {
     if (!name.trim()) return;
@@ -462,6 +487,7 @@ function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpe
       budget_currency: currency,
       budget_amount: budget ? Number(budget) : null,
       assigned_buyer_email: buyer || null,
+      trip_id: tripId,
       notes: notes.trim() || null,
     }).select("plan_id").single();
     setBusy(false);
@@ -477,6 +503,17 @@ function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpe
           <div className="grid grid-cols-[1fr_120px] gap-2">
             <div className="space-y-1"><Label>Budget</Label><Input inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} /></div>
             <div className="space-y-1"><Label>Currency</Label><select className={selectClass} value={currency} onChange={(e) => setCurrency(e.target.value)}><option value="JPY">JPY</option><option value="USD">USD</option></select></div>
+          </div>
+          <div className="space-y-1">
+            <Label>Trip</Label>
+            <select className={selectClass} value={tripId ?? ""} onChange={(e) => setTripId(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">No trip</option>
+              {trips.map((trip) => (
+                <option key={trip.trip_id} value={trip.trip_id}>
+                  {trip.name}{trip.status === "active" ? " (active)" : ""}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="space-y-1">
             <Label>Send to</Label>
@@ -1087,6 +1124,12 @@ function PlanBuyerControl({ plan, onChanged }: { plan: PurchasePlan; onChanged: 
     onChanged();
   }
 
+  // Assigning names the recipient; it does not send. The buyer only sees a plan
+  // from `ready` onward, so a draft with an assignee is NOT yet on his screen -
+  // and a control labelled "Send to" that has not sent is misleading in exactly
+  // the direction that matters.
+  const sent = plan.status !== "draft";
+
   return (
     <div className="flex items-center gap-2 text-xs">
       <span className="text-muted-foreground">Send to</span>
@@ -1103,6 +1146,11 @@ function PlanBuyerControl({ plan, onChanged }: { plan: PurchasePlan; onChanged: 
           </option>
         ))}
       </select>
+      {plan.assigned_buyer_email && (
+        sent
+          ? <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-600 dark:text-emerald-400">Sent</span>
+          : <span className="text-muted-foreground">Not sent yet - use Review &amp; send</span>
+      )}
       {error && <span className="text-destructive">{error}</span>}
     </div>
   );
