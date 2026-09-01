@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatMutationError } from "@/lib/mutation-error";
+import { planState, planStateLabel } from "@/lib/plan-state";
 
 // The buying agent's whole screen: the plans assigned to him, and a grid for
 // recording what he actually bought.
@@ -177,6 +178,9 @@ export default function BuyerOrderView() {
           <h2 className="text-lg font-semibold">{plan.name}</h2>
           <span className="text-sm text-muted-foreground">
             {plan.recorded_count} of {plan.line_count} recorded
+          </span>
+          <span className="rounded bg-muted px-2 py-0.5 text-xs">
+            {planStateLabel(planState({ status: plan.status, recordedCount: plan.recorded_count }))}
           </span>
           {readOnly ? (
             <span className="rounded bg-muted px-2 py-0.5 text-xs">

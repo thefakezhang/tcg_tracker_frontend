@@ -14,6 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { planState, planStateLabel } from "@/lib/plan-state";
 import { useTranslation } from "@/lib/i18n";
 import {
   sortedOrigins,
@@ -247,7 +248,7 @@ export default function PurchasePlannerView() {
             <SummaryCard label={t("purchasePlanner.landedTotal")} value={money(summary.landedTotalUsd)} />
           </div>
 
-          {plan && plan.status === "ordered" && <BuyerProgressStrip planId={plan.plan_id} />}
+          {plan && (plan.status === "ordered" || plan.status === "reconciled") && <BuyerProgressStrip planId={plan.plan_id} />}
 
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
             <div className="flex items-center gap-2 text-sm">
