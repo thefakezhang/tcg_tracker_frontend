@@ -10,6 +10,9 @@ export interface PurchasePlan {
   name: string;
   trip_id: number | null;
   status: PlanStatus;
+  // Who the plan is sent to. Null until assigned; must be set while the plan
+  // is still editable, since the row freezes once ordered.
+  assigned_buyer_email?: string | null;
   budget_currency: string;
   budget_amount: number | null;
   notes: string | null;

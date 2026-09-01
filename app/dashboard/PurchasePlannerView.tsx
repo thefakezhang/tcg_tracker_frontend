@@ -256,6 +256,7 @@ export default function PurchasePlannerView() {
               {plan.budget_amount != null && <span>{t("purchasePlanner.budget")}: {plan.budget_currency} {Number(plan.budget_amount).toFixed(2)}</span>}
               {plan.notes && <span className="hidden text-muted-foreground lg:inline">{plan.notes}</span>}
             </div>
+            {editable && <PlanBuyerControl plan={plan} onChanged={retry} />}
             {editable ? (
               <Button size="sm" onClick={() => setLineOpen(true)}><Plus className="size-4" /> {t("purchasePlanner.addLine")}</Button>
             ) : (
@@ -436,22 +437,36 @@ function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpe
   const { t } = useTranslation();
   const [name, setName] = useState("");
   const [budget, setBudget] = useState("");
+  // JPY by default: the buying agent pays Japanese shops in yen, and a budget
+  // in a currency he does not spend cannot be compared to what he spends -
+  // which is why the over-budget warning never fired on plans made here.
+  const [currency, setCurrency] = useState("JPY");
+  const [buyer, setBuyer] = useState("");
+  const [buyers, setBuyers] = useState<AssignableBuyer[]>([]);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    void createClient().rpc("assignable_buyers")
+      .then(({ data }) => setBuyers((data ?? []) as AssignableBuyer[]));
+  }, [open]);
+
   async function create() {
     if (!name.trim()) return;
     setBusy(true);
     setError(null);
     const { data, error: insertError } = await createClient().from("purchase_plans").insert({
       name: name.trim(),
-      budget_currency: "USD",
+      budget_currency: currency,
       budget_amount: budget ? Number(budget) : null,
+      assigned_buyer_email: buyer || null,
       notes: notes.trim() || null,
     }).select("plan_id").single();
     setBusy(false);
     if (insertError) return setError(insertError.message);
-    setName(""); setBudget(""); setNotes(""); onOpenChange(false); onCreated(Number(data.plan_id));
+    setName(""); setBudget(""); setNotes(""); setBuyer(""); onOpenChange(false); onCreated(Number(data.plan_id));
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -459,7 +474,21 @@ function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpe
         <DialogHeader><DialogTitle>{t("purchasePlanner.newPlan")}</DialogTitle><DialogDescription>{t("purchasePlanner.newPlanDescription")}</DialogDescription></DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1"><Label>{t("purchasePlanner.planName")}</Label><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} /></div>
-          <div className="space-y-1"><Label>{t("purchasePlanner.budgetUsd")}</Label><Input inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} /></div>
+          <div className="grid grid-cols-[1fr_120px] gap-2">
+            <div className="space-y-1"><Label>Budget</Label><Input inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} /></div>
+            <div className="space-y-1"><Label>Currency</Label><select className={selectClass} value={currency} onChange={(e) => setCurrency(e.target.value)}><option value="JPY">JPY</option><option value="USD">USD</option></select></div>
+          </div>
+          <div className="space-y-1">
+            <Label>Send to</Label>
+            <select className={selectClass} value={buyer} onChange={(e) => setBuyer(e.target.value)}>
+              <option value="">Nobody yet - assign later</option>
+              {buyers.map((b) => (
+                <option key={b.email} value={b.email}>
+                  {b.email}{b.has_account ? "" : " (has not signed in yet)"}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="space-y-1"><Label>{t("purchasePlanner.notes")}</Label><Textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></div>
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
@@ -1022,6 +1051,59 @@ function BuyerProgressStrip({ planId }: { planId: number }) {
           over budget by {jpy(row.projected_total_jpy - (row.budget_amount ?? 0))}
         </span>
       )}
+    </div>
+  );
+}
+
+
+type AssignableBuyer = { email: string; has_account: boolean; last_sign_in: string | null };
+
+// Choosing who a plan goes to.
+//
+// assigned_buyer_email has existed since the buyer flow shipped and every
+// buyer-facing query scopes on it, but nothing ever exposed a way to SET it -
+// so a plan could be built and then sent to nobody. Assignment has to happen
+// while the plan is still editable: guard_purchase_plan_mutation freezes the
+// row once it is ordered, which is correct, because the buyer is shopping
+// against it by then.
+function PlanBuyerControl({ plan, onChanged }: { plan: PurchasePlan; onChanged: () => void }) {
+  const [buyers, setBuyers] = useState<AssignableBuyer[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void createClient().rpc("assignable_buyers")
+      .then(({ data }) => setBuyers((data ?? []) as AssignableBuyer[]));
+  }, []);
+
+  async function assign(email: string) {
+    setSaving(true); setError(null);
+    const { error: updateError } = await createClient()
+      .from("purchase_plans")
+      .update({ assigned_buyer_email: email || null })
+      .eq("plan_id", plan.plan_id);
+    setSaving(false);
+    if (updateError) { setError(updateError.message); return; }
+    onChanged();
+  }
+
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="text-muted-foreground">Send to</span>
+      <select
+        className={selectClass}
+        value={plan.assigned_buyer_email ?? ""}
+        disabled={saving}
+        onChange={(e) => void assign(e.target.value)}
+      >
+        <option value="">Nobody yet</option>
+        {buyers.map((b) => (
+          <option key={b.email} value={b.email}>
+            {b.email}{b.has_account ? "" : " (has not signed in yet)"}
+          </option>
+        ))}
+      </select>
+      {error && <span className="text-destructive">{error}</span>}
     </div>
   );
 }
