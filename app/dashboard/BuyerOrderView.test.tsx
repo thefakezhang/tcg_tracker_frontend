@@ -165,6 +165,69 @@ describe("BuyerOrderView", () => {
     expect(screen.getAllByText("14/20").length).toBe(2);
   });
 
+
+  it("marking a line Bought fills the quantity and price so it saves first time", async () => {
+    // The database requires a purchase to carry both, but the natural order is
+    // to pick the outcome and type the numbers after - so the first save used
+    // to be rejected outright. One click now records a complete purchase.
+    render(<BuyerOrderView />);
+    await screen.findByText("cardrush");
+    rpc.mockClear();
+
+    const outcome = document.querySelector<HTMLSelectElement>('[data-cell="1:outcome"]')!;
+    fireEvent.change(outcome, { target: { value: "purchased" } });
+
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith("buyer_record_result", expect.objectContaining({
+        p_plan_line_id: 1,
+        p_outcome: "purchased",
+        p_purchased_quantity: 2,   // the line's planned quantity
+        p_unit_price_jpy: 1000,    // the asking price we already knew
+      })),
+    );
+  });
+
+  it("caps the prefilled quantity at what the want still needs", async () => {
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") return Promise.resolve({ data: [plan], error: null });
+      if (fn === "buyer_source_receipts") return Promise.resolve({ data: [], error: null });
+      if (fn === "buyer_plan_lines") {
+        return Promise.resolve({ data: [
+          // 20 wanted, 18 already bought elsewhere: this listing should offer 2.
+          { ...line(1, "cardrush"), planned_quantity: 20, want_id: 9, want_max: 20, want_filled: 18 },
+        ], error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    render(<BuyerOrderView />);
+    await screen.findByText("cardrush");
+    rpc.mockClear();
+
+    fireEvent.change(document.querySelector<HTMLSelectElement>('[data-cell="1:outcome"]')!,
+      { target: { value: "purchased" } });
+
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith("buyer_record_result", expect.objectContaining({
+        p_purchased_quantity: 2,
+      })),
+    );
+  });
+
+  it("explains the completeness rule in words he can act on", async () => {
+    render(<BuyerOrderView />);
+    await screen.findByText("cardrush");
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_record_result") {
+        return Promise.resolve({ error: { message: 'violates check constraint "purchase_plan_line_results_purchase_complete"' } });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+    fireEvent.change(document.querySelector<HTMLSelectElement>('[data-cell="1:outcome"]')!,
+      { target: { value: "purchased" } });
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("quantity and a price");
+  });
+
   it("locks the grid once the operator has reconciled", async () => {
     rpc.mockImplementation((fn: string) => {
       if (fn === "buyer_assigned_plans") {
