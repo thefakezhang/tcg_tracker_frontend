@@ -247,6 +247,8 @@ export default function PurchasePlannerView() {
             <SummaryCard label={t("purchasePlanner.landedTotal")} value={money(summary.landedTotalUsd)} />
           </div>
 
+          {plan && plan.status === "ordered" && <BuyerProgressStrip planId={plan.plan_id} />}
+
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
             <div className="flex items-center gap-2 text-sm">
               <Badge variant={statusTone(plan.status)}>{t(`purchasePlanner.status.${plan.status}` as never)}</Badge>
@@ -681,4 +683,66 @@ function DispositionDialog({ planId, demand, open, onOpenChange, onChanged }: { 
     onOpenChange(false); onChanged();
   }
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>{t("purchasePlanner.resolveDemand")}</DialogTitle><DialogDescription>{demand?.customer_name} | {demand?.demand_label}</DialogDescription></DialogHeader><div className="space-y-3"><div className="space-y-1"><Label>{t("purchasePlanner.disposition")}</Label><select className={selectClass} value={value} onChange={(event) => setValue(event.target.value)}><option value="deferred">{t("purchasePlanner.coverage.deferred")}</option><option value="unavailable">{t("purchasePlanner.coverage.unavailable")}</option><option value="out_of_scope">{t("purchasePlanner.coverage.out_of_scope")}</option></select></div><div className="space-y-1"><Label>{t("purchasePlanner.reasonRequired")}</Label><Textarea rows={3} value={note} onChange={(event) => setNote(event.target.value)} /></div>{error && <p className="text-sm text-destructive">{error}</p>}</div><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button><Button onClick={save} disabled={busy || !note.trim()}>{t("common.save")}</Button></DialogFooter></DialogContent></Dialog>;
+}
+
+
+// What the buying agent has actually bought, while he is still buying.
+//
+// The planner above shows what was ASKED for - every line reads "0/20, 20 open"
+// no matter how much has been purchased - which is exactly the wrong number to
+// budget against mid-trip. This strip reads purchase_plan_progress_v, whose
+// fee projection uses the same rules reconciliation applies, so the total shown
+// here is the total that will land.
+function BuyerProgressStrip({ planId }: { planId: number }) {
+  const [row, setRow] = useState<{
+    purchased_lines: number; open_lines: number; unavailable_lines: number;
+    cards_bought: number; card_value_jpy: number; projected_handling_jpy: number;
+    projected_line_fee_jpy: number; projected_total_jpy: number;
+    budget_amount: number | null; budget_currency: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void createClient()
+      .from("purchase_plan_progress_v")
+      .select("purchased_lines,open_lines,unavailable_lines,cards_bought,card_value_jpy," +
+              "projected_handling_jpy,projected_line_fee_jpy,projected_total_jpy,budget_amount,budget_currency")
+      .eq("plan_id", planId)
+      .maybeSingle()
+      .then(({ data }) => { if (live) setRow(data as typeof row); });
+    return () => { live = false; };
+  }, [planId]);
+
+  if (!row || row.purchased_lines === 0) return null;
+
+  const jpy = (n: number) => "JPY " + Math.round(n).toLocaleString();
+  // Budget is only comparable when the plan is budgeted in the same currency
+  // the buyer pays in; comparing JPY spend to a USD budget would be a lie.
+  const overBudget =
+    row.budget_amount != null && row.budget_currency === "JPY" &&
+    row.projected_total_jpy > row.budget_amount;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-md border px-3 py-2 text-sm">
+      <span className="font-medium">Buyer progress</span>
+      <span>{row.purchased_lines} bought / {row.open_lines} open / {row.unavailable_lines} unavailable</span>
+      <span>{row.cards_bought} cards</span>
+      <span className="text-muted-foreground">
+        cards {jpy(row.card_value_jpy)} + handling {jpy(row.projected_handling_jpy)} + line fees {jpy(row.projected_line_fee_jpy)}
+      </span>
+      <span className={overBudget ? "font-semibold text-destructive" : "font-semibold"}>
+        projected {jpy(row.projected_total_jpy)}
+        {row.budget_amount != null && row.budget_currency === "JPY" && (
+          <span className="ml-2 font-normal text-muted-foreground">
+            of {jpy(row.budget_amount)} budget
+          </span>
+        )}
+      </span>
+      {overBudget && (
+        <span className="rounded bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive">
+          over budget by {jpy(row.projected_total_jpy - (row.budget_amount ?? 0))}
+        </span>
+      )}
+    </div>
+  );
 }
