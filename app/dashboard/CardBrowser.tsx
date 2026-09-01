@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AddToPlanAction } from "./AddToPlanAction";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
 import { useAvailableCardSources, useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
@@ -732,6 +733,10 @@ export default function CardBrowser() {
               their freshness chips show the new values instead of the ages the
               table was rendered with before the click. */}
           <RefreshPricesAction cardIds={selectedCardIds} onRefreshed={refetch} />
+          {/* Selecting cards here is where the operator decides what to buy, so
+              this is where adding to a plan belongs - it used to be possible
+              only one card at a time, inside the planner. */}
+          <AddToPlanAction cardIds={selectedCardIds} />
         </div>
       )}
 
