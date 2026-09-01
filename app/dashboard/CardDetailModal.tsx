@@ -87,11 +87,6 @@ import {
   pokemonJapanExclusivityValues,
   type PokemonJapanExclusivityValues,
 } from "./PokemonJapanExclusivityEditor";
-import {
-  EnglishCounterpartPanel,
-  isJapanesePokemonCard,
-  useEnglishCounterparts,
-} from "./english-counterpart";
 
 import { formatUsd } from "@/lib/money";
 import { formatDate } from "@/lib/dates";
@@ -228,13 +223,6 @@ export default function CardDetailModal({
   const { language } = useLanguage();
   const { activeGame } = useGame();
   const { buylists, addToBuylist } = useBuyList();
-  const counterpartCardIds = useMemo(
-    () => activeGame === "pokemon" && card && isJapanesePokemonCard(card.card)
-      ? [card.card.card_id]
-      : [],
-    [activeGame, card],
-  );
-  const englishCounterparts = useEnglishCounterparts(activeGame, counterpartCardIds);
   const [addedTo, setAddedTo] = useState<string | null>(null);
   const [rawListings, setRawListings] = useState<MarketListing[]>([]);
   const [detailTcgMarketUsd, setDetailTcgMarketUsd] = useState<number | null>(null);
@@ -692,15 +680,6 @@ export default function CardDetailModal({
               {activeGame === "pokemon" && (
                 <div className="mt-2 max-w-2xl">
                   <JapanExclusiveEvidence card={def} />
-                  {isJapanesePokemonCard(def) && (
-                    <div className="mt-2">
-                      <EnglishCounterpartPanel
-                        row={englishCounterparts.byCardId.get(Number(def.card_id))}
-                        loading={englishCounterparts.isLoading}
-                        error={englishCounterparts.error}
-                      />
-                    </div>
-                  )}
                   <details className="mt-2 rounded-md border p-2">
                     <summary className="min-h-11 cursor-pointer text-xs font-medium sm:min-h-0">
                       {t("cardIndex.exclusivityTitle")}

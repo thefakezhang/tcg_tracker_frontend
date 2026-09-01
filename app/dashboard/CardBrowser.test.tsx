@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   queryResolved: vi.fn(),
   tcgResult: { data: [] as Record<string, unknown>[], error: null as unknown },
   collectrResult: { data: [] as Record<string, unknown>[], error: null as unknown },
+  useEnglishCounterparts: vi.fn(),
 }));
 const translate = (key: string, values?: Record<string, string | number>) => {
   if (values?.message) return `${key}: ${values.message}`;
@@ -58,6 +59,11 @@ vi.mock("./CardDetailModal", () => ({
     </div>
   ) : null,
 }));
+vi.mock("./english-counterpart", () => ({
+  EnglishCounterpartPanel: () => <div data-testid="counterpart-leak">counterpart leak</div>,
+  isJapanesePokemonCard: () => true,
+  useEnglishCounterparts: mocks.useEnglishCounterparts,
+}));
 vi.mock("./owned-inventory", () => ({
   ownedInventoryKey: ({ game, cardId }: { game: string; cardId?: string | number | null }) =>
     `${game}:${cardId ?? ""}`,
@@ -78,6 +84,12 @@ beforeEach(() => {
   mocks.queryResolved.mockReset();
   mocks.tcgResult = { data: [], error: null };
   mocks.collectrResult = { data: [], error: null };
+  mocks.useEnglishCounterparts.mockReset();
+  mocks.useEnglishCounterparts.mockReturnValue({
+    byCardId: new Map(),
+    isLoading: false,
+    error: undefined,
+  });
   mocks.from.mockImplementation((table: string) => {
     const builder: Record<string, unknown> = {};
     for (const method of ["select", "in", "eq"]) {
@@ -112,6 +124,16 @@ beforeEach(() => {
 });
 
 describe("CardBrowser surfaces", () => {
+  it("does not fetch or render English counterpart data in ordinary browsing", async () => {
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
+
+    render(<CardBrowser />);
+
+    await waitFor(() => expect(screen.getByTestId("browse-table").getAttribute("data-view-mode")).toBe("grid"));
+    expect(mocks.useEnglishCounterparts).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("counterpart-leak")).toBeNull();
+  });
+
   it("exposes independent inclusive Japanese-exclusivity toggles and defaults to all cards", () => {
     render(<CardBrowser />);
 

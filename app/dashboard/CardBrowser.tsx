@@ -73,11 +73,6 @@ import {
   type MarketEvidence,
   type MarketPriceRow,
 } from "./market-evidence";
-import {
-  EnglishCounterpartPanel,
-  isJapanesePokemonCard,
-  useEnglishCounterparts,
-} from "./english-counterpart";
 
 // TCGPlayer's Pokémon rarity taxonomy (the values stored in
 // pokemon_card_definitions.rarity), ordered low → high for the filter dropdown.
@@ -205,15 +200,6 @@ export default function CardBrowser() {
     activeGame,
     useMemo(() => data.map((row) => row.card.card_id), [data]),
   );
-  const counterpartCardIds = useMemo(
-    () => activeGame === "pokemon"
-      ? data
-          .filter((row) => isJapanesePokemonCard(row.card))
-          .map((row) => row.card.card_id)
-      : [],
-    [activeGame, data],
-  );
-  const englishCounterparts = useEnglishCounterparts(activeGame, counterpartCardIds);
   const dataWithOwned = useMemo(
     () => data.map((row) => {
       const counts = ownedCounts.get(ownedInventoryKey({
@@ -758,9 +744,6 @@ export default function CardBrowser() {
               availableOnly,
               tcgMarket,
               marketEvidence,
-              englishCounterparts.byCardId,
-              englishCounterparts.isLoading,
-              englishCounterparts.error,
             )]}
         data={visibleData}
         loading={loading}
@@ -849,14 +832,6 @@ export default function CardBrowser() {
                     </CardDescription>
                   )}
                   <JapanExclusiveEvidence card={row.card} compact />
-                  {activeGame === "pokemon" && isJapanesePokemonCard(row.card) && (
-                    <EnglishCounterpartPanel
-                      row={englishCounterparts.byCardId.get(Number(row.card.card_id))}
-                      compact
-                      loading={englishCounterparts.isLoading}
-                      error={englishCounterparts.error}
-                    />
-                  )}
                   <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} avgCost={row.ownedAvgCostUsd} totalCost={row.ownedCostBasisUsd} consigned={row.ownedConsigned} availableOnly={availableOnly} />
                   <ObservedLine observed={row.observed} />
                 </CardHeader>
