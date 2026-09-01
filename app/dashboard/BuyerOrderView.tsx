@@ -248,7 +248,7 @@ function Row({
             href={line.source_listing_url}
             target="_blank"
             rel="noreferrer"
-            className="text-primary underline underline-offset-2"
+            className="underline underline-offset-2 hover:text-primary"
           >
             open listing
           </a>
@@ -292,6 +292,7 @@ function Row({
         value={purchased ? line.unit_price_jpy : null}
         onCommit={(v) => onSave(line, { unit_price_jpy: v })}
         onMove={onMove}
+        groupThousands
       />
       <TextCell
         line={line} column="condition" readOnly={readOnly}
@@ -323,7 +324,7 @@ function handleNav(
 }
 
 function NumberCell({
-  line, column, value, readOnly, onCommit, onMove,
+  line, column, value, readOnly, onCommit, onMove, groupThousands,
 }: {
   line: Line;
   column: Column;
@@ -331,14 +332,20 @@ function NumberCell({
   readOnly: boolean;
   onCommit: (value: number | null) => void;
   onMove: (dir: -1 | 1, column: Column) => void;
+  // Prices are grouped while idle so they line up with the asking price beside
+  // them; the raw digits come back the moment the cell is focused, because
+  // separators in a field you are typing into fight the caret.
+  groupThousands?: boolean;
 }) {
-  const [draft, setDraft] = useState<string>(value == null ? "" : String(value));
-  const committed = useRef(draft);
+  const [focused, setFocused] = useState(false);
+  const format = (v: number | null) =>
+    v == null ? "" : groupThousands && !focused ? v.toLocaleString() : String(v);
+  const [draft, setDraft] = useState<string>(format(value));
+  const committed = useRef(value == null ? "" : String(value));
   useEffect(() => {
-    const next = value == null ? "" : String(value);
-    setDraft(next);
-    committed.current = next;
-  }, [value]);
+    setDraft(format(value));
+    committed.current = value == null ? "" : String(value);
+  }, [value, focused]);
 
   return (
     <td className="px-3 py-1 text-right">
@@ -348,10 +355,11 @@ function NumberCell({
         inputMode="numeric"
         value={draft}
         onChange={(e) => setDraft(e.target.value.replace(/[^\d.]/g, ""))}
-        onFocus={(e) => e.currentTarget.select()}
+        onFocus={(e) => { setFocused(true); e.currentTarget.select(); }}
         // Commit on leaving the cell, which is what a spreadsheet does and what
         // makes tabbing away safe.
         onBlur={() => {
+          setFocused(false);
           if (draft === committed.current) return;
           committed.current = draft;
           onCommit(draft === "" ? null : Number(draft));
@@ -360,7 +368,7 @@ function NumberCell({
           handleNav(e, (d) => { e.currentTarget.blur(); onMove(d, column); },
             () => { setDraft(committed.current); e.currentTarget.blur(); })
         }
-        className="w-20 bg-transparent text-right tabular-nums disabled:text-muted-foreground/40"
+        className="w-24 bg-transparent text-right tabular-nums disabled:text-muted-foreground/40"
       />
     </td>
   );
