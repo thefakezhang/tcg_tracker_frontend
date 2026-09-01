@@ -34,6 +34,15 @@ type Line = {
   unit_price_orig: number | null;
   currency: string | null;
   source_observed_at: string | null;
+  card_name: string | null;
+  card_english_name: string | null;
+  set_code: string | null;
+  card_number: string | null;
+  image_url: string | null;
+  want_id: number | null;
+  want_max: number | null;
+  want_filled: number | null;
+  want_ceiling: number | null;
   outcome: string;
   purchased_quantity: number;
   unit_price_jpy: number | null;
@@ -61,6 +70,7 @@ export default function BuyerOrderView() {
   const [lines, setLines] = useState<Line[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savingCells, setSavingCells] = useState<Set<string>>(new Set());
+  const [receipts, setReceipts] = useState<Receipt[]>([]);
 
   const loadPlans = useCallback(async () => {
     const { data, error } = await createClient().rpc("buyer_assigned_plans");
@@ -76,8 +86,17 @@ export default function BuyerOrderView() {
     setLines((data ?? []) as Line[]);
   }, []);
 
+  const loadReceipts = useCallback(async (planId: number) => {
+    const { data } = await createClient().rpc("buyer_source_receipts", { p_plan_id: planId });
+    setReceipts((data ?? []) as Receipt[]);
+  }, []);
+
   useEffect(() => { void loadPlans(); }, [loadPlans]);
-  useEffect(() => { if (activePlan != null) void loadLines(activePlan); }, [activePlan, loadLines]);
+  useEffect(() => {
+    if (activePlan == null) return;
+    void loadLines(activePlan);
+    void loadReceipts(activePlan);
+  }, [activePlan, loadLines, loadReceipts]);
 
   const plan = plans?.find((p) => p.plan_id === activePlan) ?? null;
   const readOnly = plan?.finalized ?? false;
@@ -159,9 +178,15 @@ export default function BuyerOrderView() {
           <span className="text-sm text-muted-foreground">
             {plan.recorded_count} of {plan.line_count} recorded
           </span>
-          {readOnly && (
+          {readOnly ? (
             <span className="rounded bg-muted px-2 py-0.5 text-xs">
-              Closed — the operator has reconciled this list
+              Closed - the operator has reconciled this list, nothing can change
+            </span>
+          ) : (
+            // Without this the grid reads as a report. It is a worksheet, and
+            // he needs to know his edits are landing as he makes them.
+            <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-500">
+              Open for editing - changes save as you type
             </span>
           )}
         </div>
@@ -175,16 +200,26 @@ export default function BuyerOrderView() {
 
       {bySource.map(([source, rows]) => (
         <section key={source} className="rounded border">
-          <header className="flex items-baseline justify-between border-b bg-muted/40 px-3 py-2">
+          <header className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
             <h3 className="font-medium">{source}</h3>
-            <span className="text-xs text-muted-foreground">
-              {rows.filter((r) => r.outcome === "purchased").length} bought / {rows.length} lines
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground">
+                {rows.filter((r) => r.outcome === "purchased").length} bought / {rows.length} lines
+              </span>
+              <SourceReceipts
+                planId={activePlan!}
+                source={source}
+                receipts={receipts.filter((r) => r.source === source)}
+                readOnly={readOnly}
+                onUploaded={() => activePlan != null && void loadReceipts(activePlan)}
+                onError={setError}
+              />
+            </div>
           </header>
           <table className="w-full text-sm">
             <thead className="text-xs text-muted-foreground">
               <tr>
-                <th className="px-3 py-1 text-left font-normal">Listing</th>
+                <th className="px-3 py-1 text-left font-normal">Card</th>
                 <th className="px-3 py-1 text-right font-normal">Want</th>
                 <th className="px-3 py-1 text-right font-normal">Asking</th>
                 <th className="px-3 py-1 text-left font-normal">Result</th>
@@ -243,27 +278,54 @@ function Row({
   return (
     <tr className="border-t align-middle">
       <td className="px-3 py-1">
-        {line.source_listing_url ? (
-          <a
-            href={line.source_listing_url}
-            target="_blank"
-            rel="noreferrer"
-            className="underline underline-offset-2 hover:text-primary"
-          >
-            open listing
-          </a>
-        ) : (
-          <span className="text-muted-foreground">no link</span>
-        )}
-        {stale && (
-          // The asking price is only as fresh as our last crawl, and he is the
-          // one standing in front of the real page.
-          <span className="ml-2 text-xs text-muted-foreground" title={line.source_observed_at ?? ""}>
-            price may be stale
+        {/* He is buying a specific card from a Japanese shop page. Without the
+            name and the picture the grid is a list of anonymous rows and he
+            cannot confirm he is buying the right thing. */}
+        <div className="flex items-center gap-2">
+          {line.image_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={line.image_url} alt="" className="h-12 w-auto rounded-sm border" loading="lazy" />
+          )}
+          <div className="min-w-0">
+            <div className="truncate font-medium">{line.card_name ?? "unknown card"}</div>
+            <div className="truncate text-xs text-muted-foreground">
+              {[line.set_code, line.card_number].filter(Boolean).join(" · ")}
+              {line.card_english_name ? ` · ${line.card_english_name}` : ""}
+            </div>
+            <div className="text-xs">
+              {line.source_listing_url ? (
+                <a href={line.source_listing_url} target="_blank" rel="noreferrer"
+                   className="underline underline-offset-2 hover:text-primary">
+                  open listing
+                </a>
+              ) : (
+                <span className="text-muted-foreground">no link</span>
+              )}
+              {stale && (
+                <span className="ml-2 text-muted-foreground" title={line.source_observed_at ?? ""}>
+                  price may be stale
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </td>
+      <td className="px-3 py-1 text-right tabular-nums">
+        {line.want_max != null ? (
+          // The cap belongs to the CARD, not this listing: he fills it from
+          // wherever the stock turns out to be, so he needs the running total.
+          <span title="total wanted across every source">
+            {line.want_filled ?? 0}/{line.want_max}
+            {line.want_ceiling != null && (
+              <span className="block text-xs text-muted-foreground">
+                max ¥{Math.round(line.want_ceiling).toLocaleString()}
+              </span>
+            )}
           </span>
+        ) : (
+          line.planned_quantity
         )}
       </td>
-      <td className="px-3 py-1 text-right tabular-nums">{line.planned_quantity}</td>
       <td className="px-3 py-1 text-right tabular-nums text-muted-foreground">
         {line.unit_price_orig != null ? Math.round(line.unit_price_orig).toLocaleString() : "—"}
       </td>
@@ -410,5 +472,84 @@ function TextCell({
         className="w-full bg-transparent disabled:text-muted-foreground/40"
       />
     </td>
+  );
+}
+
+
+type Receipt = {
+  receipt_id: number;
+  source: string;
+  storage_path: string;
+  original_name: string | null;
+  uploaded_at: string;
+};
+
+// One checkout per shop means one receipt per shop, uploaded when he finishes
+// that source rather than at the end of the trip.
+//
+// The receipt is what the operator reconciles the entered prices against: it
+// is evidence, checked against data, which catches a mistyped price far more
+// reliably than anyone re-reading the grid. So it belongs beside the source,
+// while he still has it open.
+function SourceReceipts({
+  planId, source, receipts, readOnly, onUploaded, onError,
+}: {
+  planId: number;
+  source: string;
+  receipts: Receipt[];
+  readOnly: boolean;
+  onUploaded: () => void;
+  onError: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const inputId = `receipt-${planId}-${source}`;
+
+  async function upload(file: File) {
+    setBusy(true);
+    const supabase = createClient();
+    // Path is prefixed per plan and source so the storage policy can scope the
+    // buyer to his own uploads without trusting the filename.
+    const safe = file.name.replace(/[^\w.\-]/g, "_");
+    const path = `plan-receipts/${planId}/${source}/${Date.now()}-${safe}`;
+    const { error: upErr } = await supabase.storage.from("lot-receipts").upload(path, file);
+    if (upErr) { setBusy(false); onError(upErr.message); return; }
+    const { error: recErr } = await supabase.rpc("buyer_record_source_receipt", {
+      p_plan_id: planId, p_source: source, p_storage_path: path, p_original_name: file.name,
+    });
+    setBusy(false);
+    if (recErr) { onError(recErr.message); return; }
+    onUploaded();
+  }
+
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      {receipts.length > 0 && (
+        <span className="text-muted-foreground">
+          {receipts.length} receipt{receipts.length === 1 ? "" : "s"}
+        </span>
+      )}
+      {!readOnly && (
+        <>
+          <label
+            htmlFor={inputId}
+            className="cursor-pointer rounded border px-2 py-0.5 hover:bg-accent"
+          >
+            {busy ? "Uploading…" : receipts.length ? "Add receipt" : "Upload receipt"}
+          </label>
+          <input
+            id={inputId}
+            type="file"
+            accept="image/*,application/pdf"
+            className="hidden"
+            disabled={busy}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void upload(file);
+            }}
+          />
+        </>
+      )}
+    </div>
   );
 }
