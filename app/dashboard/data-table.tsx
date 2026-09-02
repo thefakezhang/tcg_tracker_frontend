@@ -24,6 +24,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/lib/i18n";
 import { activateOnEnterOrSpace } from "@/lib/keyboard-activation";
 
+export interface GridSelection {
+  selected: boolean;
+  toggle: (value?: boolean) => void;
+}
+
 interface ServerPagination {
   page: number;
   pageSize: number;
@@ -43,7 +48,10 @@ interface DataTableProps<TData, TValue> {
   onRowClick?: (row: TData) => void;
   getRowAriaLabel?: (row: TData) => string;
   viewMode?: "list" | "grid";
-  renderGridItem?: (row: TData) => React.ReactNode;
+  // Grid items get the row's selection handle alongside the data. Without it a
+  // grid tile has no way to be selected, which is how grid mode ended up
+  // unable to do anything the list could.
+  renderGridItem?: (row: TData, selection?: GridSelection) => React.ReactNode;
   serverPagination?: ServerPagination;
   // Optional row selection. Views that pass none behave exactly as before -
   // selection is off unless a caller opts in by supplying the handler.
@@ -98,6 +106,7 @@ export function DataTable<TData, TValue>({
   });
 
   const sp = serverPagination;
+  const selectionEnabled = !!onRowSelectionChange;
 
   return (
     <div className="min-w-0">
@@ -116,10 +125,44 @@ export function DataTable<TData, TValue>({
             ))}
           </div>
         ) : table.getRowModel().rows.length ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-            {table.getRowModel().rows.map((row) => (
-              <div key={row.id}>{renderGridItem(row.original)}</div>
-            ))}
+          <div className="space-y-3">
+            {selectionEnabled && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="grid-select-all"
+                  aria-label="Select all rows on this page"
+                  className="size-6 cursor-pointer align-middle sm:size-4"
+                  checked={table.getIsAllPageRowsSelected()}
+                  ref={(el) => {
+                    if (el) {
+                      el.indeterminate =
+                        table.getIsSomePageRowsSelected() && !table.getIsAllPageRowsSelected();
+                    }
+                  }}
+                  onChange={(e) => table.toggleAllPageRowsSelected(e.target.checked)}
+                />
+                <label htmlFor="grid-select-all" className="text-muted-foreground cursor-pointer text-sm">
+                  {t("dataTable.selectAllOnPage")}
+                </label>
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+              {table.getRowModel().rows.map((row) => (
+                <div key={row.id}>
+                  {renderGridItem(
+                    row.original,
+                    selectionEnabled
+                      ? {
+                          selected: row.getIsSelected(),
+                          toggle: (value?: boolean) =>
+                            row.toggleSelected(value ?? !row.getIsSelected()),
+                        }
+                      : undefined,
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           <div className="flex h-24 items-center justify-center text-muted-foreground">

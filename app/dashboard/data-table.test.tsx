@@ -74,3 +74,89 @@ describe("DataTable actionable rows", () => {
     expect(onRowClick).not.toHaveBeenCalled();
   });
 });
+
+describe("DataTable grid selection", () => {
+  // Grid mode used to receive only the row data, so a tile could not be
+  // selected at all and every selection-driven action was list-only.
+  function renderGrid(selection: Record<string, boolean>, onChange = vi.fn()) {
+    render(
+      <DataTable
+        columns={columns}
+        data={[
+          { id: "1", name: "Iono" },
+          { id: "2", name: "Bede" },
+        ]}
+        sorting={[]}
+        onSortingChange={vi.fn()}
+        viewMode="grid"
+        getRowId={(row) => row.id}
+        rowSelection={selection}
+        onRowSelectionChange={onChange}
+        renderGridItem={(row, sel) => (
+          <div>
+            <span>{row.name}</span>
+            {sel && (
+              <input
+                type="checkbox"
+                aria-label={`Select ${row.name}`}
+                checked={sel.selected}
+                onChange={(e) => sel.toggle(e.target.checked)}
+              />
+            )}
+          </div>
+        )}
+      />,
+    );
+    return onChange;
+  }
+
+  it("gives every grid tile a working selection handle", () => {
+    const onChange = renderGrid({});
+
+    const box = screen.getByRole("checkbox", { name: "Select Bede" });
+    expect((box as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(box);
+
+    expect(onChange).toHaveBeenCalledWith({ "2": true });
+  });
+
+  it("reflects the selection the caller holds", () => {
+    renderGrid({ "1": true });
+
+    expect((screen.getByRole("checkbox", { name: "Select Iono" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: "Select Bede" }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("offers the same select-all the table header has", () => {
+    const onChange = renderGrid({});
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all rows on this page" }));
+
+    expect(onChange).toHaveBeenCalledWith({ "1": true, "2": true });
+  });
+
+  it("shows select-all as indeterminate on a partial selection", () => {
+    renderGrid({ "1": true });
+
+    const all = screen.getByRole("checkbox", { name: "Select all rows on this page" }) as HTMLInputElement;
+    expect(all.checked).toBe(false);
+    expect(all.indeterminate).toBe(true);
+  });
+
+  it("omits selection entirely when the caller opts out", () => {
+    render(
+      <DataTable
+        columns={columns}
+        data={[{ id: "1", name: "Iono" }]}
+        sorting={[]}
+        onSortingChange={vi.fn()}
+        viewMode="grid"
+        renderGridItem={(row, sel) => <div>{row.name}{sel ? " selectable" : ""}</div>}
+      />,
+    );
+
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.getByText("Iono")).toBeTruthy();
+  });
+});

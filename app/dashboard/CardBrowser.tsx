@@ -769,7 +769,7 @@ export default function CardBrowser() {
           onPageChange: setPage,
           onPageSizeChange: setPageSize,
         }}
-        renderGridItem={(row: CardRowData) => {
+        renderGridItem={(row: CardRowData, selection) => {
             const misc =
               row.card.misc_info && row.card.misc_info !== "UNKNOWN"
                 ? row.card.misc_info
@@ -797,7 +797,10 @@ export default function CardBrowser() {
             return (
               <Card
                 size="sm"
-                className="h-full cursor-pointer gap-0 !py-0 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+                data-selected={selection?.selected ? "true" : undefined}
+                className={`relative h-full cursor-pointer gap-0 !py-0 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring ${
+                  selection?.selected ? "ring-2 ring-primary" : ""
+                }`}
                 role="button"
                 tabIndex={0}
                 aria-label={cardDetailLabel(row)}
@@ -807,6 +810,19 @@ export default function CardBrowser() {
                   () => setSelectedCard(row),
                 )}
               >
+                {selection && (
+                  // Sits over the art, and stops the click from opening the card
+                  // detail the tile itself is bound to.
+                  <input
+                    type="checkbox"
+                    aria-label={t("cardBrowser.selectCard", { name: getCardDisplayName(row.card, language) })}
+                    className="absolute top-2 left-2 z-10 size-6 cursor-pointer rounded bg-background/90 shadow-sm sm:size-5"
+                    checked={selection.selected}
+                    onChange={(event) => selection.toggle(event.target.checked)}
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  />
+                )}
                 {row.card.image_url ? (
                   <img
                     src={row.card.image_url}
