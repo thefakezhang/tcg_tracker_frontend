@@ -38,11 +38,26 @@ vi.mock("./use-card-data", () => ({
 vi.mock("./columns", () => ({
   createColumns: () => [], createMtgColumns: () => [], selectColumn: {}, PriceCell: () => null,
 }));
+// The mock forwards the real selection contract. An earlier version passed only
+// the row, so grid tiles rendered here could never be selected and the tests
+// could not see that grid mode had no selection at all.
 vi.mock("./data-table", () => ({
-  DataTable: ({ viewMode, data, renderGridItem, sorting }: { viewMode: "list" | "grid"; data: unknown[]; renderGridItem: (row: unknown) => React.ReactNode; sorting: { id: string; desc: boolean }[] }) => (
+  DataTable: ({ viewMode, data, renderGridItem, sorting, rowSelection, onRowSelectionChange, getRowId }: { viewMode: "list" | "grid"; data: unknown[]; renderGridItem: (row: unknown, selection?: { selected: boolean; toggle: (value?: boolean) => void }) => React.ReactNode; sorting: { id: string; desc: boolean }[]; rowSelection?: Record<string, boolean>; onRowSelectionChange?: (next: Record<string, boolean>) => void; getRowId?: (row: unknown, index: number) => string }) => (
     <div data-testid="browse-table" data-count={data.length} data-view-mode={viewMode} data-sort={`${sorting[0]?.id}:${sorting[0]?.desc ? "desc" : "asc"}`}>
       browse table
-      {viewMode === "grid" ? data.map((row, index) => <div key={index}>{renderGridItem(row)}</div>) : null}
+      {viewMode === "grid" ? data.map((row, index) => {
+        const id = getRowId ? getRowId(row, index) : String(index);
+        const selection = onRowSelectionChange
+          ? {
+              selected: !!rowSelection?.[id],
+              toggle: (value?: boolean) => onRowSelectionChange({
+                ...(rowSelection ?? {}),
+                [id]: value ?? !rowSelection?.[id],
+              }),
+            }
+          : undefined;
+        return <div key={index}>{renderGridItem(row, selection)}</div>;
+      }) : null}
     </div>
   ),
 }));
@@ -50,6 +65,7 @@ vi.mock("./DecisionActions", () => ({ DecisionActions: () => <div><button>decisi
 vi.mock("./opportunity-exposures", () => ({ browserOpportunityPayloads: () => [], recordOpportunityExposures: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("./DecisionWatchlist", () => ({ default: () => <div>watchlist surface</div> }));
 vi.mock("./RefreshPricesAction", () => ({ RefreshPricesAction: () => null }));
+vi.mock("./AddToPlanAction", () => ({ AddToPlanAction: ({ cardIds }: { cardIds: number[] }) => <button>add to plan ({cardIds.length})</button> }));
 vi.mock("./RefreshInFlightStrip", () => ({ RefreshInFlightStrip: () => null }));
 vi.mock("./CardDetailModal", () => ({
   default: ({ card, open, onClose }: { card: { card: { card_id: string } } | null; open: boolean; onClose: () => void }) => open ? (
@@ -329,5 +345,39 @@ describe("CardBrowser surfaces", () => {
     expect(screen.getByTestId("browse-table").getAttribute("data-count")).toBe("1");
     fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
     expect(mocks.refetch).toHaveBeenCalledOnce();
+  });
+});
+
+describe("CardBrowser grid selection", () => {
+  // The grid is the default on phones and what the operator normally browses in,
+  // but selection lived only in the table's checkbox column - so every
+  // selection-driven action was unreachable from the view most used.
+  it("selects cards from grid tiles and reaches the same actions as the list", async () => {
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
+
+    render(<CardBrowser />);
+
+    await waitFor(() => expect(screen.getByTestId("browse-table").getAttribute("data-view-mode")).toBe("grid"));
+
+    const box = screen.getByRole("checkbox", { name: /cardBrowser.selectCard/ });
+    expect((box as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(box);
+
+    expect((screen.getByRole("checkbox", { name: /cardBrowser.selectCard/ }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole("button", { name: "add to plan (1)" })).toBeTruthy();
+  });
+
+  it("does not open the card detail when the tile checkbox is clicked", async () => {
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
+
+    render(<CardBrowser />);
+
+    await waitFor(() => expect(screen.getByTestId("browse-table").getAttribute("data-view-mode")).toBe("grid"));
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /cardBrowser.selectCard/ }));
+
+    // The detail surface renders the card's own heading; ticking must not open it.
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
