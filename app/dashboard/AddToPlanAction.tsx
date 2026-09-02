@@ -26,7 +26,16 @@ import { useTrips } from "./TripContext";
 
 export type PlanCard = { id: number; name: string };
 type PlanOption = { plan_id: number; name: string; status: string; trip_id: number | null };
-type AddResult = { card_id: number; added: boolean; source: string | null; asking_price: number | null; reason: string | null };
+type AddResult = {
+  card_id: number;
+  added: boolean;
+  source: string | null;
+  asking_price: number | null;
+  // Copies that shop reported. null means it does not publish a count, which is
+  // not the same as none.
+  available_quantity: number | null;
+  reason: string | null;
+};
 type Wanted = { quantity: string; ceiling: string };
 
 export function AddToPlanAction({ cards, onAdded }: { cards: PlanCard[]; onAdded?: () => void }) {
@@ -102,6 +111,13 @@ export function AddToPlanAction({ cards, onAdded }: { cards: PlanCard[]; onAdded
 
   const addedCount = results?.filter((r) => r.added).length ?? 0;
   const skipped = results?.filter((r) => !r.added) ?? [];
+  // Added, but the chosen shop cannot cover the copies asked for. Silence here
+  // is what sends a buyer to Japan with an instruction that cannot be filled.
+  const short = (results ?? []).filter((r) => {
+    if (!r.added || r.available_quantity == null) return false;
+    const wantedQty = Number(wanted[r.card_id]?.quantity) || 1;
+    return r.available_quantity < wantedQty;
+  });
   const totalCopies = cards.reduce((sum, c) => sum + (Number(wanted[c.id]?.quantity) || 1), 0);
 
   return (
@@ -208,6 +224,24 @@ export function AddToPlanAction({ cards, onAdded }: { cards: PlanCard[]; onAdded
               <p className="font-medium">
                 Added {addedCount} of {results.length}
               </p>
+              {short.length > 0 && (
+                <div className="border-destructive/40 rounded-md border">
+                  <div className="text-muted-foreground border-b px-3 py-1.5 text-xs">
+                    Added, but the shop does not have enough
+                  </div>
+                  <ul className="max-h-40 overflow-y-auto">
+                    {short.map((r) => {
+                      const wantedQty = Number(wanted[r.card_id]?.quantity) || 1;
+                      return (
+                        <li key={r.card_id} className="border-b px-3 py-1.5 text-xs last:border-0">
+                          {names.get(r.card_id) ?? `card ${r.card_id}`} - {r.source} has{" "}
+                          {r.available_quantity} of {wantedQty}. The rest needs another shop.
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
               {skipped.length > 0 && (
                 <div className="rounded-md border">
                   <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">Not added</div>

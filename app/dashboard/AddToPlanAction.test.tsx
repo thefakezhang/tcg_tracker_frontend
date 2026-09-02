@@ -138,4 +138,56 @@ describe("AddToPlanAction", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("ordered");
   });
+
+  it("says when the chosen shop cannot cover the copies asked for", async () => {
+    // The whole reason the count is captured. Silence here is what sends a
+    // buyer to Japan holding an instruction that cannot be filled.
+    rpc.mockResolvedValue({
+      data: [{ card_id: 1, added: true, source: "shinsoku", asking_price: 300, available_quantity: 3, reason: null }],
+      error: null,
+    });
+    render(<AddToPlanAction cards={[{ id: 1, name: "Iono" }]} />);
+    fireEvent.click(screen.getByText("Add to plan"));
+    await screen.findByText("Plan");
+
+    fireEvent.change(screen.getByLabelText("Copies of Iono"), { target: { value: "20" } });
+    fireEvent.click(screen.getByText(/^Add 20 copies$/));
+
+    await screen.findByText("Added 1 of 1");
+    expect(screen.getByText(/shinsoku has 3 of 20/)).toBeTruthy();
+  });
+
+  it("does not claim a shortfall when the shop publishes no count", async () => {
+    // null is "did not say", not "has none". Treating it as zero would flag
+    // every source we have not taught to read its own stock line.
+    rpc.mockResolvedValue({
+      data: [{ card_id: 1, added: true, source: "cardrush", asking_price: 300, available_quantity: null, reason: null }],
+      error: null,
+    });
+    render(<AddToPlanAction cards={[{ id: 1, name: "Iono" }]} />);
+    fireEvent.click(screen.getByText("Add to plan"));
+    await screen.findByText("Plan");
+
+    fireEvent.change(screen.getByLabelText("Copies of Iono"), { target: { value: "20" } });
+    fireEvent.click(screen.getByText(/^Add 20 copies$/));
+
+    await screen.findByText("Added 1 of 1");
+    expect(screen.queryByText(/does not have enough/)).toBeNull();
+  });
+
+  it("stays quiet when the shop has enough", async () => {
+    rpc.mockResolvedValue({
+      data: [{ card_id: 1, added: true, source: "shinsoku", asking_price: 300, available_quantity: 50, reason: null }],
+      error: null,
+    });
+    render(<AddToPlanAction cards={[{ id: 1, name: "Iono" }]} />);
+    fireEvent.click(screen.getByText("Add to plan"));
+    await screen.findByText("Plan");
+
+    fireEvent.change(screen.getByLabelText("Copies of Iono"), { target: { value: "20" } });
+    fireEvent.click(screen.getByText(/^Add 20 copies$/));
+
+    await screen.findByText("Added 1 of 1");
+    expect(screen.queryByText(/does not have enough/)).toBeNull();
+  });
 });

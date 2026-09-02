@@ -568,7 +568,7 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
     setCandidates(null);
     void createClient()
       .from("pokemon_purchase_candidate_listings_v")
-      .select("source,listing_url,asking_price,currency,observed_at,stale")
+      .select("source,listing_url,asking_price,currency,observed_at,stale,available_quantity")
       .eq("card_id", chosen.id)
       .order("asking_price")
       .then(({ data }) => { if (live) setCandidates((data ?? []) as CandidateListing[]); });
@@ -707,6 +707,9 @@ type CandidateListing = {
   currency: string;
   observed_at: string;
   stale: boolean;
+  // Copies the shop reported when we looked. null means it did not say, which
+  // is NOT none - the listing is still purchasable at an unknown depth.
+  available_quantity: number | null;
 };
 
 // The buyer fees (3% handling + 100 JPY per purchased line) mean the cheapest
@@ -760,6 +763,22 @@ function CandidatePicker({
             className="w-16 bg-transparent text-right tabular-nums disabled:text-muted-foreground/40"
           />
         </td>
+        <td className="px-2 py-1 text-right tabular-nums">
+          {c.available_quantity == null ? (
+            // Not "0" and not "-": the shop has it, we just were not told how
+            // many, and showing a number here would invent one.
+            <span className="text-muted-foreground" title="This shop does not publish a count">unknown</span>
+          ) : (
+            // Asking for more than the shop holds is the whole reason the count
+            // is here, so it has to be visible at a glance rather than inferred.
+            <span className={on && qty > c.available_quantity ? "font-medium text-destructive" : "text-muted-foreground"}
+                  title={on && qty > c.available_quantity
+                    ? `Only ${c.available_quantity} on hand; ${qty - c.available_quantity} would need another shop`
+                    : undefined}>
+              {c.available_quantity.toLocaleString()}
+            </span>
+          )}
+        </td>
         <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">
           {c.currency === "JPY" ? `${Math.round(landedPerCardJpy(c.asking_price, qty)).toLocaleString()} /card` : "-"}
         </td>
@@ -782,6 +801,7 @@ function CandidatePicker({
             <th className="px-2 py-1 text-left font-normal">Source</th>
             <th className="px-2 py-1 text-right font-normal">Asking</th>
             <th className="px-2 py-1 text-right font-normal">Qty</th>
+            <th className="px-2 py-1 text-right font-normal">In stock</th>
             <th className="px-2 py-1 text-right font-normal">Landed w/ fees</th>
             <th className="px-2 py-1 text-left font-normal">Seen</th>
             <th className="px-2 py-1"></th>
