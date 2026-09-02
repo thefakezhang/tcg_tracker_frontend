@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import {
   Boxes, CalendarDays, ClipboardCheck, DollarSign, Filter, Landmark, Library,
-  Languages, Map as MapIcon, Receipt, ScanLine, ScanSearch, Send, ShieldCheck, ShoppingBasket, Users, Activity, type LucideIcon } from "lucide-react";
+  Languages, Map as MapIcon, Receipt, ScanSearch, Send, ShieldCheck, ShoppingBasket, Users, Activity, type LucideIcon } from "lucide-react";
 import type { TranslationKey } from "@/lib/i18n";
 import TripsOverview from "./TripsOverview";
 import InventoryView from "./InventoryView";
@@ -19,7 +19,6 @@ import ShoppingListView from "./ShoppingListView";
 import PurchasePlannerView from "./PurchasePlannerView";
 import FinancesView from "./FinancesView";
 import ExpensesTab from "./trip/ExpensesTab";
-import POSView from "./POSView";
 import EnglishCounterpartReviewView from "./EnglishCounterpartReviewView";
 import EnglishCatalogReviewView from "./EnglishCatalogReviewView";
 import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNavigationContext";
@@ -77,7 +76,6 @@ export const VIEWS: ViewDef[] = [
   { sentinel: -2, slug: "sales", group: "sidebar.trips", icon: DollarSign, sidebarKey: "sales.allTitle", titleKey: "sales.allTitle", render: () => <SalesView key="sales" /> },
   { sentinel: -4, slug: "expenses", group: "sidebar.trips", icon: Receipt, sidebarKey: "expenses.title", titleKey: "expenses.title", render: () => <div key="expenses" className="p-4"><ExpensesTab tripId={null} /></div> },
   { sentinel: -11, slug: "finances", group: "sidebar.trips", icon: Landmark, sidebarKey: "finances.title", titleKey: "finances.title", render: () => <FinancesView key="finances" /> },
-  { sentinel: -16, slug: "pos", group: "sidebar.trips", icon: ScanLine, sidebarKey: "pos.title", titleKey: "pos.title", render: () => <POSView key="pos" /> },
 ];
 
 export const viewBySentinel = new Map(VIEWS.map((v) => [v.sentinel, v]));
