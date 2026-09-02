@@ -1,5 +1,6 @@
 "use client";
 
+import { OrderListingAction } from "./OrderListingAction";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, ChevronDown, DollarSign, ExternalLink, Hash, Layers, LoaderCircle, Plus, Sparkles, Trash2 } from "lucide-react";
 import {
@@ -574,6 +575,17 @@ export default function CardDetailModal({
     };
   }, [rawListings, rateMap, locationMap, conditionsMap, selectedTiers]);
 
+  // Ordering is offered for Pokemon singles only: the purchase-plan tables key
+  // on card_id, and the buy side is buyback quotes rather than something we can
+  // purchase.
+  const orderCard = useMemo(
+    () =>
+      activeGame === "pokemon" && card
+        ? { id: Number(card.card.card_id), name: getCardDisplayName(card.card, language) }
+        : undefined,
+    [activeGame, card, language],
+  );
+
   const rawMarketEvidence = useMemo<MarketEvidence | null>(() => {
     if (
       activeGame !== "pokemon"
@@ -797,6 +809,7 @@ export default function CardDetailModal({
                 sell={sellNonPsa}
                 conditionHeader={t("modal.condition")}
                 t={t}
+                orderCard={orderCard}
               />
             </TabsContent>
             {activeGame !== "mtg" && (
@@ -806,6 +819,7 @@ export default function CardDetailModal({
                   sell={sellPsa}
                   conditionHeader={t("modal.psaGrade")}
                   t={t}
+                  orderCard={orderCard}
                 />
               </TabsContent>
             )}
@@ -1165,10 +1179,12 @@ function ListingTables({
   sell,
   conditionHeader,
   t,
+  orderCard,
 }: {
   buy: DetailListing[];
   sell: DetailListing[];
   conditionHeader: string;
+  orderCard?: { id: number; name: string };
   t: (
     key: import("@/lib/i18n").TranslationKey,
     params?: Record<string, string | number>,
@@ -1182,6 +1198,7 @@ function ListingTables({
           listings={sell}
           conditionHeader={conditionHeader}
           t={t}
+          orderCard={orderCard}
         />
       </div>
       <div className="min-w-0">
@@ -1200,9 +1217,14 @@ export function ListingTable({
   listings,
   conditionHeader,
   t,
+  orderCard,
 }: {
   listings: DetailListing[];
   conditionHeader: string;
+  // Set only for the SELL table of a Pokemon card. The buy table holds buyback
+  // quotes - what a shop pays us - which are not purchasable, and CustomersView
+  // reuses this component for display only.
+  orderCard?: { id: number; name: string };
   t: (
     key: import("@/lib/i18n").TranslationKey,
     params?: Record<string, string | number>,
@@ -1278,6 +1300,16 @@ export function ListingTable({
                         actually published a count: absent means unknown depth,
                         and a "0" or a dash here would read as sold out for a
                         listing that is on sale. */}
+                    {orderCard && (
+                      <OrderListingAction
+                        cardId={orderCard.id}
+                        cardName={orderCard.name}
+                        source={l.locationName}
+                        price={l.price}
+                        currencySymbol={l.currencySymbol}
+                        availableQuantity={l.availableQuantity ?? null}
+                      />
+                    )}
                     {l.availableQuantity != null && (
                       <Badge
                         variant="secondary"
