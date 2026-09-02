@@ -219,6 +219,8 @@ const en = {
   "refreshPrices.etaSession": "next session",
   "refreshPrices.none": "No sources to refresh for this card",
   "refreshPrices.error": "Refresh request failed: {message}",
+  "cardDetail.copiesOnHand": "{count} in stock",
+  "cardDetail.copiesOnHandTitle": "Copies this shop reported when we last looked",
   "dataTable.loading": "Loading...",
   "dataTable.noResults": "No results found",
   "dataTable.selectAllOnPage": "Select all on this page",
