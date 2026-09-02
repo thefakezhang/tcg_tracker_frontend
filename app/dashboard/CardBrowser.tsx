@@ -230,14 +230,19 @@ export default function CardBrowser() {
 
   // A card can occupy two rows (PSA and non-PSA share a card_id), so dedupe -
   // the RPC should be asked once per card.
-  const selectedCardIds = useMemo(() => {
+  const selectedCards = useMemo(() => {
     if (!selectionEnabled) return [];
-    const ids = new Set<number>();
+    // Carry the name, not just the id. The plan dialog asks for a quantity per
+    // card, and "card 803169" is not something anyone can answer that for.
+    const byId = new Map<number, { id: number; name: string }>();
     for (const row of data) {
-      if (rowSelection[row.key]) ids.add(Number(row.card.card_id));
+      if (!rowSelection[row.key]) continue;
+      const id = Number(row.card.card_id);
+      if (!byId.has(id)) byId.set(id, { id, name: getCardDisplayName(row.card, language) });
     }
-    return [...ids];
-  }, [data, rowSelection, selectionEnabled]);
+    return [...byId.values()];
+  }, [data, rowSelection, selectionEnabled, language]);
+  const selectedCardIds = useMemo(() => selectedCards.map((c) => c.id), [selectedCards]);
 
   // Load TCGPlayer and Collectr raw-market values for the cards currently on
   // screen. Evidence is classified only when both queries succeed, so a source
@@ -736,7 +741,7 @@ export default function CardBrowser() {
           {/* Selecting cards here is where the operator decides what to buy, so
               this is where adding to a plan belongs - it used to be possible
               only one card at a time, inside the planner. */}
-          <AddToPlanAction cardIds={selectedCardIds} />
+          <AddToPlanAction cards={selectedCards} />
         </div>
       )}
 

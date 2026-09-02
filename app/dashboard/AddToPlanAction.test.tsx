@@ -29,14 +29,14 @@ beforeEach(() => {
 
 describe("AddToPlanAction", () => {
   it("does not appear until cards are selected", () => {
-    const { container } = render(<AddToPlanAction cardIds={[]} />);
+    const { container } = render(<AddToPlanAction cards={[]} />);
     expect(container.textContent).toBe("");
   });
 
   it("defaults to a plan on the active trip", async () => {
     // With many trips the plan list gets long; landing on the current trip's
     // plan is the difference between one click and hunting.
-    render(<AddToPlanAction cardIds={[1, 2]} />);
+    render(<AddToPlanAction cards={[{ id: 1, name: "Iono" }, { id: 2, name: "Bede" }]} />);
     fireEvent.click(screen.getByText("Add to plan"));
     await waitFor(() => {
       const select = document.querySelector("select") as HTMLSelectElement;
@@ -44,20 +44,68 @@ describe("AddToPlanAction", () => {
     });
   });
 
-  it("sends the selected cards, quantity and ceiling", async () => {
+  it("gives every card its own quantity and ceiling", async () => {
+    // One number for a whole selection is wrong for every card but the one it
+    // was chosen for: a bulk common wanted twenty deep sits next to a chase card.
     rpc.mockResolvedValue({ data: [{ card_id: 1, added: true, source: "cardrush", asking_price: 900, reason: null }], error: null });
-    render(<AddToPlanAction cardIds={[1, 2]} />);
+    render(<AddToPlanAction cards={[{ id: 1, name: "Iono" }, { id: 2, name: "Bede" }]} />);
     fireEvent.click(screen.getByText("Add to plan"));
     await screen.findByText("Plan");
 
-    fireEvent.change(screen.getByLabelText(/Copies wanted/), { target: { value: "3" } });
-    fireEvent.change(screen.getByLabelText(/Max price/), { target: { value: "2500" } });
-    fireEvent.click(screen.getByText("Add 2"));
+    fireEvent.change(screen.getByLabelText("Copies of Iono"), { target: { value: "20" } });
+    fireEvent.change(screen.getByLabelText("Max price for Iono"), { target: { value: "500" } });
+    fireEvent.change(screen.getByLabelText("Copies of Bede"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Max price for Bede"), { target: { value: "60000" } });
+    fireEvent.click(screen.getByText(/^Add 21 copies$/));
 
     await waitFor(() =>
-      expect(rpc).toHaveBeenCalledWith("add_cards_to_purchase_plan", expect.objectContaining({
-        p_plan_id: 5, p_card_ids: [1, 2], p_quantity: 3, p_ceiling_jpy: 2500,
-      })),
+      expect(rpc).toHaveBeenCalledWith("add_cards_to_purchase_plan", {
+        p_plan_id: 5,
+        p_items: [
+          { card_id: 1, quantity: 20, ceiling_jpy: 500 },
+          { card_id: 2, quantity: 1, ceiling_jpy: 60000 },
+        ],
+      }),
+    );
+  });
+
+  it("names each card, since a quantity cannot be answered for an id", async () => {
+    render(<AddToPlanAction cards={[{ id: 803169, name: "Acerola's Mischief" }]} />);
+    fireEvent.click(screen.getByText("Add to plan"));
+    await screen.findByText("Plan");
+
+    expect(screen.getByText("Acerola's Mischief")).toBeTruthy();
+    expect(screen.getByLabelText("Copies of Acerola's Mischief")).toBeTruthy();
+  });
+
+  it("seeds every row from the bulk default only when applied", async () => {
+    rpc.mockResolvedValue({ data: [], error: null });
+    render(<AddToPlanAction cards={[{ id: 1, name: "Iono" }, { id: 2, name: "Bede" }]} />);
+    fireEvent.click(screen.getByText("Add to plan"));
+    await screen.findByText("Plan");
+
+    fireEvent.change(screen.getByLabelText("Copies"), { target: { value: "4" } });
+    // Nothing changes behind the operator's back until Apply is pressed.
+    expect((screen.getByLabelText("Copies of Iono") as HTMLInputElement).value).toBe("1");
+
+    fireEvent.click(screen.getByText("Apply to all"));
+
+    expect((screen.getByLabelText("Copies of Iono") as HTMLInputElement).value).toBe("4");
+    expect((screen.getByLabelText("Copies of Bede") as HTMLInputElement).value).toBe("4");
+  });
+
+  it("defaults a card with no ceiling to no cap rather than zero", async () => {
+    rpc.mockResolvedValue({ data: [], error: null });
+    render(<AddToPlanAction cards={[{ id: 1, name: "Iono" }]} />);
+    fireEvent.click(screen.getByText("Add to plan"));
+    await screen.findByText("Plan");
+    fireEvent.click(screen.getByText(/^Add 1 copy$/));
+
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith("add_cards_to_purchase_plan", {
+        p_plan_id: 5,
+        p_items: [{ card_id: 1, quantity: 1, ceiling_jpy: null }],
+      }),
     );
   });
 
@@ -71,21 +119,21 @@ describe("AddToPlanAction", () => {
       ],
       error: null,
     });
-    render(<AddToPlanAction cardIds={[1, 2]} />);
+    render(<AddToPlanAction cards={[{ id: 1, name: "Iono" }, { id: 2, name: "Bede" }]} />);
     fireEvent.click(screen.getByText("Add to plan"));
     await screen.findByText("Plan");
-    fireEvent.click(screen.getByText("Add 2"));
+    fireEvent.click(screen.getByText(/^Add 2 copies$/));
 
     await screen.findByText("Added 1 of 2");
-    expect(screen.getByText(/no JPY listing on file/)).toBeTruthy();
+    expect(screen.getByText(/Bede - no JPY listing on file/)).toBeTruthy();
   });
 
   it("surfaces a refusal rather than failing silently", async () => {
     rpc.mockResolvedValue({ error: { message: "purchase plan 5 is ordered, so lines cannot be added" } });
-    render(<AddToPlanAction cardIds={[1]} />);
+    render(<AddToPlanAction cards={[{ id: 1, name: "Iono" }]} />);
     fireEvent.click(screen.getByText("Add to plan"));
     await screen.findByText("Plan");
-    fireEvent.click(screen.getByText("Add 1"));
+    fireEvent.click(screen.getByText(/^Add 1 copy$/));
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("ordered");
