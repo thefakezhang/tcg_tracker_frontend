@@ -172,23 +172,27 @@ export default function PurchasePlannerView() {
   // Plans are bound to a trip. Without this the selector accumulates every
   // plan ever made, and after a handful of trips it is unusable.
   const { trips, activeTripId } = useTrips();
-  const [tripFilter, setTripFilter] = useState<number | "all" | null>(null);
-  const effectiveTrip = tripFilter ?? activeTripId ?? "all";
+  // Defaults to every plan rather than the active trip. Defaulting to the trip
+  // showed nothing at all when that trip had no plans, which is how the whole
+  // planner looked empty.
+  const [tripFilter, setTripFilter] = useState<number | "all" | "none">("all");
+  const effectiveTrip = tripFilter;
   const [disposition, setDisposition] = useState<DemandCoverage | null>(null);
   const [lineError, setLineError] = useState<string | null>(null);
   const { data, error, isLoading, retry } = useSupabaseQuery(["purchase-planner", planId], () => fetchPlannerData(planId));
 
   // Memoised: this used to be rebuilt inline on every render, so the effect
   // below - which depends on it - re-ran every render too.
-  // A plan with no trip stays visible under every filter. It does not belong to
-  // another trip - it belongs to none - so hiding it makes it unreachable the
-  // moment any trip is active, which is how five existing plans disappeared
-  // from the planner as soon as the filter started being honoured.
+  // Untripped plans get their OWN filter value rather than appearing under every
+  // one. Showing them everywhere made the filter look broken - most plans have
+  // no trip, so selecting a trip appeared to change nothing.
   const visiblePlans = useMemo(
     () =>
-      (data?.plans ?? []).filter(
-        (p) => effectiveTrip === "all" || p.trip_id === effectiveTrip || p.trip_id == null,
-      ),
+      (data?.plans ?? []).filter((p) => {
+        if (effectiveTrip === "all") return true;
+        if (effectiveTrip === "none") return p.trip_id == null;
+        return p.trip_id === effectiveTrip;
+      }),
     [data?.plans, effectiveTrip],
   );
 
@@ -209,9 +213,9 @@ export default function PurchasePlannerView() {
   useEffect(() => {
     if (planId == null || !data) return;
     const current = data.plans.find((p) => p.plan_id === planId);
-    // Only clear a plan that belongs to a DIFFERENT trip. An untripped plan
-    // shows under every filter, so clearing it here would fight the selector.
-    if (current && effectiveTrip !== "all" && current.trip_id != null && current.trip_id !== effectiveTrip) {
+    // Clear a selection the current filter no longer shows, so the picker never
+    // displays a plan the filter says is not there.
+    if (current && !visiblePlans.some((p) => p.plan_id === current.plan_id)) {
       setPlanId(visiblePlans[0]?.plan_id ?? null);
     }
   }, [effectiveTrip, planId, data, visiblePlans]);
@@ -247,12 +251,14 @@ export default function PurchasePlannerView() {
           <select
             className={selectClass}
             aria-label={t("purchasePlanner.tripFilter")}
-            value={tripFilter ?? activeTripId ?? "all"}
-            onChange={(event) =>
-              setTripFilter(event.target.value === "all" ? "all" : Number(event.target.value))
-            }
+            value={tripFilter}
+            onChange={(event) => {
+              const v = event.target.value;
+              setTripFilter(v === "all" || v === "none" ? v : Number(v));
+            }}
           >
             <option value="all">{t("purchasePlanner.allTrips")}</option>
+            <option value="none">{t("purchasePlanner.noTrip")}</option>
             {trips.map((trip) => (
               <option key={trip.trip_id} value={trip.trip_id}>
                 {trip.name}
