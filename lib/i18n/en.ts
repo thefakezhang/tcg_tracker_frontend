@@ -1610,6 +1610,7 @@ const en = {
   "purchasePlanner.subtitle": "Decide what to buy and who every copy is for before placing the order.",
   "purchasePlanner.tripFilter": "Filter plans by trip",
   "purchasePlanner.allTrips": "All trips",
+  "purchasePlanner.noTrip": "No trip",
   "purchasePlanner.newPlan": "New plan",
   "purchasePlanner.newPlanDescription": "Create a working purchase batch. Nothing here is inventory until you confirm the order.",
   "purchasePlanner.planName": "Plan name",
