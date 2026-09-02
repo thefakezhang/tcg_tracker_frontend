@@ -1300,7 +1300,10 @@ export function ListingTable({
                         actually published a count: absent means unknown depth,
                         and a "0" or a dash here would read as sold out for a
                         listing that is on sale. */}
-                    {orderCard && (
+                    {/* JP rows only. The purchase plan buys the import leg and
+                        the RPC only considers JPY listings, so offering this on
+                        a US row is an affordance that could never succeed. */}
+                    {orderCard && l.marketRegion === "JP" && (
                       <OrderListingAction
                         cardId={orderCard.id}
                         cardName={orderCard.name}

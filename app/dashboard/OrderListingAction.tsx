@@ -101,7 +101,7 @@ export function OrderListingAction({
       <Button
         size="sm"
         variant="ghost"
-        className="h-6 px-1.5 text-xs"
+        className="h-6 cursor-pointer px-1.5 text-xs"
         aria-label={`Add ${cardName} from ${source} to a purchase plan`}
         onClick={(e) => { e.stopPropagation(); setResult(null); setOpen(true); }}
       >
