@@ -46,8 +46,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { QueryError, useSupabaseQuery } from "./use-query";
 
 import { formatUsd } from "@/lib/money";
-const selectClass =
-  "h-9 w-full rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
+const selectBase =
+  "h-9 rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
+const selectClass = `${selectBase} w-full`;
 
 interface PlannerData {
   plans: PurchasePlan[];
@@ -241,7 +242,10 @@ export default function PurchasePlannerView() {
               So every plan not on the active trip was unreachable, which is
               five of the six plans on this database. */}
           <select
-            className={selectClass}
+            // Fixed width: sized to the option list, not to whichever option
+            // happens to be selected, so choosing a trip does not resize the
+            // control and shove the plan picker sideways.
+            className={`${selectBase} w-48 shrink-0`}
             aria-label={t("purchasePlanner.tripFilter")}
             value={tripFilter}
             onChange={(event) => {
