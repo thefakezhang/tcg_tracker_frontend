@@ -178,14 +178,24 @@ export default function PurchasePlannerView() {
   const [lineError, setLineError] = useState<string | null>(null);
   const { data, error, isLoading, retry } = useSupabaseQuery(["purchase-planner", planId], () => fetchPlannerData(planId));
 
-  useEffect(() => {
-    if (planId == null && data?.plans[0]) setPlanId(data.plans[0].plan_id);
-  }, [data?.plans, planId]);
-
-
-  const visiblePlans = (data?.plans ?? []).filter(
-    (p) => effectiveTrip === "all" || p.trip_id === effectiveTrip,
+  // Memoised: this used to be rebuilt inline on every render, so the effect
+  // below - which depends on it - re-ran every render too.
+  const visiblePlans = useMemo(
+    () => (data?.plans ?? []).filter((p) => effectiveTrip === "all" || p.trip_id === effectiveTrip),
+    [data?.plans, effectiveTrip],
   );
+
+  // Auto-select from the VISIBLE plans, not from every plan.
+  //
+  // Selecting data.plans[0] while the trip filter excluded it made this effect
+  // and the one below fight: this one set a plan the filter hid, that one
+  // cleared it as belonging to another trip, and this one set it again -
+  // "Maximum update depth exceeded" as soon as the first plan belonged to a
+  // trip other than the active one.
+  useEffect(() => {
+    if (planId == null && visiblePlans[0]) setPlanId(visiblePlans[0].plan_id);
+  }, [visiblePlans, planId]);
+
   const plan = data?.plans.find((candidate) => candidate.plan_id === planId) ?? null;
   // Changing the trip must not leave a plan from another trip selected, which
   // would show the operator a plan the filter says is not there.
