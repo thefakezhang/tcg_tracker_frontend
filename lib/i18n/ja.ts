@@ -1604,6 +1604,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "shoppingList.criteriaModes": "希望する日本限定タイプ",
   "purchasePlanner.title": "購入プランナー",
   "purchasePlanner.subtitle": "注文前に、何を何枚買い、それぞれ誰向けかを確認します。",
+  "purchasePlanner.tripFilter": "旅程で絞り込む",
+  "purchasePlanner.allTrips": "すべての旅程",
   "purchasePlanner.newPlan": "新規プラン",
   "purchasePlanner.newPlanDescription": "購入候補のまとまりを作成します。注文確定までは在庫に計上されません。",
   "purchasePlanner.planName": "プラン名",

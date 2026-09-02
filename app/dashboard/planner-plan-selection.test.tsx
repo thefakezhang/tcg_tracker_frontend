@@ -17,7 +17,7 @@ function PlanSelection({ plans, activeTrip }: { plans: Plan[]; activeTrip: numbe
   const [planId, setPlanId] = useState<number | null>(null);
 
   const visiblePlans = useMemo(
-    () => plans.filter((p) => activeTrip === "all" || p.trip_id === activeTrip),
+    () => plans.filter((p) => activeTrip === "all" || p.trip_id === activeTrip || p.trip_id == null),
     [plans, activeTrip],
   );
 
@@ -30,7 +30,7 @@ function PlanSelection({ plans, activeTrip }: { plans: Plan[]; activeTrip: numbe
   useEffect(() => {
     if (planId == null) return;
     const current = plans.find((p) => p.plan_id === planId);
-    if (current && activeTrip !== "all" && current.trip_id !== activeTrip) {
+    if (current && activeTrip !== "all" && current.trip_id != null && current.trip_id !== activeTrip) {
       setPlanId(visiblePlans[0]?.plan_id ?? null);
     }
   }, [activeTrip, planId, plans, visiblePlans]);
@@ -69,5 +69,23 @@ describe("planner plan selection", () => {
       />,
     );
     expect(screen.getByTestId("selected").textContent).toBe("9");
+  });
+
+  // Five real plans had no trip at all. Hiding them whenever a trip was active
+  // made them unreachable - there was no control to change the filter either.
+  it("keeps a plan with no trip visible under an active trip", () => {
+    render(
+      <PlanSelection
+        plans={[{ plan_id: 4, trip_id: null }, { plan_id: 9, trip_id: 3 }]}
+        activeTrip={8}
+      />,
+    );
+    expect(screen.getByTestId("selected").textContent).toBe("4");
+  });
+
+  // A plan genuinely belonging to another trip still stays hidden.
+  it("still hides a plan that belongs to a different trip", () => {
+    render(<PlanSelection plans={[{ plan_id: 9, trip_id: 3 }]} activeTrip={8} />);
+    expect(screen.getByTestId("selected").textContent).toBe("none");
   });
 });

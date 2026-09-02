@@ -180,8 +180,15 @@ export default function PurchasePlannerView() {
 
   // Memoised: this used to be rebuilt inline on every render, so the effect
   // below - which depends on it - re-ran every render too.
+  // A plan with no trip stays visible under every filter. It does not belong to
+  // another trip - it belongs to none - so hiding it makes it unreachable the
+  // moment any trip is active, which is how five existing plans disappeared
+  // from the planner as soon as the filter started being honoured.
   const visiblePlans = useMemo(
-    () => (data?.plans ?? []).filter((p) => effectiveTrip === "all" || p.trip_id === effectiveTrip),
+    () =>
+      (data?.plans ?? []).filter(
+        (p) => effectiveTrip === "all" || p.trip_id === effectiveTrip || p.trip_id == null,
+      ),
     [data?.plans, effectiveTrip],
   );
 
@@ -202,7 +209,9 @@ export default function PurchasePlannerView() {
   useEffect(() => {
     if (planId == null || !data) return;
     const current = data.plans.find((p) => p.plan_id === planId);
-    if (current && effectiveTrip !== "all" && current.trip_id !== effectiveTrip) {
+    // Only clear a plan that belongs to a DIFFERENT trip. An untripped plan
+    // shows under every filter, so clearing it here would fight the selector.
+    if (current && effectiveTrip !== "all" && current.trip_id != null && current.trip_id !== effectiveTrip) {
       setPlanId(visiblePlans[0]?.plan_id ?? null);
     }
   }, [effectiveTrip, planId, data, visiblePlans]);
@@ -231,6 +240,25 @@ export default function PurchasePlannerView() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* The trip filter existed in state and defaulted to the active trip,
+              but nothing could ever change it - setTripFilter was never called.
+              So every plan not on the active trip was unreachable, which is
+              five of the six plans on this database. */}
+          <select
+            className={selectClass}
+            aria-label={t("purchasePlanner.tripFilter")}
+            value={tripFilter ?? activeTripId ?? "all"}
+            onChange={(event) =>
+              setTripFilter(event.target.value === "all" ? "all" : Number(event.target.value))
+            }
+          >
+            <option value="all">{t("purchasePlanner.allTrips")}</option>
+            {trips.map((trip) => (
+              <option key={trip.trip_id} value={trip.trip_id}>
+                {trip.name}
+              </option>
+            ))}
+          </select>
           <select
             className={`${selectClass} min-w-48 flex-1 sm:flex-none`}
             value={planId ?? ""}
