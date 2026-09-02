@@ -65,7 +65,6 @@ vi.mock("./DecisionActions", () => ({ DecisionActions: () => <div><button>decisi
 vi.mock("./opportunity-exposures", () => ({ browserOpportunityPayloads: () => [], recordOpportunityExposures: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("./DecisionWatchlist", () => ({ default: () => <div>watchlist surface</div> }));
 vi.mock("./RefreshPricesAction", () => ({ RefreshPricesAction: () => null }));
-vi.mock("./AddToPlanAction", () => ({ AddToPlanAction: ({ cards }: { cards: { id: number; name: string }[] }) => <button>add to plan ({cards.map((c) => c.name).join(", ")})</button> }));
 vi.mock("./RefreshInFlightStrip", () => ({ RefreshInFlightStrip: () => null }));
 vi.mock("./CardDetailModal", () => ({
   default: ({ card, open, onClose }: { card: { card: { card_id: string } } | null; open: boolean; onClose: () => void }) => open ? (
@@ -365,8 +364,9 @@ describe("CardBrowser grid selection", () => {
     fireEvent.click(box);
 
     expect((screen.getByRole("checkbox", { name: /cardBrowser.selectCard/ }) as HTMLInputElement).checked).toBe(true);
-    // The dialog needs names, not ids: a quantity cannot be answered for "card 42".
-    expect(screen.getByRole("button", { name: "add to plan (Card)" })).toBeTruthy();
+    // Selection still drives the bulk price refresh; ordering moved into the
+    // card detail view, where the prices and depth the decision needs are shown.
+    expect(screen.getByText(/cardBrowser.selectedCount/)).toBeTruthy();
   });
 
   it("does not open the card detail when the tile checkbox is clicked", async () => {
