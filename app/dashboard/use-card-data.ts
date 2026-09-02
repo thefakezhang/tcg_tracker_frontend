@@ -138,6 +138,10 @@ export interface MarketListing {
   // What the price IS (sold / bid / ask / valuation); see lib/price-kind.ts.
   // Optional because not every fetch selects it.
   price_kind?: PriceKind | null;
+  // Copies the shop reported when observed. null means it publishes no count,
+  // which is NOT none - the listing is purchasable at an unknown depth.
+  // Optional because not every fetch selects it.
+  available_quantity?: number | null;
 }
 
 export interface PriceEntry {

@@ -110,6 +110,9 @@ export interface DetailListing {
   lastUpdated: string | null;
   // What the price is (sold / bid / ask / valuation); see lib/price-kind.ts.
   kind: PriceKind | null;
+  // Copies the shop published when we last looked. null means it does not
+  // publish a count - not that it has none.
+  availableQuantity?: number | null;
 }
 
 // TCGplayer's product page accepts query params to preselect a specific SKU
@@ -338,7 +341,7 @@ export default function CardDetailModal({
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
             .select(
-              "card_id, price_type, price_kind, price, currency, psa_grade, condition, location_id, listing_url, last_updated, currencies(symbol)"
+              "card_id, price_type, price_kind, price, currency, psa_grade, condition, location_id, listing_url, last_updated, available_quantity, currencies(symbol)"
             )
             .eq("card_id", card!.card.card_id),
           fetchRateMap(supabase),
@@ -413,6 +416,7 @@ export default function CardDetailModal({
           listing_url: (l.listing_url as string | null) ?? null,
           last_updated: (l.last_updated as string | null) ?? null,
           price_kind: isPriceKind(l.price_kind) ? l.price_kind : null,
+          available_quantity: (l.available_quantity as number | null) ?? null,
         })
       );
 
@@ -531,6 +535,7 @@ export default function CardDetailModal({
           : l.listing_url,
         lastUpdated: l.last_updated,
         kind: l.price_kind ?? null,
+        availableQuantity: l.available_quantity ?? null,
       };
     };
 
@@ -1164,7 +1169,10 @@ function ListingTables({
   buy: DetailListing[];
   sell: DetailListing[];
   conditionHeader: string;
-  t: (key: import("@/lib/i18n").TranslationKey) => string;
+  t: (
+    key: import("@/lib/i18n").TranslationKey,
+    params?: Record<string, string | number>,
+  ) => string;
 }) {
   return (
     <div className="min-w-0 grid grid-cols-1 gap-4 pt-2 sm:grid-cols-2">
@@ -1195,7 +1203,10 @@ export function ListingTable({
 }: {
   listings: DetailListing[];
   conditionHeader: string;
-  t: (key: import("@/lib/i18n").TranslationKey) => string;
+  t: (
+    key: import("@/lib/i18n").TranslationKey,
+    params?: Record<string, string | number>,
+  ) => string;
 }) {
   const { displayCurrency, convertPrice } = useCurrency();
 
@@ -1261,6 +1272,19 @@ export function ListingTable({
                         title={kindTitle ? t(kindTitle) : undefined}
                       >
                         {t(kindKey)}
+                      </Badge>
+                    )}
+                    {/* How deep the shop is. Only rendered when the source
+                        actually published a count: absent means unknown depth,
+                        and a "0" or a dash here would read as sold out for a
+                        listing that is on sale. */}
+                    {l.availableQuantity != null && (
+                      <Badge
+                        variant="secondary"
+                        className="h-auto px-1.5 py-px text-xs font-normal tabular-nums"
+                        title={t("cardDetail.copiesOnHandTitle")}
+                      >
+                        {t("cardDetail.copiesOnHand", { count: l.availableQuantity })}
                       </Badge>
                     )}
                   </div>
