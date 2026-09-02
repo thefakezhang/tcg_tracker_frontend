@@ -24,7 +24,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AddToPlanAction } from "./AddToPlanAction";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
 import { useAvailableCardSources, useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
@@ -230,19 +229,16 @@ export default function CardBrowser() {
 
   // A card can occupy two rows (PSA and non-PSA share a card_id), so dedupe -
   // the RPC should be asked once per card.
-  const selectedCards = useMemo(() => {
+  // A card can occupy two rows (PSA and non-PSA share a card_id), so dedupe -
+  // the refresh should be asked once per card.
+  const selectedCardIds = useMemo(() => {
     if (!selectionEnabled) return [];
-    // Carry the name, not just the id. The plan dialog asks for a quantity per
-    // card, and "card 803169" is not something anyone can answer that for.
-    const byId = new Map<number, { id: number; name: string }>();
+    const ids = new Set<number>();
     for (const row of data) {
-      if (!rowSelection[row.key]) continue;
-      const id = Number(row.card.card_id);
-      if (!byId.has(id)) byId.set(id, { id, name: getCardDisplayName(row.card, language) });
+      if (rowSelection[row.key]) ids.add(Number(row.card.card_id));
     }
-    return [...byId.values()];
-  }, [data, rowSelection, selectionEnabled, language]);
-  const selectedCardIds = useMemo(() => selectedCards.map((c) => c.id), [selectedCards]);
+    return [...ids];
+  }, [data, rowSelection, selectionEnabled]);
 
   // Load TCGPlayer and Collectr raw-market values for the cards currently on
   // screen. Evidence is classified only when both queries succeed, so a source
@@ -738,10 +734,6 @@ export default function CardBrowser() {
               their freshness chips show the new values instead of the ages the
               table was rendered with before the click. */}
           <RefreshPricesAction cardIds={selectedCardIds} onRefreshed={refetch} />
-          {/* Selecting cards here is where the operator decides what to buy, so
-              this is where adding to a plan belongs - it used to be possible
-              only one card at a time, inside the planner. */}
-          <AddToPlanAction cards={selectedCards} />
         </div>
       )}
 

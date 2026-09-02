@@ -172,27 +172,50 @@ export default function PurchasePlannerView() {
   // Plans are bound to a trip. Without this the selector accumulates every
   // plan ever made, and after a handful of trips it is unusable.
   const { trips, activeTripId } = useTrips();
-  const [tripFilter, setTripFilter] = useState<number | "all" | null>(null);
-  const effectiveTrip = tripFilter ?? activeTripId ?? "all";
+  // Defaults to every plan rather than the active trip. Defaulting to the trip
+  // showed nothing at all when that trip had no plans, which is how the whole
+  // planner looked empty.
+  const [tripFilter, setTripFilter] = useState<number | "all" | "none">("all");
+  const effectiveTrip = tripFilter;
   const [disposition, setDisposition] = useState<DemandCoverage | null>(null);
   const [lineError, setLineError] = useState<string | null>(null);
   const { data, error, isLoading, retry } = useSupabaseQuery(["purchase-planner", planId], () => fetchPlannerData(planId));
 
-  useEffect(() => {
-    if (planId == null && data?.plans[0]) setPlanId(data.plans[0].plan_id);
-  }, [data?.plans, planId]);
-
-
-  const visiblePlans = (data?.plans ?? []).filter(
-    (p) => effectiveTrip === "all" || p.trip_id === effectiveTrip,
+  // Memoised: this used to be rebuilt inline on every render, so the effect
+  // below - which depends on it - re-ran every render too.
+  // Untripped plans get their OWN filter value rather than appearing under every
+  // one. Showing them everywhere made the filter look broken - most plans have
+  // no trip, so selecting a trip appeared to change nothing.
+  const visiblePlans = useMemo(
+    () =>
+      (data?.plans ?? []).filter((p) => {
+        if (effectiveTrip === "all") return true;
+        if (effectiveTrip === "none") return p.trip_id == null;
+        return p.trip_id === effectiveTrip;
+      }),
+    [data?.plans, effectiveTrip],
   );
+
+  // Auto-select from the VISIBLE plans, not from every plan.
+  //
+  // Selecting data.plans[0] while the trip filter excluded it made this effect
+  // and the one below fight: this one set a plan the filter hid, that one
+  // cleared it as belonging to another trip, and this one set it again -
+  // "Maximum update depth exceeded" as soon as the first plan belonged to a
+  // trip other than the active one.
+  useEffect(() => {
+    if (planId == null && visiblePlans[0]) setPlanId(visiblePlans[0].plan_id);
+  }, [visiblePlans, planId]);
+
   const plan = data?.plans.find((candidate) => candidate.plan_id === planId) ?? null;
   // Changing the trip must not leave a plan from another trip selected, which
   // would show the operator a plan the filter says is not there.
   useEffect(() => {
     if (planId == null || !data) return;
     const current = data.plans.find((p) => p.plan_id === planId);
-    if (current && effectiveTrip !== "all" && current.trip_id !== effectiveTrip) {
+    // Clear a selection the current filter no longer shows, so the picker never
+    // displays a plan the filter says is not there.
+    if (current && !visiblePlans.some((p) => p.plan_id === current.plan_id)) {
       setPlanId(visiblePlans[0]?.plan_id ?? null);
     }
   }, [effectiveTrip, planId, data, visiblePlans]);
@@ -221,6 +244,27 @@ export default function PurchasePlannerView() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* The trip filter existed in state and defaulted to the active trip,
+              but nothing could ever change it - setTripFilter was never called.
+              So every plan not on the active trip was unreachable, which is
+              five of the six plans on this database. */}
+          <select
+            className={selectClass}
+            aria-label={t("purchasePlanner.tripFilter")}
+            value={tripFilter}
+            onChange={(event) => {
+              const v = event.target.value;
+              setTripFilter(v === "all" || v === "none" ? v : Number(v));
+            }}
+          >
+            <option value="all">{t("purchasePlanner.allTrips")}</option>
+            <option value="none">{t("purchasePlanner.noTrip")}</option>
+            {trips.map((trip) => (
+              <option key={trip.trip_id} value={trip.trip_id}>
+                {trip.name}
+              </option>
+            ))}
+          </select>
           <select
             className={`${selectClass} min-w-48 flex-1 sm:flex-none`}
             value={planId ?? ""}
