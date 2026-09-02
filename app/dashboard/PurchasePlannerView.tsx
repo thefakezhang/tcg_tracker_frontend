@@ -180,9 +180,14 @@ export default function PurchasePlannerView() {
 
   // Memoised because it is an effect dependency below. As a bare filter it was
   // a new array on every render, so that effect ran on every render.
+  //
+  // A plan with no trip stays visible under every filter. It does not belong to
+  // another trip - it belongs to none - so hiding it makes it unreachable the
+  // moment any trip is active, which is how five existing plans disappeared
+  // from the planner as soon as the filter started being honoured.
   const visiblePlans = useMemo(
     () => (data?.plans ?? []).filter(
-      (p) => effectiveTrip === "all" || p.trip_id === effectiveTrip,
+      (p) => effectiveTrip === "all" || p.trip_id === effectiveTrip || p.trip_id == null,
     ),
     [data?.plans, effectiveTrip],
   );
@@ -227,6 +232,25 @@ export default function PurchasePlannerView() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* The trip filter existed in state and defaulted to the active trip,
+              but nothing could ever change it - setTripFilter was never called.
+              So every plan not on the active trip was unreachable, which is
+              five of the six plans on this database. */}
+          <select
+            className={selectClass}
+            aria-label={t("purchasePlanner.tripFilter")}
+            value={tripFilter ?? activeTripId ?? "all"}
+            onChange={(event) =>
+              setTripFilter(event.target.value === "all" ? "all" : Number(event.target.value))
+            }
+          >
+            <option value="all">{t("purchasePlanner.allTrips")}</option>
+            {trips.map((trip) => (
+              <option key={trip.trip_id} value={trip.trip_id}>
+                {trip.name}
+              </option>
+            ))}
+          </select>
           <select
             className={`${selectClass} min-w-48 flex-1 sm:flex-none`}
             value={planId ?? ""}
