@@ -262,7 +262,11 @@ export default function PurchasePlannerView() {
             ))}
           </select>
           <select
-            className={`${selectClass} min-w-48 flex-1 sm:flex-none`}
+            // Fixed width, like the trip filter beside it. With sm:flex-none it
+            // sized to the SELECTED plan's name, so changing trip changed the
+            // selection, changed this box's width, and shoved the trip filter
+            // sideways - the control moved because of what you picked in it.
+            className={`${selectBase} w-full sm:w-72`}
             value={planId ?? ""}
             onChange={(event) => setPlanId(event.target.value ? Number(event.target.value) : null)}
           >
