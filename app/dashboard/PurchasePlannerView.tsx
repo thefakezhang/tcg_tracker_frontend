@@ -1182,6 +1182,7 @@ type AssignableBuyer = { email: string; has_account: boolean; last_sign_in: stri
 function PlanBuyerControl({ plan, onChanged }: { plan: PurchasePlan; onChanged: () => void }) {
   const [buyers, setBuyers] = useState<AssignableBuyer[]>([]);
   const [saving, setSaving] = useState(false);
+  const [justAssigned, setJustAssigned] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1189,28 +1190,41 @@ function PlanBuyerControl({ plan, onChanged }: { plan: PurchasePlan; onChanged: 
       .then(({ data }) => setBuyers((data ?? []) as AssignableBuyer[]));
   }, []);
 
+  // A plan is on the buyer's screen from `ready` onward, so changing the
+  // recipient of one is not a bookkeeping edit - it hands live work to someone
+  // else and takes it away from the person who had it. Ask first.
+  const liveForBuyer = plan.status !== "draft";
+
   async function assign(email: string) {
-    setSaving(true); setError(null);
+    if (liveForBuyer) {
+      const who = email || "nobody";
+      const previous = plan.assigned_buyer_email ?? "nobody";
+      if (!window.confirm(
+        `This plan is already visible to ${previous}. Reassign it to ${who}?`,
+      )) {
+        return;
+      }
+    }
+    setSaving(true); setError(null); setJustAssigned(false);
     const { error: updateError } = await createClient()
       .from("purchase_plans")
       .update({ assigned_buyer_email: email || null })
       .eq("plan_id", plan.plan_id);
     setSaving(false);
     if (updateError) { setError(updateError.message); return; }
+    // Feedback for the action actually taken. Previously the only thing that
+    // changed on screen was a green "Sent" badge, which reports the PLAN's
+    // state and not this click - so picking a name on an already-ready plan
+    // looked exactly like having just sent it.
+    setJustAssigned(true);
     onChanged();
   }
 
-  // Assigning names the recipient; it does not send. The buyer only sees a plan
-  // from `ready` onward, so a draft with an assignee is NOT yet on his screen -
-  // and a control labelled "Send to" that has not sent is misleading in exactly
-  // the direction that matters.
-  const sent = plan.status !== "draft";
-
   return (
     <div className="flex items-center gap-2 text-xs">
-      <span className="text-muted-foreground">Send to</span>
+      <span className="text-muted-foreground">Buyer</span>
       <select
-        className={selectClass}
+        className={`${selectBase} w-56`}
         value={plan.assigned_buyer_email ?? ""}
         disabled={saving}
         onChange={(e) => void assign(e.target.value)}
@@ -1222,10 +1236,16 @@ function PlanBuyerControl({ plan, onChanged }: { plan: PurchasePlan; onChanged: 
           </option>
         ))}
       </select>
+      {saving && <span className="text-muted-foreground">Saving...</span>}
+      {!saving && justAssigned && <span className="text-muted-foreground">Buyer saved</span>}
       {plan.assigned_buyer_email && (
-        sent
-          ? <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-600 dark:text-emerald-400">Sent</span>
-          : <span className="text-muted-foreground">Not sent yet - use Review &amp; send</span>
+        // Describes the PLAN, not the click. "Sent" next to a dropdown reads as
+        // a receipt for what you just did; this says who can see what, and when.
+        liveForBuyer
+          ? <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-600 dark:text-emerald-400">
+              Visible to buyer
+            </span>
+          : <span className="text-muted-foreground">Draft - not visible until you Review &amp; send</span>
       )}
       {error && <span className="text-destructive">{error}</span>}
     </div>
