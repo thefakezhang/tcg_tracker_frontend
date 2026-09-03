@@ -38,6 +38,10 @@ import type { ReviewQueueGame } from "./ReviewQueueNavigationContext";
 
 type Game = ReviewQueueGame;
 
+// One row of match_candidate_sources_v: a source tag actually present in a
+// queue, and how much of it is waiting.
+type SourceOption = { source: string; pending: number; total: number };
+
 interface CatalogLink {
   platform_name: string;
   external_reference_id: string;
@@ -284,13 +288,21 @@ function anchorURL(platform: string, id: string): string | null {
   }
 }
 
-// SOURCE_FILTERS lists the retailer tags a curator can narrow the queue to,
-// per game (the tags each game's pushers actually write). "" = all sources.
-const SOURCE_FILTERS: Record<Game, string[]> = {
-  pokemon_sealed: ["cardrush_sealed", "snkrdunk_sealed", "pricecharting", "tcgplayer", "cardkingdom", "torecabank", "big_tcg", "toban", "surugaya"],
-  pokemon: ["cardrush", "collectr", "snkrdunk", "shinsoku", "cardkingdom", "torecabirth", "torecabank", "big_tcg", "toban", "tcgplayer", "cardladder", "surugaya", "expedition_gaming"],
-  mtg: ["cardrush", "hareruya", "fukufuku", "tcgplayer"],
-};
+// The source filter's options come from the queue itself, via
+// match_candidate_sources_v (migration 000414). They used to be a literal per
+// game, and it drifted: on 2026-09-02 the lists were missing six sources
+// holding 2,686 pending candidates - hareruya2, fukufuku and artofpkm on
+// pokemon, artofpkm and shinsoku on sealed, yellowsubmarine on mtg - while
+// offering tcgplayer on all three games where it has no rows at all.
+//
+// Drift here is invisible in the worst way. A missing source is not an empty
+// filter a curator can see and question; it is an option that does not exist,
+// so its candidates are simply never looked at and the queue reads as smaller
+// than it is.
+//
+// The view reads the same two fields applySource filters on, so every option it
+// returns can actually be selected - see the migration for why deriving this
+// from source_fields->'by_source' instead would reintroduce the bug inverted.
 
 // formatSourceOrigin turns (source, side) into "Cardrush (buy)" style text.
 // When the row carries no source tag we fall back to the caller's default
@@ -725,12 +737,29 @@ export default function MatchReviewView({
   const [createFor, setCreateFor] = useState<Candidate | null>(null);
   const [matchFor, setMatchFor] = useState<{ c: Candidate; alias: boolean } | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const sourceOptions = useMemo(
-    () => source && !SOURCE_FILTERS[game].includes(source)
-      ? [source, ...SOURCE_FILTERS[game]]
-      : SOURCE_FILTERS[game],
-    [game, source],
+  const { data: sourceRows } = useSupabaseQuery<SourceOption[]>(
+    ["match-review-sources", game],
+    async () => {
+      const { data, error } = await createClient()
+        .from("match_candidate_sources_v")
+        .select("source, pending, total")
+        .eq("game", game)
+        .order("pending", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as SourceOption[];
+    },
   );
+  // A source pinned in the URL stays selectable even when it currently has no
+  // rows, so a shared link does not silently widen to "all sources".
+  const sourceOptions = useMemo(() => {
+    const fromQueue = (sourceRows ?? []).map((r) => r.source);
+    return source && !fromQueue.includes(source) ? [source, ...fromQueue] : fromQueue;
+  }, [sourceRows, source]);
+  const pendingBySource = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of sourceRows ?? []) m.set(r.source, r.pending);
+    return m;
+  }, [sourceRows]);
 
   const proposedCount = useMemo(
     () => candidates.filter((c) => selected.has(c.candidate_id) && c.proposed_id).length,
@@ -893,9 +922,17 @@ export default function MatchReviewView({
           onChange={(e) => { setSource(e.target.value); setSelected(new Set()); setLimit(PAGE_SIZE); }}
         >
           <option value="">{t("review.sourceAll")}</option>
-          {sourceOptions.map((s) => (
-            <option key={s} value={s}>{sourceLabel(s)}</option>
-          ))}
+          {sourceOptions.map((s) => {
+            // A source with 0 pending has drained; one that is absent entirely
+            // was never wired up. Both used to render as an unremarkable
+            // option, which is how six broken sources went unnoticed.
+            const n = pendingBySource.get(s);
+            return (
+              <option key={s} value={s}>
+                {n === undefined ? sourceLabel(s) : `${sourceLabel(s)} (${n})`}
+              </option>
+            );
+          })}
         </select>
         {!isLoading && (
           <span className="text-sm text-muted-foreground">
