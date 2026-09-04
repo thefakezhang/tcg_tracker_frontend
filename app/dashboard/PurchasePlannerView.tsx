@@ -178,24 +178,30 @@ export default function PurchasePlannerView() {
   const [lineError, setLineError] = useState<string | null>(null);
   const { data, error, isLoading, retry } = useSupabaseQuery(["purchase-planner", planId], () => fetchPlannerData(planId));
 
-  useEffect(() => {
-    if (planId == null && data?.plans[0]) setPlanId(data.plans[0].plan_id);
-  }, [data?.plans, planId]);
-
-
-  const visiblePlans = (data?.plans ?? []).filter(
-    (p) => effectiveTrip === "all" || p.trip_id === effectiveTrip,
+  // Memoised because it is an effect dependency below. As a bare filter it was
+  // a new array on every render, so that effect ran on every render.
+  const visiblePlans = useMemo(
+    () => (data?.plans ?? []).filter(
+      (p) => effectiveTrip === "all" || p.trip_id === effectiveTrip,
+    ),
+    [data?.plans, effectiveTrip],
   );
   const plan = data?.plans.find((candidate) => candidate.plan_id === planId) ?? null;
-  // Changing the trip must not leave a plan from another trip selected, which
-  // would show the operator a plan the filter says is not there.
+  // One rule: the selected plan is one the operator can actually see.
+  //
+  // This was two effects, and they disagreed. One re-selected from EVERY plan
+  // whenever nothing was selected; the other cleared any plan outside the
+  // current trip. With a trip filter that matches no plan, each undid the
+  // other - select plan from another trip, clear it, select it again - and the
+  // planner died on React error #185, "Maximum update depth exceeded".
+  //
+  // Selecting from the same set the filter enforces is what makes it settle,
+  // rather than the two effects agreeing by luck about which plans exist.
   useEffect(() => {
-    if (planId == null || !data) return;
-    const current = data.plans.find((p) => p.plan_id === planId);
-    if (current && effectiveTrip !== "all" && current.trip_id !== effectiveTrip) {
-      setPlanId(visiblePlans[0]?.plan_id ?? null);
-    }
-  }, [effectiveTrip, planId, data, visiblePlans]);
+    if (planId != null && visiblePlans.some((p) => p.plan_id === planId)) return;
+    const next = visiblePlans[0]?.plan_id ?? null;
+    if (next !== planId) setPlanId(next);
+  }, [visiblePlans, planId]);
   const allocations = data?.allocations ?? [];
   const coverage = data?.coverage ?? [];
   const lines = data?.lines ?? [];
@@ -316,7 +322,19 @@ export default function PurchasePlannerView() {
         </>
       )}
 
-      <NewPlanDialog open={newPlanOpen} onOpenChange={setNewPlanOpen} onCreated={(id) => { setPlanId(id); retry(); }} />
+      <NewPlanDialog
+        open={newPlanOpen}
+        onOpenChange={setNewPlanOpen}
+        onCreated={(id, planTrip) => {
+          // Move the filter to the new plan's trip, so a plan the operator just
+          // made is one he can see. Without this the filter swallows it and the
+          // create reads as having failed - and it was also how the selection
+          // loop got started, by selecting a plan the filter then rejected.
+          setTripFilter(planTrip ?? "all");
+          setPlanId(id);
+          retry();
+        }}
+      />
       {plan && <AddLineDialog planId={plan.plan_id} open={lineOpen} onOpenChange={setLineOpen} onAdded={retry} />}
       <AllocationDialog line={allocationLine} allocations={allocations} editable={editable} open={allocationLine != null} onOpenChange={(open) => !open && setAllocationLine(null)} onChanged={retry} />
       {plan && <ReviewDialog plan={plan} open={reviewOpen} onOpenChange={setReviewOpen} onChanged={retry} />}
@@ -455,7 +473,7 @@ function CoverageTable({ coverage, onDisposition }: { coverage: DemandCoverage[]
   );
 }
 
-function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: (id: number) => void }) {
+function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: (id: number, tripId: number | null) => void }) {
   const { t } = useTranslation();
   const { trips, activeTripId } = useTrips();
   const [tripId, setTripId] = useState<number | null>(null);
@@ -492,21 +510,21 @@ function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpe
     }).select("plan_id").single();
     setBusy(false);
     if (insertError) return setError(insertError.message);
-    setName(""); setBudget(""); setNotes(""); setBuyer(""); onOpenChange(false); onCreated(Number(data.plan_id));
+    setName(""); setBudget(""); setNotes(""); setBuyer(""); onOpenChange(false); onCreated(Number(data.plan_id), tripId);
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader><DialogTitle>{t("purchasePlanner.newPlan")}</DialogTitle><DialogDescription>{t("purchasePlanner.newPlanDescription")}</DialogDescription></DialogHeader>
         <div className="space-y-3">
-          <div className="space-y-1"><Label>{t("purchasePlanner.planName")}</Label><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} /></div>
+          <div className="space-y-1"><Label htmlFor="new-plan-name">{t("purchasePlanner.planName")}</Label><Input id="new-plan-name" autoFocus value={name} onChange={(event) => setName(event.target.value)} /></div>
           <div className="grid grid-cols-[1fr_120px] gap-2">
-            <div className="space-y-1"><Label>Budget</Label><Input inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} /></div>
-            <div className="space-y-1"><Label>Currency</Label><select className={selectClass} value={currency} onChange={(e) => setCurrency(e.target.value)}><option value="JPY">JPY</option><option value="USD">USD</option></select></div>
+            <div className="space-y-1"><Label htmlFor="new-plan-budget">Budget</Label><Input id="new-plan-budget" inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} /></div>
+            <div className="space-y-1"><Label htmlFor="new-plan-currency">Currency</Label><select id="new-plan-currency" className={selectClass} value={currency} onChange={(e) => setCurrency(e.target.value)}><option value="JPY">JPY</option><option value="USD">USD</option></select></div>
           </div>
           <div className="space-y-1">
-            <Label>Trip</Label>
-            <select className={selectClass} value={tripId ?? ""} onChange={(e) => setTripId(e.target.value ? Number(e.target.value) : null)}>
+            <Label htmlFor="new-plan-trip">Trip</Label>
+            <select id="new-plan-trip" className={selectClass} value={tripId ?? ""} onChange={(e) => setTripId(e.target.value ? Number(e.target.value) : null)}>
               <option value="">No trip</option>
               {trips.map((trip) => (
                 <option key={trip.trip_id} value={trip.trip_id}>
@@ -516,8 +534,8 @@ function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpe
             </select>
           </div>
           <div className="space-y-1">
-            <Label>Send to</Label>
-            <select className={selectClass} value={buyer} onChange={(e) => setBuyer(e.target.value)}>
+            <Label htmlFor="new-plan-buyer">Send to</Label>
+            <select id="new-plan-buyer" className={selectClass} value={buyer} onChange={(e) => setBuyer(e.target.value)}>
               <option value="">Nobody yet - assign later</option>
               {buyers.map((b) => (
                 <option key={b.email} value={b.email}>
@@ -526,7 +544,7 @@ function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpe
               ))}
             </select>
           </div>
-          <div className="space-y-1"><Label>{t("purchasePlanner.notes")}</Label><Textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></div>
+          <div className="space-y-1"><Label htmlFor="new-plan-notes">{t("purchasePlanner.notes")}</Label><Textarea id="new-plan-notes" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></div>
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button><Button onClick={create} disabled={busy || !name.trim()}>{busy ? t("common.saving") : t("common.save")}</Button></DialogFooter>
