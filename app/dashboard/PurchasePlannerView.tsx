@@ -368,7 +368,10 @@ export default function PurchasePlannerView() {
           // made is one he can see. Without this the filter swallows it and the
           // create reads as having failed - and it was also how the selection
           // loop got started, by selecting a plan the filter then rejected.
-          setTripFilter(planTrip ?? "all");
+          // "none" rather than "all" for an untripped plan: it moves the
+          // filter to the bucket the plan is actually in, which keeps the
+          // control meaningful instead of widening it after every create.
+          setTripFilter(planTrip ?? "none");
           setPlanId(id);
           retry();
         }}
