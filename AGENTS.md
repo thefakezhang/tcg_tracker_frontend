@@ -502,6 +502,7 @@ The mutation sends both the displayed ledger balance and observed count so the b
 
 - `CardLinksTab.tsx` is Card Index > Pokemon > **Needs IDs**: the cards no platform can price, because nothing points at them.
 It reads `pokemon_card_link_coverage_v` (backend migration 000310) and writes through `card_index_attach_pokemon_link`, the same RPC the Card Index editor uses, so an attach also resolves any pending review candidate the new link now fully covers.
+The set list and card rows use the operator-safe coverage view, which excludes counterpart-only English definitions while retaining an English definition with a real positive JP buy signal.
 - The view's `is_numbered` column carries the split the work divides along, and the tab shows only the `false` side.
 A card with a real collector number is matched automatically from `(set_code, card_number)` - what the snkrdunk harvest and match-gen run on - so it is not a person's job.
 A card whose number is a stand-in identifies no position within its set and no matcher can ever key on it: `旧裏` on old-back cards, `DPBP#nnn` (a species number shared by a Pokemon and its LV.X), a bare set code on unnumbered promos like `XY-P`, or `UNKNOWN`.
@@ -516,7 +517,11 @@ That feed's evidence tables remain queryable in the backend, so "which cards do 
 
 ### Card Index curator flag
 
-- The Pokémon Card Index is the one surface that reaches the whole singles catalog: `fetchIndex` reads `pokemon_card_definitions` directly, with no price-summary join, so cards that have no comp data (8,943 of 32,484 definitions in Aug 2026) are listed here and nowhere else.
+- The Pokémon Card Index reaches the whole operator-visible singles catalog through `pokemon_card_definitions_operator_v`, with no price-summary requirement for non-English definitions.
+The shared server-side rule keeps every non-English definition and admits an English definition only when it has a positive JP buy signal.
+The cards, merge-target, match-memory, and Needs IDs paths use operator-safe views derived from that same predicate, so an exact UID or external ID cannot expose a counterpart-only English definition through another Card Index tab.
+English definitions imported only for counterpart pricing remain available to the dedicated English catalog and counterpart-review machinery.
+Non-English cards without comp data remain visible; price availability affects only the narrow English-with-JP-bid exception.
 - The edit modal therefore carries the same Cute switch as the Card Detail Modal (`PokemonCuratorFlagSwitches` from `PokemonCuratorFlags.tsx`), under a "Curator flags" heading between the identity fields and Links.
 Like link attach, the switch saves the moment it is toggled through `set_pokemon_cute` and calls `onSaved` so the list behind the modal refetches; the identity fields still wait for Save.
 - Each index row shows a compact Cute chip (`PokemonCuratorFlagChips`) in the Variant column, next to the misc badge, with the full label on the tooltip; unflagged rows render nothing extra.

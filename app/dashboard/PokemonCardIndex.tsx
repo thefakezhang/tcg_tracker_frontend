@@ -33,6 +33,7 @@ import {
 import PokemonMatchesTab from "./PokemonMatchesTab";
 import CardLinksTab from "./CardLinksTab";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
+import { POKEMON_INDEX_CARD_VIEW } from "./pokemon-index-visibility";
 import {
   PokemonJapanExclusivityEditor,
   pokemonJapanExclusivityValues,
@@ -196,13 +197,19 @@ export async function fetchIndex(
     return filtered;
   };
 
-  let cq = supabase.from("pokemon_card_definitions").select(`card_id${gateSelect}`, { count: "exact", head: true });
+  let cq = supabase
+    .from(POKEMON_INDEX_CARD_VIEW)
+    .select(`card_id${gateSelect}`, { count: "exact", head: true });
   if (s) for (const f of orFilters) cq = cq.or(f);
   cq = applyGate(cq);
   cq = applyCurationFilters(cq);
   const { count: total, error: countError } = await cq;
   if (countError) throw countError;
-  let q = supabase.from("pokemon_card_definitions").select(`${COLS}${gateSelect}`).order("regional_name").limit(limit);
+  let q = supabase
+    .from(POKEMON_INDEX_CARD_VIEW)
+    .select(`${COLS}${gateSelect}`)
+    .order("regional_name")
+    .limit(limit);
   if (s) for (const f of orFilters) q = q.or(f);
   q = applyGate(q);
   q = applyCurationFilters(q);
@@ -626,7 +633,7 @@ function PokemonCardModal({
       // platform external ids - a merge target is most often picked by uid.
       const extIds = await externalIdMatches(supabase, "pokemon_external_identifiers", "card_id", q);
       let mq = supabase
-        .from("pokemon_card_definitions")
+        .from(POKEMON_INDEX_CARD_VIEW)
         .select("card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, image_url")
         .neq("card_uid", card.card_uid);
       for (const f of smartSearchFilters(q, ["regional_name", "english_name", "set_code", "card_number"], "card_uid", "card_id", extIds)) mq = mq.or(f);

@@ -14,6 +14,7 @@ import {
   pokemonEditActionLabel,
   pokemonEditRPCArgs,
 } from "./PokemonCardIndex";
+import { POKEMON_INDEX_CARD_VIEW } from "./pokemon-index-visibility";
 
 const queryMethods = ["select", "eq", "in", "or", "order", "limit", "maybeSingle"] as const;
 type QueryMethod = (typeof queryMethods)[number];
@@ -68,7 +69,7 @@ describe("Pokemon Card Index query boundary", () => {
     mocks.createClient.mockReturnValue({
       from: vi.fn((table: string) => {
         if (table === "pokemon_external_identifiers") return lookup;
-        if (table === "pokemon_card_definitions") {
+        if (table === POKEMON_INDEX_CARD_VIEW) {
           definitionQueries += 1;
           return definitionQueries === 1 ? count : definitions;
         }
@@ -115,7 +116,7 @@ describe("Pokemon Card Index query boundary", () => {
     mocks.createClient.mockReturnValue({
       from: vi.fn((table: string) => {
         if (table === "pokemon_external_identifiers") return lookup;
-        if (table === "pokemon_card_definitions") {
+        if (table === POKEMON_INDEX_CARD_VIEW) {
           definitionQueries += 1;
           return definitionQueries === 1 ? count : definitions;
         }

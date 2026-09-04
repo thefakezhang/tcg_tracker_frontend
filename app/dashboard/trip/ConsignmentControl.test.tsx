@@ -45,7 +45,10 @@ describe("ConsignmentControl", () => {
     );
 
     expect(await screen.findByText("Sold ×2 for $40.00 (net $36.00)")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Undo sale" }));
+    const trigger = screen.getByRole("button", { name: "Undo sale" });
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.pointerUp(trigger, { button: 0 });
+    fireEvent.click(trigger);
 
     expect(mocks.rpc).not.toHaveBeenCalled();
     expect(await screen.findByText(/full accounting reversal/, {}, { timeout: 5_000 })).toBeTruthy();
