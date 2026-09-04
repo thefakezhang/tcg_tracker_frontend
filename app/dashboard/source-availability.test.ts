@@ -6,7 +6,7 @@ import {
 
 describe("source availability query targets", () => {
   it("uses the global summary table when no source is selected", () => {
-    expect(summaryTableForSource("pokemon", "")).toBe("pokemon_price_summaries");
+    expect(summaryTableForSource("pokemon", "")).toBe("pokemon_price_summaries_browser_v");
     expect(summaryTableForSource("mtg", "")).toBe("mtg_price_summaries");
   });
 

@@ -56,7 +56,7 @@ vi.mock("./use-query", () => ({
   useSupabaseQuery: (key: unknown[]) => {
     mocks.queryKeys.push(key);
     return {
-      data: mocks.data,
+      data: key[0] === "match-review-sources" ? [] : mocks.data,
       error: null,
       isLoading: false,
       retry: mocks.retry,
@@ -323,7 +323,7 @@ describe("MatchReviewView initial source filter", () => {
     const source = screen.getByRole("combobox", { name: "review.sourceFilter" }) as HTMLSelectElement;
     expect(source.value).toBe("big_tcg");
     expect(screen.getByRole("option", { name: "BIG TCG" })).toBeTruthy();
-    expect(mocks.queryKeys.at(-1)).toEqual(["match-review", "pokemon", "generated", "big_tcg", "500"]);
+    expect(mocks.queryKeys).toContainEqual(["match-review", "pokemon", "generated", "big_tcg", "500"]);
   });
 
   it("keeps an unlisted source visible instead of silently falling back to all", () => {

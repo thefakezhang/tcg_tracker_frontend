@@ -287,7 +287,7 @@ Each context follows the same pattern:
 
 ### Data Fetching (`use-card-data.ts`)
 
-- `useCardData()` is the main hook. It queries pre-computed `{game}_price_summaries` tables with server-side pagination, sorting, and filtering. Joins card definitions via `!inner` foreign key.
+- `useCardData()` is the main hook. It queries pre-computed summary read models with server-side pagination, sorting, and filtering. Pokémon uses `pokemon_price_summaries_browser_v`, which keeps counterpart-only English rows internal unless the exact summary grain has a positive JP bid. MTG uses `mtg_price_summaries`. Both join card definitions via the `!inner` foreign key.
 - Filters: game, PSA mode, name search, card number, set (by NAME or code), single selected tier.
 The set box resolves typed text through `pokemon_set_search_v` (our set names plus artofpkm's JP/EN names) to the codes to filter on, falling back to a raw code ilike; codes are identifiers nobody should have to memorise ("vending" finds the vending sheets).
 - Source availability is an exact server-side presence gate backed by `*_price_summaries_by_source_v`; source choices come from `card_browser_source_options_v` and keep buylist evidence separate from for-sale evidence.

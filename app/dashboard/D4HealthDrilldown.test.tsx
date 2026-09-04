@@ -82,7 +82,9 @@ vi.mock("./use-query", () => ({
   useSupabaseQuery: (key: unknown[]) => {
     mocks.queryKeys.push(key);
     return {
-      data: { candidates: [], items: new Map(), total: 0 },
+      data: key[0] === "match-review-sources"
+        ? []
+        : { candidates: [], items: new Map(), total: 0 },
       error: null,
       isLoading: false,
       retry: vi.fn(),
@@ -157,7 +159,7 @@ describe("D4 source-health drill-down", () => {
     const source = await screen.findByRole("combobox", { name: "review.sourceFilter" }) as HTMLSelectElement;
     expect(source.value).toBe("big_tcg");
     await waitFor(() => {
-      expect(mocks.queryKeys.at(-1)).toEqual(["match-review", "pokemon", "generated", "big_tcg", "500"]);
+      expect(mocks.queryKeys).toContainEqual(["match-review", "pokemon", "generated", "big_tcg", "500"]);
     });
   });
 });
