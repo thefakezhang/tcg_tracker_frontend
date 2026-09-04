@@ -7,6 +7,7 @@ import TripsOverview from "./TripsOverview";
 import InventoryView from "./InventoryView";
 import SalesView from "./SalesView";
 import CurationView from "./CurationView";
+import ScannerReviewView from "./ScannerReviewView";
 import SealedCurationView from "./SealedCurationView";
 import CardIndexView from "./CardIndexView";
 import MatchReviewView from "./MatchReviewView";
@@ -66,6 +67,9 @@ export const VIEWS: ViewDef[] = [
   { sentinel: -13, slug: "events", group: "catalog.section", icon: CalendarDays, sidebarKey: "events.title", titleKey: "events.title", render: () => <EventsCalendarView key="events-calendar" /> },
   // Lives with the curation surfaces: it governs what the image-curation
   // pipeline auto-promotes, so the operator looks for it next to the queues.
+  // Sits with the curation surfaces because it is the same act: a person
+  // confirming what a recognizer proposed, before it becomes durable.
+  { sentinel: -19, slug: "scanner-review", group: "curation.title", icon: ScanSearch, sidebarKey: "scanner.nav", titleKey: "scanner.title", render: () => <ScannerReviewView key="scanner-review" /> },
   { sentinel: -15, slug: "auto-accept", group: "curation.title", icon: ShieldCheck, sidebarKey: "autoAccept.title", titleKey: "autoAccept.title", render: () => <ImageAutoAcceptView key="image-autoaccept" /> },
   { sentinel: -7, slug: "customers", group: "customers.section", icon: Users, sidebarKey: "customers.title", titleKey: "customers.title", render: () => <CustomersView key="customers" /> },
   { sentinel: -8, slug: "reachout", group: "customers.section", icon: Send, sidebarKey: "reachout.title", titleKey: "reachout.title", render: () => <ReachOutView key="reachout" /> },
