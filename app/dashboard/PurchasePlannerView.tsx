@@ -39,6 +39,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { formatMutationError } from "@/lib/mutation-error";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -169,6 +174,7 @@ export default function PurchasePlannerView() {
   const [lineOpen, setLineOpen] = useState(false);
   const [allocationLine, setAllocationLine] = useState<PurchasePlanLine | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   // Plans are bound to a trip. Without this the selector accumulates every
   // plan ever made, and after a handful of trips it is unusable.
   const { trips, activeTripId } = useTrips();
@@ -208,6 +214,23 @@ export default function PurchasePlannerView() {
   const summary = useMemo(() => summarizePlan(lines, coverage, allocations), [lines, coverage, allocations]);
   const editable = plan?.status === "draft" || plan?.status === "ready";
 
+  // Offered only for a plan nothing has happened to. The database refuses the
+  // rest - a placed plan cascades to the agent's recorded purchases - so this
+  // decides what to show, never what is permitted.
+  const deletable = plan != null && plan.status !== "ordered" && plan.status !== "reconciled";
+
+  async function deletePlan() {
+    if (!plan) return;
+    const { error: deleteError } = await createClient()
+      .from("purchase_plans").delete().eq("plan_id", plan.plan_id);
+    setDeleteOpen(false);
+    if (deleteError) { setLineError(formatMutationError(deleteError)); return; }
+    // Let the selection effect pick the next visible plan rather than guessing
+    // here, so there is still one rule deciding what is selected.
+    setPlanId(null);
+    retry();
+  }
+
   async function removeLine(lineId: number) {
     if (!window.confirm(t("purchasePlanner.removeLineConfirm"))) return;
     setLineError(null);
@@ -241,6 +264,11 @@ export default function PurchasePlannerView() {
           <Button variant="outline" onClick={() => setNewPlanOpen(true)}>
             <Plus className="size-4" /> {t("purchasePlanner.newPlan")}
           </Button>
+          {deletable && (
+            <Button variant="outline" onClick={() => setDeleteOpen(true)} aria-label={t("purchasePlanner.deletePlan")}>
+              <Trash2 className="size-4" /> {t("purchasePlanner.deletePlan")}
+            </Button>
+          )}
           {plan && editable && (
             <Button onClick={() => setReviewOpen(true)}>
               <ShieldCheck className="size-4" />
@@ -322,6 +350,20 @@ export default function PurchasePlannerView() {
         </>
       )}
 
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("purchasePlanner.deletePlanTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("purchasePlanner.deletePlanBody", { name: plan?.name ?? "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void deletePlan()}>{t("purchasePlanner.deletePlan")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <NewPlanDialog
         open={newPlanOpen}
         onOpenChange={setNewPlanOpen}
