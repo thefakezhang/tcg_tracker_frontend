@@ -8,6 +8,7 @@ import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue } from "./use-card-data";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { POKEMON_INDEX_MATCH_VIEW } from "./pokemon-index-visibility";
 
 // Pokemon match memory (docs/match_memory.md).
 //
@@ -43,12 +44,12 @@ interface CardMatch {
   target: CardTarget | null;
 }
 
-async function fetchMatches(search: string, source: string): Promise<CardMatch[]> {
+export async function fetchMatches(search: string, source: string): Promise<CardMatch[]> {
   const supabase = createClient();
   let q = supabase
-    .from("pokemon_card_matches")
+    .from(POKEMON_INDEX_MATCH_VIEW)
     .select(
-      "alias_id, source, regional_name, set_code, card_number, misc_info, language, card_uid, note, updated_at, target:pokemon_card_definitions(regional_name, set_code, card_number, misc_info)",
+      "alias_id, source, regional_name, set_code, card_number, misc_info, language, card_uid, note, updated_at, target",
     )
     .order("regional_name")
     .limit(300);
@@ -65,9 +66,9 @@ async function fetchMatches(search: string, source: string): Promise<CardMatch[]
 
 // The source list drives the filter chips. Fetched separately from the rows so
 // filtering to one source does not collapse the chip row to that single source.
-async function fetchSources(): Promise<string[]> {
+export async function fetchSources(): Promise<string[]> {
   const { data, error } = await createClient()
-    .from("pokemon_card_matches")
+    .from(POKEMON_INDEX_MATCH_VIEW)
     .select("source")
     .limit(5000);
   if (error) throw error;

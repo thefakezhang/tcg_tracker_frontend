@@ -17,7 +17,12 @@ The SWR-backed Card Index views retain their previous successful result through 
 `identifierOrParts` decides whether a term is an identifier paste (a full UUID, the displayed 8-hex uid prefix, or a term that resolved to exact external ids) rather than free text.
 `smartSearchFilters` is built on it, so every surface classifies a term the same way instead of keeping a second copy of the rule.
 
-An identifier paste must resolve to its card regardless of any catalog partition the surface would otherwise scope to.
+The ordinary Pokémon Card Index reads server-side operator views for its cards, match-memory, and Needs IDs queries.
+Those views keep every non-English definition and admit an English definition only when it has a positive JP buy signal, matching the ordinary Browse boundary at card grain.
+English definitions imported only to supply counterpart prices remain internal inputs available through the dedicated English catalog and counterpart-review flows, not the Japanese operator index.
+The visibility predicate is not relaxed for a pasted UID or external ID, because an exact identifier should not turn an internal price input into operator inventory.
+
+Within an operator-visible catalog partition, an identifier paste must resolve to its card regardless of any narrower text-search scope the surface would otherwise apply.
 The match review picker scopes its catalog to the candidate's language, which is correct for a text search: it keeps the `jp` and `en` partitions out of each other's picker so a curator cannot bind a Japanese candidate to an English counterpart definition by typing a name.
 It is wrong for an identifier, which already names one specific card, so the scope can only hide the row the curator explicitly asked for.
 It was also silently fatal for candidates in a language the catalog has no partition for: `kr` holds one card and `cn` and `tw` hold none, so those pickers returned nothing whatever was typed, a correct uid included, and an empty picker is indistinguishable from "no such card".

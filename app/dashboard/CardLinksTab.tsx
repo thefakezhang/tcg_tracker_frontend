@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useDebouncedValue } from "./use-card-data";
 import { CardIndexMutationError } from "./PokemonCardIndex";
+import { POKEMON_INDEX_LINK_COVERAGE_VIEW } from "./pokemon-index-visibility";
 
 // The link worklist: cards the catalog holds but no platform can price, because
 // nothing points at them. It replaces the artofpkm review tab, which answered
@@ -57,7 +58,7 @@ export interface CoverageRow {
 export async function fetchSetsNeedingLinks(platform: Platform | "any"): Promise<{ set_code: string; set_name: string | null; n: number }[]> {
   const supabase = createClient();
   let q = supabase
-    .from("pokemon_card_link_coverage_v")
+    .from(POKEMON_INDEX_LINK_COVERAGE_VIEW)
     .select("set_code, set_name")
     .eq("is_numbered", false)
     .limit(5000);
@@ -78,7 +79,7 @@ export async function fetchSetsNeedingLinks(platform: Platform | "any"): Promise
 export async function fetchCards(setCode: string, platform: Platform | "any", search: string): Promise<CoverageRow[]> {
   const supabase = createClient();
   let q = supabase
-    .from("pokemon_card_link_coverage_v")
+    .from(POKEMON_INDEX_LINK_COVERAGE_VIEW)
     .select("card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, image_url, set_name, is_numbered, tcgplayer_id, snkrdunk_id, has_tcgplayer, has_snkrdunk")
     .eq("is_numbered", false)
     .eq("set_code", setCode)
