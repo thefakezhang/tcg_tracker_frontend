@@ -5,7 +5,10 @@ export type SourceSide = "buy" | "sell";
 export const SOURCE_OPTIONS_VIEW = "card_browser_source_options_v";
 
 const BASE_SUMMARY_TABLES: Record<Game, string> = {
-  pokemon: "pokemon_price_summaries",
+  // Keep counterpart-only English definitions out of the operator browser.
+  // The view preserves all non-English rows and only admits an English summary
+  // grain when that exact tier/PSA grade has a positive JP source bid.
+  pokemon: "pokemon_price_summaries_browser_v",
   mtg: "mtg_price_summaries",
   pokemon_sealed: "pokemon_sealed_summaries_v",
 };
