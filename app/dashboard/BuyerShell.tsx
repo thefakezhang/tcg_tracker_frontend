@@ -1,6 +1,7 @@
 "use client";
 
 import BuyerOrderView from "./BuyerOrderView";
+import BuyerFloatStrip from "./BuyerFloatStrip";
 import { createClient } from "@/lib/supabase/client";
 
 // What a buying agent sees: his list, and nothing else.
@@ -27,6 +28,7 @@ export function BuyerShell({ email }: { email: string }) {
           </button>
         </div>
       </header>
+      <BuyerFloatStrip />
       <BuyerOrderView />
     </div>
   );
