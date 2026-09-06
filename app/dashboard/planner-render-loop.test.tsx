@@ -30,10 +30,10 @@ vi.mock("@/lib/supabase/client", () => ({
       insert: (row: Record<string, unknown>) => ({
         select: () => ({
           single: () => {
-            mocks.plans.push({
+            mocks.plans = [...mocks.plans, {
               plan_id: 3, name: row.name, status: "draft",
               trip_id: row.trip_id, line_count: 0, want_count: 0,
-            });
+            }];
             return Promise.resolve({ data: { plan_id: 3 }, error: null });
           },
         }),
@@ -72,6 +72,7 @@ describe("purchase planner plan selection", () => {
   it("does not select a plan the trip filter hides", () => {
     render(<PurchasePlannerView />);
     // The rule the second effect existed to enforce, which must survive the fix.
+    fireEvent.change(screen.getByLabelText("purchasePlanner.tripFilter"), { target: { value: "9" } });
     expect(screen.queryByText(/August/)).toBeNull();
   });
 });
@@ -91,5 +92,6 @@ describe("creating a plan", () => {
     // Without moving the filter the plan is created and immediately hidden,
     // which reads as the create having failed.
     await waitFor(() => expect(screen.getByText(/October/)).toBeTruthy());
+    expect((screen.getByLabelText("purchasePlanner.tripFilter") as HTMLSelectElement).value).toBe("none");
   });
 });

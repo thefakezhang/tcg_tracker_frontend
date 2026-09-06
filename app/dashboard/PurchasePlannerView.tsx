@@ -46,8 +46,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { QueryError, useSupabaseQuery } from "./use-query";
 
 import { formatUsd } from "@/lib/money";
-const selectClass =
-  "h-9 w-full rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
+const selectBase =
+  "h-9 rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
+const selectClass = `${selectBase} w-full`;
 
 interface PlannerData {
   plans: PurchasePlan[];
@@ -172,18 +173,27 @@ export default function PurchasePlannerView() {
   // Plans are bound to a trip. Without this the selector accumulates every
   // plan ever made, and after a handful of trips it is unusable.
   const { trips, activeTripId } = useTrips();
-  const [tripFilter, setTripFilter] = useState<number | "all" | null>(null);
-  const effectiveTrip = tripFilter ?? activeTripId ?? "all";
+  // Defaults to every plan rather than the active trip. Defaulting to the trip
+  // showed nothing at all when that trip had no plans, which is how the whole
+  // planner looked empty.
+  const [tripFilter, setTripFilter] = useState<number | "all" | "none">("all");
+  const effectiveTrip = tripFilter;
   const [disposition, setDisposition] = useState<DemandCoverage | null>(null);
   const [lineError, setLineError] = useState<string | null>(null);
   const { data, error, isLoading, retry } = useSupabaseQuery(["purchase-planner", planId], () => fetchPlannerData(planId));
 
-  // Memoised because it is an effect dependency below. As a bare filter it was
-  // a new array on every render, so that effect ran on every render.
+  // Memoised: this used to be rebuilt inline on every render, so the effect
+  // below - which depends on it - re-ran every render too.
+  // Untripped plans get their OWN filter value rather than appearing under every
+  // one. Showing them everywhere made the filter look broken - most plans have
+  // no trip, so selecting a trip appeared to change nothing.
   const visiblePlans = useMemo(
-    () => (data?.plans ?? []).filter(
-      (p) => effectiveTrip === "all" || p.trip_id === effectiveTrip,
-    ),
+    () =>
+      (data?.plans ?? []).filter((p) => {
+        if (effectiveTrip === "all") return true;
+        if (effectiveTrip === "none") return p.trip_id == null;
+        return p.trip_id === effectiveTrip;
+      }),
     [data?.plans, effectiveTrip],
   );
   const plan = data?.plans.find((candidate) => candidate.plan_id === planId) ?? null;
@@ -227,8 +237,36 @@ export default function PurchasePlannerView() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* The trip filter existed in state and defaulted to the active trip,
+              but nothing could ever change it - setTripFilter was never called.
+              So every plan not on the active trip was unreachable, which is
+              five of the six plans on this database. */}
           <select
-            className={`${selectClass} min-w-48 flex-1 sm:flex-none`}
+            // Fixed width: sized to the option list, not to whichever option
+            // happens to be selected, so choosing a trip does not resize the
+            // control and shove the plan picker sideways.
+            className={`${selectBase} w-48 shrink-0`}
+            aria-label={t("purchasePlanner.tripFilter")}
+            value={tripFilter}
+            onChange={(event) => {
+              const v = event.target.value;
+              setTripFilter(v === "all" || v === "none" ? v : Number(v));
+            }}
+          >
+            <option value="all">{t("purchasePlanner.allTrips")}</option>
+            <option value="none">{t("purchasePlanner.noTrip")}</option>
+            {trips.map((trip) => (
+              <option key={trip.trip_id} value={trip.trip_id}>
+                {trip.name}
+              </option>
+            ))}
+          </select>
+          <select
+            // Fixed width, like the trip filter beside it. With sm:flex-none it
+            // sized to the SELECTED plan's name, so changing trip changed the
+            // selection, changed this box's width, and shoved the trip filter
+            // sideways - the control moved because of what you picked in it.
+            className={`${selectBase} w-full sm:w-72`}
             value={planId ?? ""}
             onChange={(event) => setPlanId(event.target.value ? Number(event.target.value) : null)}
           >
@@ -330,7 +368,10 @@ export default function PurchasePlannerView() {
           // made is one he can see. Without this the filter swallows it and the
           // create reads as having failed - and it was also how the selection
           // loop got started, by selecting a plan the filter then rejected.
-          setTripFilter(planTrip ?? "all");
+          // "none" rather than "all" for an untripped plan: it moves the
+          // filter to the bucket the plan is actually in, which keeps the
+          // control meaningful instead of widening it after every create.
+          setTripFilter(planTrip ?? "none");
           setPlanId(id);
           retry();
         }}
@@ -1144,6 +1185,7 @@ type AssignableBuyer = { email: string; has_account: boolean; last_sign_in: stri
 function PlanBuyerControl({ plan, onChanged }: { plan: PurchasePlan; onChanged: () => void }) {
   const [buyers, setBuyers] = useState<AssignableBuyer[]>([]);
   const [saving, setSaving] = useState(false);
+  const [justAssigned, setJustAssigned] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1151,28 +1193,41 @@ function PlanBuyerControl({ plan, onChanged }: { plan: PurchasePlan; onChanged: 
       .then(({ data }) => setBuyers((data ?? []) as AssignableBuyer[]));
   }, []);
 
+  // A plan is on the buyer's screen from `ready` onward, so changing the
+  // recipient of one is not a bookkeeping edit - it hands live work to someone
+  // else and takes it away from the person who had it. Ask first.
+  const liveForBuyer = plan.status !== "draft";
+
   async function assign(email: string) {
-    setSaving(true); setError(null);
+    if (liveForBuyer) {
+      const who = email || "nobody";
+      const previous = plan.assigned_buyer_email ?? "nobody";
+      if (!window.confirm(
+        `This plan is already visible to ${previous}. Reassign it to ${who}?`,
+      )) {
+        return;
+      }
+    }
+    setSaving(true); setError(null); setJustAssigned(false);
     const { error: updateError } = await createClient()
       .from("purchase_plans")
       .update({ assigned_buyer_email: email || null })
       .eq("plan_id", plan.plan_id);
     setSaving(false);
     if (updateError) { setError(updateError.message); return; }
+    // Feedback for the action actually taken. Previously the only thing that
+    // changed on screen was a green "Sent" badge, which reports the PLAN's
+    // state and not this click - so picking a name on an already-ready plan
+    // looked exactly like having just sent it.
+    setJustAssigned(true);
     onChanged();
   }
 
-  // Assigning names the recipient; it does not send. The buyer only sees a plan
-  // from `ready` onward, so a draft with an assignee is NOT yet on his screen -
-  // and a control labelled "Send to" that has not sent is misleading in exactly
-  // the direction that matters.
-  const sent = plan.status !== "draft";
-
   return (
     <div className="flex items-center gap-2 text-xs">
-      <span className="text-muted-foreground">Send to</span>
+      <span className="text-muted-foreground">Buyer</span>
       <select
-        className={selectClass}
+        className={`${selectBase} w-56`}
         value={plan.assigned_buyer_email ?? ""}
         disabled={saving}
         onChange={(e) => void assign(e.target.value)}
@@ -1184,10 +1239,16 @@ function PlanBuyerControl({ plan, onChanged }: { plan: PurchasePlan; onChanged: 
           </option>
         ))}
       </select>
+      {saving && <span className="text-muted-foreground">Saving...</span>}
+      {!saving && justAssigned && <span className="text-muted-foreground">Buyer saved</span>}
       {plan.assigned_buyer_email && (
-        sent
-          ? <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-600 dark:text-emerald-400">Sent</span>
-          : <span className="text-muted-foreground">Not sent yet - use Review &amp; send</span>
+        // Describes the PLAN, not the click. "Sent" next to a dropdown reads as
+        // a receipt for what you just did; this says who can see what, and when.
+        liveForBuyer
+          ? <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-600 dark:text-emerald-400">
+              Visible to buyer
+            </span>
+          : <span className="text-muted-foreground">Draft - not visible until you Review &amp; send</span>
       )}
       {error && <span className="text-destructive">{error}</span>}
     </div>
