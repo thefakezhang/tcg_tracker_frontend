@@ -154,6 +154,29 @@ function money(value: number | null | undefined): string {
   return value == null ? "-" : formatUsd(Number(value));
 }
 
+// Prices get typed the way they are read: "8,000", "¥8000", "8000 JPY". Number()
+// returns NaN for every one of those, and NaN serialises to null, so the row
+// saved with NO PRICE and no error - the agent then opens the line and sees a
+// dash where the asking price should be.
+//
+// Returns null when there is no number in the text at all, which the caller
+// reports rather than stores.
+export function parseTypedPrice(text: string): number | null {
+  // A minus is refused rather than stripped: turning "-5" into 5 is the same
+  // silent transformation this function exists to stop.
+  if (text.includes("-")) return null;
+  const cleaned = text.replace(/[,\s]/g, "").replace(/[^0-9.]/g, "");
+  if (cleaned === "" || cleaned === ".") return null;
+  const value = Number(cleaned);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+// The shops we crawl, offered so a hand-typed line matches a crawled one.
+const KNOWN_SOURCES = [
+  "snkrdunk", "cardrush", "hareruya2", "fukufuku", "shinsoku",
+  "torecabank", "big_tcg", "cardkingdom", "surugaya",
+];
+
 function itemMeta(line: PurchasePlanLine): string {
   return [line.set_code && line.set_code !== "UNKNOWN" ? line.set_code : null, line.card_number, line.misc_info && line.misc_info !== "UNKNOWN" ? line.misc_info : null]
     .filter(Boolean)
@@ -701,9 +724,11 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
     ? "Choose a card in the search above before adding it by hand."
     : !manualPrice.trim()
       ? "Enter a unit price."
-      : Number(manualQty) > 0
-        ? null
-        : "Quantity must be at least one.";
+      : parseTypedPrice(manualPrice) == null
+        ? "That unit price is not a number."
+        : Number(manualQty) > 0
+          ? null
+          : "Quantity must be at least one.";
 
   async function addManual() {
     if (manualBlockedBy) return;
@@ -716,9 +741,12 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
       product_id: chosen.game === "pokemon_sealed" ? chosen.id : null,
       psa_grade: chosen.game === "pokemon_sealed" ? null : Number(grade),
       planned_quantity: Number(manualQty),
-      source: manualSource.trim() || null,
+      // Lowercased to match the crawled lines. The fee reconciliation groups
+      // by this column, so "Snkrdunk" and "snkrdunk" are two shops and one
+      // checkout gets billed twice. The database enforces this too.
+      source: manualSource.trim().toLowerCase() || null,
       source_listing_url: manualUrl.trim() || null,
-      unit_price_orig: Number(manualPrice),
+      unit_price_orig: parseTypedPrice(manualPrice),
       currency: manualCurrency,
       source_observed_at: new Date().toISOString(),
     });
@@ -778,7 +806,7 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
           {manual && (
             <div className="space-y-2 rounded-md border p-3">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-                <div className="space-y-1"><Label htmlFor="manual-source">{t("purchasePlanner.source")}</Label><Input id="manual-source" value={manualSource} onChange={(e) => setManualSource(e.target.value)} /></div>
+                <div className="space-y-1"><Label htmlFor="manual-source">{t("purchasePlanner.source")}</Label><Input id="manual-source" list="known-sources" value={manualSource} onChange={(e) => setManualSource(e.target.value)} placeholder="snkrdunk" /><datalist id="known-sources">{KNOWN_SOURCES.map((name) => <option key={name} value={name} />)}</datalist></div>
                 <div className="space-y-1"><Label htmlFor="manual-price">{t("purchasePlanner.unitPrice")}</Label><Input id="manual-price" inputMode="decimal" value={manualPrice} onChange={(e) => setManualPrice(e.target.value)} /></div>
                 <div className="space-y-1"><Label htmlFor="manual-currency">{t("purchasePlanner.currency")}</Label><select id="manual-currency" className={selectClass} value={manualCurrency} onChange={(e) => setManualCurrency(e.target.value)}><option>JPY</option><option>USD</option></select></div>
                 <div className="space-y-1"><Label htmlFor="manual-qty">{t("purchasePlanner.quantity")}</Label><Input id="manual-qty" type="number" min="1" value={manualQty} onChange={(e) => setManualQty(e.target.value)} /></div>
