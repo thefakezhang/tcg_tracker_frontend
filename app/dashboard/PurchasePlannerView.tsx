@@ -653,8 +653,19 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
     onOpenChange(false); onAdded();
   }
 
+  // What the Add button is still waiting for, in the order the operator fills
+  // the form in. Null means it is ready.
+  const manualBlockedBy = !chosen
+    ? "Choose a card in the search above before adding it by hand."
+    : !manualPrice.trim()
+      ? "Enter a unit price."
+      : Number(manualQty) > 0
+        ? null
+        : "Quantity must be at least one.";
+
   async function addManual() {
-    if (!chosen || !manualPrice) return;
+    if (manualBlockedBy) return;
+    if (!chosen) return;
     setBusy(true); setError(null);
     const { error: insertError } = await createClient().from("purchase_plan_lines").insert({
       plan_id: planId,
@@ -723,12 +734,21 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
             {manual ? "Hide manual entry" : "Enter a listing manually (a shop we do not crawl)"}
           </button>
           {manual && (
-            <div className="grid grid-cols-2 gap-3 rounded-md border p-3 sm:grid-cols-5">
-              <div className="space-y-1"><Label>{t("purchasePlanner.source")}</Label><Input value={manualSource} onChange={(e) => setManualSource(e.target.value)} /></div>
-              <div className="space-y-1"><Label>{t("purchasePlanner.unitPrice")}</Label><Input inputMode="decimal" value={manualPrice} onChange={(e) => setManualPrice(e.target.value)} /></div>
-              <div className="space-y-1"><Label>{t("purchasePlanner.currency")}</Label><select className={selectClass} value={manualCurrency} onChange={(e) => setManualCurrency(e.target.value)}><option>JPY</option><option>USD</option></select></div>
-              <div className="space-y-1"><Label>{t("purchasePlanner.quantity")}</Label><Input type="number" min="1" value={manualQty} onChange={(e) => setManualQty(e.target.value)} /></div>
-              <div className="space-y-1 sm:col-span-5"><Label>{t("purchasePlanner.listingUrl")}</Label><Input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} /></div>
+            <div className="space-y-2 rounded-md border p-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                <div className="space-y-1"><Label htmlFor="manual-source">{t("purchasePlanner.source")}</Label><Input id="manual-source" value={manualSource} onChange={(e) => setManualSource(e.target.value)} /></div>
+                <div className="space-y-1"><Label htmlFor="manual-price">{t("purchasePlanner.unitPrice")}</Label><Input id="manual-price" inputMode="decimal" value={manualPrice} onChange={(e) => setManualPrice(e.target.value)} /></div>
+                <div className="space-y-1"><Label htmlFor="manual-currency">{t("purchasePlanner.currency")}</Label><select id="manual-currency" className={selectClass} value={manualCurrency} onChange={(e) => setManualCurrency(e.target.value)}><option>JPY</option><option>USD</option></select></div>
+                <div className="space-y-1"><Label htmlFor="manual-qty">{t("purchasePlanner.quantity")}</Label><Input id="manual-qty" type="number" min="1" value={manualQty} onChange={(e) => setManualQty(e.target.value)} /></div>
+                <div className="space-y-1 sm:col-span-5"><Label htmlFor="manual-url">{t("purchasePlanner.listingUrl")}</Label><Input id="manual-url" value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://snkrdunk.com/apparels/107574/used/49500200" /></div>
+              </div>
+              {/* Say what is still missing. The Add button needs a card as well
+                  as a price, and a card is chosen in the search ABOVE this
+                  panel - so filling every visible field here left the button
+                  dead with nothing on screen explaining why. */}
+              {manualBlockedBy && (
+                <p id="manual-blocked" className="text-xs text-muted-foreground">{manualBlockedBy}</p>
+              )}
             </div>
           )}
           {error && <p className="text-sm text-destructive">{error}</p>}
@@ -736,7 +756,7 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
           {manual
-            ? <Button onClick={addManual} disabled={busy || !chosen || !manualPrice}>{busy ? t("common.saving") : t("purchasePlanner.addLine")}</Button>
+            ? <Button onClick={addManual} disabled={busy || manualBlockedBy != null} aria-describedby={manualBlockedBy ? "manual-blocked" : undefined}>{busy ? t("common.saving") : t("purchasePlanner.addLine")}</Button>
             : <Button onClick={addPicked} disabled={busy || pickedCount === 0}>{busy ? t("common.saving") : `Add ${pickedCount || ""} ${pickedCount === 1 ? "line" : "lines"}`.trim()}</Button>}
         </DialogFooter>
       </DialogContent>
