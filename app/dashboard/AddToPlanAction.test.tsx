@@ -191,3 +191,42 @@ describe("AddToPlanAction", () => {
     expect(screen.queryByText(/does not have enough/)).toBeNull();
   });
 });
+
+describe("the target plan when a newer plan appears", () => {
+  it("re-targets the newest plan on the active trip instead of keeping the old one", async () => {
+    // The reported failure: make a plan, add a listing, and the listing lands
+    // on the PREVIOUS plan while the new one stays empty.
+    //
+    // The dialog is never unmounted, so its target survived every plan created
+    // after it was first chosen, and nothing on screen said which plan was
+    // about to receive the cards.
+    render(<AddToPlanAction cards={[{ id: 1, name: "Iono" }]} />);
+
+    fireEvent.click(screen.getByText("Add to plan"));
+    const picker = () => screen.getByLabelText("Plan") as HTMLSelectElement;
+    await waitFor(() => expect(picker().value).toBe("5"));
+
+    // Close it, and meanwhile the operator makes a new plan on the same trip.
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByLabelText("Plan")).toBeNull());
+    from.mockImplementation(() => plansResult([
+      { plan_id: 9, name: "Snkrdunk", status: "draft", trip_id: 9 },
+      { plan_id: 5, name: "October scouting", status: "draft", trip_id: 9 },
+      { plan_id: 7, name: "Other trip plan", status: "draft", trip_id: 3 },
+    ]));
+
+    fireEvent.click(screen.getByText("Add to plan"));
+    await waitFor(() => expect(picker().value).toBe("9"));
+  });
+
+  it("keeps a hand-picked plan for the rest of that open", async () => {
+    render(<AddToPlanAction cards={[{ id: 1, name: "Iono" }]} />);
+    fireEvent.click(screen.getByText("Add to plan"));
+    const picker = () => screen.getByLabelText("Plan") as HTMLSelectElement;
+    await waitFor(() => expect(picker().value).toBe("5"));
+
+    // Choosing another trip's plan deliberately must not be undone underneath.
+    fireEvent.change(picker(), { target: { value: "7" } });
+    expect(picker().value).toBe("7");
+  });
+});

@@ -62,8 +62,20 @@ export function AddToPlanAction({ cards, onAdded }: { cards: PlanCard[]; onAdded
       .order("plan_id", { ascending: false });
     const rows = (data ?? []) as PlanOption[];
     setPlans(rows);
-    setPlanId((current) =>
-      current ?? rows.find((p) => p.trip_id === activeTripId)?.plan_id ?? rows[0]?.plan_id ?? null,
+    // Re-target on every open, newest plan on the active trip first.
+    //
+    // This was `current ?? ...`, which chose a plan once and kept it forever:
+    // the dialog is never unmounted, so a target picked early outlived every
+    // plan created after it and cards landed on a stale plan silently. Making
+    // a new plan and immediately adding a listing put the listing on the
+    // PREVIOUS plan and left the new one empty, with nothing on screen saying
+    // so.
+    //
+    // load() only runs when the dialog opens, so a target the operator picks
+    // by hand still stands for the rest of that open - it is re-derived the
+    // next time they open it, which is also when their intent may have moved.
+    setPlanId(
+      rows.find((p) => p.trip_id === activeTripId)?.plan_id ?? rows[0]?.plan_id ?? null,
     );
   }, [activeTripId]);
 
