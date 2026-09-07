@@ -171,9 +171,16 @@ export default function PurchasePlannerView() {
   const [reviewOpen, setReviewOpen] = useState(false);
   // Plans are bound to a trip. Without this the selector accumulates every
   // plan ever made, and after a handful of trips it is unusable.
-  const { trips, activeTripId } = useTrips();
-  const [tripFilter, setTripFilter] = useState<number | "all" | null>(null);
-  const effectiveTrip = tripFilter ?? activeTripId ?? "all";
+  //
+  // The filter is the operator's own, and it starts at every plan. It must NOT
+  // fall back to activeTripId: that value carries the dashboard's VIEW
+  // SENTINEL, not a trip - this view is itself sentinel -14 - so filtering on
+  // it compared every plan's trip_id against -14, matched nothing, and emptied
+  // the plan picker entirely. Reaching this component at all means the sentinel
+  // is negative, so the fallback could never once have been a real trip.
+  const { trips } = useTrips();
+  const [tripFilter, setTripFilter] = useState<number | "all" | "none">("all");
+  const effectiveTrip = tripFilter;
   const [disposition, setDisposition] = useState<DemandCoverage | null>(null);
   const [lineError, setLineError] = useState<string | null>(null);
   const { data, error, isLoading, retry } = useSupabaseQuery(["purchase-planner", planId], () => fetchPlannerData(planId));
@@ -181,9 +188,13 @@ export default function PurchasePlannerView() {
   // Memoised because it is an effect dependency below. As a bare filter it was
   // a new array on every render, so that effect ran on every render.
   const visiblePlans = useMemo(
-    () => (data?.plans ?? []).filter(
-      (p) => effectiveTrip === "all" || p.trip_id === effectiveTrip,
-    ),
+    () => (data?.plans ?? []).filter((p) => {
+      if (effectiveTrip === "all") return true;
+      // Untripped plans get their OWN value rather than showing under every
+      // trip, so each option shows exactly what it says.
+      if (effectiveTrip === "none") return p.trip_id == null;
+      return p.trip_id === effectiveTrip;
+    }),
     [data?.plans, effectiveTrip],
   );
   const plan = data?.plans.find((candidate) => candidate.plan_id === planId) ?? null;
@@ -227,6 +238,21 @@ export default function PurchasePlannerView() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <select
+            aria-label={t("purchasePlanner.tripFilter")}
+            className={`${selectClass} w-44 shrink-0`}
+            value={tripFilter}
+            onChange={(event) => {
+              const raw = event.target.value;
+              setTripFilter(raw === "all" || raw === "none" ? raw : Number(raw));
+            }}
+          >
+            <option value="all">{t("purchasePlanner.allTrips")}</option>
+            <option value="none">{t("purchasePlanner.noTrip")}</option>
+            {trips.map((trip) => (
+              <option key={trip.trip_id} value={trip.trip_id}>{trip.name}</option>
+            ))}
+          </select>
           <select
             className={`${selectClass} min-w-48 flex-1 sm:flex-none`}
             value={planId ?? ""}
@@ -330,7 +356,7 @@ export default function PurchasePlannerView() {
           // made is one he can see. Without this the filter swallows it and the
           // create reads as having failed - and it was also how the selection
           // loop got started, by selecting a plan the filter then rejected.
-          setTripFilter(planTrip ?? "all");
+          setTripFilter(planTrip ?? "none");
           setPlanId(id);
           retry();
         }}
