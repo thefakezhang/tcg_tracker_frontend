@@ -71,7 +71,11 @@ describe("purchase planner plan selection", () => {
 
   it("does not select a plan the trip filter hides", () => {
     render(<PurchasePlannerView />);
-    // The rule the second effect existed to enforce, which must survive the fix.
+    // The filter now starts at every plan and is the operator's own control -
+    // it no longer falls back to activeTripId, which on this view is a VIEW
+    // SENTINEL rather than a trip. So hiding has to be driven through the
+    // control rather than assumed from the active trip.
+    fireEvent.change(screen.getByLabelText("purchasePlanner.tripFilter"), { target: { value: "9" } });
     expect(screen.queryByText(/August/)).toBeNull();
   });
 });
