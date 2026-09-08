@@ -1,0 +1,175 @@
+// @vitest-environment jsdom
+//
+// Between "he bought it" and "it is on the shelf" a card spends weeks
+// somewhere. The route depends on where it was bought, and a Snkrdunk card is
+// authenticated on the way - a leg with its own way of going wrong.
+
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const rpc = vi.fn();
+vi.mock("@/lib/i18n", () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
+vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc }) }));
+
+import BuyerOrderView from "./BuyerOrderView";
+
+afterEach(cleanup);
+
+const plan = {
+  plan_id: 7, name: "trip", status: "ordered",
+  line_count: 2, recorded_count: 2, finalized: false, handed_back: false,
+};
+
+function line(over: Record<string, unknown> = {}) {
+  return {
+    plan_line_id: 1, source: "snkrdunk", source_listing_url: null,
+    planned_quantity: 1, unit_price_orig: 8000, currency: "JPY",
+    source_observed_at: "2026-09-06T00:00:00Z",
+    card_name: "card-1", card_english_name: null, set_code: "TST",
+    card_number: "001/001", image_url: null,
+    want_id: null, want_max: null, want_filled: null, want_ceiling: null,
+    outcome: "purchased", purchased_quantity: 1, unit_price_jpy: 8000,
+    condition_seen: null, note: null,
+    delivery_status: null, delivery_status_at: null, delivery_flow: "curated",
+    ...over,
+  };
+}
+
+let lines: Array<Record<string, unknown>> = [];
+beforeEach(() => {
+  lines = [line()];
+  rpc.mockReset();
+  rpc.mockImplementation((fn: string) => {
+    if (fn === "buyer_assigned_plans") return Promise.resolve({ data: [plan], error: null });
+    if (fn === "buyer_plan_lines") return Promise.resolve({ data: lines, error: null });
+    if (fn === "buyer_set_delivery_status") return Promise.resolve({ data: 1, error: null });
+    return Promise.resolve({ data: [], error: null });
+  });
+});
+
+const rowSelect = () =>
+  within(document.querySelector("tbody tr") as HTMLElement)
+    .getByLabelText("buyer.colDelivery") as HTMLSelectElement;
+
+const optionsOf = (sel: HTMLSelectElement) =>
+  Array.from(sel.options).map((o) => o.value).filter(Boolean);
+
+describe("where the card is", () => {
+  it("is locked until he has actually bought it", async () => {
+    lines = [line({ outcome: "sold_out", purchased_quantity: 0, unit_price_jpy: null })];
+    render(<BuyerOrderView />);
+    await screen.findByText("card-1");
+    // A card he did not buy has nowhere to be, and the database refuses one.
+    expect(within(document.querySelector("tbody tr") as HTMLElement)
+      .queryByLabelText("buyer.colDelivery")).toBeNull();
+  });
+
+  it("offers only the first step on a card just bought", async () => {
+    render(<BuyerOrderView />);
+    await screen.findByText("card-1");
+    expect(optionsOf(rowSelect())).toEqual(["ordered"]);
+  });
+
+  it("sends a Snkrdunk card to authentication, never straight to him", async () => {
+    lines = [line({ delivery_status: "ordered" })];
+    render(<BuyerOrderView />);
+    await screen.findByText("card-1");
+    expect(optionsOf(rowSelect())).toEqual(["sent_to_curation", "cancelled"]);
+  });
+
+  it("sends a store card straight to him, with no authentication leg", async () => {
+    lines = [line({ source: "cardrush", delivery_flow: "direct", delivery_status: "ordered" })];
+    render(<BuyerOrderView />);
+    await screen.findByText("card-1");
+    expect(optionsOf(rowSelect())).toEqual(["sent_to_buyer", "cancelled"]);
+  });
+
+  it("records the step he picked against that one line", async () => {
+    lines = [line({ delivery_status: "ordered" })];
+    render(<BuyerOrderView />);
+    await screen.findByText("card-1");
+    fireEvent.change(rowSelect(), { target: { value: "sent_to_curation" } });
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith("buyer_set_delivery_status", {
+        p_plan_id: 7, p_source: "snkrdunk", p_status: "sent_to_curation", p_plan_line_id: 1,
+      }));
+  });
+});
+
+describe("when authentication says the card is not what was listed", () => {
+  it("offers cancel or continue, out of the same field", async () => {
+    // The operator asked whether this needs its own column. It does not: a
+    // flagged card is sitting at the authenticator, which is a place on the
+    // journey, so the decision is two transitions rather than a second field.
+    lines = [line({ delivery_status: "curation_failed" })];
+    render(<BuyerOrderView />);
+    await screen.findByText("card-1");
+    expect(optionsOf(rowSelect())).toEqual(["cancelled", "sent_to_buyer"]);
+  });
+
+  it("marks the flagged card so it is not lost among the rest", async () => {
+    lines = [line({ delivery_status: "curation_failed" })];
+    render(<BuyerOrderView />);
+    expect(await screen.findByText("buyer.delivCurationFailed")).toBeTruthy();
+  });
+
+  it("has nowhere further to go once it arrived or was cancelled", async () => {
+    for (const status of ["arrived", "cancelled"]) {
+      cleanup();
+      lines = [line({ delivery_status: status })];
+      render(<BuyerOrderView />);
+      await screen.findByText("card-1");
+      expect(within(document.querySelector("tbody tr") as HTMLElement)
+        .queryByLabelText("buyer.colDelivery"), status).toBeNull();
+    }
+  });
+});
+
+describe("moving a whole shop", () => {
+  it("moves every bought row in the shop in one go", async () => {
+    // He orders a shop in one basket and it arrives as one parcel.
+    lines = [line({ plan_line_id: 1, delivery_status: "ordered" }),
+             line({ plan_line_id: 2, card_name: "card-2", delivery_status: "ordered" })];
+    render(<BuyerOrderView />);
+    await screen.findByText("card-2");
+    fireEvent.change(await screen.findByLabelText("buyer.delivBulk"),
+      { target: { value: "sent_to_curation" } });
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith("buyer_set_delivery_status", {
+        p_plan_id: 7, p_source: "snkrdunk", p_status: "sent_to_curation", p_plan_line_id: null,
+      }));
+  });
+
+  it("says how many rows actually moved, because the rest were skipped", async () => {
+    lines = [line({ delivery_status: "ordered" })];
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") return Promise.resolve({ data: [plan], error: null });
+      if (fn === "buyer_plan_lines") return Promise.resolve({ data: lines, error: null });
+      if (fn === "buyer_set_delivery_status") return Promise.resolve({ data: 29, error: null });
+      return Promise.resolve({ data: [], error: null });
+    });
+    render(<BuyerOrderView />);
+    await screen.findByText("card-1");
+    fireEvent.change(await screen.findByLabelText("buyer.delivBulk"),
+      { target: { value: "sent_to_curation" } });
+    expect(await screen.findByText("buyer.delivBulkDone")).toBeTruthy();
+  });
+
+  it("covers a parcel whose rows are not all on the same step", async () => {
+    lines = [line({ plan_line_id: 1, delivery_status: "ordered" }),
+             line({ plan_line_id: 2, card_name: "card-2", delivery_status: "curating" })];
+    render(<BuyerOrderView />);
+    await screen.findByText("card-2");
+    const bulk = await screen.findByLabelText("buyer.delivBulk") as HTMLSelectElement;
+    // Both rows' next steps are offered; the database skips whichever cannot.
+    expect(optionsOf(bulk).sort()).toEqual(
+      ["cancelled", "curation_failed", "sent_to_buyer", "sent_to_curation"]);
+  });
+
+  it("offers nothing for a shop where he bought nothing", async () => {
+    lines = [line({ outcome: "sold_out", purchased_quantity: 0, unit_price_jpy: null })];
+    render(<BuyerOrderView />);
+    await screen.findByText("card-1");
+    expect(screen.queryByLabelText("buyer.delivBulk")).toBeNull();
+  });
+});

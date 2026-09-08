@@ -52,6 +52,37 @@ type Line = {
   unit_price_jpy: number | null;
   condition_seen: string | null;
   note: string | null;
+  delivery_status: string | null;
+  delivery_status_at: string | null;
+  delivery_flow: string | null;
+};
+
+// Mirrors delivery_status_next() in the database, which is the authority. Kept
+// here only so the screen can offer the steps that exist rather than letting
+// him pick one and be refused.
+const DELIVERY_NEXT: Record<string, (flow: string) => string[]> = {
+  "": (flow) => ["ordered"],
+  ordered: (flow) => (flow === "curated" ? ["sent_to_curation", "cancelled"] : ["sent_to_buyer", "cancelled"]),
+  sent_to_curation: () => ["curating", "cancelled"],
+  curating: () => ["sent_to_buyer", "curation_failed"],
+  // The decision, when the authenticator says the card is not what was listed.
+  curation_failed: () => ["cancelled", "sent_to_buyer"],
+  sent_to_buyer: () => ["arrived"],
+  arrived: () => [],
+  cancelled: () => [],
+};
+
+const deliveryNext = (flow: string | null, current: string | null) =>
+  (DELIVERY_NEXT[current ?? ""] ?? (() => []))(flow ?? "direct");
+
+const DELIVERY_LABEL: Record<string, string> = {
+  ordered: "buyer.delivOrdered",
+  sent_to_curation: "buyer.delivSentToCuration",
+  curating: "buyer.delivCurating",
+  curation_failed: "buyer.delivCurationFailed",
+  sent_to_buyer: "buyer.delivSentToBuyer",
+  arrived: "buyer.delivArrived",
+  cancelled: "buyer.delivCancelled",
 };
 
 // Mirrors purchase_outcome_is_buy() in the database. Two outcomes mean he
@@ -86,6 +117,7 @@ export default function BuyerOrderView() {
   const [upstreamChanged, setUpstreamChanged] = useState(false);
   const [totals, setTotals] = useState<SourceTotals[]>([]);
   const [costs, setCosts] = useState<ShopCost[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const loadPlans = useCallback(async () => {
     const { data, error } = await createClient().rpc("buyer_assigned_plans");
@@ -140,6 +172,16 @@ export default function BuyerOrderView() {
     setError(null);
     void loadPlans();
   }, [loadPlans]);
+
+  const setDelivery = useCallback(async (line: Line, status: string) => {
+    const { error } = await createClient().rpc("buyer_set_delivery_status", {
+      p_plan_id: activePlan, p_source: line.source, p_status: status,
+      p_plan_line_id: line.plan_line_id,
+    });
+    if (error) { setError(formatMutationError(error)); return; }
+    setError(null);
+    if (activePlan != null) void loadLines(activePlan);
+  }, [activePlan, loadLines]);
 
   const loadCosts = useCallback(async (planId: number) => {
     const { data } = await createClient().rpc("buyer_source_costs", { p_plan_id: planId });
@@ -405,6 +447,11 @@ export default function BuyerOrderView() {
           </button>
         </div>
       )}
+      {notice && (
+        <div className="rounded border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-sm">
+          {notice}
+        </div>
+      )}
       {error && (
         <div role="alert" className="rounded border border-destructive/50 bg-destructive/10 p-2 text-sm">
           {error}
@@ -420,6 +467,18 @@ export default function BuyerOrderView() {
                 {t("buyer.boughtOfLines", { bought: String(rows.filter((r) => isBuy(r.outcome)).length), lines: String(rows.length) })}
               </span>
               <ShopTotals totals={totals.find((x) => x.source === source)} asking={askingByShop.get(source) ?? 0} />
+              <DeliveryBulk
+                planId={activePlan!}
+                source={source}
+                rows={rows}
+                readOnly={readOnly}
+                onMoved={(n) => {
+                  setError(null);
+                  if (activePlan != null) void loadLines(activePlan);
+                  setNotice(t("buyer.delivBulkDone", { n: String(n) }));
+                }}
+                onError={setError}
+              />
               <ShopCosts
                 planId={activePlan!}
                 source={source}
@@ -460,6 +519,7 @@ export default function BuyerOrderView() {
                 <th className="px-3 py-1 text-right font-normal">{t("buyer.colQty")}</th>
                 <th className="px-3 py-1 text-right font-normal">{t("buyer.colPaid")}</th>
                 <th className="px-3 py-1 text-right font-normal">{t("buyer.colSubtotal")}</th>
+                <th className="px-3 py-1 text-left font-normal">{t("buyer.colDelivery")}</th>
                 <th className="px-3 py-1 text-left font-normal">{t("buyer.colNote")}</th>
               </tr>
             </thead>
@@ -473,6 +533,7 @@ export default function BuyerOrderView() {
                   saving={savingCells.has(String(line.plan_line_id))}
                   onSave={save}
                   onMove={(dir, column) => moveFocus(ordered, line, dir, column)}
+                  onDeliver={setDelivery}
                 />
               ))}
             </tbody>
@@ -497,10 +558,11 @@ function moveFocus(ordered: Line[], from: Line, dir: -1 | 1, column: Column) {
 }
 
 function Row({
-  line, position, readOnly, saving, onSave, onMove,
+  line, position, readOnly, saving, onSave, onMove, onDeliver,
 }: {
   line: Line;
   position: number;
+  onDeliver: (line: Line, status: string) => void;
   readOnly: boolean;
   saving: boolean;
   onSave: (line: Line, patch: Partial<Line>) => Promise<boolean>;
@@ -616,6 +678,7 @@ function Row({
           do that multiplication is how a 3-copy line gets read as a 1-copy
           one. */}
       <SubtotalCell line={line} purchased={purchased} />
+      <DeliveryCell line={line} purchased={purchased} readOnly={readOnly} onMoveTo={onDeliver} />
       {/* The condition column is gone. It sat beside the note as a second
           free-text box asking for something the listing already states, and he
           fills this in one-handed in a shop. condition_seen stays in the
@@ -1281,5 +1344,110 @@ function SortableHeader({
         </span>
       </button>
     </th>
+  );
+}
+
+// Where this card is, and the one or two places it can go next.
+//
+// Locked until he has bought it: a card he did not buy has nowhere to be, and
+// the database refuses a status on one. The options come from the same rule
+// the database enforces, so the screen cannot offer a move that will be
+// refused - including the two ways out of a failed authentication, which are
+// transitions of this field rather than a second column.
+function DeliveryCell({
+  line, purchased, readOnly, onMoveTo,
+}: {
+  line: Line;
+  purchased: boolean;
+  readOnly: boolean;
+  onMoveTo: (line: Line, status: string) => void;
+}) {
+  const { t } = useTranslation();
+  if (!purchased) {
+    return <td className="px-3 py-1 text-muted-foreground">{t("buyer.delivNotBought")}</td>;
+  }
+  const current = line.delivery_status;
+  const next = deliveryNext(line.delivery_flow, current);
+  const label = current ? t(DELIVERY_LABEL[current] as never) : "—";
+  const flagged = current === "curation_failed";
+
+  return (
+    <td className="px-3 py-1">
+      <span className="flex items-center gap-2">
+        <span
+          className={flagged ? "font-medium text-amber-600 dark:text-amber-400" : ""}
+          title={line.delivery_status_at ? new Date(line.delivery_status_at).toLocaleString() : ""}
+        >
+          {label}
+        </span>
+        {!readOnly && next.length > 0 && (
+          <select
+            aria-label={t("buyer.colDelivery")}
+            className="max-w-[10rem] rounded border bg-transparent px-1 text-xs text-foreground"
+            value=""
+            onChange={(e) => { if (e.target.value) onMoveTo(line, e.target.value); }}
+          >
+            <option value="" className="bg-popover text-popover-foreground">→</option>
+            {next.map((status) => (
+              <option key={status} value={status} className="bg-popover text-popover-foreground">
+                {t(DELIVERY_LABEL[status] as never)}
+              </option>
+            ))}
+          </select>
+        )}
+      </span>
+    </td>
+  );
+}
+
+// The whole shop, in one move.
+//
+// He orders a shop in one basket and it arrives as one parcel, so this is the
+// normal case rather than a shortcut. Rows that cannot make the move are
+// skipped by the database, and it reports how many actually went.
+function DeliveryBulk({
+  planId, source, rows, readOnly, onMoved, onError,
+}: {
+  planId: number;
+  source: string;
+  rows: Line[];
+  readOnly: boolean;
+  onMoved: (n: number) => void;
+  onError: (message: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+
+  const bought = rows.filter((r) => isBuy(r.outcome));
+  if (readOnly || bought.length === 0) return null;
+
+  // Everything any bought row in this shop could move to next, so one control
+  // covers a parcel whose rows are not all on the same step.
+  const options = [...new Set(bought.flatMap((r) => deliveryNext(r.delivery_flow, r.delivery_status)))];
+  if (options.length === 0) return null;
+
+  async function moveAll(status: string) {
+    setBusy(true);
+    const { data, error } = await createClient().rpc("buyer_set_delivery_status", {
+      p_plan_id: planId, p_source: source, p_status: status, p_plan_line_id: null,
+    });
+    setBusy(false);
+    if (error) { onError(formatMutationError(error)); return; }
+    onMoved(Number(data ?? 0));
+  }
+
+  return (
+    <select
+      aria-label={t("buyer.delivBulk")}
+      disabled={busy}
+      className="rounded border bg-background px-2 py-0.5 text-xs"
+      value=""
+      onChange={(e) => { if (e.target.value) void moveAll(e.target.value); }}
+    >
+      <option value="">{t("buyer.delivBulk")}</option>
+      {options.map((status) => (
+        <option key={status} value={status}>{t(DELIVERY_LABEL[status] as never)}</option>
+      ))}
+    </select>
   );
 }

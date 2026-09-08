@@ -51,14 +51,19 @@ describe("ConsignmentControl", () => {
     fireEvent.click(trigger);
 
     expect(mocks.rpc).not.toHaveBeenCalled();
-    expect(await screen.findByText(/full accounting reversal/, {}, { timeout: 5_000 })).toBeTruthy();
+
+    // Wait for the dialog itself, then read its text. Waiting on the TEXT
+    // first made the whole assertion a race against a five-second timeout
+    // scanning the whole document, which is why this still failed
+    // occasionally under a loaded full-suite run after the portal-order fix.
+    const dialog = await screen.findByRole("alertdialog", {}, { timeout: 10_000 });
+    expect(within(dialog).getByText(/full accounting reversal/)).toBeTruthy();
 
     // The trigger and the dialog's confirm carry the SAME accessible name, so
     // picking the last match in document order was a race: the dialog mounts
     // through a portal, and on a slow pass the only button in the tree was
     // still the trigger - clicking which closed the dialog and called nothing,
     // failing five seconds later in waitFor. Scope to the dialog instead.
-    const dialog = await screen.findByRole("alertdialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Undo sale" }));
 
     await waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith(
