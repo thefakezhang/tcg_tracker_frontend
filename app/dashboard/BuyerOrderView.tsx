@@ -1001,10 +1001,13 @@ function SubtotalCell({ line, purchased }: { line: Line; purchased: boolean }) {
 
 type ShopCost = { source: string; kind: string; amount_jpy: number; note: string | null };
 
+// Customs is deliberately not here. He buys in Japan and pays at the counter;
+// there is no import duty on that side of the trip, and offering the field
+// only invited a wrong entry. Nothing has ever been recorded against it. The
+// database still permits the value, so re-adding it is one line here.
 const COST_KINDS = [
   { value: "shipping", key: "buyer.costShipping" },
   { value: "payment_fee", key: "buyer.costPaymentFee" },
-  { value: "customs", key: "buyer.costCustoms" },
   { value: "other", key: "buyer.costOther" },
 ] as const;
 
