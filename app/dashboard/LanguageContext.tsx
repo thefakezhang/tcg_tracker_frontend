@@ -16,8 +16,16 @@ interface LanguageContextValue {
 
 const LanguageContext = createContext<LanguageContextValue | null>(null);
 
-export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [language, setLanguageState] = useState<Language>("en");
+export function LanguageProvider({
+  children,
+  defaultLanguage = "en",
+}: {
+  children: React.ReactNode;
+  // The buying agent reads Japanese and has no sidebar to go hunting in, so his
+  // shell opens in Japanese. A stored choice still wins over this.
+  defaultLanguage?: Language;
+}) {
+  const [language, setLanguageState] = useState<Language>(defaultLanguage);
 
   useEffect(() => {
     const stored = localStorage.getItem("language");
