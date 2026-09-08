@@ -1619,6 +1619,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "buyer.costCustoms": "関税",
   "buyer.costOther": "その他",
   "buyer.costAmount": "金額 (円)",
+  "buyer.priceMayBeStale": "価格が古い可能性",
   "buyer.saveCost": "保存",
   "buyer.feeExplainer": "購入1点につき100円、カード代金の3%を加算。送料は全額返金され、3%の対象外です。",
   "buyer.purchaseList": "購入リスト",

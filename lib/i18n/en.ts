@@ -1623,6 +1623,7 @@ const en = {
   "buyer.costCustoms": "Customs",
   "buyer.costOther": "Other",
   "buyer.costAmount": "Amount (JPY)",
+  "buyer.priceMayBeStale": "price may be stale",
   "buyer.saveCost": "Save",
   "buyer.feeExplainer": "100 JPY per card bought, plus 3% of what you paid for the cards. Shipping is repaid in full and is not part of the 3%.",
   "buyer.purchaseList": "Purchase list",

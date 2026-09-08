@@ -410,7 +410,7 @@ function Row({
               )}
               {stale && (
                 <span className="ml-2 text-muted-foreground" title={line.source_observed_at ?? ""}>
-                  price may be stale
+                  {t("buyer.priceMayBeStale")}
                 </span>
               )}
             </div>
