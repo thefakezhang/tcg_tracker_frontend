@@ -9,7 +9,15 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const rpc = vi.fn();
-vi.mock("@/lib/i18n", () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
+// The translator echoes its key AND its parameters. Dropping the parameters
+// would let an assertion about a figure pass while the figure was wrong,
+// which is exactly what this file checks.
+vi.mock("@/lib/i18n", () => ({
+  useTranslation: () => ({
+    t: (k: string, p?: Record<string, string>) =>
+      p ? `${k} ${Object.values(p).join(" ")}` : k,
+  }),
+}));
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc }) }));
 
 import BuyerOrderView, { parseTypedJpy } from "./BuyerOrderView";
@@ -38,12 +46,12 @@ let shopCosts: Array<Record<string, unknown>> = [];
 
 const totals = [
   {
-    source: "cardrush", total_lines: 1, recorded_lines: 1, purchased_lines: 1,
+    source: "cardrush", total_lines: 1, recorded_lines: 1, purchased_lines: 1, earning_lines: 1,
     cards_bought: 3, card_value_jpy: 30000, shipping_jpy: 800,
     other_costs_jpy: 0, spent_total_jpy: 30800, agent_payout_jpy: 1000,
   },
   {
-    source: "hareruya2", total_lines: 1, recorded_lines: 0, purchased_lines: 0,
+    source: "hareruya2", total_lines: 1, recorded_lines: 0, purchased_lines: 0, earning_lines: 0,
     cards_bought: 0, card_value_jpy: 0, shipping_jpy: 0,
     other_costs_jpy: 0, spent_total_jpy: 0, agent_payout_jpy: 0,
   },
@@ -162,5 +170,25 @@ describe("parseTypedJpy", () => {
     expect(parseTypedJpy(".")).toBeNull();
     expect(parseTypedJpy("abc")).toBeNull();
     expect(parseTypedJpy("0")).toBeNull();
+  });
+});
+
+// His pay is what gets delivered, so the breakdown counts the lines that
+// actually pay him - not the ones he bought. A cancelled card was bought and
+// never arrives, and showing its row fee would make the itemisation stop
+// adding up to the total printed beside it.
+describe("a cancelled card in the fee breakdown", () => {
+  it("counts the lines that pay him, not the lines he bought", async () => {
+    // Three bought, one cancelled: two rows pay, and the total says 2 x 100
+    // plus 3% of what is left.
+    totals[0] = {
+      ...totals[0], purchased_lines: 3, earning_lines: 2,
+      card_value_jpy: 30000, agent_payout_jpy: 200 + 600, spent_total_jpy: 30800,
+    };
+    render(<BuyerOrderView />);
+    const header = () => screen.getByRole("heading", { name: "cardrush" }).closest("header") as HTMLElement;
+    await screen.findByText("cardrush");
+    await waitFor(() => expect(within(header()).getByText(/buyer\.feePerRow/)).toBeTruthy());
+    expect(within(header()).getByText(/buyer\.feePerRow/).textContent).toContain("¥200");
   });
 });

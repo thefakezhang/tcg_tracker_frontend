@@ -31,7 +31,7 @@ const line = {
   condition_seen: null, note: null,
 };
 const totals = [{
-  source: "snkrdunk", total_lines: 1, recorded_lines: 1, purchased_lines: 1,
+  source: "snkrdunk", total_lines: 1, recorded_lines: 1, purchased_lines: 1, earning_lines: 1,
   cards_bought: 1, card_value_jpy: 30000, shipping_jpy: 900,
   other_costs_jpy: 220, spent_total_jpy: 32120, agent_payout_jpy: 1000,
 }];
