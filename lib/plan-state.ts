@@ -1,3 +1,5 @@
+import type { TranslationKey } from "@/lib/i18n";
+
 // What a purchase plan is actually doing right now.
 //
 // `status` on the row records what the OPERATOR did - drafted it, marked it
@@ -30,6 +32,12 @@ export function planState(input: {
       // An unknown status must not silently masquerade as a known one.
       return "draft";
   }
+}
+
+// The key for a plan state, so callers can translate it. planStateLabel stays
+// for surfaces that have no translator to hand.
+export function planStateKey(state: PlanState): TranslationKey {
+  return ("planState." + state) as TranslationKey;
 }
 
 export function planStateLabel(state: PlanState): string {

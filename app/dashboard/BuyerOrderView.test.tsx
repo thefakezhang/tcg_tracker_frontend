@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const rpc = vi.fn();
+// The view now translates; the tests assert behaviour, so the key is the label.
+vi.mock("@/lib/i18n", () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({ rpc }),
 }));
@@ -136,14 +138,14 @@ describe("BuyerOrderView", () => {
     // The grid read as a report; it is a worksheet, and he needs to know his
     // edits are landing.
     render(<BuyerOrderView />);
-    await screen.findByText(/Open for editing/);
+    await screen.findByText(/buyer.openForEditing/);
   });
 
   it("offers a receipt upload per source", async () => {
     render(<BuyerOrderView />);
     await screen.findByText("cardrush");
     // One per shop, because each shop is its own checkout.
-    expect(screen.getAllByText(/Upload receipt/).length).toBe(2);
+    expect(screen.getAllByText(/buyer.uploadReceipt/).length).toBe(2);
   });
 
   it("shows the want total across sources when lines share a cap", async () => {
@@ -225,7 +227,7 @@ describe("BuyerOrderView", () => {
     fireEvent.change(document.querySelector<HTMLSelectElement>('[data-cell="1:outcome"]')!,
       { target: { value: "purchased" } });
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("quantity and a price");
+    expect(alert.textContent).toContain("buyer.needQtyAndPrice");
   });
 
   it("locks the grid once the operator has reconciled", async () => {
@@ -241,6 +243,6 @@ describe("BuyerOrderView", () => {
     await screen.findByText("cardrush");
 
     expect(document.querySelector<HTMLSelectElement>('[data-cell="1:outcome"]')!.disabled).toBe(true);
-    expect(screen.getByText(/Closed/)).toBeTruthy();
+    expect(screen.getByText(/buyer.closed/)).toBeTruthy();
   });
 });

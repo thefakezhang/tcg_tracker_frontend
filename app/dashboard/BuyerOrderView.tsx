@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatMutationError } from "@/lib/mutation-error";
-import { planState, planStateLabel } from "@/lib/plan-state";
+import { planState, planStateKey } from "@/lib/plan-state";
+import { useTranslation } from "@/lib/i18n";
 
 // The buying agent's whole screen: the plans assigned to him, and a grid for
 // recording what he actually bought.
@@ -52,12 +53,12 @@ type Line = {
 };
 
 const OUTCOMES = [
-  { value: "pending", label: "—" },
-  { value: "purchased", label: "Bought" },
-  { value: "sold_out", label: "Sold out" },
-  { value: "not_found", label: "Not found" },
-  { value: "price_changed", label: "Price changed" },
-  { value: "declined", label: "Skipped" },
+  { value: "pending", key: "buyer.outcomePending" },
+  { value: "purchased", key: "buyer.outcomeBought" },
+  { value: "sold_out", key: "buyer.outcomeSoldOut" },
+  { value: "not_found", key: "buyer.outcomeNotFound" },
+  { value: "price_changed", key: "buyer.outcomePriceChanged" },
+  { value: "declined", key: "buyer.outcomeDeclined" },
 ] as const;
 
 // The columns a keyboard user moves through. Outcome first, because it is the
@@ -66,6 +67,7 @@ const COLUMNS = ["outcome", "qty", "price", "condition", "note"] as const;
 type Column = (typeof COLUMNS)[number];
 
 export default function BuyerOrderView() {
+  const { t } = useTranslation();
   const [plans, setPlans] = useState<Plan[] | null>(null);
   const [activePlan, setActivePlan] = useState<number | null>(null);
   const [lines, setLines] = useState<Line[] | null>(null);
@@ -159,7 +161,7 @@ export default function BuyerOrderView() {
         const raw = formatMutationError(error);
         setError(
           raw.includes("purchase_complete")
-            ? "A purchase needs both a quantity and a price paid."
+            ? t("buyer.needQtyAndPrice")
             : raw,
         );
         setLines((rows) => rows?.map((r) => (r.plan_line_id === line.plan_line_id ? line : r)) ?? rows);
@@ -204,20 +206,20 @@ export default function BuyerOrderView() {
         <div className="flex items-baseline gap-3">
           <h2 className="text-lg font-semibold">{plan.name}</h2>
           <span className="text-sm text-muted-foreground">
-            {plan.recorded_count} of {plan.line_count} recorded
+            {t("buyer.recordedOf", { done: String(plan.recorded_count), total: String(plan.line_count) })}
           </span>
           <span className="rounded bg-muted px-2 py-0.5 text-xs">
-            {planStateLabel(planState({ status: plan.status, recordedCount: plan.recorded_count }))}
+            {t(planStateKey(planState({ status: plan.status, recordedCount: plan.recorded_count })))}
           </span>
           {readOnly ? (
             <span className="rounded bg-muted px-2 py-0.5 text-xs">
-              Closed - the operator has reconciled this list, nothing can change
+              {t("buyer.closed")}
             </span>
           ) : (
             // Without this the grid reads as a report. It is a worksheet, and
             // he needs to know his edits are landing as he makes them.
             <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-500">
-              Open for editing - changes save as you type
+              {t("buyer.openForEditing")}
             </span>
           )}
         </div>
@@ -235,7 +237,7 @@ export default function BuyerOrderView() {
             <h3 className="font-medium">{source}</h3>
             <div className="flex items-center gap-3">
               <span className="text-xs text-muted-foreground">
-                {rows.filter((r) => r.outcome === "purchased").length} bought / {rows.length} lines
+                {t("buyer.boughtOfLines", { bought: String(rows.filter((r) => r.outcome === "purchased").length), lines: String(rows.length) })}
               </span>
               <SourceReceipts
                 planId={activePlan!}
@@ -250,14 +252,14 @@ export default function BuyerOrderView() {
           <table className="w-full text-sm">
             <thead className="text-xs text-muted-foreground">
               <tr>
-                <th className="px-3 py-1 text-left font-normal">Card</th>
-                <th className="px-3 py-1 text-right font-normal">Want</th>
-                <th className="px-3 py-1 text-right font-normal">Asking</th>
-                <th className="px-3 py-1 text-left font-normal">Result</th>
-                <th className="px-3 py-1 text-right font-normal">Qty</th>
-                <th className="px-3 py-1 text-right font-normal">Paid (¥)</th>
-                <th className="px-3 py-1 text-left font-normal">Condition</th>
-                <th className="px-3 py-1 text-left font-normal">Note</th>
+                <th className="px-3 py-1 text-left font-normal">{t("buyer.colCard")}</th>
+                <th className="px-3 py-1 text-right font-normal">{t("buyer.colWant")}</th>
+                <th className="px-3 py-1 text-right font-normal">{t("buyer.colAsking")}</th>
+                <th className="px-3 py-1 text-left font-normal">{t("buyer.colResult")}</th>
+                <th className="px-3 py-1 text-right font-normal">{t("buyer.colQty")}</th>
+                <th className="px-3 py-1 text-right font-normal">{t("buyer.colPaid")}</th>
+                <th className="px-3 py-1 text-left font-normal">{t("buyer.colCondition")}</th>
+                <th className="px-3 py-1 text-left font-normal">{t("buyer.colNote")}</th>
               </tr>
             </thead>
             <tbody>
@@ -301,6 +303,7 @@ function Row({
   onSave: (line: Line, patch: Partial<Line>) => Promise<boolean>;
   onMove: (dir: -1 | 1, column: Column) => void;
 }) {
+  const { t } = useTranslation();
   const purchased = line.outcome === "purchased";
   const stale = line.source_observed_at
     ? Date.now() - new Date(line.source_observed_at).getTime() > 36 * 3600 * 1000
@@ -327,10 +330,10 @@ function Row({
               {line.source_listing_url ? (
                 <a href={line.source_listing_url} target="_blank" rel="noreferrer"
                    className="underline underline-offset-2 hover:text-primary">
-                  open listing
+                  {t("buyer.openListing")}
                 </a>
               ) : (
-                <span className="text-muted-foreground">no link</span>
+                <span className="text-muted-foreground">{t("buyer.noLink")}</span>
               )}
               {stale && (
                 <span className="ml-2 text-muted-foreground" title={line.source_observed_at ?? ""}>
@@ -370,7 +373,7 @@ function Row({
           className="w-full bg-transparent"
         >
           {OUTCOMES.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
+            <option key={o.value} value={o.value}>{o.value === "pending" ? "—" : t(o.key)}</option>
           ))}
         </select>
       </td>
@@ -532,6 +535,7 @@ function SourceReceipts({
   onUploaded: () => void;
   onError: (message: string) => void;
 }) {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const inputId = `receipt-${planId}-${source}`;
 
@@ -565,7 +569,7 @@ function SourceReceipts({
             htmlFor={inputId}
             className="cursor-pointer rounded border px-2 py-0.5 hover:bg-accent"
           >
-            {busy ? "Uploading…" : receipts.length ? "Add receipt" : "Upload receipt"}
+            {busy ? t("buyer.uploading") : receipts.length ? t("buyer.addReceipt") : t("buyer.uploadReceipt")}
           </label>
           <input
             id={inputId}
