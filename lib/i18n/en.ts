@@ -1613,6 +1613,8 @@ const en = {
   "purchasePlanner.deletePlanBody": "This deletes {name} and everything on it. A plan that has been sent to a buyer, or has purchases or money recorded against it, cannot be deleted - cancel it instead.",
   "buyer.recordedOf": "{done} of {total} recorded",
   "buyer.boughtOfLines": "{bought} bought / {lines} lines",
+  "buyer.listChanged": "The operator changed this list",
+  "buyer.reloadList": "Reload",
   "buyer.purchaseList": "Purchase list",
   "buyer.signOut": "Sign out",
   "buyer.recorded": "recorded",

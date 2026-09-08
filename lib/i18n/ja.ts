@@ -1609,6 +1609,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "purchasePlanner.deletePlanBody": "「{name}」とその内容をすべて削除します。バイヤーに送信済み、または購入や送金が記録されているプランは削除できません。かわりにキャンセルしてください。",
   "buyer.recordedOf": "{total}件中{done}件記録済み",
   "buyer.boughtOfLines": "{lines}行中{bought}点購入",
+  "buyer.listChanged": "オペレーターがこのリストを変更しました",
+  "buyer.reloadList": "再読み込み",
   "buyer.purchaseList": "購入リスト",
   "buyer.signOut": "ログアウト",
   "buyer.recorded": "件記録済み",

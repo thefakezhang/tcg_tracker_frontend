@@ -74,6 +74,7 @@ export default function BuyerOrderView() {
   const [error, setError] = useState<string | null>(null);
   const [savingCells, setSavingCells] = useState<Set<string>>(new Set());
   const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [upstreamChanged, setUpstreamChanged] = useState(false);
 
   const loadPlans = useCallback(async () => {
     const { data, error } = await createClient().rpc("buyer_assigned_plans");
@@ -100,6 +101,34 @@ export default function BuyerOrderView() {
     void loadLines(activePlan);
     void loadReceipts(activePlan);
   }, [activePlan, loadLines, loadReceipts]);
+
+  // Watch for the operator changing the list under him.
+  //
+  // This screen used to load once and never look again, so a line added,
+  // repriced or removed after he opened it never reached him - and he is
+  // standing in a shop buying from what is on the screen.
+  //
+  // It deliberately does NOT refresh the grid by itself. He may be part-way
+  // through typing a price, and replacing the rows underneath a half-finished
+  // edit is its own way of losing his work. It tells him, and he chooses.
+  useEffect(() => {
+    if (activePlan == null || upstreamChanged) return;
+    let live = true;
+    const signature = (rows: Line[]) =>
+      rows.map((r) => [r.plan_line_id, r.planned_quantity, r.unit_price_orig,
+                       r.source, r.source_listing_url, r.want_max].join(":")).sort().join("|");
+    const check = async () => {
+      const { data, error } = await createClient().rpc("buyer_plan_lines", { p_plan_id: activePlan });
+      if (!live || error || !data) return;
+      const current = lines;
+      if (current && signature(data as Line[]) !== signature(current)) setUpstreamChanged(true);
+    };
+    const timer = setInterval(() => void check(), 30_000);
+    // Coming back to the tab is the moment he is most likely to be looking.
+    const onFocus = () => void check();
+    window.addEventListener("focus", onFocus);
+    return () => { live = false; clearInterval(timer); window.removeEventListener("focus", onFocus); };
+  }, [activePlan, lines, upstreamChanged]);
 
   const plan = plans?.find((p) => p.plan_id === activePlan) ?? null;
   const readOnly = plan?.finalized ?? false;
@@ -225,6 +254,22 @@ export default function BuyerOrderView() {
         </div>
       )}
 
+      {upstreamChanged && (
+        <div className="mb-3 flex items-center gap-3 rounded-md border border-amber-500 bg-amber-500/10 px-3 py-2 text-sm">
+          <span className="flex-1">{t("buyer.listChanged")}</span>
+          <button
+            type="button"
+            className="rounded border border-amber-600 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300"
+            onClick={() => {
+              setUpstreamChanged(false);
+              if (activePlan != null) { void loadLines(activePlan); void loadReceipts(activePlan); }
+              void loadPlans();
+            }}
+          >
+            {t("buyer.reloadList")}
+          </button>
+        </div>
+      )}
       {error && (
         <div role="alert" className="rounded border border-destructive/50 bg-destructive/10 p-2 text-sm">
           {error}
