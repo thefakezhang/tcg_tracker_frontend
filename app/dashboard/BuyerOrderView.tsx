@@ -216,6 +216,17 @@ export default function BuyerOrderView() {
 
   // Grouped by source because he checks out one shop at a time; each source
   // becomes its own acquisition lot when the operator reconciles.
+  // Sorting is off until he asks for it, and a third click puts it back: the
+  // operator's order is itself information (they built the list in that order),
+  // so it has to be reachable again rather than lost on the first click.
+  const [sort, setSort] = useState<{ column: SortColumn; dir: 1 | -1 } | null>(null);
+  const toggleSort = useCallback((column: SortColumn) => {
+    setSort((current) =>
+      current?.column !== column ? { column, dir: 1 }
+      : current.dir === 1 ? { column, dir: -1 }
+      : null);
+  }, []);
+
   const bySource = useMemo(() => {
     const groups = new Map<string, Line[]>();
     for (const line of lines ?? []) {
@@ -223,9 +234,14 @@ export default function BuyerOrderView() {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(line);
     }
+    if (sort) {
+      for (const rows of groups.values()) rows.sort(compareBy(sort.column, sort.dir));
+    }
     return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [lines]);
+  }, [lines, sort]);
 
+  // Flattened from the sorted groups, so ctrl-arrow navigation moves in the
+  // order he is actually looking at rather than the order the data arrived.
   const ordered = useMemo(() => bySource.flatMap(([, rows]) => rows), [bySource]);
 
   const save = useCallback(
@@ -429,10 +445,18 @@ export default function BuyerOrderView() {
           <table className="w-full text-sm">
             <thead className="text-xs text-muted-foreground">
               <tr>
+                {/* Position down the shop, so he can say where he is. */}
+                <th className="w-8 px-2 py-1 text-right font-normal">#</th>
                 <th className="px-3 py-1 text-left font-normal">{t("buyer.colCard")}</th>
                 <th className="px-3 py-1 text-right font-normal">{t("buyer.colWant")}</th>
-                <th className="px-3 py-1 text-right font-normal">{t("buyer.colAsking")}</th>
-                <th className="px-3 py-1 text-left font-normal">{t("buyer.colResult")}</th>
+                <SortableHeader
+                  label={t("buyer.colAsking")} column="asking" align="right"
+                  sort={sort} onToggle={toggleSort}
+                />
+                <SortableHeader
+                  label={t("buyer.colResult")} column="result"
+                  sort={sort} onToggle={toggleSort}
+                />
                 <th className="px-3 py-1 text-right font-normal">{t("buyer.colQty")}</th>
                 <th className="px-3 py-1 text-right font-normal">{t("buyer.colPaid")}</th>
                 <th className="px-3 py-1 text-right font-normal">{t("buyer.colSubtotal")}</th>
@@ -440,10 +464,11 @@ export default function BuyerOrderView() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((line) => (
+              {rows.map((line, i) => (
                 <Row
                   key={line.plan_line_id}
                   line={line}
+                  position={i + 1}
                   readOnly={readOnly}
                   saving={savingCells.has(String(line.plan_line_id))}
                   onSave={save}
@@ -472,9 +497,10 @@ function moveFocus(ordered: Line[], from: Line, dir: -1 | 1, column: Column) {
 }
 
 function Row({
-  line, readOnly, saving, onSave, onMove,
+  line, position, readOnly, saving, onSave, onMove,
 }: {
   line: Line;
+  position: number;
   readOnly: boolean;
   saving: boolean;
   onSave: (line: Line, patch: Partial<Line>) => Promise<boolean>;
@@ -488,6 +514,12 @@ function Row({
 
   return (
     <tr className="border-t align-middle">
+      {/* Where he is down the shop. Deliberately the DISPLAYED position rather
+          than a stable id: it is a counter for keeping his place while working
+          down the list, so it has to read 1, 2, 3 whatever the sort. */}
+      <td className="w-8 px-2 py-1 text-right text-xs tabular-nums text-muted-foreground">
+        {position}
+      </td>
       <td className="px-3 py-1">
         {/* He is buying a specific card from a Japanese shop page. Without the
             name and the picture the grid is a list of anonymous rows and he
@@ -1197,5 +1229,57 @@ function SheetExchange({
         </>
       )}
     </span>
+  );
+}
+
+type SortColumn = "asking" | "result";
+
+// Outcomes sort in the order he meets them, not alphabetically on a raw value
+// he never sees: unfilled lines first, because those are the work left.
+const OUTCOME_ORDER = new Map<string, number>(OUTCOMES.map((o, i) => [o.value, i]));
+
+function compareBy(column: SortColumn, dir: 1 | -1) {
+  return (a: Line, b: Line) => {
+    let d = 0;
+    if (column === "asking") {
+      d = Number(a.unit_price_orig ?? 0) - Number(b.unit_price_orig ?? 0);
+    } else {
+      d = (OUTCOME_ORDER.get(a.outcome) ?? 99) - (OUTCOME_ORDER.get(b.outcome) ?? 99);
+    }
+    // Ties keep the operator's order, so a re-sort never reshuffles equals.
+    return d !== 0 ? d * dir : a.plan_line_id - b.plan_line_id;
+  };
+}
+
+// A sortable column header. The arrows are the affordance: a column that can
+// be reordered has to look like one before he thinks to try it.
+function SortableHeader({
+  label, column, sort, onToggle, align = "left",
+}: {
+  label: string;
+  column: SortColumn;
+  sort: { column: SortColumn; dir: 1 | -1 } | null;
+  onToggle: (column: SortColumn) => void;
+  align?: "left" | "right";
+}) {
+  const active = sort?.column === column;
+  return (
+    <th
+      className={`px-3 py-1 font-normal ${align === "right" ? "text-right" : "text-left"}`}
+      aria-sort={active ? (sort!.dir === 1 ? "ascending" : "descending") : "none"}
+    >
+      <button
+        type="button"
+        onClick={() => onToggle(column)}
+        className={`inline-flex items-center gap-1 rounded px-1 hover:bg-accent ${
+          active ? "text-foreground" : ""
+        }`}
+      >
+        {label}
+        <span aria-hidden className={active ? "" : "opacity-40"}>
+          {active ? (sort!.dir === 1 ? "\u2191" : "\u2193") : "\u21c5"}
+        </span>
+      </button>
+    </th>
   );
 }
