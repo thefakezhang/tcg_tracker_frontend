@@ -231,7 +231,15 @@ export default function BuyerOrderView() {
   }, [activePlan, lines, upstreamChanged]);
 
   const plan = plans?.find((p) => p.plan_id === activePlan) ?? null;
+  // Two different freezes.
+  //
+  // Handing the list back freezes what he did at the COUNTER, so "finished"
+  // means something. It must not freeze where the cards are: the parcel ships
+  // days or weeks later, and he is the one who watches it.
   const readOnly = (plan?.finalized ?? false) || (plan?.handed_back ?? false);
+  // Only closing the trip stops the delivery, by which point it has landed in
+  // the books.
+  const deliveryLocked = plan?.finalized ?? false;
 
   // Open lists only. A finalized one is the operator's now, and leaving it in
   // the picker makes finished work look like work outstanding - but the one he
@@ -471,7 +479,7 @@ export default function BuyerOrderView() {
                 planId={activePlan!}
                 source={source}
                 rows={rows}
-                readOnly={readOnly}
+                readOnly={deliveryLocked}
                 onMoved={(n) => {
                   setError(null);
                   if (activePlan != null) void loadLines(activePlan);
@@ -530,6 +538,7 @@ export default function BuyerOrderView() {
                   line={line}
                   position={i + 1}
                   readOnly={readOnly}
+                  deliveryLocked={deliveryLocked}
                   saving={savingCells.has(String(line.plan_line_id))}
                   onSave={save}
                   onMove={(dir, column) => moveFocus(ordered, line, dir, column)}
@@ -558,10 +567,11 @@ function moveFocus(ordered: Line[], from: Line, dir: -1 | 1, column: Column) {
 }
 
 function Row({
-  line, position, readOnly, saving, onSave, onMove, onDeliver,
+  line, position, readOnly, deliveryLocked, saving, onSave, onMove, onDeliver,
 }: {
   line: Line;
   position: number;
+  deliveryLocked: boolean;
   onDeliver: (line: Line, status: string) => void;
   readOnly: boolean;
   saving: boolean;
@@ -678,7 +688,7 @@ function Row({
           do that multiplication is how a 3-copy line gets read as a 1-copy
           one. */}
       <SubtotalCell line={line} purchased={purchased} />
-      <DeliveryCell line={line} purchased={purchased} readOnly={readOnly} onMoveTo={onDeliver} />
+      <DeliveryCell line={line} purchased={purchased} readOnly={deliveryLocked} onMoveTo={onDeliver} />
       {/* The condition column is gone. It sat beside the note as a second
           free-text box asking for something the listing already states, and he
           fills this in one-handed in a shop. condition_seen stays in the

@@ -173,3 +173,55 @@ describe("moving a whole shop", () => {
     expect(screen.queryByLabelText("buyer.delivBulk")).toBeNull();
   });
 });
+
+// He hands the list back the evening he stops buying. Everything that happens
+// to the cards after that - shipped, authenticated, arrived - happens while
+// the list is handed back, and he is the one who watches it.
+describe("after he has handed the list back", () => {
+  it("still lets him say where the cards are", async () => {
+    lines = [line({ delivery_status: "ordered" })];
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") {
+        return Promise.resolve({ data: [{ ...plan, handed_back: true }], error: null });
+      }
+      if (fn === "buyer_plan_lines") return Promise.resolve({ data: lines, error: null });
+      if (fn === "buyer_set_delivery_status") return Promise.resolve({ data: 1, error: null });
+      return Promise.resolve({ data: [], error: null });
+    });
+    render(<BuyerOrderView />);
+    await screen.findByText("card-1");
+    expect(optionsOf(rowSelect())).toEqual(["sent_to_curation", "cancelled"]);
+    expect(await screen.findByLabelText("buyer.delivBulk")).toBeTruthy();
+  });
+
+  it("still refuses to let him rewrite what he did at the counter", async () => {
+    lines = [line({ delivery_status: "ordered" })];
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") {
+        return Promise.resolve({ data: [{ ...plan, handed_back: true }], error: null });
+      }
+      if (fn === "buyer_plan_lines") return Promise.resolve({ data: lines, error: null });
+      return Promise.resolve({ data: [], error: null });
+    });
+    render(<BuyerOrderView />);
+    await screen.findByText("card-1");
+    const outcome = document.querySelector<HTMLSelectElement>('[data-cell="1:outcome"]')!;
+    expect(outcome.disabled).toBe(true);
+  });
+
+  it("stops the delivery too once the operator closes the trip", async () => {
+    lines = [line({ delivery_status: "ordered" })];
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") {
+        return Promise.resolve({ data: [{ ...plan, finalized: true }], error: null });
+      }
+      if (fn === "buyer_plan_lines") return Promise.resolve({ data: lines, error: null });
+      return Promise.resolve({ data: [], error: null });
+    });
+    render(<BuyerOrderView />);
+    await screen.findByText("card-1");
+    expect(within(document.querySelector("tbody tr") as HTMLElement)
+      .queryByLabelText("buyer.colDelivery")).toBeNull();
+    expect(screen.queryByLabelText("buyer.delivBulk")).toBeNull();
+  });
+});
