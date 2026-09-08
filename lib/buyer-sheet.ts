@@ -1,9 +1,9 @@
 // The buy list as a spreadsheet, and back again.
 //
-// He is in a shop with a phone. Sometimes the shop has no signal, sometimes he
-// would rather work down a list on a laptop at the hotel, and sometimes the
-// shop hands him a printout. A file he can take away and bring back is the
-// honest answer to all three.
+// Thirty-odd lines across several shops is work he would rather do in a
+// spreadsheet than a browser grid, and a file is also what he falls back to if
+// the app is down when he needs to order. A file he can take away and bring
+// back is the honest answer to both.
 //
 // Two rules shape everything here.
 //

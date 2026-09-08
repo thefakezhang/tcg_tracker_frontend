@@ -206,7 +206,7 @@ export default function BuyerOrderView() {
   //
   // This screen used to load once and never look again, so a line added,
   // repriced or removed after he opened it never reached him - and he is
-  // standing in a shop buying from what is on the screen.
+  // ordering from what is on the screen.
   //
   // It deliberately does NOT refresh the grid by itself. He may be part-way
   // through typing a price, and replacing the rows underneath a half-finished
@@ -233,9 +233,9 @@ export default function BuyerOrderView() {
   const plan = plans?.find((p) => p.plan_id === activePlan) ?? null;
   // Two different freezes.
   //
-  // Handing the list back freezes what he did at the COUNTER, so "finished"
-  // means something. It must not freeze where the cards are: the parcel ships
-  // days or weeks later, and he is the one who watches it.
+  // Handing the list back freezes what he RECORDED, so "finished" means
+  // something. It must not freeze where the cards are: the parcels ship days
+  // or weeks later, and he is the one who watches them.
   const readOnly = (plan?.finalized ?? false) || (plan?.handed_back ?? false);
   // Only closing the trip stops the delivery, by which point it has landed in
   // the books.
@@ -413,8 +413,9 @@ export default function BuyerOrderView() {
               else, and it is his to undo until the operator closes it. */}
           <PlanTotals totals={totals} asking={askingTotal} />
 
-          {/* A file he can take away and bring back. Shops have no signal, and
-              he would sometimes rather work a list on a laptop at the hotel. */}
+          {/* A file he can take away and bring back. Thirty-odd lines across
+              several shops is work he would rather do in a spreadsheet, and
+              the file is also what he sends back if the app is ever down. */}
           <SheetExchange
             planId={plan.plan_id}
             planName={plan.name}
@@ -691,7 +692,7 @@ function Row({
       <DeliveryCell line={line} purchased={purchased} readOnly={deliveryLocked} onMoveTo={onDeliver} />
       {/* The condition column is gone. It sat beside the note as a second
           free-text box asking for something the listing already states, and he
-          fills this in one-handed in a shop. condition_seen stays in the
+          reads it off the listing anyway. condition_seen stays in the
           schema and in the operator's view; he is simply not asked twice. */}
       <TextCell
         line={line} column="note" readOnly={readOnly}
@@ -937,8 +938,8 @@ function ShopTotals({ totals, asking }: { totals?: SourceTotals; asking: number 
   );
 }
 
-// Shipping and the rest, entered where he is standing rather than messaged to
-// the operator to retype. One figure per kind: entering it again corrects it,
+// Shipping and the rest, entered by the person who actually paid them rather
+// than messaged to the operator to retype. One figure per kind: entering it again corrects it,
 // because he is reading one receipt.
 function ShopCosts({
   planId, source, costs, readOnly, onSaved, onError,
@@ -1055,7 +1056,7 @@ export function parseTypedJpy(text: string): number | null {
 }
 
 // Finished, or not yet. Two words and one button, because it is the last thing
-// he does and he does it on a phone in a shop.
+// he does and it should not need explaining.
 function HandBack({
   plan, busy, onHandBack, onReopen,
 }: {
@@ -1108,10 +1109,11 @@ function SubtotalCell({ line, purchased }: { line: Line; purchased: boolean }) {
 
 type ShopCost = { source: string; kind: string; amount_jpy: number; note: string | null };
 
-// Customs is deliberately not here. He buys in Japan and pays at the counter;
-// there is no import duty on that side of the trip, and offering the field
-// only invited a wrong entry. Nothing has ever been recorded against it. The
-// database still permits the value, so re-adding it is one line here.
+// Customs is deliberately not here. He orders from Japanese shops to a
+// Japanese address, so nothing crosses a border on his leg of the trip and
+// there is no duty to pay; offering the field only invited a wrong entry.
+// Nothing has ever been recorded against it. The database still permits the
+// value, so re-adding it is one line here.
 const COST_KINDS = [
   { value: "shipping", key: "buyer.costShipping" },
   { value: "payment_fee", key: "buyer.costPaymentFee" },
