@@ -5,6 +5,14 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+    /* Native controls follow the theme.
+       Without this the browser paints its own widgets light - and a <select>'s
+       option popup is one of those - while our CSS paints the text white, so
+       in dark mode the buying agent's outcome dropdown was white on white,
+       1.04:1, and he could not read the list he was choosing from. It also
+       fixes the scrollbars and the caret, which had the same problem less
+       visibly. */
+    color-scheme: light;
     --radius: 0.65rem;
     --background: oklch(1 0 0);
     --foreground: oklch(0.141 0.005 285.823);
@@ -40,6 +48,7 @@
 }
 
 .dark {
+    color-scheme: dark;
     --background: oklch(0.141 0.005 285.823);
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.21 0.006 285.885);
