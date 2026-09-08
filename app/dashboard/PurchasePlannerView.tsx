@@ -14,6 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { planState, planStateLabel } from "@/lib/plan-state";
 import { useTrips } from "./TripContext";
 import { useTranslation } from "@/lib/i18n";
@@ -99,55 +100,76 @@ async function fetchPlannerData(planId: number | null): Promise<PlannerData> {
   };
 }
 
+// Per-game search config, the same shape the Card Index and match-review
+// dialog use. Kept here only because this dialog searches three catalogs; the
+// SEMANTICS come from lib/card-search so every surface accepts the same terms.
+const CATALOG_SEARCH = {
+  pokemon: {
+    table: "pokemon_card_definitions",
+    select: "card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info",
+    extIdsTable: "pokemon_external_identifiers",
+    idCol: "card_id",
+    uidCol: "card_uid",
+    textCols: ["regional_name", "english_name", "set_code", "card_number", "misc_info"],
+  },
+  mtg: {
+    table: "mtg_card_definitions_v",
+    select: "card_id, card_uid, regional_name, local_name, set_code, card_number, misc_info",
+    extIdsTable: "mtg_external_identifiers",
+    idCol: "card_id",
+    uidCol: "card_uid",
+    textCols: ["regional_name", "local_name", "set_code", "card_number", "misc_info"],
+  },
+  pokemon_sealed: {
+    table: "pokemon_sealed_products",
+    select: "product_id, product_uid, name, english_name, set_code",
+    extIdsTable: "pokemon_sealed_external_identifiers",
+    idCol: "product_id",
+    uidCol: "product_uid",
+    textCols: ["name", "english_name", "set_code"],
+  },
+} as const;
+
+// Find a card the way every other card search in the app does.
+//
+// This dialog used to carry its own matcher over name/set/number only, so the
+// one identifier that is unambiguous - the card's UUID, which the UI itself
+// displays - found nothing here while working everywhere else. Pasting a
+// tcgplayer or snkrdunk id did not work either. The shared helpers in
+// lib/card-search are the semantics; this function only picks the catalog.
 async function searchCatalog(game: CatalogResult["game"], raw: string): Promise<CatalogResult[]> {
-  const tokens = raw.replace(/[%,()]/g, " ").split(/\s+/).map((v) => v.trim()).filter(Boolean);
-  if (!tokens.length) return [];
+  const term = raw.trim();
+  if (!term) return [];
+  const cfg = CATALOG_SEARCH[game];
   const supabase = createClient();
-  if (game === "pokemon_sealed") {
-    let query = supabase.from("pokemon_sealed_products").select("product_id, name, english_name, set_code");
-    for (const token of tokens) {
-      query = query.or(`name.ilike.%${token}%,english_name.ilike.%${token}%,set_code.ilike.%${token}%`);
-    }
-    const { data, error } = await query.limit(10);
-    if (error) throw error;
-    return (data ?? []).map((row: { product_id: number; name: string; english_name: string | null; set_code: string | null }) => ({
-      id: row.product_id,
-      game,
-      label: `${row.english_name || row.name}${row.set_code && row.set_code !== "UNKNOWN" ? ` | ${row.set_code}` : ""}`,
-    }));
-  }
-  if (game === "mtg") {
-    let query = supabase
-      .from("mtg_card_definitions_v")
-      .select("card_id, regional_name, local_name, set_code, card_number, misc_info");
-    for (const token of tokens) {
-      query = query.or(
-        `regional_name.ilike.%${token}%,local_name.ilike.%${token}%,set_code.ilike.%${token}%,card_number.ilike.%${token}%,misc_info.ilike.%${token}%`,
-      );
-    }
-    const { data, error } = await query.limit(10);
-    if (error) throw error;
-    return (data ?? []).map((row: { card_id: number; regional_name: string; set_code: string; card_number: string }) => ({
-      id: row.card_id,
-      game,
-      label: `${row.regional_name} | ${row.set_code} ${row.card_number}`,
-    }));
-  }
-  let query = supabase
-    .from("pokemon_card_definitions")
-    .select("card_id, regional_name, english_name, set_code, card_number, misc_info");
-  for (const token of tokens) {
-    query = query.or(
-      `regional_name.ilike.%${token}%,english_name.ilike.%${token}%,set_code.ilike.%${token}%,card_number.ilike.%${token}%,misc_info.ilike.%${token}%`,
-    );
+  const extIds = await externalIdMatches(supabase, cfg.extIdsTable, cfg.idCol, term);
+
+  // Each filter is applied in sequence: chained or() calls AND together, so a
+  // multi-word term means every token must match something, while a pasted
+  // identifier comes back as a single disjunct that stands alone.
+  let query = supabase.from(cfg.table).select(cfg.select);
+  for (const filter of smartSearchFilters(term, [...cfg.textCols], cfg.uidCol, cfg.idCol, extIds)) {
+    query = query.or(filter);
   }
   const { data, error } = await query.limit(10);
   if (error) throw error;
-  return (data ?? []).map((row: { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string }) => ({
-    id: row.card_id,
-    game,
-    label: `${row.english_name || row.regional_name} | ${row.set_code} ${row.card_number}`,
-  }));
+
+  return (data ?? []).map((row: Record<string, unknown>) => {
+    if (game === "pokemon_sealed") {
+      const setCode = row.set_code as string | null;
+      return {
+        id: row.product_id as number,
+        game,
+        label: `${(row.english_name as string) || (row.name as string)}${setCode && setCode !== "UNKNOWN" ? ` | ${setCode}` : ""}`,
+      };
+    }
+    const name = (row.english_name as string) || (row.local_name as string) || (row.regional_name as string);
+    return {
+      id: row.card_id as number,
+      game,
+      label: `${name} | ${row.set_code as string} ${row.card_number as string}`,
+    };
+  });
 }
 
 function money(value: number | null | undefined): string {
