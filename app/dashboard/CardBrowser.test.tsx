@@ -172,6 +172,28 @@ describe("CardBrowser surfaces", () => {
     expect(screen.queryByTestId("japan-exclusive-master-list-download")).toBeNull();
   });
 
+  it("gates the browse on sold evidence only when asked, and defaults to off", () => {
+    // The exit leg decides whether an ROI is evidence or arithmetic over a
+    // guess. Collectr and PriceCharting are `valuation` and are the exit on
+    // the great majority of Pokemon rows, so this must default OFF - turning
+    // it on by default would silently hide most of the catalog.
+    render(<CardBrowser />);
+
+    expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      soldEvidenceOnly: false,
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "cardBrowser.soldEvidenceOnly" }));
+    expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      soldEvidenceOnly: true,
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "cardBrowser.soldEvidenceOnly" }));
+    expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      soldEvidenceOnly: false,
+    }));
+  });
+
   it("defaults the opportunity display to highest ROI first", () => {
     render(<CardBrowser />);
 

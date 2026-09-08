@@ -441,6 +441,9 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardBrowser.filters": "絞り込み",
   "cardBrowser.promosOnly": "プロモ",
   "cardBrowser.cuteOnly": "かわいい",
+  "cardBrowser.soldEvidenceOnly": "実売のみ",
+  "cardBrowser.soldEvidenceOnlyHint":
+    "売却側の価格が実際の落札・販売実績であるカードのみ表示します（TCGplayer、130point、Card Ladder、スニダン）。第三者の推定値のみのもの（Collectr、PriceCharting）は除外されます。",
   "cardBrowser.jpExclusiveFilterLabel": "日本限定",
   "cardBrowser.jpExclusiveArtwork": "絵柄",
   "cardBrowser.jpExclusiveStamps": "スタンプ",

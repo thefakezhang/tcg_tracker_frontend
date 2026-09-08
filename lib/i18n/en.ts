@@ -439,6 +439,9 @@ const en = {
   "cardBrowser.filters": "Filters",
   "cardBrowser.promosOnly": "Promos",
   "cardBrowser.cuteOnly": "Cute",
+  "cardBrowser.soldEvidenceOnly": "Sold evidence",
+  "cardBrowser.soldEvidenceOnlyHint":
+    "Only cards whose exit price is a completed sale (TCGplayer, 130point, Card Ladder, Snkrdunk). Hides exits that are only a third-party estimate, which is Collectr and PriceCharting.",
   "cardBrowser.jpExclusiveFilterLabel": "JP exclusive",
   "cardBrowser.jpExclusiveArtwork": "Artwork",
   "cardBrowser.jpExclusiveStamps": "Stamp",

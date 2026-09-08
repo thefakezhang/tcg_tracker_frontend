@@ -131,6 +131,8 @@ export default function CardBrowser() {
   const [promosOnly, setPromosOnly] = useState(false);       // Pokémon promotional cards
   const [japanExclusivity, setJapanExclusivity] = useState<Set<JapanExclusivityDimension>>(() => new Set());
   const [cuteOnly, setCuteOnly] = useState(false); // manual "cute" flag (293)
+  // Exit must be a completed transaction rather than a third party's estimate.
+  const [soldEvidenceOnly, setSoldEvidenceOnly] = useState(false);
   const [minBuyPrice, setMinBuyPrice] = useState<string>("");
   const [minSellPrice, setMinSellPrice] = useState<string>("");
   const [roiFloor, setRoiFloor] = useState<string>("");
@@ -176,6 +178,7 @@ export default function CardBrowser() {
       sourceSide,
       rarity: rarity || null,
       promosOnly,
+      soldEvidenceOnly,
       japanExclusivity,
       cuteOnly,
       minBuyPrice: minBuyPrice !== "" ? Number(minBuyPrice) : null,
@@ -334,7 +337,7 @@ export default function CardBrowser() {
   useEffect(() => {
     setPage(0);
     setRowSelection({});
-  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, japanExclusivity, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, japanExclusivity, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -551,6 +554,14 @@ export default function CardBrowser() {
             })}
           />
         )}
+        <Button
+          variant={soldEvidenceOnly ? "default" : "outline"}
+          className="h-11 shrink-0 sm:h-8"
+          onClick={() => setSoldEvidenceOnly((v) => !v)}
+          title={t("cardBrowser.soldEvidenceOnlyHint")}
+        >
+          {t("cardBrowser.soldEvidenceOnly")}
+        </Button>
         {activeGame === "pokemon" && (
           <Button
             variant={cuteOnly ? "default" : "outline"}

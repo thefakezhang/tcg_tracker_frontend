@@ -29,6 +29,27 @@ interface JapanExclusivityQueryBuilder {
   or(filters: string, options: { referencedTable: string }): unknown;
 }
 
+interface SoldEvidenceQueryBuilder {
+  eq(column: string, value: string): unknown;
+}
+
+// Restrict the browse to exits backed by a completed transaction.
+//
+// best_buy is the EXIT leg, so its kind is what decides whether an ROI is
+// evidence or arithmetic over somebody's guess. Collectr and PriceCharting are
+// both `valuation` and together are the exit on the great majority of Pokemon
+// rows, which is why an unfiltered browse is mostly unactionable for arbitrage.
+//
+// Keyed on the KIND rather than a list of source names on purpose: a new
+// valuation feed is excluded the day it lands, and a new sold feed is included,
+// with no edit here. Every summary view the browser reads carries best_buy_kind
+// (base, browser_v and the by-source views), so this composes with the
+// required-source filter rather than fighting it.
+export function applySoldEvidenceQuery<T>(query: T, soldEvidenceOnly: boolean): T {
+  if (!soldEvidenceOnly) return query;
+  return (query as SoldEvidenceQueryBuilder).eq("best_buy_kind", "sold") as T;
+}
+
 export function applyJapanExclusivityQuery<T>(
   query: T,
   cardDefinitionTable: string,
@@ -516,6 +537,7 @@ export function useCardData(options: {
   sourceSide: SourceSide;
   rarity: string | null;
   promosOnly: boolean;
+  soldEvidenceOnly: boolean;
   japanExclusivity: ReadonlySet<JapanExclusivityDimension>;
   cuteOnly: boolean;
   minBuyPrice: number | null;
@@ -548,6 +570,7 @@ export function useCardData(options: {
     sourceSide,
     rarity,
     promosOnly,
+    soldEvidenceOnly,
     japanExclusivity,
     cuteOnly,
     minBuyPrice,
@@ -579,7 +602,7 @@ export function useCardData(options: {
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, japanExclusivity, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, japanExclusivity, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -672,6 +695,7 @@ export function useCardData(options: {
     if (activeGame === "pokemon") {
       query = applyJapanExclusivityQuery(query, cardDefTable, japanExclusivity);
     }
+    query = applySoldEvidenceQuery(query, soldEvidenceOnly);
     if (cuteOnly && activeGame === "pokemon") {
       query = query.eq(`${cardDefTable}.is_cute`, true);
     }
