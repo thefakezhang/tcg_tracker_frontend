@@ -83,7 +83,7 @@ describe("per-shop totals", () => {
     expect(openers[0].textContent).toContain("¥800");
     fireEvent.click(openers[0]);
 
-    const amount = screen.getAllByLabelText("buyer.costShipping")[0] as HTMLInputElement;
+    const amount = screen.getAllByLabelText("buyer.costAmount")[0] as HTMLInputElement;
     fireEvent.change(amount, { target: { value: "1,200" } });
     fireEvent.click(screen.getAllByRole("button", { name: "buyer.saveCost" })[0]);
 
@@ -104,7 +104,7 @@ describe("per-shop totals", () => {
     const save = screen.getAllByRole("button", { name: "buyer.saveCost" })[0] as HTMLButtonElement;
     expect(save.disabled).toBe(true);
 
-    const amount = screen.getAllByLabelText("buyer.costShipping")[0] as HTMLInputElement;
+    const amount = screen.getAllByLabelText("buyer.costAmount")[0] as HTMLInputElement;
     fireEvent.change(amount, { target: { value: "-" } });
     expect((screen.getAllByRole("button", { name: "buyer.saveCost" })[0] as HTMLButtonElement).disabled).toBe(true);
   });

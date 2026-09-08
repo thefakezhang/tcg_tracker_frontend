@@ -757,7 +757,7 @@ function ShopCosts({
           </select>
           <input
             inputMode="numeric"
-            aria-label={t("buyer.costShipping")}
+            aria-label={t("buyer.costAmount")}
             className="w-20 rounded border bg-background px-1 py-0.5 text-right"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
