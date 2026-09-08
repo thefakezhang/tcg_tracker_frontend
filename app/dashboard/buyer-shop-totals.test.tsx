@@ -97,7 +97,8 @@ describe("per-shop totals", () => {
     // The kinds he has NOT entered are each offered, so a second receipt has
     // somewhere to go - there used to be one box no matter how many he held.
     expect(within(shopHeader("cardrush")).getByRole("button", { name: /\+ buyer\.costPaymentFee/ })).toBeTruthy();
-    expect(within(shopHeader("cardrush")).getByRole("button", { name: /\+ buyer\.costCustoms/ })).toBeTruthy();
+    // Customs is not offered: he buys in Japan and pays at the counter.
+    expect(within(shopHeader("cardrush")).queryByRole("button", { name: /buyer\.costCustoms/ })).toBeNull();
     expect(within(shopHeader("cardrush")).getByRole("button", { name: /\+ buyer\.costOther/ })).toBeTruthy();
   });
 
@@ -127,11 +128,11 @@ describe("per-shop totals", () => {
   it("refuses to save an amount it could not read, rather than sending a NaN", async () => {
     render(<BuyerOrderView />);
     await screen.findByText("cardrush");
-    fireEvent.click(within(shopHeader("cardrush")).getByRole("button", { name: /\+ buyer\.costCustoms/ }));
+    fireEvent.click(within(shopHeader("cardrush")).getByRole("button", { name: /\+ buyer\.costOther/ }));
 
     const save = () => within(shopHeader("cardrush")).getByRole("button", { name: "buyer.saveCost" }) as HTMLButtonElement;
     expect(save().disabled).toBe(true);
-    fireEvent.change(within(shopHeader("cardrush")).getByLabelText("buyer.costCustoms"), { target: { value: "-" } });
+    fireEvent.change(within(shopHeader("cardrush")).getByLabelText("buyer.costOther"), { target: { value: "-" } });
     expect(save().disabled).toBe(true);
   });
 
