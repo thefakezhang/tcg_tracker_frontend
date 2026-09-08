@@ -46,12 +46,12 @@ let shopCosts: Array<Record<string, unknown>> = [];
 
 const totals = [
   {
-    source: "cardrush", total_lines: 1, recorded_lines: 1, purchased_lines: 1, earning_lines: 1,
+    source: "cardrush", total_lines: 1, recorded_lines: 1, purchased_lines: 1,
     cards_bought: 3, card_value_jpy: 30000, shipping_jpy: 800,
     other_costs_jpy: 0, spent_total_jpy: 30800, agent_payout_jpy: 1000,
   },
   {
-    source: "hareruya2", total_lines: 1, recorded_lines: 0, purchased_lines: 0, earning_lines: 0,
+    source: "hareruya2", total_lines: 1, recorded_lines: 0, purchased_lines: 0,
     cards_bought: 0, card_value_jpy: 0, shipping_jpy: 0,
     other_costs_jpy: 0, spent_total_jpy: 0, agent_payout_jpy: 0,
   },
@@ -178,11 +178,11 @@ describe("parseTypedJpy", () => {
 // never arrives, and showing its row fee would make the itemisation stop
 // adding up to the total printed beside it.
 describe("a cancelled card in the fee breakdown", () => {
-  it("counts the lines that pay him, not the lines he bought", async () => {
-    // Three bought, one cancelled: two rows pay, and the total says 2 x 100
-    // plus 3% of what is left.
+  it("counts only the purchases that still stand", async () => {
+    // Three bought, one cancelled. The cancelled one is refunded, so it counts
+    // for nothing at all - the shop reports two lines, not three.
     totals[0] = {
-      ...totals[0], purchased_lines: 3, earning_lines: 2,
+      ...totals[0], purchased_lines: 2,
       card_value_jpy: 30000, agent_payout_jpy: 200 + 600, spent_total_jpy: 30800,
     };
     render(<BuyerOrderView />);

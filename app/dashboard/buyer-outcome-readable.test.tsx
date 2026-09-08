@@ -80,3 +80,26 @@ describe("native controls follow the theme", () => {
     expect(css).toMatch(/\.dark\s*\{[^}]*?color-scheme:\s*dark/);
   });
 });
+
+// A read-only list still has to be readable.
+//
+// Every text and number cell rendered at 40% of an already muted colour once
+// the list was frozen - so the moment he handed it back, he could no longer
+// read his own notes on the work he had just done.
+describe("a frozen list is still legible", () => {
+  it("does not dim the fields once the list is handed back", async () => {
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") {
+        return Promise.resolve({ data: [{ ...plan, handed_back: true }], error: null });
+      }
+      if (fn === "buyer_plan_lines") return Promise.resolve({ data: [line], error: null });
+      return Promise.resolve({ data: [], error: null });
+    });
+    render(<BuyerOrderView />);
+    await screen.findByText("snkrdunk");
+    const note = document.querySelector<HTMLInputElement>('[data-cell="1:note"]')!;
+    expect(note.disabled).toBe(true);
+    expect(note.className).not.toMatch(/text-muted-foreground\/40/);
+    expect(note.className).toMatch(/disabled:text-foreground/);
+  });
+});
