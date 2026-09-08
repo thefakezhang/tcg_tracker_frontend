@@ -1237,16 +1237,45 @@ function BuyerProgressStrip({ planId }: { planId: number }) {
     budget_amount: number | null; budget_currency: string | null;
   } | null>(null);
 
+  const [shops, setShops] = useState<ShopProgress[]>([]);
+
+  // This strip used to load once and never look again, so the operator watched
+  // a frozen number while the agent was actually in a shop spending against it.
+  // Poll while the tab is open, and catch up immediately on focus - the common
+  // case is the operator coming back to the window to check on him.
   useEffect(() => {
     let live = true;
-    void createClient()
-      .from("purchase_plan_progress_v")
-      .select("purchased_lines,open_lines,unavailable_lines,cards_bought,card_value_jpy," +
-              "projected_handling_jpy,projected_line_fee_jpy,projected_total_jpy,budget_amount,budget_currency")
-      .eq("plan_id", planId)
-      .maybeSingle()
-      .then(({ data }) => { if (live) setRow(data as typeof row); });
-    return () => { live = false; };
+    const supabase = createClient();
+
+    async function load() {
+      const [progress, bySource] = await Promise.all([
+        supabase
+          .from("purchase_plan_progress_v")
+          .select("purchased_lines,open_lines,unavailable_lines,cards_bought,card_value_jpy," +
+                  "projected_handling_jpy,projected_line_fee_jpy,projected_total_jpy,budget_amount,budget_currency")
+          .eq("plan_id", planId)
+          .maybeSingle(),
+        supabase
+          .from("purchase_plan_source_progress_v")
+          .select("source,total_lines,recorded_lines,purchased_lines,cards_bought," +
+                  "card_value_jpy,shipping_jpy,other_costs_jpy,agent_payout_jpy,spent_total_jpy")
+          .eq("plan_id", planId)
+          .order("source"),
+      ]);
+      if (!live) return;
+      setRow(progress.data as typeof row);
+      setShops((bySource.data ?? []) as ShopProgress[]);
+    }
+
+    void load();
+    const timer = setInterval(() => void load(), 30_000);
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [planId]);
 
   if (!row || row.purchased_lines === 0) return null;
@@ -1279,9 +1308,58 @@ function BuyerProgressStrip({ planId }: { planId: number }) {
           over budget by {jpy(row.projected_total_jpy - (row.budget_amount ?? 0))}
         </span>
       )}
+
+      {/* The agent checks out one shop at a time and enters that shop's
+          shipping there, so the plan-wide figure above hides where the money
+          actually went and what he is owed for each stop. */}
+      {shops.length > 0 && (
+        <div className="basis-full overflow-x-auto">
+        <table className="w-full min-w-[36rem] text-xs tabular-nums">
+          <thead className="text-muted-foreground">
+            <tr className="text-left">
+              <th className="py-1 pr-3 font-normal">Shop</th>
+              <th className="py-1 pr-3 font-normal">Worked</th>
+              <th className="py-1 pr-3 font-normal">Bought</th>
+              <th className="py-1 pr-3 text-right font-normal">Cards</th>
+              <th className="py-1 pr-3 text-right font-normal">Shipping</th>
+              <th className="py-1 pr-3 text-right font-normal">Other</th>
+              <th className="py-1 pr-3 text-right font-normal">His fee</th>
+              <th className="py-1 text-right font-normal">Spent</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shops.map((s) => (
+              <tr key={s.source} className="border-t">
+                <td className="py-1 pr-3 font-medium">{s.source}</td>
+                <td className="py-1 pr-3">{s.recorded_lines}/{s.total_lines}</td>
+                <td className="py-1 pr-3">{s.purchased_lines}</td>
+                <td className="py-1 pr-3 text-right">{jpy(s.card_value_jpy)}</td>
+                <td className="py-1 pr-3 text-right">{jpy(s.shipping_jpy)}</td>
+                <td className="py-1 pr-3 text-right">{jpy(s.other_costs_jpy)}</td>
+                <td className="py-1 pr-3 text-right">{jpy(s.agent_payout_jpy)}</td>
+                <td className="py-1 text-right font-medium">{jpy(s.spent_total_jpy)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        </div>
+      )}
     </div>
   );
 }
+
+type ShopProgress = {
+  source: string;
+  total_lines: number;
+  recorded_lines: number;
+  purchased_lines: number;
+  cards_bought: number;
+  card_value_jpy: number;
+  shipping_jpy: number;
+  other_costs_jpy: number;
+  agent_payout_jpy: number;
+  spent_total_jpy: number;
+};
 
 
 type AssignableBuyer = { email: string; has_account: boolean; last_sign_in: string | null };
