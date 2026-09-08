@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatMutationError } from "@/lib/mutation-error";
+import { readSheetRows, toSheetRows, type SheetUpdate } from "@/lib/buyer-sheet";
 import { planState, planStateKey } from "@/lib/plan-state";
 import { useTranslation } from "@/lib/i18n";
 
@@ -53,12 +54,19 @@ type Line = {
   note: string | null;
 };
 
+// Mirrors purchase_outcome_is_buy() in the database. Two outcomes mean he
+// bought the card: a plain purchase, and one where the price had moved and he
+// bought it anyway.
+export const isBuy = (outcome: string) =>
+  outcome === "purchased" || outcome === "price_changed_bought";
+
 const OUTCOMES = [
   { value: "pending", key: "buyer.outcomePending" },
   { value: "purchased", key: "buyer.outcomeBought" },
   { value: "sold_out", key: "buyer.outcomeSoldOut" },
   { value: "not_found", key: "buyer.outcomeNotFound" },
-  { value: "price_changed", key: "buyer.outcomePriceChanged" },
+  { value: "price_changed_bought", key: "buyer.outcomePriceChangedBought" },
+  { value: "price_changed", key: "buyer.outcomePriceChangedDeclined" },
   { value: "declined", key: "buyer.outcomeDeclined" },
 ] as const;
 
@@ -77,6 +85,7 @@ export default function BuyerOrderView() {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [upstreamChanged, setUpstreamChanged] = useState(false);
   const [totals, setTotals] = useState<SourceTotals[]>([]);
+  const [costs, setCosts] = useState<ShopCost[]>([]);
 
   const loadPlans = useCallback(async () => {
     const { data, error } = await createClient().rpc("buyer_assigned_plans");
@@ -132,6 +141,11 @@ export default function BuyerOrderView() {
     void loadPlans();
   }, [loadPlans]);
 
+  const loadCosts = useCallback(async (planId: number) => {
+    const { data } = await createClient().rpc("buyer_source_costs", { p_plan_id: planId });
+    setCosts((data ?? []) as ShopCost[]);
+  }, []);
+
   const loadReceipts = useCallback(async (planId: number) => {
     const { data } = await createClient().rpc("buyer_source_receipts", { p_plan_id: planId });
     setReceipts((data ?? []) as Receipt[]);
@@ -143,7 +157,8 @@ export default function BuyerOrderView() {
     void loadLines(activePlan);
     void loadReceipts(activePlan);
     void loadTotals(activePlan);
-  }, [activePlan, loadLines, loadReceipts, loadTotals]);
+    void loadCosts(activePlan);
+  }, [activePlan, loadLines, loadReceipts, loadTotals, loadCosts]);
 
   // Watch for the operator changing the list under him.
   //
@@ -179,6 +194,21 @@ export default function BuyerOrderView() {
   // Open lists only. A finalized one is the operator's now, and leaving it in
   // the picker makes finished work look like work outstanding - but the one he
   // is currently looking at stays, so selecting it does not make it vanish.
+  // What the list would cost if he bought everything on it, at the prices the
+  // operator recorded. He is walking a shop deciding what to skip, and the
+  // only figures on screen were what he had ALREADY spent - so he could not
+  // see how far through the money he was.
+  const askingByShop = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of lines ?? []) {
+      m.set(l.source, (m.get(l.source) ?? 0)
+        + Number(l.unit_price_orig ?? 0) * Number(l.planned_quantity ?? 0));
+    }
+    return m;
+  }, [lines]);
+  const askingTotal = useMemo(
+    () => [...askingByShop.values()].reduce((n, v) => n + v, 0), [askingByShop]);
+
   const pickable = useMemo(
     () => (plans ?? []).filter((p) => !p.finalized || p.plan_id === activePlan),
     [plans, activePlan],
@@ -211,7 +241,7 @@ export default function BuyerOrderView() {
       // wanted (capped by what this listing was planned for) and the asking
       // price. That makes the record valid immediately and turns the common
       // line into one click instead of three fields.
-      if (next.outcome === "purchased") {
+      if (isBuy(next.outcome)) {
         const remaining =
           next.want_max != null
             ? Math.max(0, next.want_max - (next.want_filled ?? 0) + (line.purchased_quantity ?? 0))
@@ -231,8 +261,8 @@ export default function BuyerOrderView() {
       const { error } = await createClient().rpc("buyer_record_result", {
         p_plan_line_id: line.plan_line_id,
         p_outcome: next.outcome,
-        p_purchased_quantity: next.outcome === "purchased" ? next.purchased_quantity : 0,
-        p_unit_price_jpy: next.outcome === "purchased" ? next.unit_price_jpy : null,
+        p_purchased_quantity: isBuy(next.outcome) ? next.purchased_quantity : 0,
+        p_unit_price_jpy: isBuy(next.outcome) ? next.unit_price_jpy : null,
         p_condition_seen: next.condition_seen,
         p_note: next.note,
       });
@@ -315,6 +345,23 @@ export default function BuyerOrderView() {
               was the counter above, which cannot tell finished from stopped
               for lunch. Handing back freezes his own entries and nothing
               else, and it is his to undo until the operator closes it. */}
+          <PlanTotals totals={totals} asking={askingTotal} />
+
+          {/* A file he can take away and bring back. Shops have no signal, and
+              he would sometimes rather work a list on a laptop at the hotel. */}
+          <SheetExchange
+            planId={plan.plan_id}
+            planName={plan.name}
+            lines={lines ?? []}
+            readOnly={readOnly}
+            onApplied={() => {
+              void loadLines(plan.plan_id);
+              void loadPlans();
+              void loadTotals(plan.plan_id);
+            }}
+            onError={setError}
+          />
+
           {!plan.finalized && (
             <HandBack
               plan={plan}
@@ -354,15 +401,19 @@ export default function BuyerOrderView() {
             <h3 className="font-medium">{source}</h3>
             <div className="flex items-center gap-3">
               <span className="text-xs text-muted-foreground">
-                {t("buyer.boughtOfLines", { bought: String(rows.filter((r) => r.outcome === "purchased").length), lines: String(rows.length) })}
+                {t("buyer.boughtOfLines", { bought: String(rows.filter((r) => isBuy(r.outcome)).length), lines: String(rows.length) })}
               </span>
-              <ShopTotals totals={totals.find((x) => x.source === source)} />
+              <ShopTotals totals={totals.find((x) => x.source === source)} asking={askingByShop.get(source) ?? 0} />
               <ShopCosts
                 planId={activePlan!}
                 source={source}
-                totals={totals.find((x) => x.source === source)}
+                costs={costs.filter((c) => c.source === source)}
                 readOnly={readOnly}
-                onSaved={() => activePlan != null && void loadTotals(activePlan)}
+                onSaved={() => {
+                  if (activePlan == null) return;
+                  void loadTotals(activePlan);
+                  void loadCosts(activePlan);
+                }}
                 onError={setError}
               />
               <SourceReceipts
@@ -384,7 +435,7 @@ export default function BuyerOrderView() {
                 <th className="px-3 py-1 text-left font-normal">{t("buyer.colResult")}</th>
                 <th className="px-3 py-1 text-right font-normal">{t("buyer.colQty")}</th>
                 <th className="px-3 py-1 text-right font-normal">{t("buyer.colPaid")}</th>
-                <th className="px-3 py-1 text-left font-normal">{t("buyer.colCondition")}</th>
+                <th className="px-3 py-1 text-right font-normal">{t("buyer.colSubtotal")}</th>
                 <th className="px-3 py-1 text-left font-normal">{t("buyer.colNote")}</th>
               </tr>
             </thead>
@@ -430,7 +481,7 @@ function Row({
   onMove: (dir: -1 | 1, column: Column) => void;
 }) {
   const { t } = useTranslation();
-  const purchased = line.outcome === "purchased";
+  const purchased = isBuy(line.outcome);
   const stale = line.source_observed_at
     ? Date.now() - new Date(line.source_observed_at).getTime() > 36 * 3600 * 1000
     : false;
@@ -506,7 +557,7 @@ function Row({
           // and it was painting a light list under text that inherited the
           // page's white. color-scheme in globals.css is the systemic half of
           // this; these two classes are the belt.
-          className="w-full bg-transparent text-foreground"
+          className="w-full max-w-[11rem] bg-transparent text-foreground"
         >
           {OUTCOMES.map((o) => (
             <option key={o.value} value={o.value} className="bg-popover text-popover-foreground">
@@ -528,12 +579,15 @@ function Row({
         onMove={onMove}
         groupThousands
       />
-      <TextCell
-        line={line} column="condition" readOnly={readOnly}
-        value={line.condition_seen}
-        onCommit={(v) => onSave(line, { condition_seen: v })}
-        onMove={onMove}
-      />
+      {/* unit x qty, spelled out. The prices on this screen are per copy, and
+          the total he is judged against is the product - leaving the reader to
+          do that multiplication is how a 3-copy line gets read as a 1-copy
+          one. */}
+      <SubtotalCell line={line} purchased={purchased} />
+      {/* The condition column is gone. It sat beside the note as a second
+          free-text box asking for something the listing already states, and he
+          fills this in one-handed in a shop. condition_seen stays in the
+          schema and in the operator's view; he is simply not asked twice. */}
       <TextCell
         line={line} column="note" readOnly={readOnly}
         value={line.note}
@@ -745,16 +799,32 @@ const yen = (v: number | null | undefined) => "¥" + Math.round(Number(v ?? 0)).
 // What this shop has cost him and what it has earned him, beside the shop it
 // belongs to - he checks out one at a time, so a plan-wide figure would be the
 // wrong grain.
-function ShopTotals({ totals }: { totals?: SourceTotals }) {
+function ShopTotals({ totals, asking }: { totals?: SourceTotals; asking: number }) {
   const { t } = useTranslation();
   if (!totals) return null;
+  // The two halves of what he is owed, shown separately because they answer
+  // different questions: the line fee is his wage for working the shelf, the
+  // 3% is a commission on what he actually bought. A single number told him
+  // neither, and he cannot check a number he cannot take apart.
+  const lineFee = 100 * Number(totals.purchased_lines ?? 0);
+  const commission = Math.max(0, Number(totals.agent_payout_jpy ?? 0) - lineFee);
   return (
-    <span className="flex items-center gap-3 text-xs">
+    <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
       <span className="text-muted-foreground">
-        {t("buyer.spentHere")} <b className="font-semibold text-foreground">{yen(totals.spent_total_jpy)}</b>
+        {t("buyer.spentHere")}{" "}
+        <b className="font-semibold tabular-nums text-foreground">{yen(totals.spent_total_jpy)}</b>
+        {asking > 0 && <span className="tabular-nums text-muted-foreground"> / {yen(asking)}</span>}
       </span>
-      <span className="text-muted-foreground" title={t("buyer.feeExplainer")}>
-        {t("buyer.yourFee")} <b className="font-semibold text-emerald-600 dark:text-emerald-400">{yen(totals.agent_payout_jpy)}</b>
+      <span className="text-muted-foreground">
+        {t("buyer.yourFee")}{" "}
+        <b className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+          {yen(totals.agent_payout_jpy)}
+        </b>{" "}
+        <span className="tabular-nums">
+          ({t("buyer.feePerRow", { n: String(totals.purchased_lines ?? 0), amount: yen(lineFee) })}
+          {" + "}
+          {t("buyer.feeCommission", { amount: yen(commission) })})
+        </span>
       </span>
     </span>
   );
@@ -764,24 +834,31 @@ function ShopTotals({ totals }: { totals?: SourceTotals }) {
 // the operator to retype. One figure per kind: entering it again corrects it,
 // because he is reading one receipt.
 function ShopCosts({
-  planId, source, totals, readOnly, onSaved, onError,
+  planId, source, costs, readOnly, onSaved, onError,
 }: {
   planId: number;
   source: string;
-  totals?: SourceTotals;
+  costs: ShopCost[];
   readOnly: boolean;
   onSaved: () => void;
   onError: (message: string) => void;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const [kind, setKind] = useState("shipping");
+  const [editing, setEditing] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const recorded = Number(totals?.shipping_jpy ?? 0) + Number(totals?.other_costs_jpy ?? 0);
+  const byKind = new Map(costs.map((c) => [c.kind, Number(c.amount_jpy)]));
+  const kindLabel = (kind: string) =>
+    t(COST_KINDS.find((k) => k.value === kind)?.key ?? "buyer.costOther");
 
-  async function save() {
+  function open(kind: string) {
+    setEditing(kind);
+    const existing = byKind.get(kind);
+    setAmount(existing == null ? "" : String(Math.round(existing)));
+  }
+
+  async function save(kind: string) {
     const value = parseTypedJpy(amount);
     if (value == null) return;
     setBusy(true);
@@ -790,54 +867,71 @@ function ShopCosts({
     });
     setBusy(false);
     if (error) { onError(formatMutationError(error)); return; }
-    setAmount(""); setOpen(false); onSaved();
+    setAmount(""); setEditing(null); onSaved();
   }
 
-  if (readOnly) {
-    return recorded > 0
-      ? <span className="text-xs text-muted-foreground">{t("buyer.shippingEtc")} {yen(recorded)}</span>
-      : null;
-  }
+  // Each kind is its own line, named, with its own figure. It used to be a
+  // single button reading "shipping and fees" followed by one total, which
+  // said neither what the number was made of nor that he was the one who put
+  // it there - and offered him one box no matter how many receipts he had.
   return (
-    <span className="flex items-center gap-2 text-xs">
-      <button
-        type="button"
-        className="rounded border px-2 py-0.5 hover:bg-accent"
-        onClick={() => setOpen((v) => !v)}
-      >
-        {t("buyer.shippingEtc")}{recorded > 0 ? ` ${yen(recorded)}` : ""}
-      </button>
-      {open && (
-        <span className="flex items-center gap-1">
-          <select
-            aria-label={t("buyer.shippingEtc")}
-            className="rounded border bg-background px-1 py-0.5"
-            value={kind}
-            onChange={(e) => setKind(e.target.value)}
-          >
-            <option value="shipping">{t("buyer.costShipping")}</option>
-            <option value="payment_fee">{t("buyer.costPaymentFee")}</option>
-            <option value="customs">{t("buyer.costCustoms")}</option>
-            <option value="other">{t("buyer.costOther")}</option>
-          </select>
-          <input
-            inputMode="numeric"
-            aria-label={t("buyer.costAmount")}
-            className="w-20 rounded border bg-background px-1 py-0.5 text-right"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
-          />
+    <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+      {COST_KINDS.map(({ value, key }) => {
+        const recorded = byKind.get(value);
+        if (recorded == null && (readOnly || editing !== value)) {
+          return readOnly ? null : (
+            <button
+              key={value}
+              type="button"
+              className="rounded border border-dashed px-2 py-0.5 text-muted-foreground hover:bg-accent"
+              onClick={() => open(value)}
+            >
+              + {t(key)}
+            </button>
+          );
+        }
+        if (editing === value) {
+          return (
+            <span key={value} className="flex items-center gap-1">
+              <span className="text-muted-foreground">{t(key)}</span>
+              <input
+                autoFocus
+                inputMode="numeric"
+                aria-label={t(key)}
+                className="w-20 rounded border bg-background px-1 py-0.5 text-right"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void save(value);
+                  if (e.key === "Escape") { setEditing(null); setAmount(""); }
+                }}
+              />
+              <button
+                type="button"
+                className="rounded border px-2 py-0.5 disabled:opacity-50"
+                disabled={busy || parseTypedJpy(amount) == null}
+                onClick={() => void save(value)}
+              >
+                {t("buyer.saveCost")}
+              </button>
+            </span>
+          );
+        }
+        return readOnly ? (
+          <span key={value} className="rounded border px-2 py-0.5 text-muted-foreground">
+            {t(key)} <b className="tabular-nums text-foreground">{yen(recorded)}</b>
+          </span>
+        ) : (
           <button
+            key={value}
             type="button"
-            className="rounded border px-2 py-0.5 disabled:opacity-50"
-            disabled={busy || parseTypedJpy(amount) == null}
-            onClick={() => void save()}
+            className="rounded border px-2 py-0.5 hover:bg-accent"
+            onClick={() => open(value)}
           >
-            {t("buyer.saveCost")}
+            {t(key)} <b className="tabular-nums text-foreground">{yen(recorded)}</b>
           </button>
-        </span>
-      )}
+        );
+      })}
     </span>
   );
 }
@@ -887,5 +981,218 @@ function HandBack({
     >
       {t("buyer.handBackList")}
     </button>
+  );
+}
+
+// What this line actually costs: the unit price he typed, times the copies he
+// bought. Read-only on purpose - it is arithmetic, not another thing to enter.
+function SubtotalCell({ line, purchased }: { line: Line; purchased: boolean }) {
+  const qty = Number(line.purchased_quantity ?? 0);
+  const unit = Number(line.unit_price_jpy ?? 0);
+  if (!purchased || qty <= 0 || unit <= 0) {
+    return <td className="px-3 py-1 text-right text-muted-foreground">—</td>;
+  }
+  return (
+    <td className="px-3 py-1 text-right tabular-nums" title={`${unit.toLocaleString()} x ${qty}`}>
+      {(unit * qty).toLocaleString()}
+    </td>
+  );
+}
+
+type ShopCost = { source: string; kind: string; amount_jpy: number; note: string | null };
+
+const COST_KINDS = [
+  { value: "shipping", key: "buyer.costShipping" },
+  { value: "payment_fee", key: "buyer.costPaymentFee" },
+  { value: "customs", key: "buyer.costCustoms" },
+  { value: "other", key: "buyer.costOther" },
+] as const;
+
+// The whole list, once, at the top.
+//
+// Every figure was per shop, and the first shop on a list is often one he has
+// not reached - so the first money on screen read zero with the real number
+// further down, which is a total of nothing. He spends against one budget
+// across every shop, and this is that number, over what the list would cost if
+// he filled all of it.
+function PlanTotals({ totals, asking }: { totals: SourceTotals[]; asking: number }) {
+  const { t } = useTranslation();
+  if (totals.length === 0) return null;
+  const sum = (pick: (x: SourceTotals) => number | null | undefined) =>
+    totals.reduce((n, x) => n + Number(pick(x) ?? 0), 0);
+  const spent = sum((x) => x.spent_total_jpy);
+  const fee = sum((x) => x.agent_payout_jpy);
+  const lineFee = 100 * sum((x) => x.purchased_lines);
+  return (
+    <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+      <span className="text-muted-foreground">
+        {t("buyer.spentTotal")}{" "}
+        <b className="font-semibold tabular-nums text-foreground">{yen(spent)}</b>
+        {asking > 0 && <span className="tabular-nums"> / {yen(asking)}</span>}
+      </span>
+      <span className="text-muted-foreground">
+        {t("buyer.feeTotal")}{" "}
+        <b className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{yen(fee)}</b>{" "}
+        <span className="text-xs tabular-nums">
+          ({t("buyer.feePerRow", { n: String(sum((x) => x.purchased_lines)), amount: yen(lineFee) })}
+          {" + "}{t("buyer.feeCommission", { amount: yen(Math.max(0, fee - lineFee)) })})
+        </span>
+      </span>
+    </span>
+  );
+}
+
+// Taking the list away, and bringing it back.
+//
+// Both libraries load only when he presses a button: together they are the
+// biggest thing on this page, and most of the time he touches neither.
+function SheetExchange({
+  planId, planName, lines, readOnly, onApplied, onError,
+}: {
+  planId: number;
+  planName: string;
+  lines: Line[];
+  readOnly: boolean;
+  onApplied: () => void;
+  onError: (message: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState<"" | "down" | "up">("");
+
+  const label = (outcome: string) => {
+    const found = OUTCOMES.find((o) => o.value === outcome);
+    return found && found.value !== "pending" ? t(found.key) : "";
+  };
+  // He may type the Japanese label, the English one, or the raw value.
+  const resolveOutcome = (text: string): string | null => {
+    const v = text.trim();
+    if (v === "" || v === "—" || v === "-") return "pending";
+    const byValue = OUTCOMES.find((o) => o.value === v);
+    if (byValue) return byValue.value;
+    const byLabel = OUTCOMES.find((o) => t(o.key) === v);
+    return byLabel ? byLabel.value : null;
+  };
+
+  async function download() {
+    setBusy("down");
+    try {
+      const writeXlsx = (await import("write-excel-file/browser")).default;
+      const rows = toSheetRows(planId, lines, label);
+      const headers = [
+        t("buyer.colSheetId"), t("buyer.colShop"), t("buyer.colCard"),
+        t("buyer.colSet"), t("buyer.colNumber"), t("buyer.colWant"),
+        t("buyer.colAsking"), t("buyer.colResult"), t("buyer.colQty"),
+        t("buyer.colPaid"), t("buyer.colNote"), t("buyer.colListing"),
+      ];
+      const txt = (v: string) => ({ value: v, type: String as StringConstructor });
+      const num = (v: number | null) =>
+        v == null ? null : { value: v, type: Number as NumberConstructor };
+      // Built as sheet data rather than through the object schema, so the
+      // header row and the cell types are exactly what we say: the numeric
+      // columns land as numbers, and he can total them in the sheet itself.
+      const data = [
+        headers.map((h) => ({ value: h, type: String as StringConstructor, fontWeight: "bold" as const })),
+        ...rows.map((r) => [
+          txt(r.id), txt(r.shop), txt(r.card), txt(r.set), txt(r.number),
+          num(r.want), num(r.asking), txt(r.outcome), num(r.qty), num(r.unit_paid),
+          txt(r.note), txt(r.listing),
+        ]),
+      ];
+      const safe = planName.replace(/[^\p{L}\p{N}_-]+/gu, "_") || "list";
+      // The browser build hands back a writer rather than saving by itself.
+      await writeXlsx(data, {
+        columns: [16, 14, 26, 10, 12, 8, 12, 20, 8, 14, 30, 40].map((width) => ({ width })),
+      }).toFile(`${safe}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function upload(file: File) {
+    setBusy("up");
+    try {
+      const readXlsx = (await import("read-excel-file/browser")).default;
+      const grid = (await readXlsx(file)) as unknown as unknown[][];
+      if (grid.length < 2) { onError(t("buyer.sheetEmpty")); return; }
+      // Read by POSITION, not by header text: his Excel may be in either
+      // language, and he may have renamed the headers himself. The identity
+      // column is what actually matters.
+      const keys = ["id","shop","card","set","number","want","asking","outcome","qty","unit_paid","note","listing"];
+      const rows = grid.slice(1).map((r) =>
+        Object.fromEntries(keys.map((k, i) => [k, r[i]])) as Record<string, unknown>);
+
+      const { updates, problems } = readSheetRows(planId, rows, lines, resolveOutcome);
+      const refused = await applyUpdates(updates);
+      onApplied();
+
+      const notes = [t("buyer.sheetApplied", { n: String(updates.length - refused.length) })];
+      for (const p of problems.slice(0, 5)) {
+        notes.push(`${t("buyer.sheetRow", { row: String(p.row) })} ${p.reason}`);
+      }
+      if (problems.length > 5) notes.push(t("buyer.sheetMore", { n: String(problems.length - 5) }));
+      notes.push(...refused);
+      onError(problems.length || refused.length ? notes.join(" / ") : null);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  // One call per changed row, so one bad row cannot discard the rest of his
+  // afternoon, and the database's own refusal is what he reads.
+  async function applyUpdates(updates: SheetUpdate[]): Promise<string[]> {
+    const supabase = createClient();
+    const refused: string[] = [];
+    for (const u of updates) {
+      const { error } = await supabase.rpc("buyer_record_result", {
+        p_plan_line_id: u.plan_line_id,
+        p_outcome: u.outcome,
+        p_purchased_quantity: u.purchased_quantity,
+        p_unit_price_jpy: u.unit_price_jpy,
+        p_condition_seen: null,
+        p_note: u.note,
+      });
+      if (error) refused.push(`#${u.plan_line_id}: ${formatMutationError(error)}`);
+    }
+    return refused;
+  }
+
+  const inputId = `sheet-${planId}`;
+  return (
+    <span className="flex items-center gap-2 text-xs">
+      <button
+        type="button"
+        className="rounded border px-2 py-0.5 hover:bg-accent disabled:opacity-50"
+        disabled={busy !== "" || lines.length === 0}
+        onClick={() => void download()}
+      >
+        {busy === "down" ? t("buyer.working") : t("buyer.downloadSheet")}
+      </button>
+      {!readOnly && (
+        <>
+          <label
+            htmlFor={inputId}
+            className={`cursor-pointer rounded border px-2 py-0.5 hover:bg-accent ${busy ? "opacity-50" : ""}`}
+          >
+            {busy === "up" ? t("buyer.working") : t("buyer.uploadSheet")}
+          </label>
+          <input
+            id={inputId}
+            type="file"
+            accept=".xlsx"
+            className="hidden"
+            disabled={busy !== ""}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) void upload(f);
+            }}
+          />
+        </>
+      )}
+    </span>
   );
 }
