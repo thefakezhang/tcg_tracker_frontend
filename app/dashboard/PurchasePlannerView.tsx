@@ -343,7 +343,9 @@ export default function PurchasePlannerView() {
           {plan && editable && (
             <Button onClick={() => setReviewOpen(true)}>
               <ShieldCheck className="size-4" />
-              {plan.status === "ready" ? "Mark as ordered" : "Review & send to buyer"}
+              {/* It never sent anything. Sending is the Send button beside the
+                  buying agent; this advances the operator's own workflow. */}
+              {plan.status === "ready" ? "Mark as ordered" : "Review"}
             </Button>
           )}
         </div>
@@ -383,7 +385,11 @@ export default function PurchasePlannerView() {
               {plan.budget_amount != null && <span>{t("purchasePlanner.budget")}: {plan.budget_currency} {Number(plan.budget_amount).toFixed(2)}</span>}
               {plan.notes && <span className="hidden text-muted-foreground lg:inline">{plan.notes}</span>}
             </div>
-            {editable && <PlanBuyerControl plan={plan} onChanged={retry} />}
+            {/* Not gated on `editable`: once the plan is ordered the buyer is
+                actually out shopping, which is exactly when the operator most
+                needs to see who has it and when it went. Only reassignment
+                freezes, and guard_purchase_plan_mutation enforces that. */}
+            <PlanBuyerControl plan={plan} onChanged={retry} canReassign={editable} />
             {editable ? (
               <Button size="sm" onClick={() => setLineOpen(true)}><Plus className="size-4" /> {t("purchasePlanner.addLine")}</Button>
             ) : (
@@ -1288,7 +1294,9 @@ type AssignableBuyer = { email: string; has_account: boolean; last_sign_in: stri
 // while the plan is still editable: guard_purchase_plan_mutation freezes the
 // row once it is ordered, which is correct, because the buyer is shopping
 // against it by then.
-function PlanBuyerControl({ plan, onChanged }: { plan: PurchasePlan; onChanged: () => void }) {
+function PlanBuyerControl({
+  plan, onChanged, canReassign,
+}: { plan: PurchasePlan; onChanged: () => void; canReassign: boolean }) {
   const [buyers, setBuyers] = useState<AssignableBuyer[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1309,19 +1317,39 @@ function PlanBuyerControl({ plan, onChanged }: { plan: PurchasePlan; onChanged: 
     onChanged();
   }
 
-  // Assigning names the recipient; it does not send. The buyer only sees a plan
-  // from `ready` onward, so a draft with an assignee is NOT yet on his screen -
-  // and a control labelled "Send to" that has not sent is misleading in exactly
-  // the direction that matters.
-  const sent = plan.status !== "draft";
+  // Sending is a button, not a side effect.
+  //
+  // This used to read `plan.status !== "draft"` and render a green "Sent"
+  // badge from it, which was true before the operator had done anything and
+  // named no moment at all. Now the badge reflects purchase_plans.sent_at:
+  // somebody pressed send, and this is when.
+  const sent = plan.sent_at != null;
+
+  async function send() {
+    setSaving(true); setError(null);
+    const { error: rpcError } = await createClient()
+      .rpc("send_purchase_plan", { p_plan_id: plan.plan_id });
+    setSaving(false);
+    if (rpcError) { setError(formatMutationError(rpcError)); return; }
+    onChanged();
+  }
+
+  async function recall() {
+    setSaving(true); setError(null);
+    const { error: rpcError } = await createClient()
+      .rpc("recall_purchase_plan", { p_plan_id: plan.plan_id });
+    setSaving(false);
+    if (rpcError) { setError(formatMutationError(rpcError)); return; }
+    onChanged();
+  }
 
   return (
-    <div className="flex items-center gap-2 text-xs">
-      <span className="text-muted-foreground">Send to</span>
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="text-muted-foreground">Buying agent</span>
       <select
         className={selectClass}
         value={plan.assigned_buyer_email ?? ""}
-        disabled={saving}
+        disabled={saving || !canReassign}
         onChange={(e) => void assign(e.target.value)}
       >
         <option value="">Nobody yet</option>
@@ -1331,10 +1359,38 @@ function PlanBuyerControl({ plan, onChanged }: { plan: PurchasePlan; onChanged: 
           </option>
         ))}
       </select>
-      {plan.assigned_buyer_email && (
-        sent
-          ? <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-600 dark:text-emerald-400">Sent</span>
-          : <span className="text-muted-foreground">Not sent yet - use Review &amp; send</span>
+
+      {sent ? (
+        <>
+          <span
+            className="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-600 dark:text-emerald-400"
+            title={new Date(plan.sent_at!).toLocaleString()}
+          >
+            Sent {new Date(plan.sent_at!).toLocaleDateString()}
+          </span>
+          {/* Recall refuses server-side once he has recorded anything, because
+              by then he is standing in a shop working from the list. The
+              button stays visible so the refusal can say that. */}
+          <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => void recall()}>
+            Recall
+          </Button>
+        </>
+      ) : (
+        <>
+          <Button
+            type="button"
+            size="sm"
+            disabled={saving || !plan.assigned_buyer_email}
+            onClick={() => void send()}
+          >
+            Send to buyer
+          </Button>
+          <span className="text-muted-foreground">
+            {plan.assigned_buyer_email
+              ? "Not on his screen until you send it"
+              : "Choose a buying agent first"}
+          </span>
+        </>
       )}
       {error && <span className="text-destructive">{error}</span>}
     </div>

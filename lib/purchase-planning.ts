@@ -19,6 +19,11 @@ export interface PurchasePlan {
   created_at: string;
   reviewed_at: string | null;
   ordered_at: string | null;
+  // When someone pressed send, and who. Null means the buyer cannot see it,
+  // whatever the status says: status is the operator's workflow, not the
+  // buyer's permission to read.
+  sent_at?: string | null;
+  sent_by?: string | null;
 }
 
 export interface PrimaryCustomer {
