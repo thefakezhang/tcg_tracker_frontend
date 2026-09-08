@@ -75,6 +75,7 @@ export default function BuyerOrderView() {
   const [savingCells, setSavingCells] = useState<Set<string>>(new Set());
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [upstreamChanged, setUpstreamChanged] = useState(false);
+  const [totals, setTotals] = useState<SourceTotals[]>([]);
 
   const loadPlans = useCallback(async () => {
     const { data, error } = await createClient().rpc("buyer_assigned_plans");
@@ -90,6 +91,21 @@ export default function BuyerOrderView() {
     setLines((data ?? []) as Line[]);
   }, []);
 
+  const loadTotals = useCallback(async (planId: number) => {
+    const { data } = await createClient().rpc("buyer_source_totals", { p_plan_id: planId });
+    setTotals((data ?? []) as SourceTotals[]);
+  }, []);
+
+  // He tabs through a shelf of rows in a few seconds. Refetching the totals on
+  // every one of those would be a round trip per keystroke-commit, so coalesce:
+  // the figures are a running tally, and a tally is allowed to land last.
+  const totalsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleTotals = useCallback((planId: number) => {
+    if (totalsTimer.current) clearTimeout(totalsTimer.current);
+    totalsTimer.current = setTimeout(() => void loadTotals(planId), 600);
+  }, [loadTotals]);
+  useEffect(() => () => { if (totalsTimer.current) clearTimeout(totalsTimer.current); }, []);
+
   const loadReceipts = useCallback(async (planId: number) => {
     const { data } = await createClient().rpc("buyer_source_receipts", { p_plan_id: planId });
     setReceipts((data ?? []) as Receipt[]);
@@ -100,7 +116,8 @@ export default function BuyerOrderView() {
     if (activePlan == null) return;
     void loadLines(activePlan);
     void loadReceipts(activePlan);
-  }, [activePlan, loadLines, loadReceipts]);
+    void loadTotals(activePlan);
+  }, [activePlan, loadLines, loadReceipts, loadTotals]);
 
   // Watch for the operator changing the list under him.
   //
@@ -197,9 +214,11 @@ export default function BuyerOrderView() {
         return false;
       }
       setError(null);
+      // What he just bought is part of his spend and his fee.
+      if (activePlan != null) scheduleTotals(activePlan);
       return true;
     },
-    [],
+    [activePlan, scheduleTotals],
   );
 
   if (plans && plans.length === 0) {
@@ -284,6 +303,15 @@ export default function BuyerOrderView() {
               <span className="text-xs text-muted-foreground">
                 {t("buyer.boughtOfLines", { bought: String(rows.filter((r) => r.outcome === "purchased").length), lines: String(rows.length) })}
               </span>
+              <ShopTotals totals={totals.find((x) => x.source === source)} />
+              <ShopCosts
+                planId={activePlan!}
+                source={source}
+                totals={totals.find((x) => x.source === source)}
+                readOnly={readOnly}
+                onSaved={() => activePlan != null && void loadTotals(activePlan)}
+                onError={setError}
+              />
               <SourceReceipts
                 planId={activePlan!}
                 source={source}
@@ -555,6 +583,19 @@ function TextCell({
 }
 
 
+type SourceTotals = {
+  source: string;
+  total_lines: number;
+  recorded_lines: number;
+  purchased_lines: number;
+  cards_bought: number;
+  card_value_jpy: number;
+  shipping_jpy: number;
+  other_costs_jpy: number;
+  spent_total_jpy: number;
+  agent_payout_jpy: number;
+};
+
 type Receipt = {
   receipt_id: number;
   source: string;
@@ -632,4 +673,117 @@ function SourceReceipts({
       )}
     </div>
   );
+}
+
+const yen = (v: number | null | undefined) => "¥" + Math.round(Number(v ?? 0)).toLocaleString();
+
+// What this shop has cost him and what it has earned him, beside the shop it
+// belongs to - he checks out one at a time, so a plan-wide figure would be the
+// wrong grain.
+function ShopTotals({ totals }: { totals?: SourceTotals }) {
+  const { t } = useTranslation();
+  if (!totals) return null;
+  return (
+    <span className="flex items-center gap-3 text-xs">
+      <span className="text-muted-foreground">
+        {t("buyer.spentHere")} <b className="font-semibold text-foreground">{yen(totals.spent_total_jpy)}</b>
+      </span>
+      <span className="text-muted-foreground" title={t("buyer.feeExplainer")}>
+        {t("buyer.yourFee")} <b className="font-semibold text-emerald-600 dark:text-emerald-400">{yen(totals.agent_payout_jpy)}</b>
+      </span>
+    </span>
+  );
+}
+
+// Shipping and the rest, entered where he is standing rather than messaged to
+// the operator to retype. One figure per kind: entering it again corrects it,
+// because he is reading one receipt.
+function ShopCosts({
+  planId, source, totals, readOnly, onSaved, onError,
+}: {
+  planId: number;
+  source: string;
+  totals?: SourceTotals;
+  readOnly: boolean;
+  onSaved: () => void;
+  onError: (message: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState("shipping");
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const recorded = Number(totals?.shipping_jpy ?? 0) + Number(totals?.other_costs_jpy ?? 0);
+
+  async function save() {
+    const value = parseTypedJpy(amount);
+    if (value == null) return;
+    setBusy(true);
+    const { error } = await createClient().rpc("buyer_record_source_cost", {
+      p_plan_id: planId, p_source: source, p_kind: kind, p_amount_jpy: value, p_note: null,
+    });
+    setBusy(false);
+    if (error) { onError(formatMutationError(error)); return; }
+    setAmount(""); setOpen(false); onSaved();
+  }
+
+  if (readOnly) {
+    return recorded > 0
+      ? <span className="text-xs text-muted-foreground">{t("buyer.shippingEtc")} {yen(recorded)}</span>
+      : null;
+  }
+  return (
+    <span className="flex items-center gap-2 text-xs">
+      <button
+        type="button"
+        className="rounded border px-2 py-0.5 hover:bg-accent"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {t("buyer.shippingEtc")}{recorded > 0 ? ` ${yen(recorded)}` : ""}
+      </button>
+      {open && (
+        <span className="flex items-center gap-1">
+          <select
+            aria-label={t("buyer.shippingEtc")}
+            className="rounded border bg-background px-1 py-0.5"
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+          >
+            <option value="shipping">{t("buyer.costShipping")}</option>
+            <option value="payment_fee">{t("buyer.costPaymentFee")}</option>
+            <option value="customs">{t("buyer.costCustoms")}</option>
+            <option value="other">{t("buyer.costOther")}</option>
+          </select>
+          <input
+            inputMode="numeric"
+            aria-label={t("buyer.costShipping")}
+            className="w-20 rounded border bg-background px-1 py-0.5 text-right"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
+          />
+          <button
+            type="button"
+            className="rounded border px-2 py-0.5 disabled:opacity-50"
+            disabled={busy || parseTypedJpy(amount) == null}
+            onClick={() => void save()}
+          >
+            {t("buyer.saveCost")}
+          </button>
+        </span>
+      )}
+    </span>
+  );
+}
+
+// He types a price the way it is written on the receipt. Number() gives NaN for
+// every one of those, and a NaN reaches the database as null - the same way the
+// operator's hand-entered prices were being lost.
+export function parseTypedJpy(text: string): number | null {
+  if (text.includes("-")) return null;
+  const cleaned = text.replace(/[,\s]/g, "").replace(/[^0-9.]/g, "");
+  if (cleaned === "" || cleaned === ".") return null;
+  const value = Number(cleaned);
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
