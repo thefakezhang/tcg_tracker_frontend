@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageProvider } from "../LanguageContext";
 import ConsignmentControl from "./ConsignmentControl";
@@ -52,8 +52,14 @@ describe("ConsignmentControl", () => {
 
     expect(mocks.rpc).not.toHaveBeenCalled();
     expect(await screen.findByText(/full accounting reversal/, {}, { timeout: 5_000 })).toBeTruthy();
-    const actions = screen.getAllByRole("button", { name: "Undo sale" });
-    fireEvent.click(actions[actions.length - 1]);
+
+    // The trigger and the dialog's confirm carry the SAME accessible name, so
+    // picking the last match in document order was a race: the dialog mounts
+    // through a portal, and on a slow pass the only button in the tree was
+    // still the trigger - clicking which closed the dialog and called nothing,
+    // failing five seconds later in waitFor. Scope to the dialog instead.
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Undo sale" }));
 
     await waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith(
       "clear_line_consignment",

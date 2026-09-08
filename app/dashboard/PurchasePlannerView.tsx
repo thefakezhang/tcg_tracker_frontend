@@ -377,7 +377,20 @@ export default function PurchasePlannerView() {
             <SummaryCard label={t("purchasePlanner.landedTotal")} value={money(summary.landedTotalUsd)} />
           </div>
 
-          {plan && (plan.status === "ordered" || plan.status === "reconciled") && <BuyerProgressStrip planId={plan.plan_id} />}
+          {plan?.handed_back_at && (
+        // The end of his job and the start of yours. Worth its own line rather
+        // than a badge among others: it is the moment the list becomes ready
+        // to reconcile, and nothing else on this screen says so.
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-sm">
+          <span className="font-medium text-emerald-700 dark:text-emerald-400">
+            The buyer has finished with this list
+          </span>
+          <span className="text-muted-foreground">
+            handed back {new Date(plan.handed_back_at).toLocaleString()}
+          </span>
+        </div>
+      )}
+      {plan && (plan.status === "ordered" || plan.status === "reconciled") && <BuyerProgressStrip planId={plan.plan_id} />}
 
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
             <div className="flex items-center gap-2 text-sm">
