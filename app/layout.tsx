@@ -21,7 +21,23 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={cn("dark font-sans", geist.variable, notoSansJP.variable)}>
+    // translate="no" is not decoration. The buying agent's screens render in
+    // Japanese while this document is served as lang="en", and Chrome decides
+    // whether to machine-translate from the INITIAL html - long before
+    // LanguageContext corrects documentElement.lang on hydration. A real agent
+    // opened his list and got the page rewritten by Google Translate: the shop
+    // name "snkrdunk" translated, every outcome in the dropdown reworded, and
+    // our hand-written Japanese replaced with worse Japanese. The app carries
+    // its own language selector, so a browser rewriting these strings can only
+    // do harm.
+    <html
+      lang="en"
+      translate="no"
+      className={cn("notranslate dark font-sans", geist.variable, notoSansJP.variable)}
+    >
+      <head>
+        <meta name="google" content="notranslate" />
+      </head>
       <body className="min-h-screen bg-background text-foreground antialiased">
         {children}
       </body>

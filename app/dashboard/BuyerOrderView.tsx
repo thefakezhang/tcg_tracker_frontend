@@ -501,10 +501,17 @@ function Row({
           value={line.outcome}
           onChange={(e) => void onSave(line, { outcome: e.target.value })}
           onKeyDown={(e) => handleNav(e, (d) => onMove(d, "outcome"))}
-          className="w-full bg-transparent"
+          // Transparent so the closed control reads as a grid cell, but the
+          // OPTIONS carry explicit colours: the popup is drawn by the browser,
+          // and it was painting a light list under text that inherited the
+          // page's white. color-scheme in globals.css is the systemic half of
+          // this; these two classes are the belt.
+          className="w-full bg-transparent text-foreground"
         >
           {OUTCOMES.map((o) => (
-            <option key={o.value} value={o.value}>{o.value === "pending" ? "—" : t(o.key)}</option>
+            <option key={o.value} value={o.value} className="bg-popover text-popover-foreground">
+              {o.value === "pending" ? "—" : t(o.key)}
+            </option>
           ))}
         </select>
       </td>
