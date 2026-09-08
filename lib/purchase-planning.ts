@@ -24,6 +24,11 @@ export interface PurchasePlan {
   // buyer's permission to read.
   sent_at?: string | null;
   sent_by?: string | null;
+  // When the buying agent said he had finished. His act, and the operator's
+  // only signal before this was a counter, which cannot tell "finished" from
+  // "stopped for lunch".
+  handed_back_at?: string | null;
+  handed_back_by?: string | null;
 }
 
 export interface PrimaryCustomer {

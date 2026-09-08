@@ -26,6 +26,7 @@ type Plan = {
   line_count: number;
   recorded_count: number;
   finalized: boolean;
+  handed_back: boolean;
 };
 
 type Line = {
@@ -82,7 +83,8 @@ export default function BuyerOrderView() {
     if (error) { setError(formatMutationError(error)); return; }
     const rows = (data ?? []) as Plan[];
     setPlans(rows);
-    setActivePlan((current) => current ?? rows[0]?.plan_id ?? null);
+    setActivePlan((current) =>
+      current ?? rows.find((r) => !r.finalized)?.plan_id ?? rows[0]?.plan_id ?? null);
   }, []);
 
   const loadLines = useCallback(async (planId: number) => {
@@ -105,6 +107,30 @@ export default function BuyerOrderView() {
     totalsTimer.current = setTimeout(() => void loadTotals(planId), 600);
   }, [loadTotals]);
   useEffect(() => () => { if (totalsTimer.current) clearTimeout(totalsTimer.current); }, []);
+
+  const [handBackBusy, setHandBackBusy] = useState(false);
+
+  const handBack = useCallback(async (p: Plan) => {
+    const open = p.line_count - p.recorded_count;
+    // Confirm only when he is leaving work behind. A shut shop is a real
+    // reason to finish early, so this asks rather than refuses.
+    if (open > 0 && !window.confirm(t("buyer.confirmHandBack", { open: String(open) }))) return;
+    setHandBackBusy(true);
+    const { error } = await createClient().rpc("buyer_hand_back_plan", { p_plan_id: p.plan_id });
+    setHandBackBusy(false);
+    if (error) { setError(formatMutationError(error)); return; }
+    setError(null);
+    void loadPlans();
+  }, [loadPlans, t]);
+
+  const reopen = useCallback(async (p: Plan) => {
+    setHandBackBusy(true);
+    const { error } = await createClient().rpc("buyer_reopen_plan", { p_plan_id: p.plan_id });
+    setHandBackBusy(false);
+    if (error) { setError(formatMutationError(error)); return; }
+    setError(null);
+    void loadPlans();
+  }, [loadPlans]);
 
   const loadReceipts = useCallback(async (planId: number) => {
     const { data } = await createClient().rpc("buyer_source_receipts", { p_plan_id: planId });
@@ -148,7 +174,15 @@ export default function BuyerOrderView() {
   }, [activePlan, lines, upstreamChanged]);
 
   const plan = plans?.find((p) => p.plan_id === activePlan) ?? null;
-  const readOnly = plan?.finalized ?? false;
+  const readOnly = (plan?.finalized ?? false) || (plan?.handed_back ?? false);
+
+  // Open lists only. A finalized one is the operator's now, and leaving it in
+  // the picker makes finished work look like work outstanding - but the one he
+  // is currently looking at stays, so selecting it does not make it vanish.
+  const pickable = useMemo(
+    () => (plans ?? []).filter((p) => !p.finalized || p.plan_id === activePlan),
+    [plans, activePlan],
+  );
 
   // Grouped by source because he checks out one shop at a time; each source
   // becomes its own acquisition lot when the operator reconciles.
@@ -231,22 +265,24 @@ export default function BuyerOrderView() {
 
   return (
     <div className="flex flex-col gap-4 p-4">
-      {plans && plans.length > 1 && (
-        <div className="flex flex-wrap gap-2">
-          {plans.map((p) => (
-            <button
-              key={p.plan_id}
-              onClick={() => setActivePlan(p.plan_id)}
-              className={`rounded border px-3 py-1 text-sm ${
-                p.plan_id === activePlan ? "bg-accent font-medium" : "hover:bg-accent/50"
-              }`}
-            >
-              {p.name}
-              <span className="ml-2 text-xs text-muted-foreground">
-                {p.recorded_count}/{p.line_count}
-              </span>
-            </button>
-          ))}
+      {pickable.length > 1 && (
+        <div className="flex items-center gap-2">
+          <label htmlFor="buyer-plan" className="text-sm text-muted-foreground">
+            {t("buyer.purchaseList")}
+          </label>
+          <select
+            id="buyer-plan"
+            className="rounded-md border bg-background px-2 py-1 text-sm"
+            value={activePlan ?? ""}
+            onChange={(e) => setActivePlan(Number(e.target.value))}
+          >
+            {pickable.map((p) => (
+              <option key={p.plan_id} value={p.plan_id}>
+                {p.name} ({p.recorded_count}/{p.line_count})
+                {p.handed_back ? ` - ${t("buyer.handedBack")}` : ""}
+              </option>
+            ))}
+          </select>
         </div>
       )}
 
@@ -259,9 +295,13 @@ export default function BuyerOrderView() {
           <span className="rounded bg-muted px-2 py-0.5 text-xs">
             {t(planStateKey(planState({ status: plan.status, recordedCount: plan.recorded_count })))}
           </span>
-          {readOnly ? (
+          {plan.finalized ? (
             <span className="rounded bg-muted px-2 py-0.5 text-xs">
               {t("buyer.closed")}
+            </span>
+          ) : plan.handed_back ? (
+            <span className="rounded bg-muted px-2 py-0.5 text-xs">
+              {t("buyer.handedBack")}
             </span>
           ) : (
             // Without this the grid reads as a report. It is a worksheet, and
@@ -269,6 +309,19 @@ export default function BuyerOrderView() {
             <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-500">
               {t("buyer.openForEditing")}
             </span>
+          )}
+
+          {/* He had no way to say he was finished. The operator's only signal
+              was the counter above, which cannot tell finished from stopped
+              for lunch. Handing back freezes his own entries and nothing
+              else, and it is his to undo until the operator closes it. */}
+          {!plan.finalized && (
+            <HandBack
+              plan={plan}
+              busy={handBackBusy}
+              onHandBack={() => void handBack(plan)}
+              onReopen={() => void reopen(plan)}
+            />
           )}
         </div>
       )}
@@ -390,8 +443,13 @@ function Row({
             cannot confirm he is buying the right thing. */}
         <div className="flex items-center gap-2">
           {line.image_url && (
+            // Width is reserved, not measured. With w-auto the browser cannot
+            // size the box until the file arrives, so each thumbnail landing
+            // reflowed its row - and with loading="lazy" they land as he
+            // scrolls, which means the list moves under his thumb while he is
+            // typing a price into it. 9/12 is close enough to a card's 2.5:3.5.
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={line.image_url} alt="" className="h-12 w-auto rounded-sm border" loading="lazy" />
+            <img src={line.image_url} alt="" className="h-12 w-9 rounded-sm border object-contain" loading="lazy" />
           )}
           <div className="min-w-0">
             <div className="truncate font-medium">{line.card_name ?? "unknown card"}</div>
@@ -646,7 +704,7 @@ function SourceReceipts({
     <div className="flex items-center gap-2 text-xs">
       {receipts.length > 0 && (
         <span className="text-muted-foreground">
-          {receipts.length} receipt{receipts.length === 1 ? "" : "s"}
+          {t("buyer.receiptCount", { count: String(receipts.length) })}
         </span>
       )}
       {!readOnly && (
@@ -786,4 +844,41 @@ export function parseTypedJpy(text: string): number | null {
   if (cleaned === "" || cleaned === ".") return null;
   const value = Number(cleaned);
   return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+// Finished, or not yet. Two words and one button, because it is the last thing
+// he does and he does it on a phone in a shop.
+function HandBack({
+  plan, busy, onHandBack, onReopen,
+}: {
+  plan: Plan;
+  busy: boolean;
+  onHandBack: () => void;
+  onReopen: () => void;
+}) {
+  const { t } = useTranslation();
+  return plan.handed_back ? (
+    <button
+      type="button"
+      className="rounded border px-2 py-0.5 text-xs hover:bg-accent disabled:opacity-50"
+      disabled={busy}
+      onClick={onReopen}
+    >
+      {t("buyer.reopenList")}
+    </button>
+  ) : (
+    <button
+      type="button"
+      // Not bg-primary: this theme's --primary and --destructive are six
+      // degrees apart in hue and both read as red, so the most consequential
+      // POSITIVE action on his screen looked exactly like a delete button.
+      // Solid emerald, where the badge beside it is a translucent tint, so the
+      // control and the state stay tellable apart.
+      className="rounded bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+      disabled={busy}
+      onClick={onHandBack}
+    >
+      {t("buyer.handBackList")}
+    </button>
+  );
 }

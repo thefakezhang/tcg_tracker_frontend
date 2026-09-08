@@ -82,6 +82,18 @@ beforeEach(() => {
 });
 
 describe("the operator watching the buyer", () => {
+  it("says plainly when the agent has finished, because nothing else does", async () => {
+    mocks.plans = [{ ...mocks.plans[0], handed_back_at: "2026-09-08T04:00:00Z" }];
+    render(<PurchasePlannerView />);
+    expect(await screen.findByText("The buyer has finished with this list")).toBeTruthy();
+  });
+
+  it("says nothing while he is still working", async () => {
+    render(<PurchasePlannerView />);
+    await screen.findByText("snkrdunk");
+    expect(screen.queryByText("The buyer has finished with this list")).toBeNull();
+  });
+
   it("breaks the spend down by shop, where the agent actually checks out", async () => {
     render(<PurchasePlannerView />);
     expect(await screen.findByText("snkrdunk")).toBeTruthy();
