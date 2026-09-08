@@ -710,6 +710,15 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
     if (!open) {
       setQuery(""); setResults([]); setChosen(null); setError(null);
       setCandidates(null); setPicked(new Map()); setManual(false);
+      // The hand-entry fields too. They used to survive the dialog closing, so
+      // the next card opened with the previous card's shop, price, quantity
+      // and - worst - its LISTING URL still filled in. A stale per-listing URL
+      // points the buying agent at a different card's listing, and a stale
+      // price is simply wrong with nothing to catch it: the apparel guard only
+      // fires for snkrdunk lines on a card that has an apparel id, and no
+      // guard exists for the price at all.
+      setManualSource(""); setManualPrice(""); setManualCurrency("JPY");
+      setManualQty("1"); setManualUrl("");
     }
   }, [open]);
 
