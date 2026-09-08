@@ -802,6 +802,11 @@ type SourceTotals = {
   total_lines: number;
   recorded_lines: number;
   purchased_lines: number;
+  // The lines that actually PAY him. Not the same as purchased_lines: a
+  // cancelled card was bought and never arrives, and his pay is what gets
+  // delivered. Using the wrong one makes the breakdown stop adding up to the
+  // total beside it.
+  earning_lines: number;
   cards_bought: number;
   card_value_jpy: number;
   shipping_jpy: number;
@@ -901,7 +906,7 @@ function ShopTotals({ totals, asking }: { totals?: SourceTotals; asking: number 
   // different questions: the line fee is his wage for working the shelf, the
   // 3% is a commission on what he actually bought. A single number told him
   // neither, and he cannot check a number he cannot take apart.
-  const lineFee = 100 * Number(totals.purchased_lines ?? 0);
+  const lineFee = 100 * Number(totals.earning_lines ?? 0);
   const commission = Math.max(0, Number(totals.agent_payout_jpy ?? 0) - lineFee);
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -916,7 +921,7 @@ function ShopTotals({ totals, asking }: { totals?: SourceTotals; asking: number 
           {yen(totals.agent_payout_jpy)}
         </b>{" "}
         <span className="tabular-nums">
-          ({t("buyer.feePerRow", { n: String(totals.purchased_lines ?? 0), amount: yen(lineFee) })}
+          ({t("buyer.feePerRow", { n: String(totals.earning_lines ?? 0), amount: yen(lineFee) })}
           {" + "}
           {t("buyer.feeCommission", { amount: yen(commission) })})
         </span>
@@ -1120,7 +1125,7 @@ function PlanTotals({ totals, asking }: { totals: SourceTotals[]; asking: number
     totals.reduce((n, x) => n + Number(pick(x) ?? 0), 0);
   const spent = sum((x) => x.spent_total_jpy);
   const fee = sum((x) => x.agent_payout_jpy);
-  const lineFee = 100 * sum((x) => x.purchased_lines);
+  const lineFee = 100 * sum((x) => x.earning_lines);
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
       <span className="text-muted-foreground">
@@ -1132,7 +1137,7 @@ function PlanTotals({ totals, asking }: { totals: SourceTotals[]; asking: number
         {t("buyer.feeTotal")}{" "}
         <b className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{yen(fee)}</b>{" "}
         <span className="text-xs tabular-nums">
-          ({t("buyer.feePerRow", { n: String(sum((x) => x.purchased_lines)), amount: yen(lineFee) })}
+          ({t("buyer.feePerRow", { n: String(sum((x) => x.earning_lines)), amount: yen(lineFee) })}
           {" + "}{t("buyer.feeCommission", { amount: yen(Math.max(0, fee - lineFee)) })})
         </span>
       </span>
