@@ -1465,6 +1465,18 @@ function PlanBuyerControl({
           <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => void recall()}>
             Recall
           </Button>
+          {/* The screen he is actually looking at, from here. Not having this
+              is why a Google-translated page with an unreadable dropdown went
+              unnoticed for a day: the person who could fix it could not see
+              it. Read only - his entries stay his. */}
+          <a
+            href="/dashboard/buyer-view"
+            target="_blank"
+            rel="noreferrer"
+            className="rounded border px-2 py-0.5 underline-offset-2 hover:bg-accent hover:underline"
+          >
+            See his screen
+          </a>
         </>
       ) : (
         <>

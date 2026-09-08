@@ -42,6 +42,11 @@ beforeEach(() => {
     if (fn === "buyer_assigned_plans") return Promise.resolve({ data: [plan], error: null });
     if (fn === "buyer_plan_lines") return Promise.resolve({ data: [line], error: null });
     if (fn === "buyer_source_totals") return Promise.resolve({ data: totals, error: null });
+    if (fn === "buyer_source_costs") return Promise.resolve({
+      data: [{ source: "snkrdunk", kind: "shipping", amount_jpy: 900, note: null },
+             { source: "snkrdunk", kind: "payment_fee", amount_jpy: 220, note: null }],
+      error: null,
+    });
     return Promise.resolve({ data: [], error: null });
   });
 });
@@ -76,10 +81,19 @@ describe("the agent's screen in Japanese", () => {
     renderJa();
     await waitFor(() => expect(screen.getByText("この店での支出")).toBeTruthy());
     expect(screen.getByText("あなたの報酬")).toBeTruthy();
-    expect(screen.getByText("¥32,120")).toBeTruthy();
-    expect(screen.getByText("¥1,000")).toBeTruthy();
-    // Shipping and the payment fee he entered, on the button that opens the form.
-    expect(screen.getByRole("button", { name: /送料・手数料/ }).textContent).toContain("¥1,120");
+    // The plan-wide total says the same thing for a single-shop list, so both
+    // the shop line and the total carry these figures.
+    expect(screen.getByText("支出合計")).toBeTruthy();
+    expect(screen.getAllByText("¥32,120").length).toBe(2);
+    expect(screen.getAllByText("¥1,000").length).toBe(2);
+    // Each cost he entered is named and carries its own figure, rather than
+    // one lump he cannot take apart.
+    expect(screen.getByRole("button", { name: /送料 ¥900/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /決済手数料 ¥220/ })).toBeTruthy();
+    // And his fee is itemised: what the rows earned, and what the 3% came to.
+    // Twice over on a single-shop list: once for the shop, once for the plan.
+    expect(screen.getAllByText(/1行 ¥100/).length).toBe(2);
+    expect(screen.getAllByText(/3% ¥900/).length).toBe(2);
   });
 
   it("puts no US dollar figure anywhere on his screen", async () => {
