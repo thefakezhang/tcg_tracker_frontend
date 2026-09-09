@@ -57,23 +57,22 @@ type Line = {
   delivery_flow: string | null;
 };
 
-// Mirrors delivery_status_next() in the database, which is the authority. Kept
-// here only so the screen can offer the steps that exist rather than letting
-// him pick one and be refused.
-const DELIVERY_NEXT: Record<string, (flow: string) => string[]> = {
-  "": (flow) => ["ordered"],
-  ordered: (flow) => (flow === "curated" ? ["sent_to_curation", "cancelled"] : ["sent_to_buyer", "cancelled"]),
-  sent_to_curation: () => ["curating", "cancelled"],
-  curating: () => ["sent_to_buyer", "curation_failed"],
-  // The decision, when the authenticator says the card is not what was listed.
-  curation_failed: () => ["cancelled", "sent_to_buyer"],
-  sent_to_buyer: () => ["arrived"],
-  arrived: () => [],
-  cancelled: () => [],
+// Mirrors delivery_status_options() in the database, which is the authority.
+// Kept here only so the screen offers what will be accepted.
+//
+// Any of them can be set at any time. This used to offer only the step that
+// naturally follows the current one, and nothing at all from 'arrived' or
+// 'cancelled' - so a mis-tap was permanent and on those two the control
+// vanished. He is reporting where a card is, not walking a state machine, and
+// a person reporting has to be able to correct himself.
+const DELIVERY_FLOWS: Record<string, string[]> = {
+  curated: ["ordered", "sent_to_curation", "curating", "curation_failed",
+            "sent_to_buyer", "arrived", "cancelled"],
+  direct: ["ordered", "sent_to_buyer", "arrived", "cancelled"],
 };
 
-const deliveryNext = (flow: string | null, current: string | null) =>
-  (DELIVERY_NEXT[current ?? ""] ?? (() => []))(flow ?? "direct");
+const deliveryOptions = (flow: string | null) =>
+  DELIVERY_FLOWS[flow ?? "direct"] ?? DELIVERY_FLOWS.direct;
 
 const DELIVERY_LABEL: Record<string, string> = {
   ordered: "buyer.delivOrdered",
@@ -1381,35 +1380,37 @@ function DeliveryCell({
     return <td className="px-3 py-1 text-muted-foreground">{t("buyer.delivNotBought")}</td>;
   }
   const current = line.delivery_status;
-  const next = deliveryNext(line.delivery_flow, current);
-  const label = current ? t(DELIVERY_LABEL[current] as never) : "—";
   const flagged = current === "curation_failed";
 
+  if (readOnly) {
+    return (
+      <td className={`px-3 py-1 ${flagged ? "font-medium text-amber-600 dark:text-amber-400" : ""}`}>
+        {current ? t(DELIVERY_LABEL[current] as never) : "—"}
+      </td>
+    );
+  }
+
+  // The status itself IS the control, showing where the card is and letting him
+  // say otherwise. A separate "next step" picker beside a label is what made
+  // the last recorded answer unchangeable.
   return (
     <td className="px-3 py-1">
-      <span className="flex items-center gap-2">
-        <span
-          className={flagged ? "font-medium text-amber-600 dark:text-amber-400" : ""}
-          title={line.delivery_status_at ? new Date(line.delivery_status_at).toLocaleString() : ""}
-        >
-          {label}
-        </span>
-        {!readOnly && next.length > 0 && (
-          <select
-            aria-label={t("buyer.colDelivery")}
-            className="max-w-[10rem] rounded border bg-transparent px-1 text-xs text-foreground"
-            value=""
-            onChange={(e) => { if (e.target.value) onMoveTo(line, e.target.value); }}
-          >
-            <option value="" className="bg-popover text-popover-foreground">→</option>
-            {next.map((status) => (
-              <option key={status} value={status} className="bg-popover text-popover-foreground">
-                {t(DELIVERY_LABEL[status] as never)}
-              </option>
-            ))}
-          </select>
-        )}
-      </span>
+      <select
+        aria-label={t("buyer.colDelivery")}
+        className={`max-w-[11rem] rounded border bg-transparent px-1 text-xs ${
+          flagged ? "border-amber-600 font-medium text-amber-600 dark:text-amber-400" : "text-foreground"
+        }`}
+        value={current ?? ""}
+        title={line.delivery_status_at ? new Date(line.delivery_status_at).toLocaleString() : ""}
+        onChange={(e) => onMoveTo(line, e.target.value)}
+      >
+        <option value="" disabled className="bg-popover text-popover-foreground">—</option>
+        {deliveryOptions(line.delivery_flow).map((status) => (
+          <option key={status} value={status} className="bg-popover text-popover-foreground">
+            {t(DELIVERY_LABEL[status] as never)}
+          </option>
+        ))}
+      </select>
     </td>
   );
 }
@@ -1435,10 +1436,10 @@ function DeliveryBulk({
   const bought = rows.filter((r) => isBuy(r.outcome));
   if (readOnly || bought.length === 0) return null;
 
-  // Everything any bought row in this shop could move to next, so one control
-  // covers a parcel whose rows are not all on the same step.
-  const options = [...new Set(bought.flatMap((r) => deliveryNext(r.delivery_flow, r.delivery_status)))];
-  if (options.length === 0) return null;
+  // Every status this shop's route allows, so one control covers a parcel
+  // whose rows are not all on the same step - and can put the whole shop back
+  // if he moved it by mistake.
+  const options = deliveryOptions(bought[0].delivery_flow);
 
   async function moveAll(status: string) {
     setBusy(true);

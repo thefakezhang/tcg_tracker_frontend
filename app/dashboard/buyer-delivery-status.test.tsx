@@ -64,24 +64,41 @@ describe("where the card is", () => {
       .queryByLabelText("buyer.colDelivery")).toBeNull();
   });
 
-  it("offers only the first step on a card just bought", async () => {
+  it("offers every status on the shop's route, so a mistake can be undone", async () => {
+    // It used to offer only the step that follows the current one, which made
+    // a mis-tap permanent - and from arrived or cancelled it offered nothing
+    // at all, so the control disappeared and the wrong answer stood for ever.
     render(<BuyerOrderView />);
     await screen.findByText("card-1");
-    expect(optionsOf(rowSelect())).toEqual(["ordered"]);
+    expect(optionsOf(rowSelect())).toEqual([
+      "ordered", "sent_to_curation", "curating", "curation_failed",
+      "sent_to_buyer", "arrived", "cancelled",
+    ]);
   });
 
-  it("sends a Snkrdunk card to authentication, never straight to him", async () => {
-    lines = [line({ delivery_status: "ordered" })];
+  it("still offers a way out of the states that used to be dead ends", async () => {
+    for (const stuck of ["arrived", "cancelled"]) {
+      cleanup();
+      lines = [line({ delivery_status: stuck })];
+      render(<BuyerOrderView />);
+      await screen.findByText("card-1");
+      expect(optionsOf(rowSelect()).length, stuck).toBeGreaterThan(1);
+      expect(rowSelect().value, stuck).toBe(stuck);
+    }
+  });
+
+  it("shows where the card is now, as the control itself", async () => {
+    lines = [line({ delivery_status: "curating" })];
     render(<BuyerOrderView />);
     await screen.findByText("card-1");
-    expect(optionsOf(rowSelect())).toEqual(["sent_to_curation", "cancelled"]);
+    expect(rowSelect().value).toBe("curating");
   });
 
-  it("sends a store card straight to him, with no authentication leg", async () => {
+  it("never offers a store card the authentication states it cannot reach", async () => {
     lines = [line({ source: "cardrush", delivery_flow: "direct", delivery_status: "ordered" })];
     render(<BuyerOrderView />);
     await screen.findByText("card-1");
-    expect(optionsOf(rowSelect())).toEqual(["sent_to_buyer", "cancelled"]);
+    expect(optionsOf(rowSelect())).toEqual(["ordered", "sent_to_buyer", "arrived", "cancelled"]);
   });
 
   it("records the step he picked against that one line", async () => {
@@ -97,30 +114,38 @@ describe("where the card is", () => {
 });
 
 describe("when authentication says the card is not what was listed", () => {
-  it("offers cancel or continue, out of the same field", async () => {
+  it("offers cancel and continue out of the same field", async () => {
     // The operator asked whether this needs its own column. It does not: a
     // flagged card is sitting at the authenticator, which is a place on the
-    // journey, so the decision is two transitions rather than a second field.
+    // journey, so the decision is two values of this field, not a second one.
     lines = [line({ delivery_status: "curation_failed" })];
     render(<BuyerOrderView />);
     await screen.findByText("card-1");
-    expect(optionsOf(rowSelect())).toEqual(["cancelled", "sent_to_buyer"]);
+    expect(rowSelect().value).toBe("curation_failed");
+    expect(optionsOf(rowSelect())).toContain("cancelled");
+    expect(optionsOf(rowSelect())).toContain("sent_to_buyer");
   });
 
   it("marks the flagged card so it is not lost among the rest", async () => {
     lines = [line({ delivery_status: "curation_failed" })];
     render(<BuyerOrderView />);
-    expect(await screen.findByText("buyer.delivCurationFailed")).toBeTruthy();
+    await screen.findByText("card-1");
+    expect(rowSelect().className).toMatch(/amber/);
   });
 
-  it("has nowhere further to go once it arrived or was cancelled", async () => {
+  it("keeps arrived and cancelled changeable, because he may have slipped", async () => {
+    // These two were the end of the road: no options, so the control was not
+    // rendered at all and the answer could never be taken back. That is what
+    // "I cannot update the delivery status after setting it" was.
     for (const status of ["arrived", "cancelled"]) {
       cleanup();
       lines = [line({ delivery_status: status })];
       render(<BuyerOrderView />);
       await screen.findByText("card-1");
-      expect(within(document.querySelector("tbody tr") as HTMLElement)
-        .queryByLabelText("buyer.colDelivery"), status).toBeNull();
+      const select = within(document.querySelector("tbody tr") as HTMLElement)
+        .getByLabelText("buyer.colDelivery") as HTMLSelectElement;
+      expect(select.value, status).toBe(status);
+      expect(optionsOf(select), status).toContain("ordered");
     }
   });
 });
@@ -161,9 +186,12 @@ describe("moving a whole shop", () => {
     render(<BuyerOrderView />);
     await screen.findByText("card-2");
     const bulk = await screen.findByLabelText("buyer.delivBulk") as HTMLSelectElement;
-    // Both rows' next steps are offered; the database skips whichever cannot.
-    expect(optionsOf(bulk).sort()).toEqual(
-      ["cancelled", "curation_failed", "sent_to_buyer", "sent_to_curation"]);
+    // Every status the route allows, so one control covers a parcel whose rows
+    // are not all on the same step - and can put the shop back if he slipped.
+    expect(optionsOf(bulk)).toEqual([
+      "ordered", "sent_to_curation", "curating", "curation_failed",
+      "sent_to_buyer", "arrived", "cancelled",
+    ]);
   });
 
   it("offers nothing for a shop where he bought nothing", async () => {
@@ -190,7 +218,7 @@ describe("after he has handed the list back", () => {
     });
     render(<BuyerOrderView />);
     await screen.findByText("card-1");
-    expect(optionsOf(rowSelect())).toEqual(["sent_to_curation", "cancelled"]);
+    expect(optionsOf(rowSelect())).toContain("sent_to_curation");
     expect(await screen.findByLabelText("buyer.delivBulk")).toBeTruthy();
   });
 
