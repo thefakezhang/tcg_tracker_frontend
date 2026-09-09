@@ -75,14 +75,7 @@ describe("Card Index responsive controls", () => {
       expect(button.className).toContain("w-full");
     }
 
-    const sealedResults = screen.getByTestId("sealed-index-results");
-    expect(sealedResults.className).toContain("overflow-hidden");
-    expect(sealedResults.querySelector("thead")?.className).toContain("hidden");
-    expect(sealedResults.querySelector("tbody")?.className).toContain("block");
-    expect(sealedResults.querySelector("tbody tr")?.className).toContain("block");
-
-    fireEvent.click(screen.getByRole("button", { name: "game.pokemon" }));
-
+    // Pokemon singles is the default catalog, so its controls render without a click.
     const search = screen.getByPlaceholderText("cardIndex.search");
     expect(search.className).toContain("h-11");
     expect(search.parentElement?.className).toContain("w-full");
@@ -94,5 +87,13 @@ describe("Card Index responsive controls", () => {
     expect(pokemonResults.querySelector("tbody")?.className).toContain("block");
     expect(pokemonResults.querySelector("tbody tr")?.className).toContain("block");
     expect(screen.getByText("12345678")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "game.pokemon_sealed" }));
+
+    const sealedResults = screen.getByTestId("sealed-index-results");
+    expect(sealedResults.className).toContain("overflow-hidden");
+    expect(sealedResults.querySelector("thead")?.className).toContain("hidden");
+    expect(sealedResults.querySelector("tbody")?.className).toContain("block");
+    expect(sealedResults.querySelector("tbody tr")?.className).toContain("block");
   });
 });

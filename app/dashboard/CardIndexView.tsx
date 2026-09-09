@@ -161,7 +161,7 @@ const PLATFORM_SHORT: Record<string, string> = {
 // it migrates.
 export default function CardIndexView() {
   const { t } = useTranslation();
-  const [catalog, setCatalog] = useState<Catalog>("pokemon_sealed");
+  const [catalog, setCatalog] = useState<Catalog>("pokemon");
   return (
     <div className="min-w-0 space-y-4">
       <div data-testid="catalog-index-header" className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
