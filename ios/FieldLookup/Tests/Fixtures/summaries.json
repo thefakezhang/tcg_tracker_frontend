@@ -15,7 +15,7 @@
     "best_sell_region": "JP",
     "best_sell_normalized": 80.0,
     "best_sell_kind": "ask",
-    "roi": 0.5,
+    "roi": 50.0,
     "updated_at": "2026-09-10T14:00:00.000Z"
   },
   {
@@ -34,7 +34,7 @@
     "best_sell_region": "NA",
     "best_sell_normalized": 90.0,
     "best_sell_kind": "ask",
-    "roi": 0.3333333333,
+    "roi": 33.3333333333,
     "updated_at": "2026-09-10T13:00:00Z"
   },
   {
@@ -53,7 +53,7 @@
     "best_sell_region": "JP",
     "best_sell_normalized": 40.0,
     "best_sell_kind": "ask",
-    "roi": 0.375,
+    "roi": 37.5,
     "updated_at": "2026-09-10T12:00:00.000Z"
   },
   {

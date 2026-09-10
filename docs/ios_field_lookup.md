@@ -36,6 +36,7 @@ Identity remains the returned catalog `card_id`, `card_uid`, set code, and print
 The summary contract uses `best_sell_*` as the entry ask and `best_buy_*` as the exit signal.
 The app renders the returned entry and exit regions in their actual order, so a winning `NA -> JP` row is not relabeled as `JP -> NA`.
 It labels the exit kind as sold comp, shop bid, valuation, ask, or unknown and explains when a number is not a current shop offer.
+The API stores ROI in percentage points, so a returned value of `50` renders as `50%` rather than being multiplied by another 100.
 ROI is displayed only when both summary legs exist.
 
 `owned_inventory_counts_v` is read independently for the returned card IDs.
@@ -76,7 +77,7 @@ The app presents a setup screen when a required public value is absent rather th
 
 ## Verification
 
-The path-scoped `iOS Field Lookup` workflow runs on a macOS runner with `contents: read`, generates the project, resolves the exact package version, and runs the application, unit, and UI targets on an iPhone 16 Pro simulator with signing disabled.
+The path-scoped `iOS Field Lookup` workflow runs on a macOS runner with `contents: read`, generates the project, resolves the exact package version, and runs the application, unit, and UI targets on an iPhone 16e simulator at exactly 390 by 844 logical points with signing disabled.
 Its fixtures cover both region directions, sold, bid, and valuation exits, a missing exit quote, a card with no summary, known-zero and unknown inventory, Japanese token search, cache freshness and expiry, user change, sign-out clearing, session expiry, offline recovery, and retry.
 XCUITests retain native phone screenshots for Japanese detail, freshness, stale offline data with unknown stock, retry recovery, expired-session recovery, and loading state.
 The workflow uploads the screenshots and complete `.xcresult` as a short-lived artifact and does not receive repository secrets.

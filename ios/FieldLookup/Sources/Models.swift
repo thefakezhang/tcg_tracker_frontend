@@ -164,8 +164,9 @@ struct CardLookupResult: Codable, Equatable, Identifiable, Sendable {
     }
 
     var roiLabel: String {
-        guard let roi, entry != nil, exit != nil else { return "ROI unavailable" }
-        return roi.formatted(.percent.precision(.fractionLength(1)))
+        guard let roi, roi.isFinite, entry != nil, exit != nil else { return "ROI unavailable" }
+        let percentagePoints = roi.formatted(.number.precision(.fractionLength(0 ... 2)))
+        return "\(percentagePoints)%"
     }
 }
 

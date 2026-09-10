@@ -16,7 +16,7 @@ final class FieldLookupUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["ピカチュウ"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["JP → NA"].exists)
         XCTAssertTrue(app.staticTexts["Sold comp"].exists)
-        XCTAssertTrue(app.staticTexts["50.0%"].exists)
+        XCTAssertTrue(app.staticTexts["50%"].exists)
         attachScreenshot(name: "field-lookup-japanese-detail", app: app)
 
         app.swipeUp()
@@ -78,7 +78,9 @@ final class FieldLookupUITests: XCTestCase {
             "-AppleLocale", "en_US",
         ]
         app.launch()
-        XCTAssertLessThanOrEqual(app.windows.firstMatch.frame.width, 440)
+        let window = app.windows.firstMatch.frame
+        XCTAssertEqual(window.width, 390, accuracy: 0.5)
+        XCTAssertEqual(window.height, 844, accuracy: 0.5)
         return app
     }
 

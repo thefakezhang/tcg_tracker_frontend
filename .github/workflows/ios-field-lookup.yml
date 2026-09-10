@@ -42,12 +42,12 @@ jobs:
             -project FieldLookup.xcodeproj \
             -scheme FieldLookup
 
-      - name: Build and test on iPhone
+      - name: Build and test on 390-point iPhone
         run: |
           xcodebuild test \
             -project FieldLookup.xcodeproj \
             -scheme FieldLookup \
-            -destination "platform=iOS Simulator,name=iPhone 16 Pro" \
+            -destination "platform=iOS Simulator,name=iPhone 16e" \
             -resultBundlePath "$RUNNER_TEMP/FieldLookup.xcresult" \
             CODE_SIGNING_ALLOWED=NO
 

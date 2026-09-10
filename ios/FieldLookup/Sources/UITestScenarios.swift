@@ -145,7 +145,7 @@ enum UITestFixtures {
             normalizedUSD: 120,
             kind: .sold
         ),
-        roi: 0.5,
+        roi: 50,
         summaryRefreshedAt: Date(timeIntervalSince1970: 1_788_888_600),
         inventory: .known(owned: 2, incoming: 1, consigned: 1, available: 1)
     )
