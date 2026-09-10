@@ -430,9 +430,12 @@ private struct PriceLegView: View {
 
     private var sourceAndRegion: String {
         guard let signal else { return "No price summary" }
-        let values = [signal.location, signal.region].compactMap { value in
-            guard let value, !value.isEmpty else { return nil }
-            return value
+        var values: [String] = []
+        if let location = signal.location, !location.isEmpty {
+            values.append(location)
+        }
+        if let region = signal.region, !region.isEmpty {
+            values.append(region)
         }
         return values.isEmpty ? "Source unavailable" : values.joined(separator: " · ")
     }

@@ -56,10 +56,11 @@ struct CardIdentity: Codable, Equatable, Identifiable, Sendable {
     }
 
     var identityLine: String {
-        [setCode, cardNumber].compactMap { value in
-            guard let value, !value.isEmpty else { return nil }
-            return value
-        }.joined(separator: " ")
+        var values = [setCode]
+        if let cardNumber, !cardNumber.isEmpty {
+            values.append(cardNumber)
+        }
+        return values.joined(separator: " ")
     }
 }
 
