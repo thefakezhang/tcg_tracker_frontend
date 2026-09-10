@@ -1,11 +1,17 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const rpc = vi.fn();
 // The view now translates; the tests assert behaviour, so the key is the label.
-vi.mock("@/lib/i18n", () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
+vi.mock("@/lib/i18n", () => ({
+  useTranslation: () => ({
+    language: "en",
+    t: (key: string, params?: Record<string, string | number>) =>
+      params ? `${key} ${Object.values(params).join(" ")}` : key,
+  }),
+}));
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({ rpc }),
 }));
@@ -32,6 +38,12 @@ function line(id: number, source: string) {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 beforeEach(() => {
   rpc.mockReset();
   rpc.mockImplementation((fn: string) => {
@@ -45,6 +57,55 @@ beforeEach(() => {
 });
 
 describe("BuyerOrderView", () => {
+  it("shows an assigned-list session error and retries the initial load", async () => {
+    let attempts = 0;
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") {
+        attempts += 1;
+        return attempts === 1
+          ? Promise.resolve({ data: null, error: { message: "session expired" } })
+          : Promise.resolve({ data: [plan], error: null });
+      }
+      if (fn === "buyer_plan_lines") {
+        return Promise.resolve({ data: [line(1, "cardrush")], error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    render(<BuyerOrderView />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("buyer.loadPlansFailed");
+    expect(alert.textContent).toContain("session expired");
+
+    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(await screen.findByText("cardrush")).toBeTruthy();
+    expect(attempts).toBe(2);
+  });
+
+  it("shows a transient assigned-list failure and retries the initial load", async () => {
+    let attempts = 0;
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") {
+        attempts += 1;
+        return attempts === 1
+          ? Promise.reject(new Error("network unavailable"))
+          : Promise.resolve({ data: [plan], error: null });
+      }
+      if (fn === "buyer_plan_lines") {
+        return Promise.resolve({ data: [line(1, "cardrush")], error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    render(<BuyerOrderView />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("network unavailable");
+
+    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(await screen.findByText("cardrush")).toBeTruthy();
+    expect(attempts).toBe(2);
+  });
+
   it("groups lines by source, because he checks out one shop at a time", async () => {
     render(<BuyerOrderView />);
     await screen.findByText("cardrush");
@@ -165,6 +226,27 @@ describe("BuyerOrderView", () => {
     // Both listings show the SHARED progress, so he can see 6 remain wherever
     // he buys them.
     expect(screen.getAllByText("14/20").length).toBe(2);
+    expect(screen.getAllByText("buyer.wantAcrossSources").length).toBe(2);
+  });
+
+  it("renders stale-price timing as visible accessible text", async () => {
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") return Promise.resolve({ data: [plan], error: null });
+      if (fn === "buyer_plan_lines") {
+        return Promise.resolve({ data: [{
+          ...line(1, "cardrush"),
+          source_observed_at: "2020-01-02T03:04:00Z",
+        }], error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+    render(<BuyerOrderView />);
+    await screen.findByText("cardrush");
+
+    const note = screen.getByRole("note");
+    expect(note.textContent).toContain("buyer.priceMayBeStale");
+    expect(note.textContent).toContain("buyer.priceObservedAt");
+    expect(note.hasAttribute("title")).toBe(false);
   });
 
 
@@ -215,6 +297,35 @@ describe("BuyerOrderView", () => {
     );
   });
 
+  it("does not queue a purchase after the shared want is already filled", async () => {
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") return Promise.resolve({ data: [plan], error: null });
+      if (fn === "buyer_plan_lines") {
+        return Promise.resolve({ data: [{
+          ...line(1, "cardrush"),
+          planned_quantity: 20,
+          want_id: 9,
+          want_max: 20,
+          want_filled: 20,
+        }], error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+    render(<BuyerOrderView />);
+    await screen.findByText("cardrush");
+    rpc.mockClear();
+
+    const outcome = document.querySelector<HTMLSelectElement>('[data-cell="1:outcome"]')!;
+    fireEvent.change(outcome, { target: { value: "purchased" } });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("buyer.wantAlreadyFilled");
+    expect(outcome.value).toBe("pending");
+    expect(document.querySelector<HTMLInputElement>('[data-cell="1:qty"]')!.value).toBe("");
+    await act(async () => { await new Promise((done) => setTimeout(done, 550)); });
+    expect(rpc).not.toHaveBeenCalledWith("buyer_record_result", expect.anything());
+  });
+
   it("explains the completeness rule in words he can act on", async () => {
     render(<BuyerOrderView />);
     await screen.findByText("cardrush");
@@ -244,5 +355,258 @@ describe("BuyerOrderView", () => {
 
     expect(document.querySelector<HTMLSelectElement>('[data-cell="1:outcome"]')!.disabled).toBe(true);
     expect(screen.getByText(/buyer.closed/)).toBeTruthy();
+  });
+
+  it("restores the condition returned by the scoped line reader", async () => {
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") return Promise.resolve({ data: [plan], error: null });
+      if (fn === "buyer_plan_lines") {
+        return Promise.resolve({
+          data: [{
+            ...line(1, "cardrush"),
+            outcome: "purchased",
+            purchased_quantity: 1,
+            unit_price_jpy: 1000,
+            condition_seen: "EX",
+          }],
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+    render(<BuyerOrderView />);
+    await screen.findByText("cardrush");
+    expect(document.querySelector<HTMLSelectElement>('[data-cell="1:condition"]')?.value).toBe("EX");
+  });
+
+  it("moves left and right across editable cells", async () => {
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") return Promise.resolve({ data: [plan], error: null });
+      if (fn === "buyer_plan_lines") {
+        return Promise.resolve({
+          data: [{
+            ...line(1, "cardrush"),
+            outcome: "purchased",
+            purchased_quantity: 1,
+            unit_price_jpy: 1000,
+          }],
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+    render(<BuyerOrderView />);
+    await screen.findByText("cardrush");
+    const quantity = document.querySelector<HTMLInputElement>('[data-cell="1:qty"]')!;
+    quantity.focus();
+    fireEvent.keyDown(quantity, { key: "ArrowRight" });
+    expect(document.activeElement?.getAttribute("data-cell")).toBe("1:price");
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+    expect(document.activeElement?.getAttribute("data-cell")).toBe("1:qty");
+  });
+
+  it("applies a valid multi-cell paste with one complete save", async () => {
+    render(<BuyerOrderView />);
+    await screen.findByText("cardrush");
+    rpc.mockClear();
+    const outcome = document.querySelector<HTMLSelectElement>('[data-cell="1:outcome"]')!;
+    fireEvent.paste(outcome, {
+      clipboardData: { getData: () => "Bought\t1\t1450\tLP\tchecked" },
+    });
+
+    await waitFor(() => expect(
+      document.querySelector<HTMLSelectElement>('[data-cell="1:condition"]')?.value,
+    ).toBe("LP"));
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith("buyer_record_result", {
+        p_plan_line_id: 1,
+        p_outcome: "purchased",
+        p_purchased_quantity: 1,
+        p_unit_price_jpy: 1450,
+        p_condition_seen: "LP",
+        p_note: "checked",
+      }),
+    );
+  });
+
+  it("explains an invalid multi-cell paste without changing or saving a cell", async () => {
+    render(<BuyerOrderView />);
+    await screen.findByText("cardrush");
+    rpc.mockClear();
+    const outcome = document.querySelector<HTMLSelectElement>('[data-cell="1:outcome"]')!;
+    fireEvent.paste(outcome, {
+      clipboardData: { getData: () => "Bought\t1\t1450\tEXCELLENT\tbad" },
+    });
+
+    expect((await screen.findByRole("alert")).textContent).toContain("buyer.paste.invalidCondition");
+    expect(outcome.value).toBe("pending");
+    expect(rpc).not.toHaveBeenCalledWith("buyer_record_result", expect.anything());
+  });
+
+  it("retains a failed edit and retries it from the row status", async () => {
+    let attempts = 0;
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") return Promise.resolve({ data: [plan], error: null });
+      if (fn === "buyer_plan_lines") {
+        return Promise.resolve({ data: [line(1, "cardrush")], error: null });
+      }
+      if (fn === "buyer_record_result") {
+        attempts += 1;
+        return Promise.resolve(attempts === 1
+          ? { data: null, error: { message: "temporary save failure" } }
+          : { data: null, error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+    render(<BuyerOrderView />);
+    await screen.findByText("cardrush");
+    const note = document.querySelector<HTMLInputElement>('[data-cell="1:note"]')!;
+    fireEvent.change(note, { target: { value: "keep this" } });
+    fireEvent.blur(note);
+
+    const retry = await screen.findByRole("button", { name: "buyer.retrySave" });
+    expect(note.value).toBe("keep this");
+    fireEvent.click(retry);
+    await waitFor(() => expect(attempts).toBe(2));
+    await waitFor(() => expect(screen.getAllByText("buyer.saved").length).toBeGreaterThan(0));
+  });
+
+  it("waits for pending edits before loading a different plan", async () => {
+    let resolveSave!: (value: { data: null; error: null }) => void;
+    const pendingSave = new Promise<{ data: null; error: null }>((resolve) => { resolveSave = resolve; });
+    const plans = [plan, { ...plan, plan_id: 8, name: "Next trip" }];
+    rpc.mockImplementation((fn: string, args?: { p_plan_id?: number }) => {
+      if (fn === "buyer_assigned_plans") return Promise.resolve({ data: plans, error: null });
+      if (fn === "buyer_plan_lines") {
+        return Promise.resolve({ data: [line(args?.p_plan_id ?? 1, "cardrush")], error: null });
+      }
+      if (fn === "buyer_record_result") return pendingSave;
+      return Promise.resolve({ data: [], error: null });
+    });
+    render(<BuyerOrderView />);
+    await screen.findByText("cardrush");
+    const note = document.querySelector<HTMLInputElement>('[data-cell="7:note"]')!;
+    fireEvent.change(note, { target: { value: "save before switch" } });
+    fireEvent.change(screen.getByLabelText("buyer.purchaseList"), { target: { value: "8" } });
+
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("buyer_record_result", expect.anything()));
+    expect(rpc).not.toHaveBeenCalledWith("buyer_plan_lines", { p_plan_id: 8 });
+    await act(async () => { resolveSave({ data: null, error: null }); await pendingSave; });
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("buyer_plan_lines", { p_plan_id: 8 }));
+  });
+
+  it("keeps totals, costs, and receipts on the plan whose lines are visible", async () => {
+    type RpcRows = { data: Array<Record<string, unknown>>; error: null };
+    const oldTotals = deferred<RpcRows>();
+    const oldCosts = deferred<RpcRows>();
+    const oldReceipts = deferred<RpcRows>();
+    const plans = [plan, { ...plan, plan_id: 8, name: "Next trip" }];
+    const total = (spent: number) => ({
+      source: "shared-shop", total_lines: 1, recorded_lines: 1, purchased_lines: 1,
+      cards_bought: 1, card_value_jpy: spent, shipping_jpy: 0,
+      other_costs_jpy: 0, spent_total_jpy: spent, agent_payout_jpy: 100,
+    });
+    rpc.mockImplementation((fn: string, args?: { p_plan_id?: number }) => {
+      const planId = args?.p_plan_id;
+      if (fn === "buyer_assigned_plans") return Promise.resolve({ data: plans, error: null });
+      if (fn === "buyer_plan_lines") {
+        return Promise.resolve({ data: [line(planId === 8 ? 81 : 71, "shared-shop")], error: null });
+      }
+      if (fn === "buyer_source_totals") {
+        return planId === 7
+          ? oldTotals.promise
+          : Promise.resolve({ data: [total(2222)], error: null });
+      }
+      if (fn === "buyer_source_costs") {
+        return planId === 7
+          ? oldCosts.promise
+          : Promise.resolve({
+              data: [{ source: "shared-shop", kind: "shipping", amount_jpy: 222, note: null }],
+              error: null,
+            });
+      }
+      if (fn === "buyer_source_receipts") {
+        return planId === 7
+          ? oldReceipts.promise
+          : Promise.resolve({
+              data: [{
+                receipt_id: 8, source: "shared-shop", storage_path: "new/receipt",
+                original_name: "new.pdf", uploaded_at: "2026-09-10T00:00:00Z",
+              }],
+              error: null,
+            });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    render(<BuyerOrderView />);
+    await waitFor(() => expect(document.querySelector('[data-cell="71:note"]')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("buyer.purchaseList"), { target: { value: "8" } });
+    await waitFor(() => expect(document.querySelector('[data-cell="81:note"]')).toBeTruthy());
+    const header = screen.getByRole("heading", { name: "shared-shop" }).closest("header")!;
+    await waitFor(() => expect(within(header).getByText("¥2,222")).toBeTruthy());
+    expect(within(header).getByRole("button", { name: /buyer\.costShipping ¥222/ })).toBeTruthy();
+    expect(within(header).getByText("buyer.receiptCount 1")).toBeTruthy();
+
+    await act(async () => {
+      oldTotals.resolve({ data: [total(1111)], error: null });
+      oldCosts.resolve({
+        data: [{ source: "shared-shop", kind: "shipping", amount_jpy: 111, note: null }],
+        error: null,
+      });
+      oldReceipts.resolve({
+        data: [
+          { receipt_id: 71, source: "shared-shop", storage_path: "old/one", original_name: "one.pdf", uploaded_at: "2026-09-09T00:00:00Z" },
+          { receipt_id: 72, source: "shared-shop", storage_path: "old/two", original_name: "two.pdf", uploaded_at: "2026-09-09T00:00:00Z" },
+        ],
+        error: null,
+      });
+      await Promise.all([oldTotals.promise, oldCosts.promise, oldReceipts.promise]);
+    });
+
+    expect(within(header).getByText("¥2,222")).toBeTruthy();
+    expect(within(header).queryByText("¥1,111")).toBeNull();
+    expect(within(header).getByRole("button", { name: /buyer\.costShipping ¥222/ })).toBeTruthy();
+    expect(within(header).queryByRole("button", { name: /buyer\.costShipping ¥111/ })).toBeNull();
+    expect(within(header).getByText("buyer.receiptCount 1")).toBeTruthy();
+    expect(within(header).queryByText("buyer.receiptCount 2")).toBeNull();
+  });
+
+  it("does not refresh the prior plan after its flushed autosave succeeds", async () => {
+    const plans = [plan, { ...plan, plan_id: 8, name: "Next trip" }];
+    rpc.mockImplementation((fn: string, args?: { p_plan_id?: number }) => {
+      if (fn === "buyer_assigned_plans") return Promise.resolve({ data: plans, error: null });
+      if (fn === "buyer_plan_lines") {
+        return Promise.resolve({ data: [line(args?.p_plan_id ?? 7, "shared-shop")], error: null });
+      }
+      if (fn === "buyer_source_totals") {
+        return Promise.resolve({ data: [{
+          source: "shared-shop", total_lines: 1, recorded_lines: 0, purchased_lines: 0,
+          cards_bought: 0, card_value_jpy: 0, shipping_jpy: 0,
+          other_costs_jpy: 0, spent_total_jpy: args?.p_plan_id === 8 ? 800 : 700,
+          agent_payout_jpy: 0,
+        }], error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    render(<BuyerOrderView />);
+    await waitFor(() => expect(document.querySelector('[data-cell="7:note"]')).toBeTruthy());
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("buyer_source_totals", { p_plan_id: 7 }));
+    rpc.mockClear();
+
+    fireEvent.change(document.querySelector('[data-cell="7:note"]')!, {
+      target: { value: "save before switching" },
+    });
+    fireEvent.change(screen.getByLabelText("buyer.purchaseList"), { target: { value: "8" } });
+    await waitFor(() => expect(document.querySelector('[data-cell="8:note"]')).toBeTruthy());
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("buyer_source_totals", { p_plan_id: 8 }));
+    await act(async () => { await new Promise((done) => setTimeout(done, 700)); });
+
+    const totalPlanIds = rpc.mock.calls
+      .filter(([fn]) => fn === "buyer_source_totals")
+      .map(([, args]) => args.p_plan_id);
+    expect(totalPlanIds).toContain(8);
+    expect(totalPlanIds).not.toContain(7);
   });
 });

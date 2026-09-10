@@ -2,10 +2,26 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { formatDateTime } from "@/lib/dates";
 import { formatMutationError } from "@/lib/mutation-error";
 import { readSheetRows, toSheetRows, type SheetUpdate } from "@/lib/buyer-sheet";
+import {
+  useBuyerResultAutosave,
+  type BuyerResultField,
+  type BuyerSaveState,
+} from "@/lib/buyer-result-autosave";
+import {
+  BUYER_CONDITIONS,
+  BUYER_GRID_COLUMNS,
+  isPurchaseOutcome,
+  planBuyerGridPaste,
+  prepareBuyerResult,
+  type BuyerGridColumn,
+} from "@/lib/buyer-result-grid";
 import { planState, planStateKey } from "@/lib/plan-state";
 import { useTranslation } from "@/lib/i18n";
+import en from "@/lib/i18n/en";
+import ja from "@/lib/i18n/ja";
 
 // The buying agent's whole screen: the plans assigned to him, and a grid for
 // recording what he actually bought.
@@ -87,8 +103,7 @@ const DELIVERY_LABEL: Record<string, string> = {
 // Mirrors purchase_outcome_is_buy() in the database. Two outcomes mean he
 // bought the card: a plain purchase, and one where the price had moved and he
 // bought it anyway.
-export const isBuy = (outcome: string) =>
-  outcome === "purchased" || outcome === "price_changed_bought";
+export const isBuy = isPurchaseOutcome;
 
 const OUTCOMES = [
   { value: "pending", key: "buyer.outcomePending" },
@@ -102,40 +117,62 @@ const OUTCOMES = [
 
 // The columns a keyboard user moves through. Outcome first, because it is the
 // answer to "did you get it" and decides whether the rest applies.
-const COLUMNS = ["outcome", "qty", "price", "condition", "note"] as const;
-type Column = (typeof COLUMNS)[number];
+const COLUMNS = BUYER_GRID_COLUMNS;
+type Column = BuyerGridColumn;
+
+const PASTE_ERROR_KEY = {
+  frozen: "buyer.paste.frozen",
+  "outside-grid": "buyer.paste.outsideGrid",
+  "not-rectangle": "buyer.paste.notRectangle",
+  "invalid-outcome": "buyer.paste.invalidOutcome",
+  "invalid-number": "buyer.paste.invalidNumber",
+  "invalid-condition": "buyer.paste.invalidCondition",
+  "incomplete-purchase": "buyer.paste.incompletePurchase",
+} as const;
+
+type PlanResource<Row> = { planId: number; rows: Row[] };
 
 export default function BuyerOrderView() {
   const { t } = useTranslation();
   const [plans, setPlans] = useState<Plan[] | null>(null);
   const [activePlan, setActivePlan] = useState<number | null>(null);
-  const [lines, setLines] = useState<Line[] | null>(null);
+  const activePlanRef = useRef(activePlan);
+  activePlanRef.current = activePlan;
   const [error, setError] = useState<string | null>(null);
-  const [savingCells, setSavingCells] = useState<Set<string>>(new Set());
-  const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [receiptResult, setReceiptResult] = useState<PlanResource<Receipt> | null>(null);
   const [upstreamChanged, setUpstreamChanged] = useState(false);
-  const [totals, setTotals] = useState<SourceTotals[]>([]);
-  const [costs, setCosts] = useState<ShopCost[]>([]);
+  const [totalsResult, setTotalsResult] = useState<PlanResource<SourceTotals> | null>(null);
+  const [costResult, setCostResult] = useState<PlanResource<ShopCost> | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [switchingPlan, setSwitchingPlan] = useState(false);
+  const [loadingPlanId, setLoadingPlanId] = useState<number | null>(null);
+  const receipts = receiptResult?.planId === activePlan ? receiptResult.rows : [];
+  const totals = totalsResult?.planId === activePlan ? totalsResult.rows : [];
+  const costs = costResult?.planId === activePlan ? costResult.rows : [];
 
   const loadPlans = useCallback(async () => {
-    const { data, error } = await createClient().rpc("buyer_assigned_plans");
-    if (error) { setError(formatMutationError(error)); return; }
+    setError(null);
+    let response: { data: unknown; error: { message?: string } | null };
+    try {
+      response = await createClient().rpc("buyer_assigned_plans");
+    } catch (caught) {
+      setError(formatMutationError(caught));
+      return;
+    }
+    if (response.error) { setError(formatMutationError(response.error)); return; }
+    const { data } = response;
     const rows = (data ?? []) as Plan[];
     setPlans(rows);
     setActivePlan((current) =>
       current ?? rows.find((r) => !r.finalized)?.plan_id ?? rows[0]?.plan_id ?? null);
   }, []);
 
-  const loadLines = useCallback(async (planId: number) => {
-    const { data, error } = await createClient().rpc("buyer_plan_lines", { p_plan_id: planId });
-    if (error) { setError(formatMutationError(error)); return; }
-    setLines((data ?? []) as Line[]);
-  }, []);
-
+  const totalsLoadToken = useRef(0);
   const loadTotals = useCallback(async (planId: number) => {
+    const token = ++totalsLoadToken.current;
     const { data } = await createClient().rpc("buyer_source_totals", { p_plan_id: planId });
-    setTotals((data ?? []) as SourceTotals[]);
+    if (token !== totalsLoadToken.current || activePlanRef.current !== planId) return;
+    setTotalsResult({ planId, rows: (data ?? []) as SourceTotals[] });
   }, []);
 
   // He tabs through a shelf of rows in a few seconds. Refetching the totals on
@@ -144,9 +181,74 @@ export default function BuyerOrderView() {
   const totalsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleTotals = useCallback((planId: number) => {
     if (totalsTimer.current) clearTimeout(totalsTimer.current);
-    totalsTimer.current = setTimeout(() => void loadTotals(planId), 600);
+    totalsTimer.current = setTimeout(() => {
+      totalsTimer.current = null;
+      if (activePlanRef.current === planId) void loadTotals(planId);
+    }, 600);
   }, [loadTotals]);
+  useEffect(() => {
+    if (!totalsTimer.current) return;
+    clearTimeout(totalsTimer.current);
+    totalsTimer.current = null;
+  }, [activePlan]);
   useEffect(() => () => { if (totalsTimer.current) clearTimeout(totalsTimer.current); }, []);
+
+  const persistResult = useCallback(async (next: Line) => {
+    if (isBuy(next.outcome) && (next.purchased_quantity <= 0 || next.unit_price_jpy == null)) {
+      return { ok: false as const, message: t("buyer.needQtyAndPrice"), terminal: false };
+    }
+    let rpcError: { message?: string } | null = null;
+    try {
+      ({ error: rpcError } = await createClient().rpc("buyer_record_result", {
+        p_plan_line_id: next.plan_line_id,
+        p_outcome: next.outcome,
+        p_purchased_quantity: isBuy(next.outcome) ? next.purchased_quantity : 0,
+        p_unit_price_jpy: isBuy(next.outcome) ? next.unit_price_jpy : null,
+        p_condition_seen: next.condition_seen,
+        p_note: next.note,
+      }));
+    } catch (caught) {
+      return {
+        ok: false as const,
+        message: formatMutationError(caught),
+        terminal: false,
+      };
+    }
+    if (rpcError) {
+      const raw = formatMutationError(rpcError);
+      return {
+        ok: false as const,
+        message: raw.includes("purchase_complete") ? t("buyer.needQtyAndPrice") : raw,
+        terminal: /finalized|handed back|no assigned plan line|not assigned/i.test(raw),
+      };
+    }
+    if (activePlan != null) scheduleTotals(activePlan);
+    return { ok: true as const };
+  }, [activePlan, scheduleTotals, t]);
+
+  const {
+    rows: lines,
+    states: saveStates,
+    replaceRows,
+    queue: queueResult,
+    flush: flushResult,
+    flushAll: flushAllResults,
+    retry: retryResult,
+    revert: revertResult,
+    currentRow,
+    confirmedRow,
+  } = useBuyerResultAutosave<Line>({ persist: persistResult });
+
+  const lineLoadToken = useRef(0);
+  const loadLines = useCallback(async (planId: number) => {
+    const token = ++lineLoadToken.current;
+    setLoadingPlanId(planId);
+    const { data, error: rpcError } = await createClient().rpc("buyer_plan_lines", { p_plan_id: planId });
+    if (token !== lineLoadToken.current) return;
+    setLoadingPlanId(null);
+    if (rpcError) { setError(formatMutationError(rpcError)); return; }
+    replaceRows((data ?? []) as Line[]);
+  }, [replaceRows]);
 
   const [handBackBusy, setHandBackBusy] = useState(false);
 
@@ -155,13 +257,17 @@ export default function BuyerOrderView() {
     // Confirm only when he is leaving work behind. A shut shop is a real
     // reason to finish early, so this asks rather than refuses.
     if (open > 0 && !window.confirm(t("buyer.confirmHandBack", { open: String(open) }))) return;
+    if (!(await flushAllResults())) {
+      setError(t("buyer.resolveSaveBeforeLeaving"));
+      return;
+    }
     setHandBackBusy(true);
     const { error } = await createClient().rpc("buyer_hand_back_plan", { p_plan_id: p.plan_id });
     setHandBackBusy(false);
     if (error) { setError(formatMutationError(error)); return; }
     setError(null);
     void loadPlans();
-  }, [loadPlans, t]);
+  }, [flushAllResults, loadPlans, t]);
 
   const reopen = useCallback(async (p: Plan) => {
     setHandBackBusy(true);
@@ -182,14 +288,20 @@ export default function BuyerOrderView() {
     if (activePlan != null) void loadLines(activePlan);
   }, [activePlan, loadLines]);
 
+  const costsLoadToken = useRef(0);
   const loadCosts = useCallback(async (planId: number) => {
+    const token = ++costsLoadToken.current;
     const { data } = await createClient().rpc("buyer_source_costs", { p_plan_id: planId });
-    setCosts((data ?? []) as ShopCost[]);
+    if (token !== costsLoadToken.current || activePlanRef.current !== planId) return;
+    setCostResult({ planId, rows: (data ?? []) as ShopCost[] });
   }, []);
 
+  const receiptsLoadToken = useRef(0);
   const loadReceipts = useCallback(async (planId: number) => {
+    const token = ++receiptsLoadToken.current;
     const { data } = await createClient().rpc("buyer_source_receipts", { p_plan_id: planId });
-    setReceipts((data ?? []) as Receipt[]);
+    if (token !== receiptsLoadToken.current || activePlanRef.current !== planId) return;
+    setReceiptResult({ planId, rows: (data ?? []) as Receipt[] });
   }, []);
 
   useEffect(() => { void loadPlans(); }, [loadPlans]);
@@ -293,83 +405,155 @@ export default function BuyerOrderView() {
   // order he is actually looking at rather than the order the data arrived.
   const ordered = useMemo(() => bySource.flatMap(([, rows]) => rows), [bySource]);
 
-  const save = useCallback(
-    async (line: Line, patch: Partial<Line>) => {
-      let next = { ...line, ...patch };
+  const purchaseDefaults = useCallback((line: Line) => {
+    const remaining = line.want_max != null
+      ? Math.max(0, line.want_max - (line.want_filled ?? 0) + (line.purchased_quantity ?? 0))
+      : line.planned_quantity;
+    return {
+      plannedQuantity: line.want_max != null
+        ? Math.min(line.planned_quantity, remaining)
+        : Math.max(1, line.planned_quantity),
+      askingPriceJpy: line.currency === "JPY" && line.unit_price_orig != null
+        ? Math.round(line.unit_price_orig)
+        : null,
+    };
+  }, []);
 
-      // Marking a line "Bought" is the common case, and it used to fail: the
-      // database (correctly) requires a purchase to carry a quantity AND a
-      // price, but the natural order is to choose the outcome first and type
-      // the numbers after - so the first save was always invalid.
-      //
-      // Selecting Bought now fills in what we already know: the quantity still
-      // wanted (capped by what this listing was planned for) and the asking
-      // price. That makes the record valid immediately and turns the common
-      // line into one click instead of three fields.
-      if (isBuy(next.outcome)) {
-        const remaining =
-          next.want_max != null
-            ? Math.max(0, next.want_max - (next.want_filled ?? 0) + (line.purchased_quantity ?? 0))
-            : next.planned_quantity;
-        if (!next.purchased_quantity || next.purchased_quantity <= 0) {
-          next = { ...next, purchased_quantity: Math.min(next.planned_quantity, remaining || next.planned_quantity) || 1 };
-        }
-        if (next.unit_price_jpy == null && next.currency === "JPY" && next.unit_price_orig != null) {
-          next = { ...next, unit_price_jpy: Math.round(next.unit_price_orig) };
-        }
-      }
-      const cell = String(line.plan_line_id);
-      setSavingCells((s) => new Set(s).add(cell));
-      // Optimistic: he keeps typing while this lands. A failure restores the
-      // row and says why, rather than silently dropping what he entered.
-      setLines((rows) => rows?.map((r) => (r.plan_line_id === line.plan_line_id ? next : r)) ?? rows);
-      const { error } = await createClient().rpc("buyer_record_result", {
-        p_plan_line_id: line.plan_line_id,
-        p_outcome: next.outcome,
-        p_purchased_quantity: isBuy(next.outcome) ? next.purchased_quantity : 0,
-        p_unit_price_jpy: isBuy(next.outcome) ? next.unit_price_jpy : null,
-        p_condition_seen: next.condition_seen,
-        p_note: next.note,
-      });
-      setSavingCells((s) => { const c = new Set(s); c.delete(cell); return c; });
-      if (error) {
-        const raw = formatMutationError(error);
-        setError(
-          raw.includes("purchase_complete")
-            ? t("buyer.needQtyAndPrice")
-            : raw,
-        );
-        setLines((rows) => rows?.map((r) => (r.plan_line_id === line.plan_line_id ? line : r)) ?? rows);
-        return false;
-      }
+  const editResult = useCallback((
+    line: Line,
+    patch: Partial<Line>,
+    fields: BuyerResultField[],
+  ) => {
+    const prior = currentRow(line.plan_line_id) ?? line;
+    const defaults = purchaseDefaults(prior);
+    if (
+      typeof patch.outcome === "string"
+      && isBuy(patch.outcome)
+      && !isBuy(prior.outcome)
+      && defaults.plannedQuantity === 0
+    ) {
+      setError(t("buyer.wantAlreadyFilled"));
+      return;
+    }
+    const next = prepareBuyerResult(prior, patch, defaults);
+    queueResult(prior, next, fields);
+    setError(null);
+  }, [currentRow, purchaseDefaults, queueResult, t]);
+
+  const outcomeAliases = useMemo(() => {
+    const aliases = new Map<string, string>();
+    for (const outcome of OUTCOMES) {
+      aliases.set(outcome.value.toLocaleLowerCase(), outcome.value);
+      aliases.set(t(outcome.key).trim().toLocaleLowerCase(), outcome.value);
+      aliases.set(en[outcome.key].trim().toLocaleLowerCase(), outcome.value);
+      aliases.set(ja[outcome.key].trim().toLocaleLowerCase(), outcome.value);
+    }
+    aliases.set("", "pending");
+    aliases.set("-", "pending");
+    aliases.set("—", "pending");
+    return aliases;
+  }, [t]);
+
+  const pasteResult = useCallback((
+    line: Line,
+    column: Column,
+    event: React.ClipboardEvent<HTMLElement>,
+  ) => {
+    const text = event.clipboardData.getData("text/plain");
+    if (!/[\t\r\n]/.test(text)) return;
+    event.preventDefault();
+    const planned = planBuyerGridPaste({
+      rows: ordered,
+      startLineId: line.plan_line_id,
+      startColumn: column,
+      text,
+      frozen: readOnly,
+      outcomeAliases,
+      defaultsForRow: purchaseDefaults,
+    });
+    if (!planned.ok) {
+      setError(t(PASTE_ERROR_KEY[planned.reason]));
+      return;
+    }
+    for (const edit of planned.edits) {
+      queueResult(edit.prior, edit.next, edit.fields);
+    }
+    setError(null);
+  }, [ordered, outcomeAliases, purchaseDefaults, queueResult, readOnly, t]);
+
+  const switchPlan = useCallback(async (next: number) => {
+    if (next === activePlan || switchingPlan) return;
+    setSwitchingPlan(true);
+    const saved = await flushAllResults();
+    if (saved) {
+      lineLoadToken.current += 1;
+      replaceRows([]);
+      setLoadingPlanId(next);
       setError(null);
-      // What he just bought is part of his spend and his fee.
-      if (activePlan != null) scheduleTotals(activePlan);
-      return true;
-    },
-    [activePlan, scheduleTotals],
-  );
+      setNotice(null);
+      setUpstreamChanged(false);
+      setActivePlan(next);
+    } else {
+      setError(t("buyer.resolveSaveBeforeLeaving"));
+    }
+    setSwitchingPlan(false);
+  }, [activePlan, flushAllResults, replaceRows, switchingPlan, t]);
 
-  if (plans && plans.length === 0) {
+  if (plans === null && error) {
     return (
-      <div className="p-8 text-sm text-muted-foreground">
-        No purchase lists are assigned to you yet.
+      <section
+        role="alert"
+        className="mx-auto my-12 max-w-md rounded-lg border border-destructive/50 p-6 text-center"
+      >
+        <h2 className="font-semibold">{t("buyer.loadPlansFailed")}</h2>
+        <p className="mt-2 break-words text-sm text-destructive">{error}</p>
+        <p className="mt-2 text-sm text-muted-foreground">{t("buyer.loadPlansFailedHelp")}</p>
+        <button
+          type="button"
+          className="mt-4 min-h-11 rounded border px-4 font-medium hover:bg-accent"
+          onClick={() => void loadPlans()}
+        >
+          {t("common.retry")}
+        </button>
+      </section>
+    );
+  }
+
+  if (plans === null) {
+    return (
+      <div role="status" className="p-8 text-center text-sm text-muted-foreground">
+        {t("buyer.loading")}
       </div>
     );
   }
 
+  if (plans.length === 0) {
+    return (
+      <section
+        data-testid="buyer-empty-state"
+        className="mx-auto my-12 max-w-md rounded-lg border border-dashed p-6 text-center"
+      >
+        <h2 className="font-semibold">{t("buyer.noAssignedPlans")}</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {t("buyer.noAssignedPlansHelp")}
+        </p>
+      </section>
+    );
+  }
+
   return (
-    <div className="flex flex-col gap-4 p-4">
+    <div className="flex min-w-0 flex-col gap-4 p-3 sm:p-4">
       {pickable.length > 1 && (
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <label htmlFor="buyer-plan" className="text-sm text-muted-foreground">
             {t("buyer.purchaseList")}
           </label>
           <select
             id="buyer-plan"
-            className="rounded-md border bg-background px-2 py-1 text-sm"
+            className="min-h-11 min-w-0 flex-1 rounded-md border bg-background px-2 py-1 text-sm sm:min-h-0 sm:flex-none"
             value={activePlan ?? ""}
-            onChange={(e) => setActivePlan(Number(e.target.value))}
+            disabled={switchingPlan}
+            onChange={(e) => void switchPlan(Number(e.target.value))}
           >
             {pickable.map((p) => (
               <option key={p.plan_id} value={p.plan_id}>
@@ -378,12 +562,17 @@ export default function BuyerOrderView() {
               </option>
             ))}
           </select>
+          {switchingPlan && (
+            <span role="status" className="text-xs text-muted-foreground">
+              {t("buyer.savingBeforeSwitch")}
+            </span>
+          )}
         </div>
       )}
 
       {plan && (
-        <div className="flex items-baseline gap-3">
-          <h2 className="text-lg font-semibold">{plan.name}</h2>
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <h2 className="min-w-0 break-words text-lg font-semibold">{plan.name}</h2>
           <span className="text-sm text-muted-foreground">
             {t("buyer.recordedOf", { done: String(plan.recorded_count), total: String(plan.line_count) })}
           </span>
@@ -439,12 +628,25 @@ export default function BuyerOrderView() {
         </div>
       )}
 
+      {loadingPlanId === activePlan && (
+        <div role="status" className="rounded border border-dashed p-6 text-center text-sm text-muted-foreground">
+          {t("buyer.loadingLines")}
+        </div>
+      )}
+
+      {loadingPlanId !== activePlan && plan && lines?.length === 0 && (
+        <section data-testid="buyer-plan-empty-state" className="rounded border border-dashed p-6 text-center">
+          <h3 className="font-medium">{t("buyer.planHasNoLines")}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">{t("buyer.planHasNoLinesHelp")}</p>
+        </section>
+      )}
+
       {upstreamChanged && (
         <div className="mb-3 flex items-center gap-3 rounded-md border border-amber-500 bg-amber-500/10 px-3 py-2 text-sm">
           <span className="flex-1">{t("buyer.listChanged")}</span>
           <button
             type="button"
-            className="rounded border border-amber-600 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300"
+            className="min-h-11 rounded border border-amber-600 px-3 font-medium text-amber-700 dark:text-amber-300 sm:min-h-0 sm:px-2 sm:py-0.5"
             onClick={() => {
               setUpstreamChanged(false);
               if (activePlan != null) { void loadLines(activePlan); void loadReceipts(activePlan); }
@@ -467,10 +669,10 @@ export default function BuyerOrderView() {
       )}
 
       {bySource.map(([source, rows]) => (
-        <section key={source} className="rounded border">
+        <section key={source} className="min-w-0 overflow-hidden rounded border">
           <header className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
             <h3 className="font-medium">{source}</h3>
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 sm:gap-3">
               <span className="text-xs text-muted-foreground">
                 {t("buyer.boughtOfLines", { bought: String(rows.filter((r) => isBuy(r.outcome)).length), lines: String(rows.length) })}
               </span>
@@ -509,8 +711,9 @@ export default function BuyerOrderView() {
               />
             </div>
           </header>
-          <table className="w-full text-sm">
-            <thead className="text-xs text-muted-foreground">
+          <table className="block w-full text-sm md:table md:table-fixed">
+            <caption className="sr-only">{t("buyer.resultsForShop", { shop: source })}</caption>
+            <thead className="hidden text-xs text-muted-foreground md:table-header-group">
               <tr>
                 {/* Position down the shop, so he can say where he is. */}
                 <th className="w-8 px-2 py-1 text-right font-normal">#</th>
@@ -527,21 +730,28 @@ export default function BuyerOrderView() {
                 <th className="px-3 py-1 text-right font-normal">{t("buyer.colQty")}</th>
                 <th className="px-3 py-1 text-right font-normal">{t("buyer.colPaid")}</th>
                 <th className="px-3 py-1 text-right font-normal">{t("buyer.colSubtotal")}</th>
+                <th className="px-3 py-1 text-left font-normal">{t("buyer.colCondition")}</th>
                 <th className="px-3 py-1 text-left font-normal">{t("buyer.colDelivery")}</th>
                 <th className="px-3 py-1 text-left font-normal">{t("buyer.colNote")}</th>
+                <th className="px-3 py-1 text-left font-normal">{t("buyer.colSave")}</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="block md:table-row-group">
               {rows.map((line, i) => (
                 <Row
                   key={line.plan_line_id}
                   line={line}
+                  confirmedLine={confirmedRow(line.plan_line_id) ?? line}
                   position={i + 1}
                   readOnly={readOnly}
                   deliveryLocked={deliveryLocked}
-                  saving={savingCells.has(String(line.plan_line_id))}
-                  onSave={save}
-                  onMove={(dir, column) => moveFocus(ordered, line, dir, column)}
+                  saveState={saveStates[line.plan_line_id]}
+                  onEdit={editResult}
+                  onFlush={() => void flushResult(line.plan_line_id)}
+                  onPaste={pasteResult}
+                  onRetry={() => retryResult(line.plan_line_id)}
+                  onCancel={() => revertResult(line.plan_line_id)}
+                  onMove={(direction, column) => moveFocus(ordered, line, direction, column)}
                   onDeliver={setDelivery}
                 />
               ))}
@@ -555,44 +765,76 @@ export default function BuyerOrderView() {
 
 // Focus moves by (row, column) rather than DOM order, so Enter goes DOWN the
 // column the way it does in a spreadsheet instead of jumping to the next cell.
-function moveFocus(ordered: Line[], from: Line, dir: -1 | 1, column: Column) {
-  const index = ordered.findIndex((l) => l.plan_line_id === from.plan_line_id);
-  const target = ordered[index + dir];
-  if (!target) return;
-  const el = document.querySelector<HTMLElement>(
-    `[data-cell="${target.plan_line_id}:${column}"]`,
-  );
-  el?.focus();
-  if (el instanceof HTMLInputElement) el.select();
+type GridDirection = "up" | "down" | "left" | "right";
+
+function focusGridCell(lineId: number, column: Column): boolean {
+  const element = document.querySelector<HTMLElement>(`[data-cell="${lineId}:${column}"]`);
+  if (!element || element.matches(":disabled")) return false;
+  element.focus();
+  if (element instanceof HTMLInputElement) element.select();
+  return true;
+}
+
+function moveFocus(ordered: Line[], from: Line, direction: GridDirection, column: Column) {
+  const rowIndex = ordered.findIndex((line) => line.plan_line_id === from.plan_line_id);
+  const columnIndex = COLUMNS.indexOf(column);
+  if (rowIndex < 0 || columnIndex < 0) return;
+
+  if (direction === "up" || direction === "down") {
+    const step = direction === "up" ? -1 : 1;
+    for (let row = rowIndex + step; row >= 0 && row < ordered.length; row += step) {
+      if (focusGridCell(ordered[row].plan_line_id, column)) return;
+    }
+    return;
+  }
+
+  const step = direction === "left" ? -1 : 1;
+  const total = ordered.length * COLUMNS.length;
+  for (
+    let index = rowIndex * COLUMNS.length + columnIndex + step;
+    index >= 0 && index < total;
+    index += step
+  ) {
+    const targetRow = Math.floor(index / COLUMNS.length);
+    const targetColumn = COLUMNS[index % COLUMNS.length];
+    if (focusGridCell(ordered[targetRow].plan_line_id, targetColumn)) return;
+  }
 }
 
 function Row({
-  line, position, readOnly, deliveryLocked, saving, onSave, onMove, onDeliver,
+  line, confirmedLine, position, readOnly, deliveryLocked, saveState, onEdit,
+  onFlush, onPaste, onRetry, onCancel, onMove, onDeliver,
 }: {
   line: Line;
+  confirmedLine: Line;
   position: number;
   deliveryLocked: boolean;
   onDeliver: (line: Line, status: string) => void;
   readOnly: boolean;
-  saving: boolean;
-  onSave: (line: Line, patch: Partial<Line>) => Promise<boolean>;
-  onMove: (dir: -1 | 1, column: Column) => void;
+  saveState?: BuyerSaveState;
+  onEdit: (line: Line, patch: Partial<Line>, fields: BuyerResultField[]) => void;
+  onFlush: () => void;
+  onPaste: (line: Line, column: Column, event: React.ClipboardEvent<HTMLElement>) => void;
+  onRetry: () => void;
+  onCancel: () => void;
+  onMove: (direction: GridDirection, column: Column) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const purchased = isBuy(line.outcome);
   const stale = line.source_observed_at
     ? Date.now() - new Date(line.source_observed_at).getTime() > 36 * 3600 * 1000
     : false;
+  const observedAt = formatDateTime(line.source_observed_at, language);
 
   return (
-    <tr className="border-t align-middle">
+    <tr className="grid grid-cols-2 gap-x-3 gap-y-2 border-t p-3 align-middle md:table-row md:p-0">
       {/* Where he is down the shop. Deliberately the DISPLAYED position rather
           than a stable id: it is a counter for keeping his place while working
           down the list, so it has to read 1, 2, 3 whatever the sort. */}
-      <td className="w-8 px-2 py-1 text-right text-xs tabular-nums text-muted-foreground">
+      <td className="hidden w-8 px-2 py-1 text-right text-xs tabular-nums text-muted-foreground md:table-cell">
         {position}
       </td>
-      <td className="px-3 py-1">
+      <td className="col-span-2 p-0 md:table-cell md:px-3 md:py-1">
         {/* He is buying a specific card from a Japanese shop page. Without the
             name and the picture the grid is a list of anonymous rows and he
             cannot confirm he is buying the right thing. */}
@@ -607,7 +849,10 @@ function Row({
             <img src={line.image_url} alt="" className="h-12 w-9 rounded-sm border object-contain" loading="lazy" />
           )}
           <div className="min-w-0">
-            <div className="truncate font-medium">{line.card_name ?? "unknown card"}</div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs tabular-nums text-muted-foreground md:hidden">#{position}</span>
+              <span className="truncate font-medium">{line.card_name ?? t("buyer.unknownCard")}</span>
+            </div>
             <div className="truncate text-xs text-muted-foreground">
               {[line.set_code, line.card_number].filter(Boolean).join(" · ")}
               {line.card_english_name ? ` · ${line.card_english_name}` : ""}
@@ -622,46 +867,62 @@ function Row({
                 <span className="text-muted-foreground">{t("buyer.noLink")}</span>
               )}
               {stale && (
-                <span className="ml-2 text-muted-foreground" title={line.source_observed_at ?? ""}>
-                  {t("buyer.priceMayBeStale")}
+                <span role="note" className="ml-2 inline-flex flex-wrap gap-x-1 text-muted-foreground">
+                  <span>{t("buyer.priceMayBeStale")}</span>
+                  <span>{t("buyer.priceObservedAt", { time: observedAt })}</span>
                 </span>
               )}
             </div>
           </div>
         </div>
       </td>
-      <td className="px-3 py-1 text-right tabular-nums">
+      <td className="min-w-0 py-1 tabular-nums md:table-cell md:px-3 md:text-right">
+        <MobileLabel>{t("buyer.colWant")}</MobileLabel>
         {line.want_max != null ? (
           // The cap belongs to the CARD, not this listing: he fills it from
           // wherever the stock turns out to be, so he needs the running total.
-          <span title="total wanted across every source">
+          <span className="inline-block">
             {line.want_filled ?? 0}/{line.want_max}
             {line.want_ceiling != null && (
               <span className="block text-xs text-muted-foreground">
                 max ¥{Math.round(line.want_ceiling).toLocaleString()}
               </span>
             )}
+            <span role="note" className="block text-[11px] leading-tight text-muted-foreground">
+              {t("buyer.wantAcrossSources")}
+            </span>
           </span>
         ) : (
           line.planned_quantity
         )}
       </td>
-      <td className="px-3 py-1 text-right tabular-nums text-muted-foreground">
+      <td className="min-w-0 py-1 tabular-nums text-muted-foreground md:table-cell md:px-3 md:text-right">
+        <MobileLabel>{t("buyer.colAsking")}</MobileLabel>
         {line.unit_price_orig != null ? Math.round(line.unit_price_orig).toLocaleString() : "—"}
       </td>
-      <td className="px-3 py-1">
+      <td className="col-span-2 min-w-0 py-1 md:table-cell md:px-3">
+        <MobileLabel>{t("buyer.colResult")}</MobileLabel>
         <select
           data-cell={`${line.plan_line_id}:outcome`}
+          aria-label={t("buyer.colResult")}
           disabled={readOnly}
           value={line.outcome}
-          onChange={(e) => void onSave(line, { outcome: e.target.value })}
-          onKeyDown={(e) => handleNav(e, (d) => onMove(d, "outcome"))}
+          onChange={(e) => onEdit(line, { outcome: e.target.value }, ["outcome"])}
+          onBlur={onFlush}
+          onPaste={(e) => onPaste(line, "outcome", e)}
+          onKeyDown={(e) => handleNav(e, (direction) => {
+            e.currentTarget.blur();
+            onMove(direction, "outcome");
+          }, () => {
+            onCancel();
+            e.currentTarget.blur();
+          })}
           // Transparent so the closed control reads as a grid cell, but the
           // OPTIONS carry explicit colours: the popup is drawn by the browser,
           // and it was painting a light list under text that inherited the
           // page's white. color-scheme in globals.css is the systemic half of
           // this; these two classes are the belt.
-          className="w-full max-w-[11rem] bg-transparent text-foreground"
+          className="min-h-[45px] w-full rounded border bg-transparent px-2 text-foreground md:min-h-0 md:max-w-[11rem] md:border-0 md:px-0"
         >
           {OUTCOMES.map((o) => (
             <option key={o.value} value={o.value} className="bg-popover text-popover-foreground">
@@ -673,13 +934,23 @@ function Row({
       <NumberCell
         line={line} column="qty" readOnly={readOnly || !purchased}
         value={purchased ? line.purchased_quantity : null}
-        onCommit={(v) => onSave(line, { purchased_quantity: v ?? 0 })}
+        confirmedValue={isBuy(confirmedLine.outcome) ? confirmedLine.purchased_quantity : null}
+        label={t("buyer.colQty")}
+        onEdit={(v) => onEdit(line, { purchased_quantity: v ?? 0 }, ["purchased_quantity"])}
+        onFlush={onFlush}
+        onPaste={(e) => onPaste(line, "qty", e)}
+        onCancel={onCancel}
         onMove={onMove}
       />
       <NumberCell
         line={line} column="price" readOnly={readOnly || !purchased}
         value={purchased ? line.unit_price_jpy : null}
-        onCommit={(v) => onSave(line, { unit_price_jpy: v })}
+        confirmedValue={isBuy(confirmedLine.outcome) ? confirmedLine.unit_price_jpy : null}
+        label={t("buyer.colPaid")}
+        onEdit={(v) => onEdit(line, { unit_price_jpy: v }, ["unit_price_jpy"])}
+        onFlush={onFlush}
+        onPaste={(e) => onPaste(line, "price", e)}
+        onCancel={onCancel}
         onMove={onMove}
         groupThousands
       />
@@ -687,19 +958,32 @@ function Row({
           the total he is judged against is the product - leaving the reader to
           do that multiplication is how a 3-copy line gets read as a 1-copy
           one. */}
-      <SubtotalCell line={line} purchased={purchased} />
+      <SubtotalCell line={line} purchased={purchased} label={t("buyer.colSubtotal")} />
+      <ConditionCell
+        line={line}
+        value={line.condition_seen}
+        confirmedValue={confirmedLine.condition_seen}
+        readOnly={readOnly || !purchased}
+        label={t("buyer.colCondition")}
+        onEdit={(value) => onEdit(line, { condition_seen: value }, ["condition_seen"])}
+        onFlush={onFlush}
+        onPaste={(e) => onPaste(line, "condition", e)}
+        onCancel={onCancel}
+        onMove={onMove}
+      />
       <DeliveryCell line={line} purchased={purchased} readOnly={deliveryLocked} onMoveTo={onDeliver} />
-      {/* The condition column is gone. It sat beside the note as a second
-          free-text box asking for something the listing already states, and he
-          reads it off the listing anyway. condition_seen stays in the
-          schema and in the operator's view; he is simply not asked twice. */}
       <TextCell
         line={line} column="note" readOnly={readOnly}
         value={line.note}
-        onCommit={(v) => onSave(line, { note: v })}
+        confirmedValue={confirmedLine.note}
+        label={t("buyer.colNote")}
+        onEdit={(v) => onEdit(line, { note: v }, ["note"])}
+        onFlush={onFlush}
+        onPaste={(e) => onPaste(line, "note", e)}
+        onCancel={onCancel}
         onMove={onMove}
       />
-      <td className="w-6 pr-2 text-xs text-muted-foreground">{saving ? "…" : ""}</td>
+      <SaveIndicator state={saveState} onRetry={onRetry} />
     </tr>
   );
 }
@@ -708,100 +992,222 @@ function Row({
 // this the grid is a form, and an Excel user has to mouse between every cell.
 function handleNav(
   e: React.KeyboardEvent,
-  move: (dir: -1 | 1) => void,
+  move: (direction: GridDirection) => void,
   onEscape?: () => void,
 ) {
-  if (e.key === "Enter" || e.key === "ArrowDown") { e.preventDefault(); move(1); }
-  else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+  if (e.key === "Enter" || e.key === "ArrowDown") { e.preventDefault(); move("down"); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); move("up"); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); move("left"); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); move("right"); }
+  else if (e.key === "Tab") { e.preventDefault(); move(e.shiftKey ? "left" : "right"); }
   else if (e.key === "Escape" && onEscape) { e.preventDefault(); onEscape(); }
 }
 
+function MobileLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="mb-1 block text-xs font-medium text-muted-foreground md:hidden">
+      {children}
+    </span>
+  );
+}
+
 function NumberCell({
-  line, column, value, readOnly, onCommit, onMove, groupThousands,
+  line, column, value, confirmedValue, label, readOnly, onEdit, onFlush,
+  onPaste, onCancel, onMove, groupThousands,
 }: {
   line: Line;
   column: Column;
   value: number | null;
+  confirmedValue: number | null;
+  label: string;
   readOnly: boolean;
-  onCommit: (value: number | null) => void;
-  onMove: (dir: -1 | 1, column: Column) => void;
+  onEdit: (value: number | null) => void;
+  onFlush: () => void;
+  onPaste: (event: React.ClipboardEvent<HTMLInputElement>) => void;
+  onCancel: () => void;
+  onMove: (direction: GridDirection, column: Column) => void;
   // Prices are grouped while idle so they line up with the asking price beside
   // them; the raw digits come back the moment the cell is focused, because
   // separators in a field you are typing into fight the caret.
   groupThousands?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
-  const format = (v: number | null) =>
-    v == null ? "" : groupThousands && !focused ? v.toLocaleString() : String(v);
-  const [draft, setDraft] = useState<string>(format(value));
-  const committed = useRef(value == null ? "" : String(value));
+  const display = (next: number | null) =>
+    next == null ? "" : groupThousands && !focused ? next.toLocaleString() : String(next);
+  const [draft, setDraft] = useState<string>(display(value));
   useEffect(() => {
-    setDraft(format(value));
-    committed.current = value == null ? "" : String(value);
-  }, [value, focused]);
+    setDraft(display(value));
+  }, [focused, groupThousands, value]);
 
   return (
-    <td className="px-3 py-1 text-right">
+    <td className="min-w-0 py-1 md:table-cell md:px-3 md:text-right">
+      <MobileLabel>{label}</MobileLabel>
       <input
         data-cell={`${line.plan_line_id}:${column}`}
+        aria-label={label}
         disabled={readOnly}
         inputMode="numeric"
         value={draft}
-        onChange={(e) => setDraft(e.target.value.replace(/[^\d.]/g, ""))}
-        onFocus={(e) => { setFocused(true); e.currentTarget.select(); }}
-        // Commit on leaving the cell, which is what a spreadsheet does and what
-        // makes tabbing away safe.
+        onChange={(event) => {
+          const next = event.target.value.replace(/\D/g, "");
+          setDraft(next);
+          onEdit(next === "" ? null : Number(next));
+        }}
+        onFocus={(event) => { setFocused(true); event.currentTarget.select(); }}
         onBlur={() => {
           setFocused(false);
-          if (draft === committed.current) return;
-          committed.current = draft;
-          onCommit(draft === "" ? null : Number(draft));
+          onFlush();
         }}
-        onKeyDown={(e) =>
-          handleNav(e, (d) => { e.currentTarget.blur(); onMove(d, column); },
-            () => { setDraft(committed.current); e.currentTarget.blur(); })
+        onPaste={onPaste}
+        onKeyDown={(event) =>
+          handleNav(event, (direction) => {
+            event.currentTarget.blur();
+            onMove(direction, column);
+          }, () => {
+            setDraft(confirmedValue == null ? "" : String(confirmedValue));
+            onCancel();
+            event.currentTarget.blur();
+          })
         }
-        className="w-24 bg-transparent text-right tabular-nums disabled:text-foreground disabled:opacity-100"
+        className="min-h-[45px] w-full min-w-0 rounded border bg-transparent px-2 text-right tabular-nums disabled:text-foreground disabled:opacity-100 md:min-h-0 md:w-24 md:border-0 md:px-0"
       />
     </td>
   );
 }
 
+function ConditionCell({
+  line, value, confirmedValue, label, readOnly, onEdit, onFlush, onPaste,
+  onCancel, onMove,
+}: {
+  line: Line;
+  value: string | null;
+  confirmedValue: string | null;
+  label: string;
+  readOnly: boolean;
+  onEdit: (value: string | null) => void;
+  onFlush: () => void;
+  onPaste: (event: React.ClipboardEvent<HTMLSelectElement>) => void;
+  onCancel: () => void;
+  onMove: (direction: GridDirection, column: Column) => void;
+}) {
+  const legacyValue = value && !BUYER_CONDITIONS.includes(value as (typeof BUYER_CONDITIONS)[number])
+    ? value
+    : null;
+  return (
+    <td className="min-w-0 py-1 md:table-cell md:px-3">
+      <MobileLabel>{label}</MobileLabel>
+      <select
+        data-cell={`${line.plan_line_id}:condition`}
+        aria-label={label}
+        disabled={readOnly}
+        value={value ?? ""}
+        onChange={(event) => onEdit(event.target.value || null)}
+        onBlur={onFlush}
+        onPaste={onPaste}
+        onKeyDown={(event) => handleNav(event, (direction) => {
+          event.currentTarget.blur();
+          onMove(direction, "condition");
+        }, () => {
+          onEdit(confirmedValue);
+          onCancel();
+          event.currentTarget.blur();
+        })}
+        className="min-h-[45px] w-full rounded border bg-transparent px-2 disabled:text-foreground disabled:opacity-100 md:min-h-0 md:border-0 md:px-0"
+      >
+        <option value="" className="bg-popover text-popover-foreground">-</option>
+        {legacyValue && (
+          <option value={legacyValue} className="bg-popover text-popover-foreground">{legacyValue}</option>
+        )}
+        {BUYER_CONDITIONS.map((condition) => (
+          <option key={condition} value={condition} className="bg-popover text-popover-foreground">
+            {condition}
+          </option>
+        ))}
+      </select>
+    </td>
+  );
+}
+
 function TextCell({
-  line, column, value, readOnly, onCommit, onMove,
+  line, column, value, confirmedValue, label, readOnly, onEdit, onFlush,
+  onPaste, onCancel, onMove,
 }: {
   line: Line;
   column: Column;
   value: string | null;
+  confirmedValue: string | null;
+  label: string;
   readOnly: boolean;
-  onCommit: (value: string | null) => void;
-  onMove: (dir: -1 | 1, column: Column) => void;
+  onEdit: (value: string | null) => void;
+  onFlush: () => void;
+  onPaste: (event: React.ClipboardEvent<HTMLInputElement>) => void;
+  onCancel: () => void;
+  onMove: (direction: GridDirection, column: Column) => void;
 }) {
   const [draft, setDraft] = useState(value ?? "");
-  const committed = useRef(draft);
   useEffect(() => {
     setDraft(value ?? "");
-    committed.current = value ?? "";
   }, [value]);
 
   return (
-    <td className="px-3 py-1">
+    <td className="col-span-2 min-w-0 py-1 md:table-cell md:px-3">
+      <MobileLabel>{label}</MobileLabel>
       <input
         data-cell={`${line.plan_line_id}:${column}`}
+        aria-label={label}
         disabled={readOnly}
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          if (draft === committed.current) return;
-          committed.current = draft;
-          onCommit(draft === "" ? null : draft);
+        onChange={(event) => {
+          setDraft(event.target.value);
+          onEdit(event.target.value || null);
         }}
-        onKeyDown={(e) =>
-          handleNav(e, (d) => { e.currentTarget.blur(); onMove(d, column); },
-            () => { setDraft(committed.current); e.currentTarget.blur(); })
+        onBlur={onFlush}
+        onPaste={onPaste}
+        onKeyDown={(event) =>
+          handleNav(event, (direction) => {
+            event.currentTarget.blur();
+            onMove(direction, column);
+          }, () => {
+            setDraft(confirmedValue ?? "");
+            onCancel();
+            event.currentTarget.blur();
+          })
         }
-        className="w-full bg-transparent disabled:text-foreground disabled:opacity-100"
+        className="min-h-[45px] w-full min-w-0 rounded border bg-transparent px-2 disabled:text-foreground disabled:opacity-100 md:min-h-0 md:border-0 md:px-0"
       />
+    </td>
+  );
+}
+
+function SaveIndicator({ state, onRetry }: { state?: BuyerSaveState; onRetry: () => void }) {
+  const { t } = useTranslation();
+  const current = state ?? { phase: "saved" as const };
+  if (current.phase === "error") {
+    return (
+      <td className="col-span-2 min-w-0 py-1 md:table-cell md:px-3">
+        <div role="alert" className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-destructive">
+          <span className="break-words">{current.message ?? t("buyer.saveFailed")}</span>
+          {current.retryable && (
+            <button
+              type="button"
+              className="min-h-11 rounded border border-destructive/50 px-3 font-medium md:min-h-0 md:px-2 md:py-1"
+              onClick={onRetry}
+            >
+              {t("buyer.retrySave")}
+            </button>
+          )}
+        </div>
+      </td>
+    );
+  }
+  const label = current.phase === "pending"
+    ? t("buyer.savePending")
+    : current.phase === "saving"
+      ? t("buyer.saving")
+      : t("buyer.saved");
+  return (
+    <td className="col-span-2 min-w-0 py-1 text-xs text-muted-foreground md:table-cell md:px-3">
+      <span role="status" aria-live="polite">{label}</span>
     </td>
   );
 }
@@ -879,7 +1285,7 @@ function SourceReceipts({
         <>
           <label
             htmlFor={inputId}
-            className="cursor-pointer rounded border px-2 py-0.5 hover:bg-accent"
+            className="flex min-h-11 cursor-pointer items-center rounded border px-3 hover:bg-accent sm:min-h-0 sm:px-2 sm:py-0.5"
           >
             {busy ? t("buyer.uploading") : receipts.length ? t("buyer.addReceipt") : t("buyer.uploadReceipt")}
           </label>
@@ -990,7 +1396,7 @@ function ShopCosts({
             <button
               key={value}
               type="button"
-              className="rounded border border-dashed px-2 py-0.5 text-muted-foreground hover:bg-accent"
+              className="min-h-11 rounded border border-dashed px-3 text-muted-foreground hover:bg-accent sm:min-h-0 sm:px-2 sm:py-0.5"
               onClick={() => open(value)}
             >
               + {t(key)}
@@ -1005,7 +1411,7 @@ function ShopCosts({
                 autoFocus
                 inputMode="numeric"
                 aria-label={t(key)}
-                className="w-20 rounded border bg-background px-1 py-0.5 text-right"
+                className="min-h-11 w-24 rounded border bg-background px-2 text-right sm:min-h-0 sm:w-20 sm:px-1 sm:py-0.5"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 onKeyDown={(e) => {
@@ -1015,7 +1421,7 @@ function ShopCosts({
               />
               <button
                 type="button"
-                className="rounded border px-2 py-0.5 disabled:opacity-50"
+                className="min-h-11 rounded border px-3 disabled:opacity-50 sm:min-h-0 sm:px-2 sm:py-0.5"
                 disabled={busy || parseTypedJpy(amount) == null}
                 onClick={() => void save(value)}
               >
@@ -1032,7 +1438,7 @@ function ShopCosts({
           <button
             key={value}
             type="button"
-            className="rounded border px-2 py-0.5 hover:bg-accent"
+            className="min-h-11 rounded border px-3 hover:bg-accent sm:min-h-0 sm:px-2 sm:py-0.5"
             onClick={() => open(value)}
           >
             {t(key)} <b className="tabular-nums text-foreground">{yen(recorded)}</b>
@@ -1068,7 +1474,7 @@ function HandBack({
   return plan.handed_back ? (
     <button
       type="button"
-      className="rounded border px-2 py-0.5 text-xs hover:bg-accent disabled:opacity-50"
+      className="min-h-11 rounded border px-3 text-xs hover:bg-accent disabled:opacity-50 sm:min-h-0 sm:px-2 sm:py-0.5"
       disabled={busy}
       onClick={onReopen}
     >
@@ -1082,7 +1488,7 @@ function HandBack({
       // POSITIVE action on his screen looked exactly like a delete button.
       // Solid emerald, where the badge beside it is a translucent tint, so the
       // control and the state stay tellable apart.
-      className="rounded bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+      className="min-h-11 rounded bg-emerald-600 px-3 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50 sm:min-h-0 sm:px-2 sm:py-0.5"
       disabled={busy}
       onClick={onHandBack}
     >
@@ -1093,14 +1499,26 @@ function HandBack({
 
 // What this line actually costs: the unit price he typed, times the copies he
 // bought. Read-only on purpose - it is arithmetic, not another thing to enter.
-function SubtotalCell({ line, purchased }: { line: Line; purchased: boolean }) {
+function SubtotalCell({
+  line, purchased, label,
+}: {
+  line: Line;
+  purchased: boolean;
+  label: string;
+}) {
   const qty = Number(line.purchased_quantity ?? 0);
   const unit = Number(line.unit_price_jpy ?? 0);
   if (!purchased || qty <= 0 || unit <= 0) {
-    return <td className="px-3 py-1 text-right text-muted-foreground">—</td>;
+    return (
+      <td className="min-w-0 py-1 text-muted-foreground md:table-cell md:px-3 md:text-right">
+        <MobileLabel>{label}</MobileLabel>
+        -
+      </td>
+    );
   }
   return (
-    <td className="px-3 py-1 text-right tabular-nums" title={`${unit.toLocaleString()} x ${qty}`}>
+    <td className="min-w-0 py-1 tabular-nums md:table-cell md:px-3 md:text-right" title={`${unit.toLocaleString()} x ${qty}`}>
+      <MobileLabel>{label}</MobileLabel>
       {(unit * qty).toLocaleString()}
     </td>
   );
@@ -1276,7 +1694,7 @@ function SheetExchange({
     <span className="flex items-center gap-2 text-xs">
       <button
         type="button"
-        className="rounded border px-2 py-0.5 hover:bg-accent disabled:opacity-50"
+        className="min-h-11 rounded border px-3 hover:bg-accent disabled:opacity-50 sm:min-h-0 sm:px-2 sm:py-0.5"
         disabled={busy !== "" || lines.length === 0}
         onClick={() => void download()}
       >
@@ -1286,7 +1704,7 @@ function SheetExchange({
         <>
           <label
             htmlFor={inputId}
-            className={`cursor-pointer rounded border px-2 py-0.5 hover:bg-accent ${busy ? "opacity-50" : ""}`}
+            className={`flex min-h-11 cursor-pointer items-center rounded border px-3 hover:bg-accent sm:min-h-0 sm:px-2 sm:py-0.5 ${busy ? "opacity-50" : ""}`}
           >
             {busy === "up" ? t("buyer.working") : t("buyer.uploadSheet")}
           </label>
@@ -1377,14 +1795,20 @@ function DeliveryCell({
 }) {
   const { t } = useTranslation();
   if (!purchased) {
-    return <td className="px-3 py-1 text-muted-foreground">{t("buyer.delivNotBought")}</td>;
+    return (
+      <td className="col-span-2 min-w-0 py-1 text-muted-foreground md:table-cell md:px-3">
+        <MobileLabel>{t("buyer.colDelivery")}</MobileLabel>
+        {t("buyer.delivNotBought")}
+      </td>
+    );
   }
   const current = line.delivery_status;
   const flagged = current === "curation_failed";
 
   if (readOnly) {
     return (
-      <td className={`px-3 py-1 ${flagged ? "font-medium text-amber-600 dark:text-amber-400" : ""}`}>
+      <td className={`col-span-2 min-w-0 py-1 md:table-cell md:px-3 ${flagged ? "font-medium text-amber-600 dark:text-amber-400" : ""}`}>
+        <MobileLabel>{t("buyer.colDelivery")}</MobileLabel>
         {current ? t(DELIVERY_LABEL[current] as never) : "—"}
       </td>
     );
@@ -1394,10 +1818,11 @@ function DeliveryCell({
   // say otherwise. A separate "next step" picker beside a label is what made
   // the last recorded answer unchangeable.
   return (
-    <td className="px-3 py-1">
+    <td className="col-span-2 min-w-0 py-1 md:table-cell md:px-3">
+      <MobileLabel>{t("buyer.colDelivery")}</MobileLabel>
       <select
         aria-label={t("buyer.colDelivery")}
-        className={`max-w-[11rem] rounded border bg-transparent px-1 text-xs ${
+        className={`min-h-11 w-full rounded border bg-transparent px-2 text-xs md:min-h-0 md:max-w-[11rem] md:px-1 ${
           flagged ? "border-amber-600 font-medium text-amber-600 dark:text-amber-400" : "text-foreground"
         }`}
         value={current ?? ""}
@@ -1455,7 +1880,7 @@ function DeliveryBulk({
     <select
       aria-label={t("buyer.delivBulk")}
       disabled={busy}
-      className="rounded border bg-background px-2 py-0.5 text-xs"
+      className="min-h-11 rounded border bg-background px-2 text-xs sm:min-h-0 sm:py-0.5"
       value=""
       onChange={(e) => { if (e.target.value) void moveAll(e.target.value); }}
     >
