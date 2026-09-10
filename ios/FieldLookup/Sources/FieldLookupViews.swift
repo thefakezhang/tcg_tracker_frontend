@@ -249,7 +249,7 @@ struct CardDetailView: View {
     let provenance: ResultProvenance
 
     var body: some View {
-        ScrollView {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 18) {
                 identityHeader
                 if case let .cached(savedAt, stale) = provenance {
@@ -265,6 +265,7 @@ struct CardDetailView: View {
                 freshnessSection
             }
             .padding(16)
+            .containerRelativeFrame(.horizontal, alignment: .leading)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Card detail")

@@ -24,6 +24,7 @@ final class FieldLookupUITests: XCTestCase {
         app.swipeUp()
         XCTAssertTrue(app.staticTexts["Owned across grades"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.staticTexts["Source observation time is unavailable from the summary API."].exists)
+        assertDetailContentFitsWidth(in: app, stage: "after two upward swipes")
         attachScreenshot(name: "field-lookup-japanese-detail-freshness", app: app)
     }
 
@@ -104,6 +105,7 @@ final class FieldLookupUITests: XCTestCase {
 
     private func assertDetailContentFitsWidth(
         in app: XCUIApplication,
+        stage: String = "before scrolling",
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
@@ -124,8 +126,28 @@ final class FieldLookupUITests: XCTestCase {
 
         for identifier in identifiers {
             let content = element(identifier, in: app)
-            XCTAssertTrue(content.exists, "Missing detail content: \(identifier)", file: file, line: line)
-            assertFitsWidth(content, in: app, file: file, line: line)
+            XCTAssertTrue(
+                content.exists,
+                "Missing detail content \(stage): \(identifier)",
+                file: file,
+                line: line
+            )
+            let frame = content.frame
+            let window = app.windows.firstMatch.frame
+            XCTAssertGreaterThanOrEqual(
+                frame.minX,
+                window.minX,
+                "Detail content starts outside the phone width \(stage): \(identifier), \(frame)",
+                file: file,
+                line: line
+            )
+            XCTAssertLessThanOrEqual(
+                frame.maxX,
+                window.maxX,
+                "Detail content ends outside the phone width \(stage): \(identifier), \(frame)",
+                file: file,
+                line: line
+            )
         }
     }
 
