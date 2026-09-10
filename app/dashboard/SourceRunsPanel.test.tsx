@@ -207,6 +207,28 @@ describe("SourceRunsPanel", () => {
     expect(screen.getByTestId("scheduler-task-TCG Card Ladder Refresh")).toBeTruthy();
   });
 
+  it("renders expected partial coverage separately from an error", async () => {
+    const partial = structuredClone(snapshot);
+    partial.runs = [{
+      ...partial.runs[1],
+      run_id: 8,
+      state: "partial",
+      display_state: "partial",
+      exit_code: 44,
+      failure_code: "partial_coverage",
+      result_summary: "Run budget expired after durable partial coverage.",
+    }];
+    mocks.rpc.mockResolvedValue({ data: partial, error: null });
+    render(<SourceRunsPanel />);
+
+    const partialRun = await screen.findByTestId("source-run-8");
+    expect(within(partialRun).getByText("runs.state.partial")).toBeTruthy();
+    expect(within(partialRun).getByText("runs.outcomeCode partial_coverage")).toBeTruthy();
+    expect(within(partialRun).getByText("runs.partialCoverageWarning")).toBeTruthy();
+    expect(within(partialRun).queryByText("runs.partialExecutionWarning")).toBeNull();
+    expect(within(partialRun).getByText(/runs.exitCode 44/)).toBeTruthy();
+  });
+
   it("requires explicit confirmation for dangerous maintenance", async () => {
     const dangerous = structuredClone(snapshot);
     dangerous.jobs.push({

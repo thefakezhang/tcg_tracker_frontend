@@ -144,6 +144,31 @@ describe("source-run control helpers", () => {
     })).toBe(true);
   });
 
+  it("accepts a persisted partial run without treating it as malformed", () => {
+    expect(isSnapshot({
+      server_time: "2026-07-22T12:00:00Z",
+      jobs: [{
+        job: "cardladder", family: "marketplace", fetch_lane: "session",
+        artifact_home: "data-repo", expected_minutes_full: 45, min_interval_hours: 8,
+        modes: { full: { lane: "session", meaning: "fetch" } },
+        readiness: { full: {
+          state: "eligible", reason_code: "ready", host_name: "Main PC",
+          lane: "session", artifact_home: "data-repo",
+        } },
+      }],
+      runs: [{
+        ...run,
+        state: "partial",
+        display_state: "partial",
+        finished_at: "2026-07-22T12:10:00Z",
+        exit_code: 44,
+        failure_code: "partial_coverage",
+      }],
+      hosts: [],
+      inventory: [],
+    })).toBe(true);
+  });
+
   it("rejects scheduler-only run and host activity outside the visible job registry", () => {
     const base = {
       server_time: "2026-07-22T12:00:00Z",
