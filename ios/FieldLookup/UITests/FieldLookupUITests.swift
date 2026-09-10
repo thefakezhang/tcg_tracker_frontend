@@ -17,8 +17,10 @@ final class FieldLookupUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["JP → NA"].exists)
         XCTAssertTrue(app.staticTexts["Sold comp"].exists)
         XCTAssertTrue(app.staticTexts["50%"].exists)
+        assertDetailContentFitsWidth(in: app)
         attachScreenshot(name: "field-lookup-japanese-detail", app: app)
 
+        app.swipeUp()
         app.swipeUp()
         XCTAssertTrue(app.staticTexts["Owned across grades"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.staticTexts["Source observation time is unavailable from the summary API."].exists)
@@ -98,6 +100,33 @@ final class FieldLookupUITests: XCTestCase {
         let window = app.windows.firstMatch.frame
         XCTAssertGreaterThanOrEqual(frame.minX, window.minX, file: file, line: line)
         XCTAssertLessThanOrEqual(frame.maxX, window.maxX, file: file, line: line)
+    }
+
+    private func assertDetailContentFitsWidth(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let identifiers = [
+            "detail-card-name",
+            "price-direction",
+            "entry-price-leg-title",
+            "entry-price-leg-price",
+            "entry-price-leg-source",
+            "entry-price-leg-normalized",
+            "exit-price-leg-title",
+            "exit-price-leg-price",
+            "exit-price-leg-source",
+            "exit-price-leg-normalized",
+            "exit-kind-note",
+            "summary-roi",
+        ]
+
+        for identifier in identifiers {
+            let content = element(identifier, in: app)
+            XCTAssertTrue(content.exists, "Missing detail content: \(identifier)", file: file, line: line)
+            assertFitsWidth(content, in: app, file: file, line: line)
+        }
     }
 
     private func attachScreenshot(name: String, app: XCUIApplication) {

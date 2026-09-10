@@ -312,14 +312,16 @@ struct CardDetailView: View {
                 eyebrow: "ENTRY / 仕入れ",
                 title: "Asking price",
                 signal: result.entry,
-                showKind: false
+                showKind: false,
+                accessibilityID: "entry-price-leg"
             )
             Divider()
             PriceLegView(
                 eyebrow: "EXIT / 売却",
                 title: result.exit?.kind.exitLabel ?? "Exit unavailable",
                 signal: result.exit,
-                showKind: true
+                showKind: true,
+                accessibilityID: "exit-price-leg"
             )
             HStack {
                 Text("Summary ROI")
@@ -394,30 +396,37 @@ private struct PriceLegView: View {
     let title: String
     let signal: PriceSignal?
     let showKind: Bool
+    let accessibilityID: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(eyebrow)
                 .font(.caption.bold())
                 .foregroundStyle(.secondary)
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.subheadline.weight(.semibold))
-                    Text(sourceAndRegion)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(signal?.originalPriceLabel ?? "Unavailable")
-                        .font(.title3.bold())
-                    if let normalized = signal?.normalizedPriceLabel {
-                        Text("\(normalized) normalized")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityIdentifier("\(accessibilityID)-title")
+                Spacer(minLength: 8)
+                Text(signal?.originalPriceLabel ?? "Unavailable")
+                    .font(.title3.bold())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .accessibilityIdentifier("\(accessibilityID)-price")
+            }
+            Text(sourceAndRegion)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("\(accessibilityID)-source")
+            if let normalized = signal?.normalizedPriceLabel {
+                Text("\(normalized) normalized")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .accessibilityIdentifier("\(accessibilityID)-normalized")
             }
             if showKind, let signal {
                 Text(signal.kind.evidenceNote)
