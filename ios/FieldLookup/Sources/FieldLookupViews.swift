@@ -288,10 +288,11 @@ struct CardDetailView: View {
                 if let cardNumber = result.card.cardNumber {
                     IdentityChip(text: cardNumber)
                 }
-                if let variant = result.card.variant {
-                    IdentityChip(text: variant)
-                }
             }
+            if let variant = result.card.variant {
+                IdentityChip(text: variant)
+            }
+            IdentityChip(text: "Raw · Tier 1")
         }
         .sectionCard()
     }
@@ -403,7 +404,7 @@ private struct PriceLegView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.subheadline.weight(.semibold))
-                    Text(signal?.location ?? "No price summary")
+                    Text(sourceAndRegion)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -425,6 +426,15 @@ private struct PriceLegView: View {
                     .accessibilityIdentifier("exit-kind-note")
             }
         }
+    }
+
+    private var sourceAndRegion: String {
+        guard let signal else { return "No price summary" }
+        let values = [signal.location, signal.region].compactMap { value in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        return values.isEmpty ? "Source unavailable" : values.joined(separator: " · ")
     }
 }
 

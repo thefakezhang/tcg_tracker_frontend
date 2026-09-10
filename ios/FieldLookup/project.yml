@@ -29,7 +29,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.tztcg.fieldlookup
-        PRODUCT_NAME: Field Lookup
+        PRODUCT_NAME: FieldLookup
         INFOPLIST_FILE: Config/Info.plist
     dependencies:
       - package: Supabase
