@@ -19,7 +19,8 @@ final class SupabaseSessionController: AuthenticationControlling {
     private let now: () -> Date
 
     init(configuration: AppConfiguration, now: @escaping () -> Date = Date.init) {
-        keychain = KeychainLocalStorage(service: Self.keychainService)
+        let keychain = KeychainLocalStorage(service: Self.keychainService)
+        self.keychain = keychain
         client = SupabaseClient(
             supabaseURL: configuration.supabaseURL,
             supabaseKey: configuration.publishableKey,
