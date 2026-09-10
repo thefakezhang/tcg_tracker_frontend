@@ -1,0 +1,16 @@
+[
+  {
+    "card_id": 101,
+    "qty_owned": 2,
+    "qty_incoming": 1,
+    "qty_consigned": 1,
+    "qty_available": 1
+  },
+  {
+    "card_id": 103,
+    "qty_owned": 3,
+    "qty_incoming": 0,
+    "qty_consigned": 0,
+    "qty_available": 3
+  }
+]

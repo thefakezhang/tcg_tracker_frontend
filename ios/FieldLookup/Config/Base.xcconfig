@@ -1,0 +1,5 @@
+SUPABASE_URL =
+SUPABASE_PUBLISHABLE_KEY =
+SUPABASE_REDIRECT_URL = com.tztcg.fieldlookup:/$()/auth-callback
+
+#include? "Secrets.xcconfig"

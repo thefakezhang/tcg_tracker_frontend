@@ -1,0 +1,75 @@
+name: FieldLookup
+
+options:
+  bundleIdPrefix: com.tztcg
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "16.3"
+
+packages:
+  Supabase:
+    url: https://github.com/supabase/supabase-swift.git
+    exactVersion: 2.54.1
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+
+targets:
+  FieldLookup:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    configFiles:
+      Debug: Config/Base.xcconfig
+      Release: Config/Base.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tztcg.fieldlookup
+        PRODUCT_NAME: Field Lookup
+        INFOPLIST_FILE: Config/Info.plist
+    dependencies:
+      - package: Supabase
+        product: Supabase
+
+  FieldLookupTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tztcg.fieldlookup.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: FieldLookup
+
+  FieldLookupUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tztcg.fieldlookup.uitests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: FieldLookup
+
+schemes:
+  FieldLookup:
+    build:
+      targets:
+        FieldLookup: all
+        FieldLookupTests: [test]
+        FieldLookupUITests: [test]
+    test:
+      gatherCoverageData: true
+      targets:
+        - name: FieldLookupTests
+          parallelizable: false
+        - name: FieldLookupUITests
+          parallelizable: false
