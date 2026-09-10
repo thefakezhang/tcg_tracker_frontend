@@ -1,0 +1,44 @@
+name: Frontend checks
+
+on:
+  pull_request:
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Tests, types and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Unit and component tests
+        run: npm test -- --maxWorkers=2
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Production build
+        run: npm run build

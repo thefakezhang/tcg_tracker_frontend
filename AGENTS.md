@@ -43,6 +43,7 @@ If you see one, get it fixed even if it was not caused by what you are working o
 ## Agent tooling (committed for both machines)
 - Skill `.claude/skills/ship-pr` - the branch -> commit -> PR -> poll -> merge -> cleanup flow.
 - Script `scripts/check.sh` - `tsc --noEmit` + `next build` (node bin auto-detected).
+- Pull requests run the unit tests, TypeScript check, and production build in one Linux CI job; see [docs/continuous_integration.md](docs/continuous_integration.md).
 
 ---
 
