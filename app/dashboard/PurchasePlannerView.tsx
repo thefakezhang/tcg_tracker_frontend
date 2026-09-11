@@ -56,6 +56,10 @@ import {
   SEALED_CONDITIONS,
   SEALED_EDITIONS,
 } from "./use-sealed-data";
+import {
+  SealedPlanningReadinessNotice,
+  useSealedPlanningReadiness,
+} from "./sealed-planning-readiness";
 
 import { formatUsd } from "@/lib/money";
 const selectClass =
@@ -726,18 +730,21 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
   const [manualVariantEdition, setManualVariantEdition] = useState("standard");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const sealedPlanning = useSealedPlanningReadiness(open && game === "pokemon_sealed");
+  const sealedPlanningBlocked = game === "pokemon_sealed" && sealedPlanning.state !== "ready";
+  const sealedPlanningNoticeId = "planner-sealed-planning-readiness";
 
   useEffect(() => {
     const term = query.trim();
-    if (!open || chosen || !term) { setResults([]); return; }
+    if (!open || chosen || !term || sealedPlanningBlocked) { setResults([]); return; }
     const timer = setTimeout(() => searchCatalog(game, term).then(setResults).catch((reason: Error) => setError(reason.message)), 250);
     return () => clearTimeout(timer);
-  }, [chosen, game, open, query]);
+  }, [chosen, game, open, query, sealedPlanningBlocked]);
 
   // The whole point: once a card is chosen, offer the listings we already
   // crawled instead of asking the operator to retype source, URL and price.
   useEffect(() => {
-    if (!chosen || chosen.game === "mtg") { setCandidates(null); return; }
+    if (!chosen || chosen.game === "mtg" || (chosen.game === "pokemon_sealed" && sealedPlanning.state !== "ready")) { setCandidates(null); return; }
     let live = true;
     setCandidates(null);
     const sealed = chosen.game === "pokemon_sealed";
@@ -767,7 +774,7 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
         setCandidates((data ?? []) as CandidateListing[]);
       });
     return () => { live = false; };
-  }, [chosen]);
+  }, [chosen, sealedPlanning.state]);
 
   useEffect(() => {
     if (!open) {
@@ -787,6 +794,7 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
   }, [open]);
 
   function chooseResult(result: CatalogResult) {
+    if (result.game === "pokemon_sealed" && sealedPlanning.state !== "ready") return;
     setChosen(result);
     setQuery(result.label);
     setPicked(new Map());
@@ -798,6 +806,7 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
 
   async function addPicked() {
     if (!chosen) return;
+    if (chosen.game === "pokemon_sealed" && sealedPlanning.state !== "ready") return;
     const rows = (candidates ?? [])
       .filter((candidate) => picked.has(candidateListingKey(candidate)))
       .map((candidate) => candidatePlanLine(
@@ -832,6 +841,7 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
   async function addManual() {
     if (manualBlockedBy) return;
     if (!chosen) return;
+    if (chosen.game === "pokemon_sealed" && sealedPlanning.state !== "ready") return;
     setBusy(true); setError(null);
     const { error: insertError } = await createClient().from("purchase_plan_lines").insert(
       manualPlanLine(
@@ -867,8 +877,16 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
             <select className={selectClass} value={game} onChange={(event) => { setGame(event.target.value as CatalogResult["game"]); setChosen(null); setQuery(""); setCandidates(null); setPicked(new Map()); }}>
               {(["pokemon", "mtg", "pokemon_sealed"] as const).map((value) => <option key={value} value={value}>{t(`game.${value}` as never)}</option>)}
             </select>
-            <div className="relative"><Search className="absolute left-2 top-2.5 size-4 text-muted-foreground" /><Input className="pl-8" value={chosen?.label ?? query} onChange={(event) => { setChosen(null); setQuery(event.target.value); }} placeholder={t("purchasePlanner.searchCatalog")} /></div>
+            <div className="relative"><Search className="absolute left-2 top-2.5 size-4 text-muted-foreground" /><Input className="pl-8" value={chosen?.label ?? query} onChange={(event) => { setChosen(null); setQuery(event.target.value); }} placeholder={t("purchasePlanner.searchCatalog")} disabled={sealedPlanningBlocked} aria-describedby={sealedPlanningBlocked ? sealedPlanningNoticeId : undefined} /></div>
           </div>
+          {game === "pokemon_sealed" && (
+            <SealedPlanningReadinessNotice
+              id={sealedPlanningNoticeId}
+              state={sealedPlanning.state}
+              error={sealedPlanning.error}
+              retry={sealedPlanning.retry}
+            />
+          )}
           {!chosen && results.length > 0 && <div className="max-h-44 overflow-y-auto rounded-md border">{results.map((result) => <button key={`${result.id}:${result.sealedCondition}:${result.variantEdition}`} type="button" className="block min-h-11 w-full border-b px-3 py-2 text-left text-xs last:border-0 hover:bg-muted" onClick={() => chooseResult(result)}>{result.label}</button>)}</div>}
 
           {chosen && game !== "pokemon_sealed" && (
@@ -898,11 +916,15 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
             />
           )}
 
-          <button type="button" className="text-xs underline underline-offset-2 text-muted-foreground" onClick={() => setManual((v) => !v)}>
+          <button type="button" className="min-h-11 text-xs underline underline-offset-2 text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50" onClick={() => setManual((v) => !v)} disabled={sealedPlanningBlocked} aria-describedby={sealedPlanningBlocked ? sealedPlanningNoticeId : undefined}>
             {manual ? "Hide manual entry" : "Enter a listing manually (a shop we do not crawl)"}
           </button>
           {manual && (
-            <div className="space-y-2 rounded-md border p-3">
+            <fieldset
+              className="space-y-2 rounded-md border p-3 disabled:opacity-60"
+              disabled={sealedPlanningBlocked}
+              aria-describedby={sealedPlanningBlocked ? sealedPlanningNoticeId : undefined}
+            >
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                 <div className="space-y-1"><Label htmlFor="manual-source">{t("purchasePlanner.source")}</Label><Input id="manual-source" list="known-sources" value={manualSource} onChange={(e) => setManualSource(e.target.value)} placeholder="snkrdunk" /><datalist id="known-sources">{KNOWN_SOURCES.map((name) => <option key={name} value={name} />)}</datalist></div>
                 <div className="space-y-1"><Label htmlFor="manual-price">{t("purchasePlanner.unitPrice")}</Label><Input id="manual-price" inputMode="decimal" value={manualPrice} onChange={(e) => setManualPrice(e.target.value)} /></div>
@@ -933,15 +955,15 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
               {manualBlockedBy && (
                 <p id="manual-blocked" className="text-xs text-muted-foreground">{manualBlockedBy}</p>
               )}
-            </div>
+            </fieldset>
           )}
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
           {manual
-            ? <Button onClick={addManual} disabled={busy || manualBlockedBy != null} aria-describedby={manualBlockedBy ? "manual-blocked" : undefined}>{busy ? t("common.saving") : t("purchasePlanner.addLine")}</Button>
-            : <Button onClick={addPicked} disabled={busy || pickedCount === 0}>{busy ? t("common.saving") : `Add ${pickedCount || ""} ${pickedCount === 1 ? "line" : "lines"}`.trim()}</Button>}
+            ? <Button onClick={addManual} disabled={sealedPlanningBlocked || busy || manualBlockedBy != null} aria-describedby={sealedPlanningBlocked ? sealedPlanningNoticeId : manualBlockedBy ? "manual-blocked" : undefined}>{busy ? t("common.saving") : t("purchasePlanner.addLine")}</Button>
+            : <Button onClick={addPicked} disabled={sealedPlanningBlocked || busy || pickedCount === 0} aria-describedby={sealedPlanningBlocked ? sealedPlanningNoticeId : undefined}>{busy ? t("common.saving") : `Add ${pickedCount || ""} ${pickedCount === 1 ? "line" : "lines"}`.trim()}</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

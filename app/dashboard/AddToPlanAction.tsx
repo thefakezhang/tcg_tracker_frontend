@@ -99,10 +99,14 @@ export function AddToPlanAction({
   cards,
   sealedProducts,
   onAdded,
+  disabled = false,
+  disabledDescriptionId,
 }: {
   cards?: PlanCard[];
   sealedProducts?: PlanSealedProduct[];
   onAdded?: () => void;
+  disabled?: boolean;
+  disabledDescriptionId?: string;
 }) {
   const { t } = useTranslation();
   const { activeTripId } = useTrips();
@@ -198,7 +202,7 @@ export function AddToPlanAction({
       : null;
 
   async function submit(keys: string[]) {
-    if (planId == null || validationError) return;
+    if (disabled || planId == null || validationError) return;
     const submitted = items.filter((item) => keys.includes(item.key));
     if (!submitted.length) return;
     const rpcItems = submitted.map((item) => {
@@ -276,6 +280,8 @@ export function AddToPlanAction({
         size="sm"
         variant="outline"
         className="h-11 sm:h-8"
+        disabled={disabled}
+        aria-describedby={disabled ? disabledDescriptionId : undefined}
         onClick={() => {
           setResults(null);
           setError(null);
@@ -502,7 +508,7 @@ export function AddToPlanAction({
               <Button
                 className="h-11 sm:h-9"
                 onClick={() => void submit(items.map((item) => item.key))}
-                disabled={busy || planId == null || validationError != null}
+                disabled={disabled || busy || planId == null || validationError != null}
               >
                 {busy
                   ? t("bulkPlan.adding")
@@ -514,7 +520,7 @@ export function AddToPlanAction({
               <Button
                 className="h-11 sm:h-9"
                 onClick={() => void submit(retryKeys)}
-                disabled={busy}
+                disabled={disabled || busy}
               >
                 {busy ? t("bulkPlan.adding") : t("bulkPlan.retry", { count: retryKeys.length })}
               </Button>

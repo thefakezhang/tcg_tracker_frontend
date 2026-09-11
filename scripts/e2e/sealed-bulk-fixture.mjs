@@ -124,6 +124,11 @@ const copy = {
     complete: "2 of 2 are on the plan",
     refusal: "No eligible JPY listing at or below the ceiling",
     retry: "Retry 1 not added",
+    retryReadiness: "Retry",
+    unavailable: "Sealed purchase planning is temporarily unavailable.",
+    unavailableHelp: "You can keep browsing sealed products and check again when planning is available.",
+    checkAgain: "Check again",
+    checkFailed: "Could not check sealed purchase planning availability.",
     close: "Close",
     setPlaceholder: "Set name or code...",
     modes: { list: "List", grid: "Grid" },
@@ -155,6 +160,11 @@ const copy = {
     complete: "2件中2件がプランにあります",
     refusal: "上限価格以下の円建て出品がありません",
     retry: "未追加の1件を再試行",
+    retryReadiness: "再試行",
+    unavailable: "未開封商品の購入プランは一時的に利用できません。",
+    unavailableHelp: "未開封商品は引き続き閲覧できます。購入プランが利用可能になったら、もう一度確認してください。",
+    checkAgain: "もう一度確認",
+    checkFailed: "未開封商品の購入プランが利用可能か確認できませんでした。",
     close: "閉じる",
     setPlaceholder: "セット名またはコード...",
     modes: { list: "リスト", grid: "グリッド" },
@@ -391,7 +401,7 @@ async function selectRows(page, viewport, language, mode) {
   return tapTargets;
 }
 
-async function runJourney(browser, name, viewport, language, mode) {
+async function runJourney(browser, name, viewport, language, mode, readinessMode = "ready") {
   const labels = copy[language];
   const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
   await context.addInitScript((chosenLanguage) => {
@@ -400,6 +410,8 @@ async function runJourney(browser, name, viewport, language, mode) {
   }, language);
 
   const rpcPayloads = [];
+  const readinessRequests = [];
+  const requestOrder = [];
   const routeErrors = [];
   const unknownRequests = [];
   await context.route("http://127.0.0.1:54321/**", async (route) => {
@@ -416,6 +428,39 @@ async function runJourney(browser, name, viewport, language, mode) {
         return;
       }
       const table = decodeURIComponent(url.pathname.split("/").filter(Boolean).at(-1) ?? "");
+      if (table === "pokemon_sealed_purchase_candidate_listings_v") {
+        const attempt = readinessRequests.length + 1;
+        const authorization = request.headers().authorization ?? "";
+        const observation = {
+          attempt,
+          method,
+          select: url.searchParams.get("select"),
+          limit: url.searchParams.get("limit"),
+          authenticated: authorization.startsWith("Bearer "),
+        };
+        readinessRequests.push(observation);
+        requestOrder.push("readiness");
+        assert(method === "GET", `${name} readiness probe used ${method}, want GET`);
+        assert(observation.select === "product_id", `${name} readiness probe selected ${observation.select}`);
+        assert(observation.limit === "0", `${name} readiness probe limit was ${observation.limit}`);
+        assert(observation.authenticated, `${name} readiness probe omitted authorization`);
+        if (readinessMode === "unavailable") {
+          await fulfillJson(route, {
+            code: "PGRST205",
+            message: "Could not find the table 'public.pokemon_sealed_purchase_candidate_listings_v' in the schema cache",
+          }, { status: 404 });
+          return;
+        }
+        if (readinessMode === "transient" && attempt === 1) {
+          await fulfillJson(route, {
+            code: "PGRST000",
+            message: "temporary fixture transport failure",
+          }, { status: 503 });
+          return;
+        }
+        await fulfillJson(route, [], { headers: { "content-range": "*/0" } });
+        return;
+      }
       if (table === "pokemon_sealed_summaries_best_v" || table === "pokemon_sealed_summaries_v") {
         const range = request.headers().range ?? "0-49";
         const start = Number(url.searchParams.get("offset") ?? range.split("-")[0]);
@@ -458,6 +503,7 @@ async function runJourney(browser, name, viewport, language, mode) {
         return;
       }
       if (table === "add_sealed_to_purchase_plan" && method === "POST") {
+        requestOrder.push("mutation");
         const payload = request.postDataJSON();
         rpcPayloads.push(payload);
         const expected = rpcPayloads.length === 1 ? fullPayload : retryPayload;
@@ -482,10 +528,21 @@ async function runJourney(browser, name, viewport, language, mode) {
   const page = await context.newPage();
   const pageErrors = [];
   const consoleErrors = [];
+  const expectedReadinessConsoleErrors = [];
   const requestFailures = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
+    if (message.type() !== "error") return;
+    const location = message.location().url;
+    if (
+      readinessMode !== "ready"
+      && location.includes("pokemon_sealed_purchase_candidate_listings_v")
+      && message.text().includes("Failed to load resource")
+    ) {
+      expectedReadinessConsoleErrors.push({ message: message.text(), location });
+      return;
+    }
+    consoleErrors.push(message.text());
   });
   page.on("requestfailed", (request) => {
     const failure = request.failure()?.errorText ?? "unknown request failure";
@@ -521,11 +578,82 @@ async function runJourney(browser, name, viewport, language, mode) {
   await assertNoHorizontalOverflow(page, `${name} initial`);
 
   const tapTargetCount = await selectRows(page, viewport, language, mode);
+  const addToPlanButton = page.getByRole("button", { name: labels.addToPlan });
+
+  if (readinessMode === "unavailable") {
+    await page.getByText(labels.unavailable, { exact: true }).waitFor({ state: "visible" });
+    assert(await page.getByText(labels.unavailableHelp, { exact: true }).isVisible(), `${name} missing schema reason is hidden`);
+    assert(await addToPlanButton.isDisabled(), `${name} enabled sealed add while its schema was absent`);
+    assert(await page.getByText(labels.alpha, { exact: true }).first().isVisible(), `${name} hid ordinary sealed browsing`);
+    const checkAgain = page.getByRole("button", { name: labels.checkAgain, exact: true });
+    if (viewport.width < 640) await assertTapTarget(checkAgain, `${name} check again`);
+    const checkAgainResponse = page.waitForResponse((response) =>
+      response.url().includes("pokemon_sealed_purchase_candidate_listings_v"),
+    );
+    await clickAction(checkAgain, viewport.width, `${name} check again`);
+    await checkAgainResponse;
+    const unavailableScreenshot = `${artifactRoot}/sealed-bulk-${name}-unavailable.png`;
+    await captureViewport(page, unavailableScreenshot);
+    assert(readinessRequests.length >= 2, `${name} check again did not repeat schema readiness`);
+    assert(rpcPayloads.length === 0, `${name} called the mutating RPC while unavailable`);
+    assert(!requestOrder.includes("mutation"), `${name} used the mutation as a readiness probe`);
+    assert(routeErrors.length === 0, `${name} route assertion errors: ${routeErrors.join(" | ")}`);
+    assert(unknownRequests.length === 0, `${name} unexpected fixture requests: ${JSON.stringify(unknownRequests)}`);
+    assert(pageErrors.length === 0, `${name} page errors: ${pageErrors.join(" | ")}`);
+    assert(consoleErrors.length === 0, `${name} console errors: ${consoleErrors.join(" | ")}`);
+    assert(requestFailures.length === 0, `${name} request failures: ${requestFailures.join(" | ")}`);
+    const result = {
+      name, language, viewport, mode, readinessMode, readinessRequests,
+      mutationRequests: rpcPayloads.length,
+      ordinaryBrowsingVisible: true,
+      addToPlanDisabled: true,
+      tapTargets: tapTargetCount,
+      screenshots: { unavailable: unavailableScreenshot },
+      expectedReadinessConsoleErrors,
+      pageErrors, consoleErrors, requestFailures, routeErrors, unknownRequests,
+    };
+    await context.close();
+    return result;
+  }
+
+  if (readinessMode === "transient") {
+    await page.getByText(labels.checkFailed, { exact: true }).waitFor({ state: "visible" });
+    assert(await addToPlanButton.isDisabled(), `${name} enabled sealed add after a readiness error`);
+    const errorScreenshot = `${artifactRoot}/sealed-bulk-${name}-readiness-error.png`;
+    await captureViewport(page, errorScreenshot);
+    const retryReadiness = page.getByRole("button", { name: labels.retryReadiness, exact: true });
+    if (viewport.width < 640) await assertTapTarget(retryReadiness, `${name} readiness retry`);
+    await clickAction(retryReadiness, viewport.width, `${name} readiness retry`);
+    await page.waitForFunction((label) => Array.from(document.querySelectorAll("button"))
+      .some((button) => button.textContent?.trim() === label && !button.disabled), labels.addToPlan);
+    assert(readinessRequests.length >= 2, `${name} retry did not repeat the zero-row read`);
+    assert(rpcPayloads.length === 0, `${name} called the mutating RPC during readiness recovery`);
+    const recoveredScreenshot = `${artifactRoot}/sealed-bulk-${name}-readiness-recovered.png`;
+    await captureViewport(page, recoveredScreenshot);
+    assert(routeErrors.length === 0, `${name} route assertion errors: ${routeErrors.join(" | ")}`);
+    assert(unknownRequests.length === 0, `${name} unexpected fixture requests: ${JSON.stringify(unknownRequests)}`);
+    assert(pageErrors.length === 0, `${name} page errors: ${pageErrors.join(" | ")}`);
+    assert(consoleErrors.length === 0, `${name} console errors: ${consoleErrors.join(" | ")}`);
+    assert(requestFailures.length === 0, `${name} request failures: ${requestFailures.join(" | ")}`);
+    const result = {
+      name, language, viewport, mode, readinessMode, readinessRequests,
+      mutationRequests: rpcPayloads.length,
+      addToPlanDisabledBeforeRetry: true,
+      addToPlanEnabledAfterRetry: true,
+      tapTargets: tapTargetCount,
+      screenshots: { error: errorScreenshot, recovered: recoveredScreenshot },
+      expectedReadinessConsoleErrors,
+      pageErrors, consoleErrors, requestFailures, routeErrors, unknownRequests,
+    };
+    await context.close();
+    return result;
+  }
+
   const selectedScreenshot = `${artifactRoot}/sealed-bulk-${name}-selected.png`;
   await captureViewport(page, selectedScreenshot);
 
   await clickAction(
-    page.getByRole("button", { name: labels.addToPlan }),
+    addToPlanButton,
     viewport.width,
     `${name} Add to plan`,
   );
@@ -635,6 +763,8 @@ async function runJourney(browser, name, viewport, language, mode) {
   }
   const finalOverflow = await assertNoHorizontalOverflow(page, `${name} final`);
   assertJson(rpcPayloads, [fullPayload, retryPayload], `${name} RPC payload sequence`);
+  assert(readinessRequests.length >= 1, `${name} never checked schema readiness`);
+  assert(requestOrder.indexOf("readiness") < requestOrder.indexOf("mutation"), `${name} mutated before its readiness read`);
   assert(routeErrors.length === 0, `${name} route assertion errors: ${routeErrors.join(" | ")}`);
   assert(unknownRequests.length === 0, `${name} unexpected fixture requests: ${JSON.stringify(unknownRequests)}`);
   assert(pageErrors.length === 0, `${name} page errors: ${pageErrors.join(" | ")}`);
@@ -646,6 +776,8 @@ async function runJourney(browser, name, viewport, language, mode) {
     language,
     viewport,
     mode,
+    readinessMode,
+    readinessRequests,
     intendedPlan: { planId: 501, label: labels.plans[0] },
     rpcPayloads,
     tapTargets: tapTargetCount + dialogTapTargets + pageTapTargets,
@@ -661,6 +793,7 @@ async function runJourney(browser, name, viewport, language, mode) {
     },
     pageErrors,
     consoleErrors,
+    expectedReadinessConsoleErrors,
     requestFailures,
     routeErrors,
     unknownRequests,
@@ -688,6 +821,38 @@ try {
       "grid",
     ));
   }
+  results.push(await runJourney(
+    browser,
+    "schema-unavailable-desktop-1440x900-en",
+    { width: 1440, height: 900 },
+    "en",
+    "list",
+    "unavailable",
+  ));
+  results.push(await runJourney(
+    browser,
+    "schema-unavailable-phone-390x844-ja",
+    { width: 390, height: 844 },
+    "ja",
+    "grid",
+    "unavailable",
+  ));
+  results.push(await runJourney(
+    browser,
+    "readiness-retry-phone-390x844-en",
+    { width: 390, height: 844 },
+    "en",
+    "grid",
+    "transient",
+  ));
+  results.push(await runJourney(
+    browser,
+    "readiness-retry-desktop-1440x900-ja",
+    { width: 1440, height: 900 },
+    "ja",
+    "list",
+    "transient",
+  ));
   const evidence = {
     route: "/e2e/sealed-bulk",
     fixtureOnly: true,
@@ -698,6 +863,10 @@ try {
     languages: ["en", "ja"],
     assertions: [
       "table and grid selection retain exact product, condition, and edition",
+      "every sealed planning surface performs an authorized zero-row candidate-view read before mutation",
+      "missing schema keeps ordinary sealed browsing visible while disabling Add to plan with an explicit localized reason",
+      "transport failures keep Add to plan disabled, surface a localized error, and recover through Retry",
+      "no readiness path calls the mutating RPC as a capability probe",
       "pointer and keyboard checkbox selection never opens the detail dialog",
       "localized list, grid, select-all, row-selection, and refresh accessible names are present",
       "all pointer interactions pass normal Playwright actionability without force",

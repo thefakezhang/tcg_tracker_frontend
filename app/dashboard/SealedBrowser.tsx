@@ -59,6 +59,10 @@ import {
   type OwnedInventoryIdentity,
 } from "./owned-inventory";
 import { OwnedCountLine } from "./OwnedCountLine";
+import {
+  SealedPlanningReadinessNotice,
+  useSealedPlanningReadiness,
+} from "./sealed-planning-readiness";
 
 import { formatRoi } from "@/lib/money";
 export default function SealedBrowser() {
@@ -89,6 +93,8 @@ export default function SealedBrowser() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [selectedCard, setSelectedCard] = useState<SealedRowData | null>(null);
   const [refreshOpen, setRefreshOpen] = useState(false);
+  const sealedPlanning = useSealedPlanningReadiness();
+  const sealedPlanningNoticeId = "sealed-planning-readiness";
 
   const { data, loading, error, totalCount, refresh } = useSealedData({
     search,
@@ -346,6 +352,13 @@ export default function SealedBrowser() {
         <p className="text-destructive text-sm">{t("cardBrowser.error", { message: error })}</p>
       )}
 
+      <SealedPlanningReadinessNotice
+        id={sealedPlanningNoticeId}
+        state={sealedPlanning.state}
+        error={sealedPlanning.error}
+        retry={sealedPlanning.retry}
+      />
+
       {selectedProducts.length > 0 && (
         <div className="flex flex-wrap items-center gap-3" data-testid="sealed-selection-actions">
           <span className="text-muted-foreground text-xs">
@@ -353,6 +366,8 @@ export default function SealedBrowser() {
           </span>
           <AddToPlanAction
             sealedProducts={selectedProducts}
+            disabled={sealedPlanning.state !== "ready"}
+            disabledDescriptionId={sealedPlanningNoticeId}
           />
         </div>
       )}

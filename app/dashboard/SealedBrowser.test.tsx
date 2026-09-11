@@ -44,6 +44,9 @@ const rows = [
   },
 ];
 
+let readinessState: "ready" | "unavailable" | "error" = "ready";
+const retryReadiness = vi.fn();
+
 vi.mock("@/lib/i18n", () => ({
   useTranslation: () => ({
     t: (key: string, params?: Record<string, string | number>) => {
@@ -83,12 +86,29 @@ vi.mock("./SealedDetailModal", () => ({
   default: ({ card, open }: { card: { key: string } | null; open: boolean }) =>
     open && card ? <div data-testid="sealed-detail">detail {card.key}</div> : null,
 }));
+vi.mock("./sealed-planning-readiness", () => ({
+  useSealedPlanningReadiness: () => ({
+    state: readinessState,
+    error: readinessState === "error" ? new Error("offline") : undefined,
+    retry: retryReadiness,
+  }),
+  SealedPlanningReadinessNotice: ({ state, retry, id }: { state: string; retry: () => void; id: string }) =>
+    state === "ready" ? null : (
+      <div id={id} role={state === "error" ? "alert" : "status"}>
+        sealed planning {state}
+        {state === "error" && <button type="button" onClick={retry}>Retry readiness</button>}
+      </div>
+    ),
+}));
 vi.mock("./AddToPlanAction", () => ({
-  AddToPlanAction: ({ sealedProducts }: {
+  AddToPlanAction: ({ sealedProducts, disabled, disabledDescriptionId }: {
     sealedProducts: unknown[];
+    disabled: boolean;
+    disabledDescriptionId?: string;
   }) => (
     <div>
       <output data-testid="sealed-plan-items">{JSON.stringify(sealedProducts)}</output>
+      <button type="button" disabled={disabled} aria-describedby={disabledDescriptionId}>Add to plan</button>
     </div>
   ),
 }));
@@ -145,6 +165,8 @@ import SealedBrowser from "./SealedBrowser";
 afterEach(cleanup);
 
 beforeEach(() => {
+  readinessState = "ready";
+  retryReadiness.mockReset();
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     value: vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
@@ -198,5 +220,28 @@ describe("sealed browser purchase-plan selection", () => {
     fireEvent.click(screen.getByText("next fixture page"));
     await waitFor(() => expect(screen.queryByText("1 selected")).toBeNull());
 
+  });
+
+  it("keeps browsing available but disables planning when the schema is missing", async () => {
+    readinessState = "unavailable";
+    render(<SealedBrowser />);
+
+    expect(screen.getByRole("button", { name: "Open list 41:shrink:1ed" })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("sealed planning unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Select list 41:shrink:1ed" }));
+
+    const add = await screen.findByRole("button", { name: "Add to plan" });
+    expect((add as HTMLButtonElement).disabled).toBe(true);
+    expect(add.getAttribute("aria-describedby")).toBe("sealed-planning-readiness");
+  });
+
+  it("surfaces readiness failures with retry while keeping planning disabled", async () => {
+    readinessState = "error";
+    render(<SealedBrowser />);
+    fireEvent.click(screen.getByRole("button", { name: "Select list 41:shrink:1ed" }));
+
+    expect((await screen.findByRole("button", { name: "Add to plan" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Retry readiness" }));
+    expect(retryReadiness).toHaveBeenCalledOnce();
   });
 });

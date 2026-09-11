@@ -43,6 +43,21 @@ describe("AddToPlanAction", () => {
     expect(container.textContent).toBe("");
   });
 
+  it("cannot open or mutate when sealed planning readiness blocks it", () => {
+    render(<AddToPlanAction
+      sealedProducts={[{ id: 41, name: "Test Box", sealedCondition: "shrink", variantEdition: "1ed" }]}
+      disabled
+      disabledDescriptionId="sealed-readiness"
+    />);
+
+    const button = screen.getByRole("button", { name: "Add to plan" });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.getAttribute("aria-describedby")).toBe("sealed-readiness");
+    fireEvent.click(button);
+    expect(screen.queryByLabelText("Plan")).toBeNull();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("defaults to a plan on the active trip", async () => {
     // With many trips the plan list gets long; landing on the current trip's
     // plan is the difference between one click and hunting.
