@@ -587,6 +587,8 @@ It reads the same `source_health` snapshot as the board, renders nothing on a fe
 
 - Every red metric in `SourceHealthView` is a button that opens the Pokémon Match Review queue with that health row's exact source filter.
 - `identity` and `aop` remain database health snapshots but are omitted from the operator-facing source comparison because they are internal bookkeeping labels rather than actionable market sources.
+- `SourceHealthView` reads structured collection coverage from `source_health.notes.collection_coverage`.
+  A known retired side renders its localized reason and historical `last_good_at` beneath the source name; malformed or unknown coverage notes render no retirement claim.
 - Freshness has a headline and a secondary signal.
 `freshness_p50_hours` (median listing age) is the honest "how stale is what you see"; `notes.last_run_hours` (newest successful `source_run_requests` completion) and `notes.last_write_hours` (newest listing write) tell "dead" from "alive but incremental" - a source that only re-stamps changed rows (tcgplayer) shows a p50 of weeks while it ran days ago.
 The board renders the secondary line under the p50 and downgrades a bad p50 to warn when the source ran inside the window; `SourceStalenessBadge` (`isStaleSource`) fires only when BOTH the p50 and the last run are past the threshold.
