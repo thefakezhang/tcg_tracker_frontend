@@ -528,8 +528,8 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
           className="shrink-0"
         >
           <TabsList>
-            <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
-            <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
+            <TabsTrigger className="min-w-11 sm:min-w-0" value="list">{t("cardBrowser.list")}</TabsTrigger>
+            <TabsTrigger className="min-w-11 sm:min-w-0" value="grid">{t("cardBrowser.grid")}</TabsTrigger>
           </TabsList>
         </Tabs>
         {viewMode === "grid" && (

@@ -624,8 +624,8 @@ export default function CardBrowser() {
           className="shrink-0"
         >
           <TabsList className="h-11 sm:h-8">
-            <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
-            <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
+            <TabsTrigger className="min-w-11 sm:min-w-0" value="list">{t("cardBrowser.list")}</TabsTrigger>
+            <TabsTrigger className="min-w-11 sm:min-w-0" value="grid">{t("cardBrowser.grid")}</TabsTrigger>
           </TabsList>
         </Tabs>
         <AlertDialog open={refreshOpen} onOpenChange={setRefreshOpen}>
@@ -826,15 +826,19 @@ export default function CardBrowser() {
                 {selection && (
                   // Sits over the art, and stops the click from opening the card
                   // detail the tile itself is bound to.
-                  <input
-                    type="checkbox"
-                    aria-label={t("cardBrowser.selectCard", { name: getCardDisplayName(row.card, language) })}
-                    className="absolute top-2 left-2 z-10 size-6 cursor-pointer rounded bg-background/90 shadow-sm sm:size-5"
-                    checked={selection.selected}
-                    onChange={(event) => selection.toggle(event.target.checked)}
+                  <label
+                    className="absolute top-0 left-0 z-10 inline-flex size-11 cursor-pointer items-center justify-center"
                     onClick={(event) => event.stopPropagation()}
                     onKeyDown={(event) => event.stopPropagation()}
-                  />
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={t("cardBrowser.selectCard", { name: getCardDisplayName(row.card, language) })}
+                      className="size-6 cursor-pointer rounded bg-background/90 shadow-sm sm:size-5"
+                      checked={selection.selected}
+                      onChange={(event) => selection.toggle(event.target.checked)}
+                    />
+                  </label>
                 )}
                 {row.card.image_url ? (
                   <img
