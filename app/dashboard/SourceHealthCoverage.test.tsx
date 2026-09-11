@@ -25,33 +25,39 @@ afterEach(() => {
 
 describe("retired Sell source-health coverage", () => {
   it("accepts only the documented structured reason and timestamp", () => {
-    expect(parseRetiredSellCoverage(validNotes)).toEqual({
+    expect(parseRetiredSellCoverage("torecabank", validNotes)).toEqual({
       status: "retired",
       reason: "storefront_access_gate_http_401_since_2026_08_11",
       lastGoodAt: "2026-08-10T14:30:00Z",
     });
-    expect(parseRetiredSellCoverage({
+    expect(parseRetiredSellCoverage("torecabank", {
       collection_coverage: {
         sell: { ...validNotes.collection_coverage.sell, reason: "unknown_reason" },
       },
     })).toBeNull();
-    expect(parseRetiredSellCoverage({
+    expect(parseRetiredSellCoverage("torecabank", {
       collection_coverage: {
         sell: { ...validNotes.collection_coverage.sell, last_good_at: "not-a-date" },
       },
     })).toBeNull();
-    expect(parseRetiredSellCoverage({
+    expect(parseRetiredSellCoverage("torecabank", {
       collection_coverage: {
         sell: { ...validNotes.collection_coverage.sell, last_good_at: "2026-08-10" },
       },
     })).toBeNull();
-    expect(parseRetiredSellCoverage({ collection_coverage: [] })).toBeNull();
+    expect(parseRetiredSellCoverage("torecabank", { collection_coverage: [] })).toBeNull();
+    expect(parseRetiredSellCoverage(" TORECABANK ", validNotes)).toEqual({
+      status: "retired",
+      reason: "storefront_access_gate_http_401_since_2026_08_11",
+      lastGoodAt: "2026-08-10T14:30:00Z",
+    });
+    expect(parseRetiredSellCoverage("cardrush", validNotes)).toBeNull();
   });
 
   it("renders the operator reason and historical timestamp in English", () => {
     render(
       <LanguageProvider defaultLanguage="en">
-        <RetiredSellCoverageNotice notes={validNotes} />
+        <RetiredSellCoverageNotice source="torecabank" notes={validNotes} />
       </LanguageProvider>,
     );
 
@@ -64,7 +70,7 @@ describe("retired Sell source-health coverage", () => {
   it("renders the same operator evidence in Japanese", () => {
     render(
       <LanguageProvider defaultLanguage="ja">
-        <RetiredSellCoverageNotice notes={validNotes} />
+        <RetiredSellCoverageNotice source="torecabank" notes={validNotes} />
       </LanguageProvider>,
     );
 
@@ -76,16 +82,23 @@ describe("retired Sell source-health coverage", () => {
   it("leaves ordinary and malformed source rows unchanged", () => {
     const { rerender } = render(
       <LanguageProvider defaultLanguage="en">
-        <RetiredSellCoverageNotice notes={{ listing_sides: { sell: { rows: 10 } } }} />
+        <RetiredSellCoverageNotice source="torecabank" notes={{ listing_sides: { sell: { rows: 10 } } }} />
       </LanguageProvider>,
     );
     expect(screen.queryByRole("status")).toBeNull();
 
     rerender(
       <LanguageProvider defaultLanguage="en">
-        <RetiredSellCoverageNotice notes={{
+        <RetiredSellCoverageNotice source="torecabank" notes={{
           collection_coverage: { sell: { status: "retired", reason: 401 } },
         }} />
+      </LanguageProvider>,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+
+    rerender(
+      <LanguageProvider defaultLanguage="en">
+        <RetiredSellCoverageNotice source="another_source" notes={validNotes} />
       </LanguageProvider>,
     );
     expect(screen.queryByRole("status")).toBeNull();

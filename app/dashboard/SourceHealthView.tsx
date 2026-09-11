@@ -70,7 +70,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-export function parseRetiredSellCoverage(notes: unknown): RetiredSellCoverage | null {
+export function parseRetiredSellCoverage(source: unknown, notes: unknown): RetiredSellCoverage | null {
+  if (typeof source !== "string" || source.trim().toLowerCase() !== "torecabank") {
+    return null;
+  }
   const noteRecord = asRecord(notes);
   const coverage = asRecord(noteRecord?.collection_coverage);
   const sell = asRecord(coverage?.sell);
@@ -98,9 +101,9 @@ export function parseRetiredSellCoverage(notes: unknown): RetiredSellCoverage | 
   };
 }
 
-export function RetiredSellCoverageNotice({ notes }: { notes: unknown }) {
+export function RetiredSellCoverageNotice({ source, notes }: { source: unknown; notes: unknown }) {
   const { t, language } = useTranslation();
-  const coverage = parseRetiredSellCoverage(notes);
+  const coverage = parseRetiredSellCoverage(source, notes);
   if (coverage == null) return null;
 
   return (
@@ -374,7 +377,7 @@ export default function SourceHealthView() {
                 <TableRow key={r.source}>
                   <TableCell className="font-medium">
                     <span>{r.source}</span>
-                    <RetiredSellCoverageNotice notes={r.notes} />
+                    <RetiredSellCoverageNotice source={r.source} notes={r.notes} />
                   </TableCell>
                   <TableCell>
                     {r.rows_written ?? "-"}
