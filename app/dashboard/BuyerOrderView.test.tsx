@@ -112,6 +112,28 @@ describe("BuyerOrderView", () => {
     expect(screen.getByText("hareruya2")).toBeTruthy();
   });
 
+  it("names the exact condition and edition on a sealed buying instruction", async () => {
+    rpc.mockImplementation((fn: string) => {
+      if (fn === "buyer_assigned_plans") return Promise.resolve({ data: [{ ...plan, line_count: 1 }], error: null });
+      if (fn === "buyer_plan_lines") return Promise.resolve({ data: [{
+        ...line(9, "cardrush"),
+        game: "pokemon_sealed",
+        product_id: 41,
+        card_name: "テストボックス",
+        card_english_name: "Test Box",
+        card_number: null,
+        sealed_condition: "no_shrink",
+        variant_edition: "unlimited",
+      }], error: null });
+      if (fn === "buyer_source_receipts") return Promise.resolve({ data: [], error: null });
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    render(<BuyerOrderView />);
+    expect(await screen.findByText("テストボックス")).toBeTruthy();
+    expect(screen.getByText(/sealedBrowser.editionUnlimited/).textContent).toContain("sealedBrowser.conditionNoShrink");
+  });
+
   it("records a purchase with the quantity and price he typed", async () => {
     render(<BuyerOrderView />);
     await screen.findByText("cardrush");

@@ -68,6 +68,8 @@ export interface PurchasePlanLine {
   backup_count: number;
   primary_customers: PrimaryCustomer[];
   speculative_quantity: number;
+  sealed_condition?: string | null;
+  variant_edition?: string | null;
 }
 
 export interface DemandOrigin {

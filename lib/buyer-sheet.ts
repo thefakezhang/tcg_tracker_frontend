@@ -28,6 +28,9 @@ export type SheetLine = {
   purchased_quantity: number;
   unit_price_jpy: number | null;
   note: string | null;
+  game?: string | null;
+  sealed_condition?: string | null;
+  variant_edition?: string | null;
 };
 
 export type SheetUpdate = {
@@ -46,7 +49,7 @@ export const planTag = (planId: number) => `plan:${planId}`;
 
 export const SHEET_COLUMNS = [
   "id", "shop", "card", "set", "number", "want", "asking",
-  "outcome", "qty", "unit_paid", "note", "listing",
+  "outcome", "qty", "unit_paid", "note", "listing", "condition", "edition",
 ] as const;
 
 export function toSheetRows(
@@ -67,6 +70,8 @@ export function toSheetRows(
     unit_paid: l.outcome === "purchased" ? l.unit_price_jpy : null,
     note: l.note ?? "",
     listing: l.source_listing_url ?? "",
+    condition: l.sealed_condition ?? "",
+    edition: l.variant_edition ?? "",
   }));
 }
 

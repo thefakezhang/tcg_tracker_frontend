@@ -2,252 +2,471 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { createClient } from "@/lib/supabase/client";
 import { formatMutationError } from "@/lib/mutation-error";
+import { conditionLabel, editionLabel } from "./use-sealed-data";
 import { useTrips } from "./TripContext";
 
-// Add the selected cards to a purchase plan without leaving the browser.
-//
-// Adding used to be one card at a time inside the planner, and nothing outside
-// the planner touched plans at all. Selecting cards here is where the operator
-// already decides what to buy, so this is where adding belongs.
-//
-// Each card becomes a WANT with its cheapest current JPY listing attached, so a
-// bulk-added card carries a cap across sources rather than being nailed to
-// whichever shop happened to be cheapest at planning time.
-//
-// Quantity and ceiling are PER CARD. A selection is heterogeneous by nature - a
-// bulk common wanted twenty deep sits next to a single chase card - so one
-// number for all of them is wrong for every card but the one it was chosen for.
-// The shared value survives only as a default to seed the rows with.
-
 export type PlanCard = { id: number; name: string };
-type PlanOption = { plan_id: number; name: string; status: string; trip_id: number | null };
+export type PlanSealedProduct = {
+  id: number;
+  name: string;
+  sealedCondition: string;
+  variantEdition: string;
+};
+
+type PlanOption = {
+  plan_id: number;
+  name: string;
+  status: string;
+  trip_id: number | null;
+};
 type AddResult = {
-  card_id: number;
+  card_id?: number | null;
+  product_id?: number | null;
+  sealed_condition?: string | null;
+  variant_edition?: string | null;
   added: boolean;
   source: string | null;
   asking_price: number | null;
-  // Copies that shop reported. null means it does not publish a count, which is
-  // not the same as none.
+  // A null count means the shop does not publish depth. It never means zero.
   available_quantity: number | null;
   reason: string | null;
 };
 type Wanted = { quantity: string; ceiling: string };
+type PlanItem = {
+  key: string;
+  id: number;
+  name: string;
+  sealedCondition: string | null;
+  variantEdition: string | null;
+};
 
-export function AddToPlanAction({ cards, onAdded }: { cards: PlanCard[]; onAdded?: () => void }) {
+const MAX_ITEMS = 100;
+const MAX_QUANTITY = 1000;
+const MAX_CEILING_JPY = 1_000_000_000;
+
+export function sealedPlanItemKey(item: Pick<PlanSealedProduct, "id" | "sealedCondition" | "variantEdition">) {
+  return `sealed:${item.id}:${item.sealedCondition}:${item.variantEdition}`;
+}
+
+function cardPlanItemKey(id: number) {
+  return `card:${id}`;
+}
+
+function resultKey(result: AddResult) {
+  return result.product_id != null
+    ? sealedPlanItemKey({
+        id: Number(result.product_id),
+        sealedCondition: result.sealed_condition ?? "",
+        variantEdition: result.variant_edition ?? "",
+      })
+    : cardPlanItemKey(Number(result.card_id));
+}
+
+function isOnPlan(result: AddResult) {
+  return result.added || result.reason === "already on this plan";
+}
+
+function parseWanted(row: Wanted): { quantity: number; ceiling: number | null } | null {
+  const quantity = Number(row.quantity);
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_QUANTITY) return null;
+  if (row.ceiling.trim() === "") return { quantity, ceiling: null };
+  const ceiling = Number(row.ceiling);
+  if (!Number.isFinite(ceiling) || ceiling < 0 || ceiling > MAX_CEILING_JPY) return null;
+  return { quantity, ceiling };
+}
+
+const REASON_KEYS: Record<string, TranslationKey> = {
+  "already on this plan": "bulkPlan.reasonAlready",
+  "sealed product not found": "bulkPlan.reasonMissingProduct",
+  "no eligible JPY listing on file": "bulkPlan.reasonNoListing",
+  "no eligible JPY listing at or below the ceiling": "bulkPlan.reasonAboveCeiling",
+};
+
+export function AddToPlanAction({
+  cards,
+  sealedProducts,
+  onAdded,
+}: {
+  cards?: PlanCard[];
+  sealedProducts?: PlanSealedProduct[];
+  onAdded?: () => void;
+}) {
+  const { t } = useTranslation();
   const { activeTripId } = useTrips();
+  const isSealed = sealedProducts !== undefined;
+  const items = useMemo<PlanItem[]>(
+    () => isSealed
+      ? (sealedProducts ?? []).map((item) => ({
+          key: sealedPlanItemKey(item),
+          id: item.id,
+          name: item.name,
+          sealedCondition: item.sealedCondition,
+          variantEdition: item.variantEdition,
+        }))
+      : (cards ?? []).map((item) => ({
+          key: cardPlanItemKey(item.id),
+          id: item.id,
+          name: item.name,
+          sealedCondition: null,
+          variantEdition: null,
+        })),
+    [cards, isSealed, sealedProducts],
+  );
   const [open, setOpen] = useState(false);
   const [plans, setPlans] = useState<PlanOption[]>([]);
   const [planId, setPlanId] = useState<number | null>(null);
-  const [wanted, setWanted] = useState<Record<number, Wanted>>({});
+  const [wanted, setWanted] = useState<Record<string, Wanted>>({});
   const [bulkQuantity, setBulkQuantity] = useState("1");
   const [bulkCeiling, setBulkCeiling] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<AddResult[] | null>(null);
 
-  const names = useMemo(() => new Map(cards.map((c) => [c.id, c.name])), [cards]);
+  const itemLabel = useCallback((item: PlanItem) => {
+    if (!item.sealedCondition || !item.variantEdition) return item.name;
+    return `${item.name} · ${editionLabel(t, item.variantEdition)} · ${conditionLabel(t, item.sealedCondition)}`;
+  }, [t]);
+  const byKey = useMemo(() => new Map(items.map((item) => [item.key, item])), [items]);
+  const resultByKey = useMemo(
+    () => new Map((results ?? []).map((result) => [resultKey(result), result])),
+    [results],
+  );
 
   const load = useCallback(async () => {
-    // Only a plan that can still take lines: the row freezes once ordered,
-    // because the buyer is shopping against it by then.
-    const { data } = await createClient()
+    const { data, error: loadError } = await createClient()
       .from("purchase_plans")
       .select("plan_id,name,status,trip_id")
       .in("status", ["draft", "ready"])
       .order("plan_id", { ascending: false });
+    if (loadError) {
+      setError(formatMutationError(loadError));
+      return;
+    }
     const rows = (data ?? []) as PlanOption[];
     setPlans(rows);
-    // Re-target on every open, newest plan on the active trip first.
-    //
-    // This was `current ?? ...`, which chose a plan once and kept it forever:
-    // the dialog is never unmounted, so a target picked early outlived every
-    // plan created after it and cards landed on a stale plan silently. Making
-    // a new plan and immediately adding a listing put the listing on the
-    // PREVIOUS plan and left the new one empty, with nothing on screen saying
-    // so.
-    //
-    // load() only runs when the dialog opens, so a target the operator picks
-    // by hand still stands for the rest of that open - it is re-derived the
-    // next time they open it, which is also when their intent may have moved.
     setPlanId(
-      rows.find((p) => p.trip_id === activeTripId)?.plan_id ?? rows[0]?.plan_id ?? null,
+      rows.find((plan) => plan.trip_id === activeTripId)?.plan_id
+        ?? rows[0]?.plan_id
+        ?? null,
     );
   }, [activeTripId]);
 
-  useEffect(() => { if (open) void load(); }, [open, load]);
+  useEffect(() => {
+    if (open) void load();
+  }, [open, load]);
 
-  // Open with every card at one copy and no cap, so the dialog is answerable
-  // immediately and the operator only touches the rows they care about.
   useEffect(() => {
     if (!open) return;
-    setWanted(Object.fromEntries(cards.map((c) => [c.id, { quantity: "1", ceiling: "" }])));
+    setWanted(Object.fromEntries(items.map((item) => [item.key, { quantity: "1", ceiling: "" }])));
     setBulkQuantity("1");
     setBulkCeiling("");
-  }, [open, cards]);
+  }, [items, open]);
 
-  function setRow(id: number, patch: Partial<Wanted>) {
-    setWanted((current) => ({ ...current, [id]: { ...(current[id] ?? { quantity: "1", ceiling: "" }), ...patch } }));
+  function setRow(key: string, patch: Partial<Wanted>) {
+    setWanted((current) => ({
+      ...current,
+      [key]: { ...(current[key] ?? { quantity: "1", ceiling: "" }), ...patch },
+    }));
   }
 
   function applyToAll() {
-    setWanted(Object.fromEntries(cards.map((c) => [c.id, { quantity: bulkQuantity || "1", ceiling: bulkCeiling }])));
+    setWanted(Object.fromEntries(items.map((item) => [
+      item.key,
+      { quantity: bulkQuantity, ceiling: bulkCeiling },
+    ])));
   }
 
-  async function add() {
-    if (planId == null) return;
-    setBusy(true); setError(null); setResults(null);
-    const items = cards.map((c) => {
-      const row = wanted[c.id] ?? { quantity: "1", ceiling: "" };
-      return {
-        card_id: c.id,
-        quantity: Number(row.quantity) || 1,
-        ceiling_jpy: row.ceiling ? Number(row.ceiling) : null,
-      };
+  const invalidItem = items.find((item) =>
+    parseWanted(wanted[item.key] ?? { quantity: "1", ceiling: "" }) === null);
+  const validationError = invalidItem
+    ? t("bulkPlan.invalidValues", { name: itemLabel(invalidItem) })
+    : items.length > MAX_ITEMS
+      ? t("bulkPlan.tooMany", { count: MAX_ITEMS })
+      : null;
+
+  async function submit(keys: string[]) {
+    if (planId == null || validationError) return;
+    const submitted = items.filter((item) => keys.includes(item.key));
+    if (!submitted.length) return;
+    const rpcItems = submitted.map((item) => {
+      const parsed = parseWanted(wanted[item.key] ?? { quantity: "1", ceiling: "" });
+      if (!parsed) throw new Error("validated plan item became invalid");
+      return isSealed
+        ? {
+            product_id: item.id,
+            sealed_condition: item.sealedCondition,
+            variant_edition: item.variantEdition,
+            quantity: parsed.quantity,
+            ceiling_jpy: parsed.ceiling,
+          }
+        : {
+            card_id: item.id,
+            quantity: parsed.quantity,
+            ceiling_jpy: parsed.ceiling,
+          };
     });
-    const { data, error: rpcError } = await createClient().rpc("add_cards_to_purchase_plan", {
-      p_plan_id: planId,
-      p_items: items,
-    });
+
+    setBusy(true);
+    setError(null);
+    const { data, error: rpcError } = await createClient().rpc(
+      isSealed ? "add_sealed_to_purchase_plan" : "add_cards_to_purchase_plan",
+      { p_plan_id: planId, p_items: rpcItems },
+    );
     setBusy(false);
-    if (rpcError) { setError(formatMutationError(rpcError)); return; }
-    setResults((data ?? []) as AddResult[]);
-    onAdded?.();
+    if (rpcError) {
+      setError(formatMutationError(rpcError));
+      return;
+    }
+
+    const returned = (data ?? []) as AddResult[];
+    setResults((current) => {
+      const merged = new Map((current ?? []).map((result) => [resultKey(result), result]));
+      for (const result of returned) merged.set(resultKey(result), result);
+      return items.flatMap((item) => {
+        const result = merged.get(item.key);
+        return result ? [result] : [];
+      });
+    });
+    if (returned.some(isOnPlan)) onAdded?.();
   }
 
-  if (!cards.length) return null;
+  if (!items.length) return null;
 
-  const addedCount = results?.filter((r) => r.added).length ?? 0;
-  const skipped = results?.filter((r) => !r.added) ?? [];
-  // Added, but the chosen shop cannot cover the copies asked for. Silence here
-  // is what sends a buyer to Japan with an instruction that cannot be filled.
-  const short = (results ?? []).filter((r) => {
-    if (!r.added || r.available_quantity == null) return false;
-    const wantedQty = Number(wanted[r.card_id]?.quantity) || 1;
-    return r.available_quantity < wantedQty;
+  const successful = (results ?? []).filter(isOnPlan);
+  const skipped = (results ?? []).filter((result) => !isOnPlan(result));
+  const retryKeys = results === null
+    ? []
+    : items
+        .filter((item) => {
+          const result = resultByKey.get(item.key);
+          return !result || !isOnPlan(result);
+        })
+        .map((item) => item.key);
+  const short = successful.filter((result) => {
+    if (!result.added || result.available_quantity == null) return false;
+    const parsed = parseWanted(wanted[resultKey(result)] ?? { quantity: "1", ceiling: "" });
+    return parsed != null && result.available_quantity < parsed.quantity;
   });
-  const totalCopies = cards.reduce((sum, c) => sum + (Number(wanted[c.id]?.quantity) || 1), 0);
+  const totalCopies = items.reduce((sum, item) => {
+    const parsed = parseWanted(wanted[item.key] ?? { quantity: "1", ceiling: "" });
+    return sum + (parsed?.quantity ?? 0);
+  }, 0);
+  const reasonText = (reason: string | null) => {
+    if (!reason) return t("bulkPlan.reasonUnknown");
+    const key = REASON_KEYS[reason];
+    return key ? t(key) : reason;
+  };
 
   return (
     <>
-      <Button size="sm" variant="outline" onClick={() => { setResults(null); setOpen(true); }}>
-        Add to plan
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-11 sm:h-8"
+        onClick={() => {
+          setResults(null);
+          setError(null);
+          setOpen(true);
+        }}
+      >
+        {t("bulkPlan.open")}
       </Button>
-      <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) setResults(null); }}>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) setResults(null);
+        }}
+      >
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Add {cards.length} card{cards.length === 1 ? "" : "s"} to a plan</DialogTitle>
+            <DialogTitle className="pr-10 sm:pr-0">
+              {t(
+                isSealed
+                  ? items.length === 1 ? "bulkPlan.titleSealedOne" : "bulkPlan.titleSealed"
+                  : items.length === 1 ? "bulkPlan.titleCard" : "bulkPlan.titleCards",
+                { count: items.length },
+              )}
+            </DialogTitle>
             <DialogDescription>
-              Each card is added with its cheapest current JPY listing, as a want you can fill
-              from any shop. Copies and cap are set per card.
+              {t(isSealed ? "bulkPlan.descriptionSealed" : "bulkPlan.descriptionCards")}
             </DialogDescription>
           </DialogHeader>
 
           {results === null ? (
             <div className="space-y-3">
               <div className="space-y-1">
-                <Label htmlFor="add-to-plan-plan">Plan</Label>
+                <Label htmlFor="add-to-plan-plan">{t("bulkPlan.plan")}</Label>
                 <select
                   id="add-to-plan-plan"
-                  className="border-input bg-background h-9 w-full rounded-md border px-2 text-sm"
+                  className="border-input bg-background h-11 w-full rounded-md border px-2 text-sm sm:h-9"
                   value={planId ?? ""}
-                  onChange={(e) => setPlanId(e.target.value ? Number(e.target.value) : null)}
+                  onChange={(event) => setPlanId(event.target.value ? Number(event.target.value) : null)}
                 >
-                  {plans.length === 0 && <option value="">No draft plans - create one first</option>}
-                  {plans.map((p) => (
-                    <option key={p.plan_id} value={p.plan_id}>{p.name} [{p.status}]</option>
+                  {plans.length === 0 && <option value="">{t("bulkPlan.noPlans")}</option>}
+                  {plans.map((plan) => (
+                    <option key={plan.plan_id} value={plan.plan_id}>
+                      {plan.name} [{plan.status}]
+                    </option>
                   ))}
                 </select>
               </div>
 
-              {cards.length > 1 && (
-                // A default to seed the rows, not a value applied behind the
-                // operator's back - nothing changes until Apply is pressed.
+              {items.length > 1 && (
                 <div className="flex flex-wrap items-end gap-2 rounded-md border p-2">
                   <div className="space-y-1">
-                    <Label htmlFor="add-to-plan-bulk-qty" className="text-xs">Copies</Label>
+                    <Label htmlFor="add-to-plan-bulk-qty" className="text-xs">
+                      {t("bulkPlan.copies")}
+                    </Label>
                     <Input
                       id="add-to-plan-bulk-qty"
                       type="number"
                       min="1"
-                      className="h-8 w-20"
+                      max={MAX_QUANTITY}
+                      step="1"
+                      className="h-11 w-24 sm:h-8 sm:w-20"
                       value={bulkQuantity}
-                      onChange={(e) => setBulkQuantity(e.target.value)}
+                      onChange={(event) => setBulkQuantity(event.target.value)}
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label htmlFor="add-to-plan-bulk-ceiling" className="text-xs">Max ¥</Label>
+                    <Label htmlFor="add-to-plan-bulk-ceiling" className="text-xs">
+                      {t("bulkPlan.maxYen")}
+                    </Label>
                     <Input
                       id="add-to-plan-bulk-ceiling"
-                      inputMode="numeric"
-                      className="h-8 w-24"
-                      placeholder="no limit"
+                      type="number"
+                      min="0"
+                      max={MAX_CEILING_JPY}
+                      className="h-11 w-28 sm:h-8 sm:w-24"
+                      placeholder={t("bulkPlan.noLimit")}
                       value={bulkCeiling}
-                      onChange={(e) => setBulkCeiling(e.target.value)}
+                      onChange={(event) => setBulkCeiling(event.target.value)}
                     />
                   </div>
-                  <Button type="button" size="sm" variant="secondary" onClick={applyToAll}>
-                    Apply to all
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="h-11 sm:h-8"
+                    onClick={applyToAll}
+                  >
+                    {t("bulkPlan.applyAll")}
                   </Button>
                 </div>
               )}
 
-              <div className="rounded-md border">
-                <div className="text-muted-foreground grid grid-cols-[1fr_5rem_6rem] gap-2 border-b px-3 py-1.5 text-xs">
-                  <span>Card</span>
-                  <span>Copies</span>
-                  <span>Max ¥</span>
+              <div className="overflow-hidden rounded-md border">
+                <div className="text-muted-foreground hidden grid-cols-[minmax(0,1fr)_5rem_6rem] gap-2 border-b px-3 py-1.5 text-xs sm:grid">
+                  <span>{t("bulkPlan.item")}</span>
+                  <span>{t("bulkPlan.copies")}</span>
+                  <span>{t("bulkPlan.maxYen")}</span>
                 </div>
                 <ul className="max-h-72 overflow-y-auto">
-                  {cards.map((card) => (
-                    <li key={card.id} className="grid grid-cols-[1fr_5rem_6rem] items-center gap-2 border-b px-3 py-1.5 last:border-0">
-                      <span className="truncate text-sm" title={card.name}>{card.name}</span>
-                      <Input
-                        type="number"
-                        min="1"
-                        className="h-8"
-                        aria-label={`Copies of ${card.name}`}
-                        value={wanted[card.id]?.quantity ?? "1"}
-                        onChange={(e) => setRow(card.id, { quantity: e.target.value })}
-                      />
-                      <Input
-                        inputMode="numeric"
-                        className="h-8"
-                        placeholder="none"
-                        aria-label={`Max price for ${card.name}`}
-                        value={wanted[card.id]?.ceiling ?? ""}
-                        onChange={(e) => setRow(card.id, { ceiling: e.target.value })}
-                      />
-                    </li>
-                  ))}
+                  {items.map((item) => {
+                    const label = itemLabel(item);
+                    return (
+                      <li
+                        key={item.key}
+                        className="grid grid-cols-2 items-end gap-2 border-b px-3 py-2 last:border-0 sm:grid-cols-[minmax(0,1fr)_5rem_6rem] sm:items-center sm:py-1.5"
+                      >
+                        <span className="col-span-2 break-words text-sm sm:col-span-1 sm:truncate" title={label}>{label}</span>
+                        <div className="flex min-w-0 flex-col items-stretch gap-1 sm:block">
+                          <span className="text-muted-foreground text-xs sm:sr-only">{t("bulkPlan.copies")}</span>
+                          <Input
+                            type="number"
+                            min="1"
+                            max={MAX_QUANTITY}
+                            step="1"
+                            className="h-11 w-full sm:h-8"
+                            aria-label={t("bulkPlan.copiesOf", { name: label })}
+                            value={wanted[item.key]?.quantity ?? "1"}
+                            onChange={(event) => setRow(item.key, { quantity: event.target.value })}
+                          />
+                        </div>
+                        <div className="flex min-w-0 flex-col items-stretch gap-1 sm:block">
+                          <span className="text-muted-foreground text-xs sm:sr-only">{t("bulkPlan.maxYen")}</span>
+                          <Input
+                            type="number"
+                            min="0"
+                            max={MAX_CEILING_JPY}
+                            className="h-11 w-full sm:h-8"
+                            placeholder={t("bulkPlan.none")}
+                            aria-label={t("bulkPlan.maxFor", { name: label })}
+                            value={wanted[item.key]?.ceiling ?? ""}
+                            onChange={(event) => setRow(item.key, { ceiling: event.target.value })}
+                          />
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
+              {validationError && <p role="alert" className="text-sm text-destructive">{validationError}</p>}
               {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             </div>
           ) : (
-            // What actually happened, per card. A partial success the operator
-            // cannot see is worse than a slow dialog: a card would be believed
-            // on the list when it is not.
-            <div className="space-y-2 text-sm">
+            <div className="space-y-3 text-sm" aria-live="polite">
               <p className="font-medium">
-                Added {addedCount} of {results.length}
+                {t("bulkPlan.onPlanSummary", { done: successful.length, total: items.length })}
               </p>
+              {successful.length > 0 && (
+                <div className="rounded-md border">
+                  <div className="text-muted-foreground border-b px-3 py-1.5 text-xs">
+                    {t("bulkPlan.onPlan")}
+                  </div>
+                  <ul className="max-h-48 overflow-y-auto">
+                    {successful.map((result) => {
+                      const item = byKey.get(resultKey(result));
+                      const detail = result.added
+                        ? [
+                            result.source,
+                            result.asking_price == null
+                              ? null
+                              : `¥${Math.round(Number(result.asking_price)).toLocaleString()}`,
+                          ].filter(Boolean).join(" · ")
+                        : reasonText(result.reason);
+                      return (
+                        <li key={resultKey(result)} className="border-b px-3 py-1.5 text-xs last:border-0">
+                          <span className="font-medium">{item ? itemLabel(item) : resultKey(result)}</span>
+                          {detail && <span className="text-muted-foreground"> · {detail}</span>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
               {short.length > 0 && (
                 <div className="border-destructive/40 rounded-md border">
                   <div className="text-muted-foreground border-b px-3 py-1.5 text-xs">
-                    Added, but the shop does not have enough
+                    {t("bulkPlan.shortfall")}
                   </div>
                   <ul className="max-h-40 overflow-y-auto">
-                    {short.map((r) => {
-                      const wantedQty = Number(wanted[r.card_id]?.quantity) || 1;
+                    {short.map((result) => {
+                      const key = resultKey(result);
+                      const item = byKey.get(key);
+                      const parsed = parseWanted(wanted[key] ?? { quantity: "1", ceiling: "" });
                       return (
-                        <li key={r.card_id} className="border-b px-3 py-1.5 text-xs last:border-0">
-                          {names.get(r.card_id) ?? `card ${r.card_id}`} - {r.source} has{" "}
-                          {r.available_quantity} of {wantedQty}. The rest needs another shop.
+                        <li key={key} className="border-b px-3 py-1.5 text-xs last:border-0">
+                          {t("bulkPlan.shortfallDetail", {
+                            name: item ? itemLabel(item) : key,
+                            source: result.source ?? t("bulkPlan.unknownSource"),
+                            available: result.available_quantity ?? 0,
+                            wanted: parsed?.quantity ?? 0,
+                          })}
                         </li>
                       );
                     })}
@@ -256,28 +475,50 @@ export function AddToPlanAction({ cards, onAdded }: { cards: PlanCard[]; onAdded
               )}
               {skipped.length > 0 && (
                 <div className="rounded-md border">
-                  <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">Not added</div>
+                  <div className="text-muted-foreground border-b px-3 py-1.5 text-xs">
+                    {t("bulkPlan.notAdded")}
+                  </div>
                   <ul className="max-h-56 overflow-y-auto">
-                    {skipped.map((r) => (
-                      <li key={r.card_id} className="border-b px-3 py-1.5 text-xs last:border-0">
-                        {names.get(r.card_id) ?? `card ${r.card_id}`} - {r.reason}
-                      </li>
-                    ))}
+                    {skipped.map((result) => {
+                      const item = byKey.get(resultKey(result));
+                      return (
+                        <li key={resultKey(result)} className="border-b px-3 py-1.5 text-xs last:border-0">
+                          {item ? itemLabel(item) : resultKey(result)} · {reasonText(result.reason)}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               )}
+              {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             </div>
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>
-              {results === null ? "Cancel" : "Done"}
+            <Button className="h-11 sm:h-9" variant="outline" onClick={() => setOpen(false)}>
+              {results === null ? t("common.cancel") : t("common.close")}
             </Button>
-            {results === null && (
-              <Button onClick={add} disabled={busy || planId == null}>
-                {busy ? "Adding..." : `Add ${totalCopies} cop${totalCopies === 1 ? "y" : "ies"}`}
+            {results === null ? (
+              <Button
+                className="h-11 sm:h-9"
+                onClick={() => void submit(items.map((item) => item.key))}
+                disabled={busy || planId == null || validationError != null}
+              >
+                {busy
+                  ? t("bulkPlan.adding")
+                  : totalCopies === 1
+                    ? t("bulkPlan.addCopy")
+                    : t("bulkPlan.addCopies", { count: totalCopies })}
               </Button>
-            )}
+            ) : retryKeys.length > 0 ? (
+              <Button
+                className="h-11 sm:h-9"
+                onClick={() => void submit(retryKeys)}
+                disabled={busy}
+              >
+                {busy ? t("bulkPlan.adding") : t("bulkPlan.retry", { count: retryKeys.length })}
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

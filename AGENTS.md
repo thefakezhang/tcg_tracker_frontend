@@ -687,6 +687,10 @@ own data hook and modal, because sealed products differ structurally from cards:
   entries. `addToBuylist` takes an optional `{ sealedCondition, variantEdition }` for sealed inserts.
 - The Sealed browser has parity with the card browser for the shared inventory signal: the same `Available only` toggle, landed cost and consigned counts on rows and tiles, phone-height inputs, and the phone card-grid default.
 `createMtgColumns` / `createSealedColumns` defer their secondary columns behind breakpoints like `createColumns` does (`columns-responsive.test.ts` pins all three), and `createBuylistColumns` drops the columns buy-list rows can never fill.
+- The Sealed browser multi-select keys every row by `product_id + sealed_condition + variant_edition`, works in list and grid layouts without opening the detail dialog, and clears when a page, page size, filter, or sort changes.
+`AddToPlanAction` sends bounded per-variant quantities and ceilings to `add_sealed_to_purchase_plan`, keeps partial failures visible, and retries only unresolved exact variants.
+- The Purchase Planner reads exact sealed candidates from `pokemon_sealed_purchase_candidate_listings_v` and writes condition and edition for both selected and manually entered lines.
+The planner ledger, buyer instruction, and appended sheet columns retain those axes through result entry.
 - The `aggregate-prices` edge function's `computeAndInsertSealed()` populates
   `pokemon_sealed_price_summaries` (the same one-lane JP-entry / NA-exit rule and kind precedence as cards).
 - **RLS note:** the views run as their owner and bypass base-table RLS, so browse works regardless. But
@@ -714,12 +718,14 @@ The authoritative schema is `docs/schema.md` in the backend repository; this tab
 | `pokemon_buylist_entries` / `mtg_buylist_entries` | entry_id (PK), buylist_id (FK→buylists), card_id (FK→*_card_definitions), psa_grade (0-10, default 0), target_price_usd (numeric, nullable), notes, added_at |
 | `pokemon_sealed_products` | product_id (PK), name, english_name, set_code, variant_edition, product_type, language, misc_info, image_url |
 | `pokemon_sealed_market_listings` | product_id, location_id, price_type (Buy/Sell), price, currency, sealed_condition, variant_edition, listing_url, seller_text |
+| `pokemon_sealed_purchase_candidate_listings_v` | eligible positive JPY Sell listing, exact sealed axes, source URL, observed ask and freshness, unknown stock depth |
 | `pokemon_sealed_price_summaries` | (product_id, sealed_condition, variant_edition) PK, best_buy_*, best_sell_*, roi, updated_at |
 | `pokemon_sealed_summaries_v` / `_best_v` (views) | flat card-shaped projection of summaries+products; `_best_v` = DISTINCT ON product (best ROI) |
 | `pokemon_sealed_buylist_entries` | entry_id (PK), buylist_id (FK→buylists), product_id (FK→pokemon_sealed_products), sealed_condition, variant_edition, target_price_usd, notes, added_at |
 | `customer_wishlist` / `customer_wish_criteria` | exact or broad customer demand, priority, target quantity, intent, optional expiry, and price or grade constraints |
 | `purchase_plans` | plan_id, name, status, trip_id, budget, reviewed_at, ordered_at |
-| `purchase_plan_lines` | exact card or sealed product, grade, planned quantity, source snapshot, original price, and landed cost |
+| `purchase_plan_wants` | plan-wide quantity and ceiling, plus exact condition and edition for new sealed wants |
+| `purchase_plan_lines` | exact card or sealed product, grade or sealed axes, planned quantity, source snapshot, original price, and landed cost |
 | `purchase_plan_allocations` | primary or ranked backup customer, demand origin, quantity, price expectation, and lifecycle status |
 | `purchase_plan_lines_v` / `purchase_plan_coverage_v` | card-oriented allocation ledger and customer-oriented demand coverage ledger |
 | `trips` | trip_id (PK), name, status, started_at, ended_at, notes |

@@ -7,6 +7,16 @@ const rpc = vi.fn();
 const from = vi.fn();
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc, from }) }));
 vi.mock("./TripContext", () => ({ useTrips: () => ({ activeTripId: 9, trips: [] }) }));
+vi.mock("@/lib/i18n", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/i18n")>();
+  return {
+    ...actual,
+    useTranslation: () => ({
+      t: (key: Parameters<typeof actual.t>[1], params?: Record<string, string | number>) =>
+        actual.t("en", key, params),
+    }),
+  };
+});
 
 import { AddToPlanAction } from "./AddToPlanAction";
 
@@ -124,8 +134,8 @@ describe("AddToPlanAction", () => {
     await screen.findByText("Plan");
     fireEvent.click(screen.getByText(/^Add 2 copies$/));
 
-    await screen.findByText("Added 1 of 2");
-    expect(screen.getByText(/Bede - no JPY listing on file/)).toBeTruthy();
+    await screen.findByText("1 of 2 are on the plan");
+    expect(screen.getByText(/Bede · no JPY listing on file/)).toBeTruthy();
   });
 
   it("surfaces a refusal rather than failing silently", async () => {
@@ -153,8 +163,8 @@ describe("AddToPlanAction", () => {
     fireEvent.change(screen.getByLabelText("Copies of Iono"), { target: { value: "20" } });
     fireEvent.click(screen.getByText(/^Add 20 copies$/));
 
-    await screen.findByText("Added 1 of 1");
-    expect(screen.getByText(/shinsoku has 3 of 20/)).toBeTruthy();
+    await screen.findByText("1 of 1 are on the plan");
+    expect(screen.getByText(/shinsoku reports 3 of 20/)).toBeTruthy();
   });
 
   it("does not claim a shortfall when the shop publishes no count", async () => {
@@ -171,7 +181,7 @@ describe("AddToPlanAction", () => {
     fireEvent.change(screen.getByLabelText("Copies of Iono"), { target: { value: "20" } });
     fireEvent.click(screen.getByText(/^Add 20 copies$/));
 
-    await screen.findByText("Added 1 of 1");
+    await screen.findByText("1 of 1 are on the plan");
     expect(screen.queryByText(/does not have enough/)).toBeNull();
   });
 
@@ -187,8 +197,115 @@ describe("AddToPlanAction", () => {
     fireEvent.change(screen.getByLabelText("Copies of Iono"), { target: { value: "20" } });
     fireEvent.click(screen.getByText(/^Add 20 copies$/));
 
-    await screen.findByText("Added 1 of 1");
+    await screen.findByText("1 of 1 are on the plan");
     expect(screen.queryByText(/does not have enough/)).toBeNull();
+  });
+
+  it("sends the exact condition and edition for every sealed variant", async () => {
+    rpc.mockResolvedValue({
+      data: [
+        { product_id: 41, sealed_condition: "shrink", variant_edition: "1ed", added: true, source: "cardrush", asking_price: 1200, available_quantity: null, reason: null },
+        { product_id: 41, sealed_condition: "no_shrink", variant_edition: "unlimited", added: true, source: "hareruya2", asking_price: 800, available_quantity: null, reason: null },
+      ],
+      error: null,
+    });
+    render(<AddToPlanAction sealedProducts={[
+      { id: 41, name: "Test Box", sealedCondition: "shrink", variantEdition: "1ed" },
+      { id: 41, name: "Test Box", sealedCondition: "no_shrink", variantEdition: "unlimited" },
+    ]} />);
+    fireEvent.click(screen.getByText("Add to plan"));
+    await screen.findByText("Plan");
+
+    fireEvent.change(screen.getByLabelText("Copies of Test Box · 1st Edition · Shrink"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("Max price for Test Box · 1st Edition · Shrink"), { target: { value: "1500" } });
+    fireEvent.click(screen.getByText("Add 4 copies"));
+
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("add_sealed_to_purchase_plan", {
+      p_plan_id: 5,
+      p_items: [
+        { product_id: 41, sealed_condition: "shrink", variant_edition: "1ed", quantity: 3, ceiling_jpy: 1500 },
+        { product_id: 41, sealed_condition: "no_shrink", variant_edition: "unlimited", quantity: 1, ceiling_jpy: null },
+      ],
+    }));
+    expect(await screen.findByText("2 of 2 are on the plan")).toBeTruthy();
+    expect(screen.getByText(/Test Box · 1st Edition · Shrink/)).toBeTruthy();
+    expect(screen.getByText(/Test Box · Unlimited · No Shrink/)).toBeTruthy();
+  });
+
+  it("retries only failed sealed selections and merges the new outcome", async () => {
+    rpc
+      .mockResolvedValueOnce({
+        data: [
+          { product_id: 41, sealed_condition: "shrink", variant_edition: "1ed", added: true, source: "cardrush", asking_price: 1200, available_quantity: null, reason: null },
+          { product_id: 42, sealed_condition: "standard", variant_edition: "standard", added: false, source: null, asking_price: null, available_quantity: null, reason: "no eligible JPY listing on file" },
+        ],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: [
+          { product_id: 42, sealed_condition: "standard", variant_edition: "standard", added: true, source: "shinsoku", asking_price: 900, available_quantity: null, reason: null },
+        ],
+        error: null,
+      });
+    render(<AddToPlanAction sealedProducts={[
+      { id: 41, name: "Alpha Box", sealedCondition: "shrink", variantEdition: "1ed" },
+      { id: 42, name: "Beta Box", sealedCondition: "standard", variantEdition: "standard" },
+    ]} />);
+    fireEvent.click(screen.getByText("Add to plan"));
+    await screen.findByText("Plan");
+    fireEvent.click(screen.getByText("Add 2 copies"));
+
+    expect(await screen.findByText("1 of 2 are on the plan")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry 1 not added" }));
+    await waitFor(() => expect(rpc).toHaveBeenCalledTimes(2));
+    expect(rpc.mock.calls[1]).toEqual(["add_sealed_to_purchase_plan", {
+      p_plan_id: 5,
+      p_items: [{
+        product_id: 42,
+        sealed_condition: "standard",
+        variant_edition: "standard",
+        quantity: 1,
+        ceiling_jpy: null,
+      }],
+    }]);
+    expect(await screen.findByText("2 of 2 are on the plan")).toBeTruthy();
+    expect(screen.queryByText("Retry 1 not added")).toBeNull();
+  });
+
+  it("treats a lost-response duplicate as already present instead of retryable", async () => {
+    rpc
+      .mockResolvedValueOnce({
+        data: [{ product_id: 41, sealed_condition: "shrink", variant_edition: "1ed", added: false, source: null, asking_price: null, available_quantity: null, reason: "no eligible JPY listing on file" }],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: [{ product_id: 41, sealed_condition: "shrink", variant_edition: "1ed", added: false, source: null, asking_price: null, available_quantity: null, reason: "already on this plan" }],
+        error: null,
+      });
+    render(<AddToPlanAction sealedProducts={[
+      { id: 41, name: "Alpha Box", sealedCondition: "shrink", variantEdition: "1ed" },
+    ]} />);
+    fireEvent.click(screen.getByText("Add to plan"));
+    await screen.findByText("Plan");
+    fireEvent.click(screen.getByText("Add 1 copy"));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry 1 not added" }));
+
+    expect(await screen.findByText("1 of 1 are on the plan")).toBeTruthy();
+    expect(screen.getByText(/Already on this plan/)).toBeTruthy();
+    expect(screen.queryByText("Retry 1 not added")).toBeNull();
+  });
+
+  it("blocks invalid quantities instead of silently changing them to one", async () => {
+    render(<AddToPlanAction sealedProducts={[
+      { id: 41, name: "Alpha Box", sealedCondition: "shrink", variantEdition: "1ed" },
+    ]} />);
+    fireEvent.click(screen.getByText("Add to plan"));
+    await screen.findByText("Plan");
+    fireEvent.change(screen.getByLabelText("Copies of Alpha Box · 1st Edition · Shrink"), { target: { value: "0" } });
+
+    expect(screen.getByRole("alert").textContent).toMatch(/whole-number quantity/);
+    expect((screen.getByRole("button", { name: "Add 0 copies" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(rpc).not.toHaveBeenCalled();
   });
 });
 

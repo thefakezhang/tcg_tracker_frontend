@@ -211,30 +211,37 @@ export const selectColumn: ColumnDef<CardRowData> = {
   enableSorting: false,
   size: 32,
   header: ({ table }) => (
-    <input
-      type="checkbox"
-      aria-label="Select all rows on this page"
-      className="size-6 cursor-pointer align-middle sm:size-4"
-      checked={table.getIsAllPageRowsSelected()}
-      ref={(el) => {
-        if (el) {
-          el.indeterminate =
-            table.getIsSomePageRowsSelected() && !table.getIsAllPageRowsSelected();
-        }
-      }}
-      onChange={(e) => table.toggleAllPageRowsSelected(e.target.checked)}
-      onClick={(e) => e.stopPropagation()}
-    />
+    <label className="inline-flex size-11 cursor-pointer items-center justify-center sm:size-6">
+      <input
+        type="checkbox"
+        aria-label="Select all rows on this page"
+        className="size-6 cursor-pointer align-middle sm:size-4"
+        checked={table.getIsAllPageRowsSelected()}
+        ref={(el) => {
+          if (el) {
+            el.indeterminate =
+              table.getIsSomePageRowsSelected() && !table.getIsAllPageRowsSelected();
+          }
+        }}
+        onChange={(e) => table.toggleAllPageRowsSelected(e.target.checked)}
+        onClick={(e) => e.stopPropagation()}
+      />
+    </label>
   ),
   cell: ({ row }) => (
-    <input
-      type="checkbox"
-      aria-label="Select row"
-      className="size-6 cursor-pointer align-middle sm:size-4"
-      checked={row.getIsSelected()}
-      onChange={(e) => row.toggleSelected(e.target.checked)}
+    <label
+      className="inline-flex size-11 cursor-pointer items-center justify-center sm:size-6"
       onClick={(e) => e.stopPropagation()}
-    />
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <input
+        type="checkbox"
+        aria-label="Select row"
+        className="size-6 cursor-pointer align-middle sm:size-4"
+        checked={row.getIsSelected()}
+        onChange={(e) => row.toggleSelected(e.target.checked)}
+      />
+    </label>
   ),
 };
 

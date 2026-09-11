@@ -50,6 +50,12 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { QueryError, useSupabaseQuery } from "./use-query";
+import {
+  conditionLabel,
+  editionLabel,
+  SEALED_CONDITIONS,
+  SEALED_EDITIONS,
+} from "./use-sealed-data";
 
 import { formatUsd } from "@/lib/money";
 const selectClass =
@@ -62,10 +68,12 @@ interface PlannerData {
   coverage: DemandCoverage[];
 }
 
-interface CatalogResult {
+export interface CatalogResult {
   id: number;
   game: "pokemon" | "mtg" | "pokemon_sealed";
   label: string;
+  sealedCondition: string | null;
+  variantEdition: string | null;
 }
 
 async function fetchPlannerData(planId: number | null): Promise<PlannerData> {
@@ -122,7 +130,7 @@ const CATALOG_SEARCH = {
   },
   pokemon_sealed: {
     table: "pokemon_sealed_products",
-    select: "product_id, product_uid, name, english_name, set_code",
+    select: "product_id, product_uid, name, english_name, set_code, sealed_condition, variant_edition",
     extIdsTable: "pokemon_sealed_external_identifiers",
     idCol: "product_id",
     uidCol: "product_uid",
@@ -160,7 +168,9 @@ async function searchCatalog(game: CatalogResult["game"], raw: string): Promise<
       return {
         id: row.product_id as number,
         game,
-        label: `${(row.english_name as string) || (row.name as string)}${setCode && setCode !== "UNKNOWN" ? ` | ${setCode}` : ""}`,
+        label: `${(row.english_name as string) || (row.name as string)}${setCode && setCode !== "UNKNOWN" ? ` | ${setCode}` : ""} | ${row.variant_edition as string} · ${row.sealed_condition as string}`,
+        sealedCondition: row.sealed_condition as string,
+        variantEdition: row.variant_edition as string,
       };
     }
     const name = (row.english_name as string) || (row.local_name as string) || (row.regional_name as string);
@@ -168,6 +178,8 @@ async function searchCatalog(game: CatalogResult["game"], raw: string): Promise<
       id: row.card_id as number,
       game,
       label: `${name} | ${row.set_code as string} ${row.card_number as string}`,
+      sealedCondition: null,
+      variantEdition: null,
     };
   });
 }
@@ -199,8 +211,18 @@ const KNOWN_SOURCES = [
   "torecabank", "big_tcg", "cardkingdom", "surugaya",
 ];
 
-function itemMeta(line: PurchasePlanLine): string {
-  return [line.set_code && line.set_code !== "UNKNOWN" ? line.set_code : null, line.card_number, line.misc_info && line.misc_info !== "UNKNOWN" ? line.misc_info : null]
+function itemMeta(line: PurchasePlanLine, t: ReturnType<typeof useTranslation>["t"]): string {
+  return [
+    line.set_code && line.set_code !== "UNKNOWN" ? line.set_code : null,
+    line.card_number,
+    line.game === "pokemon_sealed" && line.variant_edition
+      ? editionLabel(t, line.variant_edition)
+      : null,
+    line.game === "pokemon_sealed" && line.sealed_condition
+      ? conditionLabel(t, line.sealed_condition)
+      : null,
+    line.misc_info && line.misc_info !== "UNKNOWN" ? line.misc_info : null,
+  ]
     .filter(Boolean)
     .join(" | ");
 }
@@ -515,7 +537,7 @@ function PlanLines({ lines, allocations, editable, onAllocate, onRemove }: {
               <tr key={line.plan_line_id} className="border-t align-top">
                 <td className="px-3 py-2">
                   <div className="font-medium">{line.item_name || `#${line.card_id ?? line.product_id}`}</div>
-                  <div className="text-xs text-muted-foreground">{itemMeta(line) || t(`game.${line.game}` as never)}{line.game !== "pokemon_sealed" ? ` | ${line.psa_grade ? `PSA ${line.psa_grade}` : t("purchasePlanner.raw")}` : ""}</div>
+                  <div className="text-xs text-muted-foreground">{itemMeta(line, t) || t(`game.${line.game}` as never)}{line.game !== "pokemon_sealed" ? ` | ${line.psa_grade ? `PSA ${line.psa_grade}` : t("purchasePlanner.raw")}` : ""}</div>
                 </td>
                 <td className="px-3 py-2 text-xs">
                   <div>{line.source || "-"}</div>
@@ -700,6 +722,8 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
   const [manualPrice, setManualPrice] = useState("");
   const [manualCurrency, setManualCurrency] = useState("JPY");
   const [manualQty, setManualQty] = useState("1");
+  const [manualSealedCondition, setManualSealedCondition] = useState("standard");
+  const [manualVariantEdition, setManualVariantEdition] = useState("standard");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -713,15 +737,35 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
   // The whole point: once a card is chosen, offer the listings we already
   // crawled instead of asking the operator to retype source, URL and price.
   useEffect(() => {
-    if (!chosen || chosen.game !== "pokemon") { setCandidates(null); return; }
+    if (!chosen || chosen.game === "mtg") { setCandidates(null); return; }
     let live = true;
     setCandidates(null);
-    void createClient()
-      .from("pokemon_purchase_candidate_listings_v")
-      .select("source,listing_url,asking_price,currency,observed_at,stale,available_quantity")
-      .eq("card_id", chosen.id)
+    const sealed = chosen.game === "pokemon_sealed";
+    let request = createClient()
+      .from(sealed
+        ? "pokemon_sealed_purchase_candidate_listings_v"
+        : "pokemon_purchase_candidate_listings_v")
+      .select(sealed
+        ? "listing_id,product_id,sealed_condition,variant_edition,source,listing_url,asking_price,currency,observed_at,stale,available_quantity"
+        : "card_id,source,listing_url,asking_price,currency,observed_at,stale,available_quantity")
+      .eq(sealed ? "product_id" : "card_id", chosen.id);
+    if (sealed) {
+      request = request
+        .eq("sealed_condition", chosen.sealedCondition)
+        .eq("variant_edition", chosen.variantEdition);
+    }
+    void request
       .order("asking_price")
-      .then(({ data }) => { if (live) setCandidates((data ?? []) as CandidateListing[]); });
+      .order("source")
+      .then(({ data, error: candidateError }) => {
+        if (!live) return;
+        if (candidateError) {
+          setError(candidateError.message);
+          setCandidates([]);
+          return;
+        }
+        setCandidates((data ?? []) as CandidateListing[]);
+      });
     return () => { live = false; };
   }, [chosen]);
 
@@ -738,28 +782,31 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
       // guard exists for the price at all.
       setManualSource(""); setManualPrice(""); setManualCurrency("JPY");
       setManualQty("1"); setManualUrl("");
+      setManualSealedCondition("standard"); setManualVariantEdition("standard");
     }
   }, [open]);
+
+  function chooseResult(result: CatalogResult) {
+    setChosen(result);
+    setQuery(result.label);
+    setPicked(new Map());
+    if (result.game === "pokemon_sealed") {
+      setManualSealedCondition(result.sealedCondition ?? "standard");
+      setManualVariantEdition(result.variantEdition ?? "standard");
+    }
+  }
 
   async function addPicked() {
     if (!chosen) return;
     const rows = (candidates ?? [])
-      .filter((c) => picked.has(c.listing_url))
-      .map((c) => ({
-        plan_id: planId,
-        game: chosen.game,
-        card_id: chosen.game === "pokemon_sealed" ? null : chosen.id,
-        product_id: chosen.game === "pokemon_sealed" ? chosen.id : null,
-        psa_grade: chosen.game === "pokemon_sealed" ? null : Number(grade),
-        planned_quantity: picked.get(c.listing_url) ?? 1,
-        source: c.source,
-        source_listing_url: c.listing_url,
-        unit_price_orig: c.asking_price,
-        currency: c.currency,
-        // The crawl time, not now: the operator should be able to see how old
-        // the price they committed to actually was.
-        source_observed_at: c.observed_at,
-      }));
+      .filter((candidate) => picked.has(candidateListingKey(candidate)))
+      .map((candidate) => candidatePlanLine(
+        planId,
+        chosen,
+        grade,
+        candidate,
+        picked.get(candidateListingKey(candidate)) ?? 1,
+      ));
     if (!rows.length) return;
     setBusy(true); setError(null);
     const { error: insertError } = await createClient().from("purchase_plan_lines").insert(rows);
@@ -776,30 +823,31 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
       ? "Enter a unit price."
       : parseTypedPrice(manualPrice) == null
         ? "That unit price is not a number."
-        : Number(manualQty) > 0
+        : Number.isInteger(Number(manualQty))
+          && Number(manualQty) >= 1
+          && Number(manualQty) <= 1000
           ? null
-          : "Quantity must be at least one.";
+          : "Quantity must be a whole number from 1 to 1,000.";
 
   async function addManual() {
     if (manualBlockedBy) return;
     if (!chosen) return;
     setBusy(true); setError(null);
-    const { error: insertError } = await createClient().from("purchase_plan_lines").insert({
-      plan_id: planId,
-      game: chosen.game,
-      card_id: chosen.game === "pokemon_sealed" ? null : chosen.id,
-      product_id: chosen.game === "pokemon_sealed" ? chosen.id : null,
-      psa_grade: chosen.game === "pokemon_sealed" ? null : Number(grade),
-      planned_quantity: Number(manualQty),
-      // Lowercased to match the crawled lines. The fee reconciliation groups
-      // by this column, so "Snkrdunk" and "snkrdunk" are two shops and one
-      // checkout gets billed twice. The database enforces this too.
-      source: manualSource.trim().toLowerCase() || null,
-      source_listing_url: manualUrl.trim() || null,
-      unit_price_orig: parseTypedPrice(manualPrice),
-      currency: manualCurrency,
-      source_observed_at: new Date().toISOString(),
-    });
+    const { error: insertError } = await createClient().from("purchase_plan_lines").insert(
+      manualPlanLine(
+        planId,
+        chosen,
+        grade,
+        manualSealedCondition,
+        manualVariantEdition,
+        manualQty,
+        manualSource,
+        manualUrl,
+        manualPrice,
+        manualCurrency,
+        new Date().toISOString(),
+      ),
+    );
     setBusy(false);
     if (insertError) return setError(insertError.message);
     onOpenChange(false); onAdded();
@@ -816,12 +864,12 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
         </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-[140px_1fr] gap-2">
-            <select className={selectClass} value={game} onChange={(event) => { setGame(event.target.value as CatalogResult["game"]); setChosen(null); setQuery(""); }}>
+            <select className={selectClass} value={game} onChange={(event) => { setGame(event.target.value as CatalogResult["game"]); setChosen(null); setQuery(""); setCandidates(null); setPicked(new Map()); }}>
               {(["pokemon", "mtg", "pokemon_sealed"] as const).map((value) => <option key={value} value={value}>{t(`game.${value}` as never)}</option>)}
             </select>
             <div className="relative"><Search className="absolute left-2 top-2.5 size-4 text-muted-foreground" /><Input className="pl-8" value={chosen?.label ?? query} onChange={(event) => { setChosen(null); setQuery(event.target.value); }} placeholder={t("purchasePlanner.searchCatalog")} /></div>
           </div>
-          {!chosen && results.length > 0 && <div className="max-h-44 overflow-y-auto rounded-md border">{results.map((result) => <button key={result.id} type="button" className="block w-full border-b px-3 py-2 text-left text-xs last:border-0 hover:bg-muted" onClick={() => { setChosen(result); setQuery(result.label); }}>{result.label}</button>)}</div>}
+          {!chosen && results.length > 0 && <div className="max-h-44 overflow-y-auto rounded-md border">{results.map((result) => <button key={`${result.id}:${result.sealedCondition}:${result.variantEdition}`} type="button" className="block min-h-11 w-full border-b px-3 py-2 text-left text-xs last:border-0 hover:bg-muted" onClick={() => chooseResult(result)}>{result.label}</button>)}</div>}
 
           {chosen && game !== "pokemon_sealed" && (
             <div className="flex items-center gap-2">
@@ -833,18 +881,18 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
             </div>
           )}
 
-          {chosen && chosen.game === "pokemon" && (
+          {chosen && (chosen.game === "pokemon" || chosen.game === "pokemon_sealed") && (
             <CandidatePicker
               candidates={candidates}
               picked={picked}
-              onToggle={(url, qty) => {
+              onToggle={(key, qty) => {
                 const next = new Map(picked);
-                if (next.has(url)) next.delete(url); else next.set(url, qty);
+                if (next.has(key)) next.delete(key); else next.set(key, qty);
                 setPicked(next);
               }}
-              onQuantity={(url, qty) => {
+              onQuantity={(key, qty) => {
                 const next = new Map(picked);
-                next.set(url, qty);
+                next.set(key, qty);
                 setPicked(next);
               }}
             />
@@ -859,7 +907,23 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
                 <div className="space-y-1"><Label htmlFor="manual-source">{t("purchasePlanner.source")}</Label><Input id="manual-source" list="known-sources" value={manualSource} onChange={(e) => setManualSource(e.target.value)} placeholder="snkrdunk" /><datalist id="known-sources">{KNOWN_SOURCES.map((name) => <option key={name} value={name} />)}</datalist></div>
                 <div className="space-y-1"><Label htmlFor="manual-price">{t("purchasePlanner.unitPrice")}</Label><Input id="manual-price" inputMode="decimal" value={manualPrice} onChange={(e) => setManualPrice(e.target.value)} /></div>
                 <div className="space-y-1"><Label htmlFor="manual-currency">{t("purchasePlanner.currency")}</Label><select id="manual-currency" className={selectClass} value={manualCurrency} onChange={(e) => setManualCurrency(e.target.value)}><option>JPY</option><option>USD</option></select></div>
-                <div className="space-y-1"><Label htmlFor="manual-qty">{t("purchasePlanner.quantity")}</Label><Input id="manual-qty" type="number" min="1" value={manualQty} onChange={(e) => setManualQty(e.target.value)} /></div>
+                <div className="space-y-1"><Label htmlFor="manual-qty">{t("purchasePlanner.quantity")}</Label><Input id="manual-qty" type="number" min="1" max="1000" step="1" value={manualQty} onChange={(e) => setManualQty(e.target.value)} /></div>
+                {chosen?.game === "pokemon_sealed" && (
+                  <>
+                    <div className="space-y-1">
+                      <Label htmlFor="manual-sealed-condition">{t("column.condition")}</Label>
+                      <select id="manual-sealed-condition" className={selectClass} value={manualSealedCondition} onChange={(event) => setManualSealedCondition(event.target.value)}>
+                        {SEALED_CONDITIONS.filter((value) => value !== "best").map((value) => <option key={value} value={value}>{conditionLabel(t, value)}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="manual-sealed-edition">{t("column.edition")}</Label>
+                      <select id="manual-sealed-edition" className={selectClass} value={manualVariantEdition} onChange={(event) => setManualVariantEdition(event.target.value)}>
+                        {SEALED_EDITIONS.filter((value) => value !== "best").map((value) => <option key={value} value={value}>{editionLabel(t, value)}</option>)}
+                      </select>
+                    </div>
+                  </>
+                )}
                 <div className="space-y-1 sm:col-span-5"><Label htmlFor="manual-url">{t("purchasePlanner.listingUrl")}</Label><Input id="manual-url" value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://snkrdunk.com/apparels/107574/used/49500200" /></div>
               </div>
               {/* Say what is still missing. The Add button needs a card as well
@@ -884,7 +948,11 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
   );
 }
 
-type CandidateListing = {
+export type CandidateListing = {
+  listing_id?: number;
+  product_id?: number;
+  sealed_condition?: string | null;
+  variant_edition?: string | null;
   source: string;
   listing_url: string;
   asking_price: number;
@@ -895,6 +963,78 @@ type CandidateListing = {
   // is NOT none - the listing is still purchasable at an unknown depth.
   available_quantity: number | null;
 };
+
+export function candidateListingKey(candidate: CandidateListing): string {
+  return [
+    candidate.listing_id ?? "url",
+    candidate.source,
+    candidate.listing_url,
+    candidate.sealed_condition ?? "card",
+    candidate.variant_edition ?? "card",
+  ].join(":");
+}
+
+export function candidatePlanLine(
+  planId: number,
+  chosen: CatalogResult,
+  grade: string,
+  candidate: CandidateListing,
+  quantity: number,
+) {
+  const sealed = chosen.game === "pokemon_sealed";
+  return {
+    plan_id: planId,
+    game: chosen.game,
+    card_id: sealed ? null : chosen.id,
+    product_id: sealed ? chosen.id : null,
+    psa_grade: sealed ? null : Number(grade),
+    sealed_condition: sealed
+      ? candidate.sealed_condition ?? chosen.sealedCondition
+      : null,
+    variant_edition: sealed
+      ? candidate.variant_edition ?? chosen.variantEdition
+      : null,
+    planned_quantity: quantity,
+    source: candidate.source,
+    source_listing_url: candidate.listing_url,
+    unit_price_orig: candidate.asking_price,
+    currency: candidate.currency,
+    // Keep the crawl time. Replacing it with now hides a stale observation.
+    source_observed_at: candidate.observed_at,
+  };
+}
+
+export function manualPlanLine(
+  planId: number,
+  chosen: CatalogResult,
+  grade: string,
+  sealedCondition: string,
+  variantEdition: string,
+  quantity: string,
+  source: string,
+  listingUrl: string,
+  unitPrice: string,
+  currency: string,
+  observedAt: string,
+) {
+  const sealed = chosen.game === "pokemon_sealed";
+  return {
+    plan_id: planId,
+    game: chosen.game,
+    card_id: sealed ? null : chosen.id,
+    product_id: sealed ? chosen.id : null,
+    psa_grade: sealed ? null : Number(grade),
+    sealed_condition: sealed ? sealedCondition : null,
+    variant_edition: sealed ? variantEdition : null,
+    planned_quantity: Number(quantity),
+    // Source normalization keeps one checkout and one fee group per shop.
+    source: source.trim().toLowerCase() || null,
+    source_listing_url: listingUrl.trim() || null,
+    unit_price_orig: parseTypedPrice(unitPrice),
+    currency,
+    source_observed_at: observedAt,
+  };
+}
 
 // The buyer fees (3% handling + 100 JPY per purchased line) mean the cheapest
 // sticker price is not the cheapest landed cost, and that the flat line fee is
@@ -911,9 +1051,10 @@ function CandidatePicker({
 }: {
   candidates: CandidateListing[] | null;
   picked: Map<string, number>;
-  onToggle: (url: string, qty: number) => void;
-  onQuantity: (url: string, qty: number) => void;
+  onToggle: (key: string, qty: number) => void;
+  onQuantity: (key: string, qty: number) => void;
 }) {
+  const { t } = useTranslation();
   if (candidates === null) return <p className="text-sm text-muted-foreground">Loading listings…</p>;
   if (!candidates.length) {
     return (
@@ -929,21 +1070,29 @@ function CandidatePicker({
   const other = candidates.filter((c) => c.currency !== "JPY");
 
   const row = (c: CandidateListing) => {
-    const qty = picked.get(c.listing_url) ?? 1;
-    const on = picked.has(c.listing_url);
+    const key = candidateListingKey(c);
+    const qty = picked.get(key) ?? 1;
+    const on = picked.has(key);
     return (
-      <tr key={c.listing_url + c.source} className="border-t">
+      <tr key={key} className="border-t">
         <td className="px-2 py-1">
-          <input type="checkbox" checked={on} onChange={() => onToggle(c.listing_url, qty)} aria-label={`select ${c.source}`} />
+          <label className="inline-flex size-11 cursor-pointer items-center justify-center sm:size-6">
+            <input type="checkbox" className="size-6 sm:size-4" checked={on} onChange={() => onToggle(key, qty)} aria-label={`select ${c.source}`} />
+          </label>
         </td>
         <td className="px-2 py-1">{c.source}</td>
+        <td className="px-2 py-1 text-xs text-muted-foreground">
+          {c.sealed_condition && c.variant_edition
+            ? `${editionLabel(t, c.variant_edition)} · ${conditionLabel(t, c.sealed_condition)}`
+            : "-"}
+        </td>
         <td className="px-2 py-1 text-right tabular-nums">
           {Math.round(c.asking_price).toLocaleString()} {c.currency}
         </td>
         <td className="px-2 py-1 text-right">
           <input
-            type="number" min="1" value={qty} disabled={!on}
-            onChange={(e) => onQuantity(c.listing_url, Math.max(1, Number(e.target.value)))}
+            type="number" min="1" max="1000" step="1" value={qty} disabled={!on}
+            onChange={(e) => onQuantity(key, Math.min(1000, Math.max(1, Math.floor(Number(e.target.value)))))}
             className="w-16 bg-transparent text-right tabular-nums disabled:text-muted-foreground/40"
           />
         </td>
@@ -983,6 +1132,7 @@ function CandidatePicker({
           <tr>
             <th className="px-2 py-1"></th>
             <th className="px-2 py-1 text-left font-normal">Source</th>
+            <th className="px-2 py-1 text-left font-normal">Variant</th>
             <th className="px-2 py-1 text-right font-normal">Asking</th>
             <th className="px-2 py-1 text-right font-normal">Qty</th>
             <th className="px-2 py-1 text-right font-normal">In stock</th>
@@ -995,7 +1145,7 @@ function CandidatePicker({
           {jpy.map(row)}
           {other.length > 0 && (
             <tr className="border-t bg-muted/30">
-              <td colSpan={7} className="px-2 py-1 text-xs text-muted-foreground">
+              <td colSpan={9} className="px-2 py-1 text-xs text-muted-foreground">
                 Not orderable through the JP buyer - the fee model does not apply
               </td>
             </tr>
