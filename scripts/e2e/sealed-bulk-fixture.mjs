@@ -12,6 +12,13 @@ const artifactRoot = process.env.E2E_ARTIFACT_ROOT;
 if (!appUrl || !artifactRoot) {
   throw new Error("APP_URL and E2E_ARTIFACT_ROOT are required");
 }
+if (
+  process.env.E2E_HEADED !== "1" ||
+  process.env.TCG_SEALED_BULK_XVFB !== "1" ||
+  !process.env.DISPLAY
+) {
+  throw new Error("sealed bulk acceptance requires headed Chromium under Xvfb");
+}
 mkdirSync(artifactRoot, { recursive: true });
 
 function assert(condition, message) {
@@ -684,6 +691,7 @@ try {
   const evidence = {
     route: "/e2e/sealed-bulk",
     fixtureOnly: true,
+    browserMode: "headed-xvfb",
     authenticatedSession: false,
     databaseAccess: false,
     viewports: ["1440x900", "390x844"],
@@ -693,6 +701,7 @@ try {
       "pointer and keyboard checkbox selection never opens the detail dialog",
       "localized list, grid, select-all, row-selection, and refresh accessible names are present",
       "all pointer interactions pass normal Playwright actionability without force",
+      "the acceptance wrapper runs headed Chromium inside an isolated Xvfb display",
       "filter, page-size, and page changes clear selection",
       "draft and ready plans are visible and the intended draft plan is selected",
       "each selected variant has an independent bounded quantity and ceiling",

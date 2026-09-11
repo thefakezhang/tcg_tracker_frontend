@@ -12,6 +12,19 @@ fail() {
   exit 1
 }
 
+# Chromium's headless compositor and an inherited display are not supported
+# acceptance environments for this visual journey. Enter a task-owned Xvfb
+# display before acquiring the shared browser lock or starting Next.js so the
+# plain npm command is the complete, reproducible invocation.
+if [[ "${TCG_SEALED_BULK_XVFB:-}" != "1" ]]; then
+  command -v xvfb-run >/dev/null || fail "xvfb-run is required for headed browser evidence"
+  export E2E_HEADED=1
+  export TCG_SEALED_BULK_XVFB=1
+  exec xvfb-run -a "$0" "$@"
+fi
+[[ -n "${DISPLAY:-}" ]] || fail "the isolated Xvfb display is unavailable"
+export E2E_HEADED=1
+
 cleanup() {
   local status="$1"
   trap - EXIT INT TERM
