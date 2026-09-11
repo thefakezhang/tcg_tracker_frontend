@@ -106,6 +106,8 @@ app/
     AccountingRollupView.tsx # Monthly accounting rollup table (accounting_rollup_v) with CSV export
     AddToLotPopover.tsx   # Popover that adds a browsed card to an open acquisition lot
     BalanceSheetCard.tsx  # Business-wide balance sheet card (get_balance_sheet RPC)
+    BuyerOrderView.tsx    # Buyer result-entry grid, save states, paste, and plan-switch fencing
+    BuyerShell.tsx        # Minimal translated buyer shell and administrator preview wrapper
     BuyListContext.tsx    # Buy list state + CRUD operations (fetch, create, delete, add/remove entries)
     BuyListView.tsx       # Buy list card view (merges pokemon + mtg + sealed entries, list/grid with compact toggle)
     CardBrowser.tsx       # Search filters + data table + modal trigger
@@ -216,6 +218,8 @@ app/
     use-sealed-data.ts    # Sealed-product data hook + product -> CardRowData adapter (parallel to use-card-data)
 components/ui/            # shadcn/ui primitives (do not edit directly unless customizing)
 lib/
+  buyer-result-autosave.ts # Serial per-line result queue with debouncing, retry, and confirmed-row recovery
+  buyer-result-grid.ts    # Result edit defaults and all-before-any spreadsheet paste validation
   utils.ts                # cn() utility (clsx + tailwind-merge)
   export/sheet.ts         # dependency-free CSV + XLSX writers (store-mode ZIP); sheet.test.ts guards it
   wantlist/cards.json     # build-time data for /wantlist (swap this file to change the list)
@@ -635,6 +639,24 @@ Blockers stop the transition, while warnings require explicit acknowledgement.
 Rejected criterion inserts keep the Add criterion dialog and entered values open, announce an inline error, and allow retry; only a successful insert closes the dialog and refreshes the criteria list.
 - `lib/purchase-planning.ts` contains pure ordering and summary behavior covered by `lib/purchase-planning.test.ts`.
 - Backend architecture and invariants are documented in `docs/customer_purchase_planning.md` in the backend repository.
+
+### Buyer result grid
+
+- `BuyerOrderView.tsx` consumes only the scoped buyer RPC surface and keeps result entry separate from purchase-plan definition.
+- `lib/buyer-result-autosave.ts` coalesces cell edits into one desired row and serializes each line's full-row RPC writes.
+An older response must complete before the newer desired row is sent, so stale completions cannot win.
+- A plan change first flushes every pending line and remains on the current plan when any save needs retry.
+Stale line-reader responses carry a request token and cannot replace the newly selected plan.
+- Totals, cost, and receipt results are plan-tagged and latest-request fenced so prior-plan responses cannot replace current-plan evidence.
+- `lib/buyer-result-grid.ts` validates the complete pasted rectangle, including result, quantity, price, and condition relationships, before any row is queued.
+- Existing `condition_seen` text is rendered faithfully, including a legacy value outside the current NM, LP, MP, HP, and DAMAGED choices.
+- Stale prices show their observation time and shared want counts explain their cross-shop scope as visible text.
+- A failed initial assigned-plan read replaces the loading state with translated guidance and Retry.
+- A bought result is refused before queueing when the shared want has no remaining quantity.
+- Each row exposes waiting, saving, saved, and failed states, with an inline retry for a transient failure.
+- The same semantic table becomes stacked result cards below the `md` breakpoint, keeps 44-pixel editing targets, and prevents page-level horizontal overflow.
+- Empty assignment and empty-plan states explain what the operator needs to do in both supported languages.
+- Architecture, goals, non-goals, and browser evidence are documented in `docs/buyer_result_grid.md`.
 
 ### Sealed Products (Pokémon)
 

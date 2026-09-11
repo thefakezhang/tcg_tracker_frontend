@@ -34,12 +34,12 @@ function BuyerShellInner({ email, viewingAs }: { email: string; viewingAs: boole
           {t("buyer.operatorPreview")}
         </div>
       )}
-      <header className="flex items-center justify-between border-b px-4 py-2">
+      <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b px-3 py-2 sm:px-4">
         <h1 className="font-semibold">{t("buyer.purchaseList")}</h1>
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 text-sm text-muted-foreground sm:gap-3">
           <select
             aria-label="Language"
-            className="rounded-md border bg-background px-2 py-1 text-sm"
+            className="min-h-11 rounded-md border bg-background px-2 py-1 text-sm sm:min-h-0"
             value={language}
             onChange={(e) => setLanguage(e.target.value as Language)}
           >
@@ -47,9 +47,9 @@ function BuyerShellInner({ email, viewingAs }: { email: string; viewingAs: boole
               <option key={code} value={code}>{LANGUAGE_LABELS[code]}</option>
             ))}
           </select>
-          <span>{email}</span>
+          <span className="min-w-0 max-w-36 truncate sm:max-w-none">{email}</span>
           <button
-            className="underline underline-offset-2"
+            className="min-h-11 px-1 underline underline-offset-2 sm:min-h-0"
             onClick={async () => {
               await createClient().auth.signOut();
               window.location.href = "/login";

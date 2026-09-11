@@ -1,0 +1,88 @@
+{
+  "generatedAt": "2026-09-10T18:45:28.078Z",
+  "browser": {
+    "name": "firefox",
+    "version": "151.0"
+  },
+  "fixtureOnly": true,
+  "databaseMutations": 0,
+  "externalRequests": 0,
+  "journey": [
+    "initial plan-load failure and retry",
+    "fully filled shared-want boundary",
+    "condition restoration",
+    "visible stale timestamp and shared-want context",
+    "left and right keyboard navigation",
+    "invalid and valid rectangular paste",
+    "failed save and retry",
+    "pending-save plan switch",
+    "Japanese empty state",
+    "phone tap targets and overflow"
+  ],
+  "results": [
+    {
+      "viewportName": "desktop-1440x900",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "mockedRpcRequests": 16,
+      "writeAttempts": 4,
+      "successfulWrites": 3,
+      "lineReads": [
+        7,
+        8
+      ],
+      "resultOverflow": {
+        "viewport": 1440,
+        "document": 1440,
+        "body": 1440
+      },
+      "emptyOverflow": {
+        "viewport": 1440,
+        "document": 1440,
+        "body": 1440
+      },
+      "resultScreenshot": "buyer-result-desktop-1440x900.png",
+      "emptyScreenshot": "buyer-result-desktop-1440x900-empty.png",
+      "pageErrors": [],
+      "consoleErrors": [],
+      "expectedConsoleErrors": [],
+      "observedSaveFailureResponses": 1,
+      "observedPlanLoadFailureResponses": 1,
+      "unexpectedExternalRequests": 0
+    },
+    {
+      "viewportName": "phone-390x844",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "mockedRpcRequests": 17,
+      "writeAttempts": 4,
+      "successfulWrites": 3,
+      "lineReads": [
+        7,
+        8
+      ],
+      "resultOverflow": {
+        "viewport": 390,
+        "document": 390,
+        "body": 390
+      },
+      "emptyOverflow": {
+        "viewport": 390,
+        "document": 390,
+        "body": 390
+      },
+      "resultScreenshot": "buyer-result-phone-390x844.png",
+      "emptyScreenshot": "buyer-result-phone-390x844-empty.png",
+      "pageErrors": [],
+      "consoleErrors": [],
+      "expectedConsoleErrors": [],
+      "observedSaveFailureResponses": 1,
+      "observedPlanLoadFailureResponses": 1,
+      "unexpectedExternalRequests": 0
+    }
+  ]
+}

@@ -26,7 +26,7 @@ const line = {
   source_observed_at: "2026-09-06T00:00:00Z",
   card_name: "リザードン", card_english_name: "Charizard",
   set_code: "SV-P", card_number: "001/001", image_url: null,
-  want_id: null, want_max: null, want_filled: null, want_ceiling: null,
+  want_id: 501, want_max: 4, want_filled: 1, want_ceiling: 31000,
   outcome: "purchased", purchased_quantity: 1, unit_price_jpy: 30000,
   condition_seen: null, note: null,
 };
@@ -75,6 +75,9 @@ describe("the agent's screen in Japanese", () => {
       .replace(/[^\x00-\x7F]/g, "");            // drop everything non-ASCII
     const english = stripped.match(/[a-z]{3,}\s+[a-z]{2,}\s+[a-z]{2,}/g);
     expect(english, `hardcoded English on the Japanese screen: ${english?.join(" / ")}`).toBeNull();
+    expect(screen.getByText("価格が古い可能性があります。")).toBeTruthy();
+    expect(screen.getByText(/最終確認:/)).toBeTruthy();
+    expect(screen.getByText("全購入先の合計")).toBeTruthy();
   });
 
   it("shows him his money in Japanese and in yen", async () => {
@@ -102,5 +105,14 @@ describe("the agent's screen in Japanese", () => {
     const text = document.body.textContent ?? "";
     expect(text.match(/\$\s?[\d,]/g)).toBeNull();
     expect(text).not.toMatch(/\bUSD\b/);
+  });
+
+  it("explains in Japanese when no list has been assigned", async () => {
+    rpc.mockImplementation((fn: string) => fn === "buyer_assigned_plans"
+      ? Promise.resolve({ data: [], error: null })
+      : Promise.resolve({ data: [], error: null }));
+    renderJa();
+    expect(await screen.findByText("割り当てられた購入リストはありません")).toBeTruthy();
+    expect(screen.getByText("オペレーターが次のリストを送信すると、ここに表示されます。")).toBeTruthy();
   });
 });
