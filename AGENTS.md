@@ -67,6 +67,7 @@ The rest of this file is the frontend project guide.
 | Dev server | `npm run dev` (port 3000) |
 | Type check | `npx tsc --noEmit` |
 | Build | `npm run build` (run after changes to catch Next.js-specific errors) |
+| Native iOS | SwiftUI + XcodeGen, iOS 17, pinned Supabase Swift |
 
 ## Project Purpose
 
@@ -258,12 +259,20 @@ middleware.ts             # Next.js middleware entry (delegates to supabase/midd
 scripts/
   check.sh                # tsc --noEmit + next build
   e2e/                    # Browser acceptance scripts (shared Docker + browser lock, guarded auth)
+ios/FieldLookup/          # Read-only native iPhone card lookup, native tests, and XcodeGen project spec
 supabase/
   config.toml             # Local Supabase dev config
   functions/
     update-exchange-rates/ # Deno edge function for rate updates
     aggregate-prices/      # Deno edge function: pre-computes price summaries into DB tables
 ```
+
+The native iPhone target is documented in `docs/ios_field_lookup.md`.
+Generate its Xcode project from `ios/FieldLookup/project.yml`; do not hand-edit or commit the generated `.xcodeproj`.
+Native credentials remain limited to public project configuration in the ignored `Config/Secrets.xcconfig`, while authenticated sessions persist in Keychain.
+Any 401, 403, changed user, or refreshed role loss must clear local operator data and return the authorized journey to sign-in without offering lookup retry.
+Native card images must expose stable loading, loaded, and unavailable states; nil URLs, failed HTTP responses, and invalid bytes must not leave an indefinite spinner.
+Run its macOS simulator build, unit tests, XCUITests, and screenshot gate through `.github/workflows/ios-field-lookup.yml` when Xcode is unavailable locally.
 
 ## Architecture & Patterns
 

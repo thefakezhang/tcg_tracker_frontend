@@ -1,0 +1,57 @@
+[
+  {
+    "card_id": 101,
+    "card_uid": "11111111-1111-1111-1111-111111111111",
+    "regional_name": "ピカチュウ",
+    "english_name": "Pikachu",
+    "set_code": "SV-P",
+    "card_number": "001/SV-P",
+    "misc_info": "プロモ",
+    "image_url": "https://images.example.test/pikachu.jpg",
+    "language": "jp"
+  },
+  {
+    "card_id": 102,
+    "card_uid": "22222222-2222-2222-2222-222222222222",
+    "regional_name": "リザードン",
+    "english_name": "Charizard",
+    "set_code": "XY",
+    "card_number": "089/080",
+    "misc_info": null,
+    "image_url": null,
+    "language": "jp"
+  },
+  {
+    "card_id": 103,
+    "card_uid": "33333333-3333-3333-3333-333333333333",
+    "regional_name": "ミュウ",
+    "english_name": "Mew",
+    "set_code": "S8a",
+    "card_number": "030/028",
+    "misc_info": "UR",
+    "image_url": null,
+    "language": "jp"
+  },
+  {
+    "card_id": 104,
+    "card_uid": "44444444-4444-4444-4444-444444444444",
+    "regional_name": "コダック",
+    "english_name": "Psyduck",
+    "set_code": "SV2a",
+    "card_number": "054/165",
+    "misc_info": "UNKNOWN",
+    "image_url": null,
+    "language": "jp"
+  },
+  {
+    "card_id": 105,
+    "card_uid": "55555555-5555-5555-5555-555555555555",
+    "regional_name": "イーブイ",
+    "english_name": "Eevee",
+    "set_code": "SM-P",
+    "card_number": "287/SM-P",
+    "misc_info": null,
+    "image_url": null,
+    "language": "jp"
+  }
+]

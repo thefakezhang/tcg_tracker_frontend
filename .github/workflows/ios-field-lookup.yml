@@ -1,0 +1,71 @@
+name: iOS Field Lookup
+
+on:
+  pull_request:
+    paths:
+      - "ios/FieldLookup/**"
+      - ".github/workflows/ios-field-lookup.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-field-lookup-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator:
+    name: iPhone simulator build, unit, and UI tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ios/FieldLookup
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Report Apple toolchain
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Resolve pinned packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project FieldLookup.xcodeproj \
+            -scheme FieldLookup
+
+      - name: Build and test on 390-point iPhone
+        run: |
+          xcodebuild test \
+            -project FieldLookup.xcodeproj \
+            -scheme FieldLookup \
+            -destination "platform=iOS Simulator,name=iPhone 16e" \
+            -resultBundlePath "$RUNNER_TEMP/FieldLookup.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Export native screenshot attachments
+        if: always()
+        run: |
+          mkdir -p artifacts/screenshots
+          xcrun xcresulttool export attachments \
+            --path "$RUNNER_TEMP/FieldLookup.xcresult" \
+            --output-path artifacts/screenshots
+
+      - name: Upload native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: field-lookup-native-evidence
+          path: |
+            ios/FieldLookup/artifacts/screenshots
+            ${{ runner.temp }}/FieldLookup.xcresult
+          if-no-files-found: error
+          retention-days: 14

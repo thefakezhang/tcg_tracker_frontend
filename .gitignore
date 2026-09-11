@@ -42,3 +42,9 @@ next-env.d.ts
 # agent E2E session + screenshots (machine-local credentials)
 .auth/
 debug/
+
+# Native iOS generated and local-only files
+/ios/FieldLookup/FieldLookup.xcodeproj/
+/ios/FieldLookup/Config/Secrets.xcconfig
+/ios/FieldLookup/TestResults.xcresult/
+/ios/FieldLookup/artifacts/
