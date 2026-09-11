@@ -52,7 +52,7 @@ export type SourceRun = {
   run_id: number;
   job: string;
   mode: SourceRunMode;
-  state: "pending" | "claimed" | "running" | "done" | "error" | "rejected";
+  state: "pending" | "claimed" | "running" | "done" | "partial" | "error" | "rejected";
   display_state:
     | "deferred_unsupported"
     | "queued_host_offline"
@@ -64,6 +64,7 @@ export type SourceRun = {
     | "claimed"
     | "running"
     | "done"
+    | "partial"
     | "error"
     | "rejected"
     | "cancelled";
@@ -287,10 +288,10 @@ function isJob(value: unknown): value is SourceRunJob {
 
 function isRun(value: unknown): value is SourceRun {
   if (!isRecord(value) || typeof value.run_id !== "number" || typeof value.job !== "string" || !isMode(value.mode)) return false;
-  const states = ["pending", "claimed", "running", "done", "error", "rejected"];
+  const states = ["pending", "claimed", "running", "done", "partial", "error", "rejected"];
   const displayStates = [
     "deferred_unsupported", "queued_host_offline", "queued_scope_busy", "awaiting_session", "host_failure", "host_incapable",
-    "eligible", "claimed", "running", "done", "error", "rejected", "cancelled",
+    "eligible", "claimed", "running", "done", "partial", "error", "rejected", "cancelled",
   ];
   return states.includes(value.state as string) && displayStates.includes(value.display_state as string)
     && isDateString(value.requested_at) && isNullableDate(value.claimed_at)

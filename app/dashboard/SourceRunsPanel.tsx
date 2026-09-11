@@ -72,6 +72,7 @@ function stateTone(state: string): string {
     case "queued_scope_busy":
     case "claimed":
     case "running":
+    case "partial":
       return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300";
     case "deferred_unsupported":
       return "border-border bg-muted text-muted-foreground";
@@ -262,7 +263,7 @@ function RunEvidence({
         </div>
       ) : null}
       {run.result_summary && <p className="mt-2 text-xs">{run.result_summary}</p>}
-      {run.failure_code && <p className="text-destructive mt-1 text-xs">{t("runs.failureCode", { code: run.failure_code })}</p>}
+      {run.failure_code && <p className={`${run.state === "partial" ? "text-amber-700 dark:text-amber-300" : "text-destructive"} mt-1 text-xs`}>{t(run.state === "partial" ? "runs.outcomeCode" : "runs.failureCode", { code: run.failure_code })}</p>}
       <p className="text-muted-foreground mt-2 text-[11px]">
         {t("runs.attemptCount", { count: run.claim_attempt_count })}
         {run.exit_code != null ? ` · ${t("runs.exitCode", { code: run.exit_code })}` : ""}
@@ -273,6 +274,12 @@ function RunEvidence({
         <p className="text-destructive mt-2 flex items-start gap-1.5 text-xs">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
           {t("runs.partialExecutionWarning")}
+        </p>
+      ) : null}
+      {run.state === "partial" ? (
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          {t("runs.partialCoverageWarning")}
         </p>
       ) : null}
 
