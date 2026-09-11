@@ -55,6 +55,7 @@ final class SupabaseSessionController: AuthenticationControlling {
             throw FieldLookupError.userChanged
         }
         guard session.role == .administrator else {
+            invalidateLocalSession()
             throw FieldLookupError.accessDenied(session.role)
         }
         return session

@@ -21,6 +21,8 @@ It targets iOS 17 and pins `supabase-swift` exactly at 2.54.1.
 Supabase Swift owns the Google PKCE flow, token refresh, and session persistence.
 The app supplies `KeychainLocalStorage` with the service `com.tztcg.fieldlookup.auth` and storage key `field-lookup.supabase.session`.
 Sign-out removes the local Supabase session, the pending PKCE verifier, and the complete field-lookup cache even when the remote logout request fails.
+An HTTP 401 or 403 during lookup, a changed user, or a refreshed session that no longer carries `administrator` authority invalidates local authentication, clears cached operator data, and replaces the authorized lookup with the sign-in screen.
+These authorization failures never remain as retryable lookup errors.
 
 The lookup repository makes read-only PostgREST requests with the public publishable key and the current user's bearer token.
 It never holds a service-role credential.
@@ -39,6 +41,10 @@ It labels the exit kind as sold comp, shop bid, valuation, ask, or unknown and e
 The API stores ROI in percentage points, so a returned value of `50` renders as `50%` rather than being multiplied by another 100.
 ROI is displayed only when both summary legs exist.
 
+Card images use an explicit three-state loader.
+A valid decoded image renders in both the result card and detail view, an in-flight request shows a loading state, and a missing URL, failed HTTP response, or undecodable body becomes a stable `Card image unavailable` state.
+The debug-only XCUITest fixture may read a generated local PNG, while production image requests remain limited to HTTP or HTTPS URLs returned by the catalog view.
+
 `owned_inventory_counts_v` is read independently for the returned card IDs.
 A successful inventory request with no row means a known zero.
 A failed inventory request means unknown stock and remains visibly different from zero while the price result stays usable.
@@ -52,7 +58,7 @@ Each record includes the normalized query, original query, user ID, save time, c
 A cached response becomes visibly stale after six hours and expires after seven days.
 Expired records are removed instead of being presented as current data.
 Only a network failure can fall back to cache.
-HTTP authorization failures, an expired session, and a changed user clear local cached operator data and require sign-in.
+HTTP 401 and 403 responses, an expired session, a changed user, and a refreshed non-administrator role clear local cached operator data and require sign-in.
 Activating a different user or signing out clears the prior user's complete cache.
 
 ## Freshness language
@@ -78,11 +84,13 @@ The app presents a setup screen when a required public value is absent rather th
 ## Verification
 
 The path-scoped `iOS Field Lookup` workflow runs on a macOS runner with `contents: read`, generates the project, resolves the exact package version, and runs the application, unit, and UI targets on an iPhone 16e simulator at exactly 390 by 844 logical points with signing disabled.
-Its fixtures cover both region directions, sold, bid, and valuation exits, a missing exit quote, a card with no summary, known-zero and unknown inventory, Japanese token search, cache freshness and expiry, user change, sign-out clearing, session expiry, offline recovery, and retry.
-XCUITests retain native phone screenshots for Japanese detail, freshness, stale offline data with unknown stock, retry recovery, expired-session recovery, and loading state.
+Its fixtures cover both region directions, sold, bid, and valuation exits, a missing exit quote, a card with no summary, known-zero and unknown inventory, Japanese token search, cache freshness and expiry, user change, sign-out clearing, HTTP 401 and 403 invalidation, mid-session access revocation, offline recovery, retry, and valid, missing, failed, and undecodable image responses.
+XCUITests assert a generated local PNG reaches the loaded state in both the result card and detail view, invalid bytes reach the unavailable state, and a lookup-time access denial replaces the authorized screen with actionable sign-in while removing retry.
+They retain native phone screenshots for Japanese detail, freshness, stale offline data with unknown stock and unavailable image, retry recovery, expired-session recovery, mid-session access revocation, and loading state.
 The workflow uploads the screenshots and complete `.xcresult` as a short-lived artifact and does not receive repository secrets.
 
 ## Operational boundary
 
 No migration, cloud write, local database mutation, live source request, scheduler change, device signing, or App Store action is part of this increment.
+The retained screenshots use deterministic local fixtures and do not prove live catalog image availability or live mapped-administrator authentication.
 Before distributing to a real device, an operator still needs an Apple developer signing setup and the documented public Supabase configuration.

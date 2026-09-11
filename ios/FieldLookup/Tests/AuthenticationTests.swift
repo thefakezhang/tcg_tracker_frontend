@@ -81,6 +81,49 @@ final class AppCoordinatorTests: XCTestCase {
         XCTAssertEqual(cache.clearCount, 1)
     }
 
+    func testMidSessionAccessDenialClearsCacheInvalidatesSessionAndReturnsToSignIn() async throws {
+        let auth = FakeAuthentication(session: makeSession(role: .administrator))
+        let cache = MemoryCache()
+        let cachedQuery = try SearchQuery("Pikachu")
+        cache.save(
+            results: [fixtureResult()],
+            query: cachedQuery,
+            userID: "operator-1",
+            now: Date(timeIntervalSince1970: 1_788_892_200)
+        )
+        let coordinator = AppCoordinator(
+            authentication: auth,
+            repository: SequenceRepository(outcomes: [.failure(.accessDenied(.unknown))]),
+            cache: cache
+        )
+
+        await coordinator.restoreIfNeeded()
+        guard case let .authorized(session) = coordinator.state else {
+            return XCTFail("Expected administrator access before revocation")
+        }
+        let viewModel = try XCTUnwrap(coordinator.makeViewModel(for: session))
+        viewModel.queryText = "Pikachu"
+
+        await viewModel.search()
+
+        XCTAssertEqual(
+            coordinator.state,
+            .signedOut(message: PrincipalRole.unknown.signInRequiredMessage)
+        )
+        XCTAssertEqual(cache.clearCount, 1)
+        XCTAssertEqual(
+            cache.load(
+                query: cachedQuery,
+                userID: "operator-1",
+                now: Date(timeIntervalSince1970: 1_788_892_200)
+            ),
+            .miss
+        )
+        XCTAssertEqual(auth.invalidateCount, 1)
+        XCTAssertNil(auth.session)
+        XCTAssertFalse(viewModel.canRetry)
+    }
+
     private func makeSession(role: PrincipalRole) -> OperatorSession {
         OperatorSession(
             userID: "operator-1",

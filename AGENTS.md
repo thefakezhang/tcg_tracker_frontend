@@ -265,6 +265,8 @@ supabase/
 The native iPhone target is documented in `docs/ios_field_lookup.md`.
 Generate its Xcode project from `ios/FieldLookup/project.yml`; do not hand-edit or commit the generated `.xcodeproj`.
 Native credentials remain limited to public project configuration in the ignored `Config/Secrets.xcconfig`, while authenticated sessions persist in Keychain.
+Any 401, 403, changed user, or refreshed role loss must clear local operator data and return the authorized journey to sign-in without offering lookup retry.
+Native card images must expose stable loading, loaded, and unavailable states; nil URLs, failed HTTP responses, and invalid bytes must not leave an indefinite spinner.
 Run its macOS simulator build, unit tests, XCUITests, and screenshot gate through `.github/workflows/ios-field-lookup.yml` when Xcode is unavailable locally.
 
 ## Architecture & Patterns

@@ -159,6 +159,7 @@ final class SupabaseFieldLookupRepository: FieldLookupRepositoryProtocol {
             sessionProvider.invalidateLocalSession()
             throw FieldLookupError.sessionExpired
         case 403:
+            sessionProvider.invalidateLocalSession()
             throw FieldLookupError.accessDenied(.unknown)
         default:
             throw FieldLookupError.server(status: httpResponse.statusCode)

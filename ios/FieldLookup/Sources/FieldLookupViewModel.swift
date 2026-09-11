@@ -10,7 +10,7 @@ final class FieldLookupViewModel: ObservableObject {
     private let repository: FieldLookupRepositoryProtocol
     private let cache: SearchCacheStoring
     private let now: () -> Date
-    private let onSessionExpired: () -> Void
+    private let onSignInRequired: (String) -> Void
     private var lastSubmittedQuery: SearchQuery?
 
     init(
@@ -21,7 +21,7 @@ final class FieldLookupViewModel: ObservableObject {
         initialState: LookupState = .idle,
         retryQuery: SearchQuery? = nil,
         now: @escaping () -> Date = Date.init,
-        onSessionExpired: @escaping () -> Void = {}
+        onSignInRequired: @escaping (String) -> Void
     ) {
         self.userID = userID
         self.repository = repository
@@ -30,7 +30,7 @@ final class FieldLookupViewModel: ObservableObject {
         state = initialState
         lastSubmittedQuery = retryQuery
         self.now = now
-        self.onSessionExpired = onSessionExpired
+        self.onSignInRequired = onSignInRequired
         cache.activate(userID: userID)
     }
 
@@ -70,12 +70,11 @@ final class FieldLookupViewModel: ObservableObject {
         } catch FieldLookupError.networkUnavailable {
             restoreCached(query)
         } catch FieldLookupError.sessionExpired {
-            expireSession()
+            requireSignIn(message: FieldLookupError.sessionExpired.localizedDescription)
         } catch FieldLookupError.userChanged {
-            expireSession()
+            requireSignIn(message: FieldLookupError.userChanged.localizedDescription)
         } catch let FieldLookupError.accessDenied(role) {
-            cache.clearAll()
-            state = .failure(message: role.accessMessage)
+            requireSignIn(message: role.signInRequiredMessage)
         } catch let error as LocalizedError {
             state = .failure(message: error.errorDescription ?? "Lookup failed. Try again.")
         } catch {
@@ -94,9 +93,9 @@ final class FieldLookupViewModel: ObservableObject {
         }
     }
 
-    private func expireSession() {
-        cache.clearAll()
+    private func requireSignIn(message: String) {
+        lastSubmittedQuery = nil
         state = .sessionExpired
-        onSessionExpired()
+        onSignInRequired(message)
     }
 }

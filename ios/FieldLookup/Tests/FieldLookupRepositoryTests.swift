@@ -110,6 +110,26 @@ final class FieldLookupRepositoryTests: XCTestCase {
         XCTAssertEqual(session.invalidationCount, 1)
     }
 
+    func testForbiddenResponseRevokesAndClearsLocalSession() async throws {
+        FixtureURLProtocol.handler = { _ in
+            .init(status: 403, data: Data("{}".utf8))
+        }
+        let session = StaticSessionProvider()
+        let repository = SupabaseFieldLookupRepository(
+            configuration: testConfiguration,
+            sessionProvider: session,
+            urlSession: fixtureURLSession()
+        )
+
+        do {
+            _ = try await repository.search(SearchQuery("Pikachu"), expectedUserID: "operator-1")
+            XCTFail("Expected access denial")
+        } catch {
+            XCTAssertEqual(error as? FieldLookupError, .accessDenied(.unknown))
+        }
+        XCTAssertEqual(session.invalidationCount, 1)
+    }
+
     func testSessionUserChangeStopsBeforeAnyRequest() async throws {
         var requestCount = 0
         FixtureURLProtocol.handler = { _ in

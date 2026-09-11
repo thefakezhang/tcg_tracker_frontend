@@ -11,9 +11,15 @@ final class FieldLookupUITests: XCTestCase {
         XCTAssertTrue(result.waitForExistence(timeout: 5))
         XCTAssertTrue(result.isHittable)
         assertFitsWidth(result, in: app)
+        let resultImage = element("result-card-image-101-loaded", in: app)
+        XCTAssertTrue(resultImage.waitForExistence(timeout: 3))
+        assertFitsWidth(resultImage, in: app)
         result.tap()
 
         XCTAssertTrue(app.staticTexts["ピカチュウ"].waitForExistence(timeout: 3))
+        let detailImage = element("detail-card-image-loaded", in: app)
+        XCTAssertTrue(detailImage.waitForExistence(timeout: 3))
+        assertFitsWidth(detailImage, in: app)
         XCTAssertTrue(app.staticTexts["JP → NA"].exists)
         XCTAssertTrue(app.staticTexts["Sold comp"].exists)
         XCTAssertTrue(app.staticTexts["50%"].exists)
@@ -35,7 +41,15 @@ final class FieldLookupUITests: XCTestCase {
         let result = element("card-101", in: app)
         XCTAssertTrue(result.isHittable)
         assertFitsWidth(result, in: app)
+        XCTAssertTrue(
+            element("result-card-image-101-unavailable", in: app)
+                .waitForExistence(timeout: 3)
+        )
         result.tap()
+        let unavailableImage = element("detail-card-image-unavailable", in: app)
+        XCTAssertTrue(unavailableImage.waitForExistence(timeout: 3))
+        XCTAssertEqual(unavailableImage.label, "Card image unavailable")
+        assertFitsWidth(unavailableImage, in: app)
         app.swipeUp()
         app.swipeUp()
         XCTAssertTrue(element("unknown-stock", in: app).waitForExistence(timeout: 3))
@@ -64,6 +78,33 @@ final class FieldLookupUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(signIn.frame.height, 44)
         assertFitsWidth(signIn, in: app)
         attachScreenshot(name: "field-lookup-session-expired", app: app)
+    }
+
+    func testMidSessionAccessDenialRequiresSignIn() throws {
+        let app = launch(scenario: "access-revoked")
+        let searchField = element("card-search-field", in: app)
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+        searchField.tap()
+        searchField.typeText("Pikachu")
+
+        let searchButton = element("search-button", in: app)
+        XCTAssertTrue(searchButton.isHittable)
+        searchButton.tap()
+
+        let message = element("session-message", in: app)
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            app.staticTexts[
+                "This session does not carry a recognized application role. Sign in again to continue."
+            ].exists
+        )
+        let signIn = element("google-sign-in", in: app)
+        XCTAssertTrue(signIn.isHittable)
+        XCTAssertGreaterThanOrEqual(signIn.frame.height, 44)
+        assertFitsWidth(signIn, in: app)
+        XCTAssertTrue(searchField.waitForNonExistence(timeout: 2))
+        XCTAssertFalse(element("retry-button", in: app).exists)
+        attachScreenshot(name: "field-lookup-access-revoked", app: app)
     }
 
     func testLoadingStateIsReadable() throws {

@@ -21,6 +21,21 @@ enum PrincipalRole: String, Codable, Equatable, Sendable {
             return "This session does not carry a recognized application role."
         }
     }
+
+    var signInRequiredMessage: String {
+        switch self {
+        case .administrator:
+            return "Administrator access could not be confirmed. Sign in again to continue."
+        case .buyer:
+            return "Buyer accounts cannot open the operator field lookup. Sign in with a mapped administrator account to continue."
+        case .unmapped:
+            return "This Google account is not mapped to an application principal. Sign in with a mapped administrator account to continue."
+        case .authenticated:
+            return "This session has a generic authenticated role. Sign in again after the administrator mapping hook is active."
+        case .unknown:
+            return "This session does not carry a recognized application role. Sign in again to continue."
+        }
+    }
 }
 
 struct OperatorSession: Equatable, Sendable {

@@ -15,7 +15,8 @@ final class FieldLookupViewModelTests: XCTestCase {
             repository: repository,
             cache: cache,
             queryText: "ピカチュウ",
-            now: { now.addingTimeInterval(7 * 60 * 60) }
+            now: { now.addingTimeInterval(7 * 60 * 60) },
+            onSignInRequired: { _ in }
         )
 
         await viewModel.search()
@@ -39,7 +40,8 @@ final class FieldLookupViewModelTests: XCTestCase {
             repository: repository,
             cache: cache,
             queryText: "Pikachu",
-            now: { Date(timeIntervalSince1970: 1_788_892_200) }
+            now: { Date(timeIntervalSince1970: 1_788_892_200) },
+            onSignInRequired: { _ in }
         )
 
         await viewModel.search()
@@ -59,23 +61,27 @@ final class FieldLookupViewModelTests: XCTestCase {
         XCTAssertEqual(repository.searchedIdentities, ["pikachu", "pikachu"])
     }
 
-    func testSessionExpiryClearsCacheAndSignalsCoordinator() async {
+    func testSessionExpirySignalsRequiredSignInAndDisablesRetry() async {
         let repository = SequenceRepository(outcomes: [.failure(.sessionExpired)])
         let cache = MemoryCache()
-        var expiryCount = 0
+        var signInMessage: String?
         let viewModel = FieldLookupViewModel(
             userID: "operator-1",
             repository: repository,
             cache: cache,
             queryText: "Pikachu",
-            onSessionExpired: { expiryCount += 1 }
+            onSignInRequired: { signInMessage = $0 }
         )
 
         await viewModel.search()
 
         XCTAssertEqual(viewModel.state, .sessionExpired)
-        XCTAssertEqual(cache.clearCount, 1)
-        XCTAssertEqual(expiryCount, 1)
+        XCTAssertEqual(cache.clearCount, 0)
+        XCTAssertEqual(
+            signInMessage,
+            "Your session expired. Sign in again to continue."
+        )
+        XCTAssertFalse(viewModel.canRetry)
     }
 
     func testUnknownStockSurvivesLiveResultWithoutBecomingZero() async {
@@ -91,7 +97,8 @@ final class FieldLookupViewModelTests: XCTestCase {
             userID: "operator-1",
             repository: SequenceRepository(outcomes: [.success([result])]),
             cache: MemoryCache(),
-            queryText: "Pikachu"
+            queryText: "Pikachu",
+            onSignInRequired: { _ in }
         )
 
         await viewModel.search()

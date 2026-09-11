@@ -1,4 +1,6 @@
+import Foundation
 import SwiftUI
+import UIKit
 
 struct FieldLookupScreen: View {
     @ObservedObject var viewModel: FieldLookupViewModel
@@ -187,7 +189,11 @@ private struct ResultCard: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            CardImage(url: result.card.imageURL, size: 78)
+            CardImage(
+                url: result.card.imageURL,
+                size: 78,
+                accessibilityID: "result-card-image-\(result.card.cardID)"
+            )
             VStack(alignment: .leading, spacing: 6) {
                 Text(result.card.displayName)
                     .font(.headline)
@@ -229,7 +235,7 @@ private struct ResultCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background, in: RoundedRectangle(cornerRadius: 16))
         .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilitySummary)
     }
 
@@ -274,7 +280,11 @@ struct CardDetailView: View {
 
     private var identityHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
-            CardImage(url: result.card.imageURL, size: 260)
+            CardImage(
+                url: result.card.imageURL,
+                size: 260,
+                accessibilityID: "detail-card-image"
+            )
                 .frame(maxWidth: .infinity)
             Text(result.card.displayName)
                 .font(.title2.bold())
@@ -472,31 +482,52 @@ private struct InventoryMetric: View {
 }
 
 private struct CardImage: View {
-    let url: URL?
+    @StateObject private var loader: CardImageLoader
     let size: CGFloat
+    let accessibilityID: String
+
+    init(
+        url: URL?,
+        size: CGFloat,
+        accessibilityID: String,
+        urlSession: URLSession = .shared
+    ) {
+        _loader = StateObject(
+            wrappedValue: CardImageLoader(url: url, urlSession: urlSession)
+        )
+        self.size = size
+        self.accessibilityID = accessibilityID
+    }
 
     var body: some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case let .success(image):
-                image
+        Group {
+            switch loader.state {
+            case let .loaded(image):
+                Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
-            case .failure:
+                    .accessibilityLabel("Card image")
+                    .accessibilityIdentifier("\(accessibilityID)-loaded")
+            case .unavailable:
                 placeholder
-            case .empty:
+                    .accessibilityLabel("Card image unavailable")
+                    .accessibilityIdentifier("\(accessibilityID)-unavailable")
+            case .loading:
                 ZStack {
-                    placeholder
+                    placeholder.accessibilityHidden(true)
                     ProgressView()
+                        .accessibilityLabel("Loading card image")
                 }
-            @unknown default:
-                placeholder
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("\(accessibilityID)-loading")
             }
         }
         .frame(width: size, height: size)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .accessibilityHidden(true)
+        .task {
+            await loader.load()
+        }
     }
 
     private var placeholder: some View {
@@ -504,6 +535,64 @@ private struct CardImage: View {
             .font(.system(size: size * 0.28))
             .foregroundStyle(.tertiary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+enum CardImageLoadState {
+    case loading
+    case loaded(UIImage)
+    case unavailable
+}
+
+@MainActor
+final class CardImageLoader: ObservableObject {
+    @Published private(set) var state: CardImageLoadState
+
+    private let url: URL?
+    private let urlSession: URLSession
+
+    init(url: URL?, urlSession: URLSession = .shared) {
+        self.url = url
+        self.urlSession = urlSession
+        state = url == nil ? .unavailable : .loading
+    }
+
+    func load() async {
+        guard case .loading = state, let url else { return }
+
+        do {
+            let data = try await imageData(from: url)
+            guard let image = UIImage(data: data) else {
+                state = .unavailable
+                return
+            }
+            state = .loaded(image)
+        } catch {
+            state = .unavailable
+        }
+    }
+
+    private func imageData(from url: URL) async throws -> Data {
+        #if DEBUG
+        if url.isFileURL {
+            return try Data(contentsOf: url)
+        }
+        #endif
+
+        guard url.scheme == "https" || url.scheme == "http" else {
+            throw URLError(.unsupportedURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        let (data, response) = try await urlSession.data(for: request)
+        guard
+            let httpResponse = response as? HTTPURLResponse,
+            200 ..< 300 ~= httpResponse.statusCode
+        else {
+            throw URLError(.badServerResponse)
+        }
+        return data
     }
 }
 

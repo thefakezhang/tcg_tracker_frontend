@@ -77,10 +77,10 @@ final class AppCoordinator: ObservableObject {
         state = .signedOut(message: nil)
     }
 
-    func expireSession() {
+    func requireSignIn(message: String) {
         cache.clearAll()
         authentication?.invalidateLocalSession()
-        state = .signedOut(message: "Your session expired. Sign in again to continue.")
+        state = .signedOut(message: message)
     }
 
     func handleOpenURL(_ url: URL) {
@@ -94,8 +94,8 @@ final class AppCoordinator: ObservableObject {
             repository: repository,
             cache: cache,
             now: now,
-            onSessionExpired: { [weak self] in
-                self?.expireSession()
+            onSignInRequired: { [weak self] message in
+                self?.requireSignIn(message: message)
             }
         )
     }
