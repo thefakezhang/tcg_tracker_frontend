@@ -13,7 +13,7 @@ import {
 } from "@/lib/image-curation-price-evidence";
 import { useLanguage } from "./LanguageContext";
 import { useSupabaseQuery, QueryError } from "./use-query";
-import { getCardDisplayName, cardMeta, cardVariant, useDebouncedValue } from "./use-card-data";
+import { getCardDisplayName, cardMeta, useDebouncedValue } from "./use-card-data";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -854,7 +854,7 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
                   {hits.map((h) => (
                     <button key={h.card_id} onClick={() => { setOverride(h); setSearch(""); setHits([]); }}
                       className="block min-h-11 w-full truncate px-2 py-1 text-left text-xs hover:bg-accent">
-                      {getCardDisplayName(h, language)} · {cardMeta(h.set_code, h.card_number, h.misc_info)}{cardVariant(h.misc_info) ? "" : ""}
+                      {getCardDisplayName(h, language)} · {cardMeta(h.set_code, h.card_number, h.misc_info)}
                     </button>
                   ))}
                 </div>

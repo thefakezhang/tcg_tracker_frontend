@@ -12,7 +12,9 @@ import {
   type CardRowData,
   type CardDefinition,
   type PriceEntry,
+  cardVariant,
   cardDefCols,
+  cardSummarySelect,
   getCardDisplayName,
 } from "./use-card-data";
 import { useLanguage } from "./LanguageContext";
@@ -109,6 +111,19 @@ function summaryToPrice(
   };
 }
 
+export function buylistSummaryQuery(
+  supabase: ReturnType<typeof createClient>,
+  game: Game,
+  summaryTable: string,
+  cardTable: string,
+  cardIds: Array<string | number>,
+) {
+  return supabase
+    .from(summaryTable)
+    .select(cardSummarySelect(game, cardTable))
+    .in("card_id", cardIds);
+}
+
 export default function BuyListView({ buylistId }: BuyListViewProps) {
   const { t } = useTranslation();
   const { language } = useLanguage();
@@ -163,7 +178,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
       const summaries = await selectAllByIds<SummaryRow>(
         cardIds,
         ["card_id", "tier", "psa_grade"],
-        (chunk) => supabase.from(summaryTable).select(`*, ${cardTable}!inner(${cardDefCols(game)})`).in("card_id", chunk),
+        (chunk) => buylistSummaryQuery(supabase, game, summaryTable, cardTable, chunk),
       );
 
       const summaryMap = new Map<string, SummaryRow>();
@@ -407,10 +422,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
   const renderGridItem = useCallback(
     (row: CardRowData) => {
       const entry = row as BuylistEntryRow;
-      const misc =
-        row.card.misc_info && row.card.misc_info !== "UNKNOWN"
-          ? row.card.misc_info
-          : null;
+      const misc = cardVariant(row.card);
       const cardNumber =
         row.card.card_number && row.card.card_number !== "UNKNOWN"
           ? row.card.card_number

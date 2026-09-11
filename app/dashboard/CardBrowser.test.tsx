@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   tcgResult: { data: [] as Record<string, unknown>[], error: null as unknown },
   collectrResult: { data: [] as Record<string, unknown>[], error: null as unknown },
   useEnglishCounterparts: vi.fn(),
+  language: "en" as "en" | "ja",
+  activeGame: "pokemon" as "pokemon" | "mtg" | "pokemon_sealed",
 }));
 const translate = (key: string, values?: Record<string, string | number>) => {
   if (values?.message) return `${key}: ${values.message}`;
@@ -22,44 +24,60 @@ const translate = (key: string, values?: Record<string, string | number>) => {
 };
 
 vi.mock("@/lib/i18n", () => ({ useTranslation: () => ({ t: translate }) }));
-vi.mock("./LanguageContext", () => ({ useLanguage: () => ({ language: "en" }) }));
+vi.mock("./LanguageContext", () => ({ useLanguage: () => ({ language: mocks.language }) }));
 vi.mock("./GameContext", () => ({
-  useGame: () => ({ activeGame: "pokemon", psaMode: "psa", setPsaMode: vi.fn() }),
+  useGame: () => ({ activeGame: mocks.activeGame, psaMode: "psa", setPsaMode: vi.fn() }),
 }));
 vi.mock("./ExitBasisContext", () => ({
   useExitBasis: () => ({ exitPercentile: "p25", setExitPercentile: vi.fn() }),
 }));
+vi.mock("./CurrencyContext", () => ({
+  useCurrency: () => ({
+    displayCurrency: "none",
+    convertPrice: (price: number) => ({ price, symbol: "$" }),
+  }),
+}));
 vi.mock("./HeaderContext", () => ({ useHeader: () => ({ setHeaderActions: vi.fn() }) }));
-vi.mock("./use-card-data", () => ({
-  useAvailableCardSources: () => ["expedition_gaming"],
-  useCardData: mocks.useCardData,
-  getCardDisplayName: () => "Card",
-}));
-vi.mock("./columns", () => ({
-  createColumns: () => [], createMtgColumns: () => [], selectColumn: {}, PriceCell: () => null,
-}));
+vi.mock("./use-card-data", async () => {
+  const { pokemonVariantLabel } = await import("@/lib/pokemon-variant");
+  return {
+    useAvailableCardSources: () => ["expedition_gaming"],
+    useCardData: mocks.useCardData,
+    getCardDisplayName: (card: { regional_name: string; english_name?: string | null }, language: "en" | "ja") =>
+      language === "en" && card.english_name ? card.english_name : card.regional_name,
+    cardVariant: pokemonVariantLabel,
+  };
+});
 // The mock forwards the real selection contract. An earlier version passed only
 // the row, so grid tiles rendered here could never be selected and the tests
 // could not see that grid mode had no selection at all.
 vi.mock("./data-table", () => ({
-  DataTable: ({ viewMode, data, renderGridItem, sorting, rowSelection, onRowSelectionChange, getRowId }: { viewMode: "list" | "grid"; data: unknown[]; renderGridItem: (row: unknown, selection?: { selected: boolean; toggle: (value?: boolean) => void }) => React.ReactNode; sorting: { id: string; desc: boolean }[]; rowSelection?: Record<string, boolean>; onRowSelectionChange?: (next: Record<string, boolean>) => void; getRowId?: (row: unknown, index: number) => string }) => (
-    <div data-testid="browse-table" data-count={data.length} data-view-mode={viewMode} data-sort={`${sorting[0]?.id}:${sorting[0]?.desc ? "desc" : "asc"}`}>
-      browse table
-      {viewMode === "grid" ? data.map((row, index) => {
-        const id = getRowId ? getRowId(row, index) : String(index);
-        const selection = onRowSelectionChange
-          ? {
-              selected: !!rowSelection?.[id],
-              toggle: (value?: boolean) => onRowSelectionChange({
-                ...(rowSelection ?? {}),
-                [id]: value ?? !rowSelection?.[id],
-              }),
-            }
-          : undefined;
-        return <div key={index}>{renderGridItem(row, selection)}</div>;
-      }) : null}
-    </div>
-  ),
+  DataTable: ({ viewMode, data, columns, renderGridItem, sorting, rowSelection, onRowSelectionChange, getRowId }: { viewMode: "list" | "grid"; data: unknown[]; columns: { id?: string; cell?: unknown }[]; renderGridItem: (row: unknown, selection?: { selected: boolean; toggle: (value?: boolean) => void }) => React.ReactNode; sorting: { id: string; desc: boolean }[]; rowSelection?: Record<string, boolean>; onRowSelectionChange?: (next: Record<string, boolean>) => void; getRowId?: (row: unknown, index: number) => string }) => {
+    const nameCell = columns.find((column) => column.id === "regional_name")?.cell;
+    return (
+      <div data-testid="browse-table" data-count={data.length} data-view-mode={viewMode} data-sort={`${sorting[0]?.id}:${sorting[0]?.desc ? "desc" : "asc"}`}>
+        browse table
+        {viewMode === "list" && typeof nameCell === "function"
+          ? data.map((row, index) => (
+              <div key={index}>{nameCell({ row: { original: row } })}</div>
+            ))
+          : null}
+        {viewMode === "grid" ? data.map((row, index) => {
+          const id = getRowId ? getRowId(row, index) : String(index);
+          const selection = onRowSelectionChange
+            ? {
+                selected: !!rowSelection?.[id],
+                toggle: (value?: boolean) => onRowSelectionChange({
+                  ...(rowSelection ?? {}),
+                  [id]: value ?? !rowSelection?.[id],
+                }),
+              }
+            : undefined;
+          return <div key={index}>{renderGridItem(row, selection)}</div>;
+        }) : null}
+      </div>
+    );
+  },
 }));
 vi.mock("./DecisionActions", () => ({ DecisionActions: () => <div><button>decision.watch</button><button aria-label="decision.dismissOpportunity" /></div> }));
 vi.mock("./opportunity-exposures", () => ({ browserOpportunityPayloads: () => [], recordOpportunityExposures: vi.fn().mockResolvedValue(undefined) }));
@@ -106,6 +124,8 @@ beforeEach(() => {
     isLoading: false,
     error: undefined,
   });
+  mocks.language = "en";
+  mocks.activeGame = "pokemon";
   mocks.from.mockImplementation((table: string) => {
     const builder: Record<string, unknown> = {};
     for (const method of ["select", "in", "eq"]) {
@@ -125,7 +145,7 @@ beforeEach(() => {
   mocks.useCardData.mockReturnValue({
     data: [{
       key: "42:10",
-      card: { card_id: "42", regional_name: "Card", set_code: "SV-P", card_number: "124", misc_info: null, image_url: null },
+      card: { card_id: "42", regional_name: "カード", english_name: "Card", set_code: "SV-P", card_number: "124", misc_info: null, image_url: null },
       psaGrade: 10,
       prices: { highestBuy: null, lowestSell: null },
       roi: null,
@@ -218,6 +238,78 @@ describe("CardBrowser surfaces", () => {
     expect(screen.getByText("124/SV-P")).toBeTruthy();
     expect(screen.getByRole("button", { name: "decision.watch" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "decision.dismissOpportunity" })).toBeTruthy();
+  });
+
+  it.each([
+    { viewport: "desktop", width: 1440, mobile: false, language: "en", expectedName: "Card" },
+    { viewport: "desktop", width: 1440, mobile: false, language: "ja", expectedName: "カード" },
+    { viewport: "phone", width: 390, mobile: true, language: "en", expectedName: "Card" },
+    { viewport: "phone", width: 390, mobile: true, language: "ja", expectedName: "カード" },
+  ] as const)("renders the same typed projection for compound and residual payloads on $viewport in $language", async ({ width, mobile, language, expectedName }) => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: mobile } as MediaQueryList);
+    mocks.language = language;
+
+    for (const miscInfo of ["SA,ミラー,1ED", "SA"]) {
+      mocks.useCardData.mockReturnValue({
+        ...mocks.useCardData(),
+        data: [{
+          key: "42:10",
+          card: {
+            card_id: "42",
+            regional_name: "カード",
+            english_name: "Card",
+            set_code: "SV-P",
+            card_number: "124",
+            misc_info: miscInfo,
+            edition: "first",
+            foil_treatment: "mirror",
+            variant_attrs: ["SA"],
+            image_url: null,
+          },
+          psaGrade: 10,
+          prices: { highestBuy: null, lowestSell: null },
+          roi: null,
+          signal: null,
+        }],
+      });
+
+      const view = render(<CardBrowser />);
+      await waitFor(() => expect(screen.getByTestId("browse-table").getAttribute("data-view-mode")).toBe(mobile ? "grid" : "list"));
+      expect(screen.getByText("SA,ミラー,1ED")).toBeTruthy();
+      expect(screen.getByText(expectedName)).toBeTruthy();
+      view.unmount();
+    }
+  });
+
+  it.each([
+    { viewport: "desktop", width: 1440, mobile: false },
+    { viewport: "phone", width: 390, mobile: true },
+  ] as const)("keeps the MTG misc label unchanged on $viewport", async ({ width, mobile }) => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: mobile } as MediaQueryList);
+    mocks.activeGame = "mtg";
+    mocks.useCardData.mockReturnValue({
+      ...mocks.useCardData(),
+      data: [{
+        key: "7",
+        card: {
+          card_id: "7",
+          regional_name: "Black Lotus",
+          set_code: "LEA",
+          card_number: "232",
+          misc_info: "Showcase,etched",
+          image_url: null,
+        },
+        prices: { highestBuy: null, lowestSell: null },
+        roi: null,
+      }],
+    });
+
+    render(<CardBrowser />);
+
+    await waitFor(() => expect(screen.getByTestId("browse-table").getAttribute("data-view-mode")).toBe(mobile ? "grid" : "list"));
+    expect(screen.getByText("Showcase,etched")).toBeTruthy();
   });
 
   it("calls out Collectr-only raw estimates on phones", async () => {

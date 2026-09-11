@@ -60,6 +60,7 @@ import {
   fetchLocationMap,
   refreshLocationMap,
   fetchConditionsCache,
+  cardVariant,
   getCardDisplayName,
 } from "./use-card-data";
 import { useLanguage } from "./LanguageContext";
@@ -626,8 +627,7 @@ export default function CardDetailModal({
   const { card: def } = card;
   const cardNumber =
     def.card_number && def.card_number !== "UNKNOWN" ? def.card_number : null;
-  const misc =
-    def.misc_info && def.misc_info !== "UNKNOWN" ? def.misc_info : null;
+  const misc = cardVariant(def);
   const askingNumber = Number(askingPrice);
   const askingPriceUsd = askingPrice.trim() === "" || !Number.isFinite(askingNumber) || askingNumber <= 0
     ? null

@@ -41,6 +41,12 @@ import {
 } from "./PokemonJapanExclusivityEditor";
 import { JapanExclusivityFilter } from "./JapanExclusivityFilter";
 import {
+  pokemonVariantLabel,
+  type PokemonEdition,
+  type PokemonFoilTreatment,
+  type PokemonVariantProjection,
+} from "@/lib/pokemon-variant";
+import {
   japanExclusivitySelectionQueryFilter,
   type JapanExclusivityDimension,
 } from "./japan-exclusivity";
@@ -98,6 +104,9 @@ export interface IndexCard {
   card_number: string;
   language: string;
   misc_info: string;
+  edition: PokemonEdition;
+  foil_treatment: PokemonFoilTreatment;
+  variant_attrs: string[];
   image_url: string | null;
   // The Cute curator flag (000293). The Card Index is the one surface
   // that lists the WHOLE catalog, so a card with no price summary (and hence
@@ -121,7 +130,12 @@ export function pokemonEditActionLabel(
 
 export const pokemonEditActionClassName = "size-11 shrink-0 sm:size-7";
 
-const COLS = "card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, image_url, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url";
+export function PokemonVariantBadge({ card }: { card: PokemonVariantProjection }) {
+  const label = pokemonVariantLabel(card);
+  return label ? <Badge variant="outline">{label}</Badge> : null;
+}
+
+const COLS = "card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, edition, foil_treatment, variant_attrs, image_url, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url";
 const PLATFORMS = pokemonSinglePlatforms;
 const PLATFORM_SHORT: Record<string, string> = Object.fromEntries(pokemonSinglePlatforms.map((p) => [p, platformShort(p)]));
 const PLATFORM_HINT_KEYS: Record<string, TranslationKey> = {
@@ -445,10 +459,10 @@ function CardsTab() {
                   <td className="block p-0 py-1 sm:table-cell sm:px-3 sm:py-2">
                     {/* Variant badge plus the curator flags that are set on this
                         printing; an unflagged base printing keeps the bare dash. */}
-                    {(c.misc_info && c.misc_info !== "UNKNOWN") || c.is_cute || c.japan_exclusive_artwork || c.japan_exclusive_stamps ? (
+                    {pokemonVariantLabel(c) || c.is_cute || c.japan_exclusive_artwork || c.japan_exclusive_stamps ? (
                       <div className="min-w-0 space-y-1">
                         <div className="flex flex-wrap gap-1">
-                          {c.misc_info && c.misc_info !== "UNKNOWN" && <Badge variant="outline">{c.misc_info}</Badge>}
+                          {pokemonVariantLabel(c) && <PokemonVariantBadge card={c} />}
                           <PokemonCuratorFlagChips card={c} />
                         </div>
                         <JapanExclusiveEvidence card={c} compact />
@@ -634,7 +648,7 @@ function PokemonCardModal({
       const extIds = await externalIdMatches(supabase, "pokemon_external_identifiers", "card_id", q);
       let mq = supabase
         .from(POKEMON_INDEX_CARD_VIEW)
-        .select("card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, image_url")
+        .select("card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, edition, foil_treatment, variant_attrs, image_url")
         .neq("card_uid", card.card_uid);
       for (const f of smartSearchFilters(q, ["regional_name", "english_name", "set_code", "card_number"], "card_uid", "card_id", extIds)) mq = mq.or(f);
       const { data } = await mq.limit(8);
@@ -1076,7 +1090,7 @@ function PokemonCardModal({
               <div className="flex items-center gap-2">
                 <span className="flex-1 truncate text-sm">
                   {t("cardIndex.mergeInto")}: <span className="font-medium">{mergeTarget.regional_name}</span>
-                  <span className="ml-1 text-xs text-muted-foreground">{mergeTarget.set_code} {mergeTarget.card_number} {mergeTarget.misc_info}</span>
+                  <span className="ml-1 text-xs text-muted-foreground">{mergeTarget.set_code} {mergeTarget.card_number} {pokemonVariantLabel(mergeTarget)}</span>
                 </span>
                 <Button variant="ghost" size="sm" disabled={busy} onClick={() => setMergeTarget(null)}>{t("common.cancel")}</Button>
                 <Button variant="destructive" size="sm" disabled={busy} onClick={doMerge}>{t("cardIndex.mergeConfirm")}</Button>
@@ -1091,7 +1105,7 @@ function PokemonCardModal({
                         className="flex w-full items-center gap-2 px-2 py-1 text-left text-sm hover:bg-muted"
                         onClick={() => { setMergeTarget(r); setMergeResults([]); setMergeSearch(""); }}>
                         <span className="flex-1 truncate">{r.regional_name}{r.english_name ? ` / ${r.english_name}` : ""}</span>
-                        <span className="shrink-0 text-xs text-muted-foreground">{r.set_code} {r.card_number} {r.misc_info}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">{r.set_code} {r.card_number} {pokemonVariantLabel(r)}</span>
                       </button>
                     ))}
                   </div>

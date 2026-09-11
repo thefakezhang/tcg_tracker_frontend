@@ -59,6 +59,9 @@ describe("Pokemon Card Index query boundary", () => {
         card_number: "124",
         language: "en",
         misc_info: "SR仕様, 英語版",
+        edition: "not_applicable",
+        foil_treatment: "normal",
+        variant_attrs: ["SR仕様", "英語版"],
         image_url: null,
         is_cute: true,
       }],
@@ -92,6 +95,9 @@ describe("Pokemon Card Index query boundary", () => {
     expect(count.or.mock.calls.map(([filter]) => filter)).toEqual(expectedFilters);
     expect(definitions.or.mock.calls.map(([filter]) => filter)).toEqual(expectedFilters);
     expect(definitions.select).toHaveBeenCalledWith(expect.stringContaining("english_name_version"));
+    expect(definitions.select).toHaveBeenCalledWith(
+      expect.stringContaining("misc_info, edition, foil_treatment, variant_attrs"),
+    );
     // The curator flags ride along on every index row: the Card Index is the
     // surface that reaches cards the price-summary-driven browser never lists.
     expect(definitions.select).toHaveBeenCalledWith(expect.stringContaining("is_cute, japan_exclusive_artwork"));
@@ -102,6 +108,9 @@ describe("Pokemon Card Index query boundary", () => {
         card_uid: "da807f6b-e540-44a1-bbbc-1b3179cf9211",
         english_name: "Iono",
         english_name_version: 1,
+        edition: "not_applicable",
+        foil_treatment: "normal",
+        variant_attrs: ["SR仕様", "英語版"],
         is_cute: true,
         links: [expect.objectContaining({ external_reference_id: "545661" })],
       }),
@@ -165,5 +174,22 @@ describe("Pokemon Card Index query boundary", () => {
       .toBe("Edit ナンジャモ 124");
     expect(pokemonEditActionClassName).toContain("size-11");
     expect(pokemonEditActionClassName).toContain("sm:size-7");
+  });
+
+  it("keeps the legacy Card Index writer RPC contract until Phase 4", () => {
+    const args = pokemonEditRPCArgs(42, 1, {
+      regional_name: "カード",
+      english_name: "Card",
+      set_code: "SV-P",
+      card_number: "124",
+      language: "jp",
+      misc_info: "SA,ミラー,1ED",
+      image_url: "",
+    }, "");
+
+    expect(args).toEqual(expect.objectContaining({ p_misc_info: "SA,ミラー,1ED" }));
+    expect(args).not.toHaveProperty("p_edition");
+    expect(args).not.toHaveProperty("p_foil_treatment");
+    expect(args).not.toHaveProperty("p_variant_attrs");
   });
 });

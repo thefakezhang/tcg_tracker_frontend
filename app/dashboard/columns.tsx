@@ -3,7 +3,7 @@
 import { ColumnDef } from "@tanstack/react-table";
 import { ArrowUp, ArrowDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { type CardRowData, type PriceEntry, getCardDisplayName } from "./use-card-data";
+import { type CardRowData, type PriceEntry, cardVariant, getCardDisplayName } from "./use-card-data";
 import { conditionLabel, editionLabel, productTypeLabel } from "./use-sealed-data";
 import { useCurrency } from "./CurrencyContext";
 import { type Language } from "./LanguageContext";
@@ -252,7 +252,7 @@ export function createColumns(
       header: ({ column }) => <SortableHeader column={column} label={t("column.name")} />,
       cell: ({ row }) => {
         const card = row.original.card;
-        const misc = card.misc_info && card.misc_info !== "UNKNOWN" ? card.misc_info : null;
+        const misc = cardVariant(card);
         return (
           <div className="min-w-0 whitespace-normal">
             <div>{getCardDisplayName(card, language)}</div>
@@ -437,7 +437,7 @@ export function createMtgColumns(
       header: ({ column }) => <SortableHeader column={column} label={t("column.name")} />,
       cell: ({ row }) => {
         const card = row.original.card;
-        const misc = card.misc_info && card.misc_info !== "UNKNOWN" ? card.misc_info : null;
+        const misc = cardVariant(card);
         return (
           <div>
             <div>{getCardDisplayName(card, language)}</div>
@@ -543,7 +543,7 @@ export function createSealedColumns(
       header: ({ column }) => <SortableHeader column={column} label={t("column.name")} />,
       cell: ({ row }) => {
         const card = row.original.card;
-        const misc = card.misc_info && card.misc_info !== "UNKNOWN" ? card.misc_info : null;
+        const misc = cardVariant(card);
         return (
           <div>
             <div>{getCardDisplayName(card, language)}</div>

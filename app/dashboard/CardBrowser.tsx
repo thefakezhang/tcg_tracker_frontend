@@ -27,7 +27,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AddToPlanAction } from "./AddToPlanAction";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
-import { useAvailableCardSources, useCardData, type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
+import { useAvailableCardSources, useCardData, type CardRowData, type RegionFilter, cardVariant, getCardDisplayName } from "./use-card-data";
 import { createClient } from "@/lib/supabase/client";
 import { RefreshPricesAction } from "./RefreshPricesAction";
 import { RefreshInFlightStrip } from "./RefreshInFlightStrip";
@@ -786,10 +786,7 @@ export default function CardBrowser() {
           onPageSizeChange: setPageSize,
         }}
         renderGridItem={(row: CardRowData, selection) => {
-            const misc =
-              row.card.misc_info && row.card.misc_info !== "UNKNOWN"
-                ? row.card.misc_info
-                : null;
+            const misc = cardVariant(row.card);
             const cardNumber =
               row.card.card_number && row.card.card_number !== "UNKNOWN"
                 ? row.card.card_number
