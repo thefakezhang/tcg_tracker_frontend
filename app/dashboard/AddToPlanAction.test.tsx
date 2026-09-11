@@ -51,6 +51,10 @@ describe("AddToPlanAction", () => {
     await waitFor(() => {
       const select = document.querySelector("select") as HTMLSelectElement;
       expect(select.value).toBe("5");
+      expect(Array.from(select.options, (option) => option.text)).toEqual([
+        "October scouting [Draft]",
+        "Other trip plan [Draft]",
+      ]);
     });
   });
 
@@ -63,9 +67,9 @@ describe("AddToPlanAction", () => {
     await screen.findByText("Plan");
 
     fireEvent.change(screen.getByLabelText("Copies of Iono"), { target: { value: "20" } });
-    fireEvent.change(screen.getByLabelText("Max price for Iono"), { target: { value: "500" } });
+    fireEvent.change(screen.getByLabelText("Max price per copy for Iono"), { target: { value: "500" } });
     fireEvent.change(screen.getByLabelText("Copies of Bede"), { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText("Max price for Bede"), { target: { value: "60000" } });
+    fireEvent.change(screen.getByLabelText("Max price per copy for Bede"), { target: { value: "60000" } });
     fireEvent.click(screen.getByText(/^Add 21 copies$/));
 
     await waitFor(() =>
@@ -217,7 +221,7 @@ describe("AddToPlanAction", () => {
     await screen.findByText("Plan");
 
     fireEvent.change(screen.getByLabelText("Copies of Test Box · 1st Edition · Shrink"), { target: { value: "3" } });
-    fireEvent.change(screen.getByLabelText("Max price for Test Box · 1st Edition · Shrink"), { target: { value: "1500" } });
+    fireEvent.change(screen.getByLabelText("Max price per copy for Test Box · 1st Edition · Shrink"), { target: { value: "1500" } });
     fireEvent.click(screen.getByText("Add 4 copies"));
 
     await waitFor(() => expect(rpc).toHaveBeenCalledWith("add_sealed_to_purchase_plan", {

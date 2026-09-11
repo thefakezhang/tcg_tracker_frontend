@@ -319,7 +319,7 @@ export function AddToPlanAction({
                   {plans.length === 0 && <option value="">{t("bulkPlan.noPlans")}</option>}
                   {plans.map((plan) => (
                     <option key={plan.plan_id} value={plan.plan_id}>
-                      {plan.name} [{plan.status}]
+                      {plan.name} [{t(`purchasePlanner.status.${plan.status}` as never)}]
                     </option>
                   ))}
                 </select>

@@ -110,8 +110,8 @@ const copy = {
     itemBeta: "Beta Box · Standard · Standard",
     copiesAlpha: "Copies of Alpha Box · 1st Edition · Shrink",
     copiesBeta: "Copies of Beta Box · Standard · Standard",
-    ceilingAlpha: "Max price for Alpha Box · 1st Edition · Shrink",
-    ceilingBeta: "Max price for Beta Box · Standard · Standard",
+    ceilingAlpha: "Max price per copy for Alpha Box · 1st Edition · Shrink",
+    ceilingBeta: "Max price per copy for Beta Box · Standard · Standard",
     addCopies: "Add 5 copies",
     partial: "1 of 2 are on the plan",
     complete: "2 of 2 are on the plan",
@@ -120,6 +120,10 @@ const copy = {
     close: "Close",
     setPlaceholder: "Set name or code...",
     modes: { list: "List", grid: "Grid" },
+    selectAll: "Select all on this page",
+    selectRow: "Select row",
+    refresh: "Refresh",
+    plans: ["Tokyo September [Draft]", "Osaka Ready [Ready]"],
     pageOne: "Page 1 of 2",
     pageTwo: "Page 2 of 2",
     next: "Next",
@@ -137,8 +141,8 @@ const copy = {
     itemBeta: "ベータボックス · 標準 · 標準",
     copiesAlpha: "アルファボックス · 初版 · シュリンク付きの数量",
     copiesBeta: "ベータボックス · 標準 · 標準の数量",
-    ceilingAlpha: "アルファボックス · 初版 · シュリンク付きの上限価格",
-    ceilingBeta: "ベータボックス · 標準 · 標準の上限価格",
+    ceilingAlpha: "アルファボックス · 初版 · シュリンク付きの1点あたり上限価格",
+    ceilingBeta: "ベータボックス · 標準 · 標準の1点あたり上限価格",
     addCopies: "5点を追加",
     partial: "2件中1件がプランにあります",
     complete: "2件中2件がプランにあります",
@@ -147,6 +151,10 @@ const copy = {
     close: "閉じる",
     setPlaceholder: "セット名またはコード...",
     modes: { list: "リスト", grid: "グリッド" },
+    selectAll: "このページをすべて選択",
+    selectRow: "行を選択",
+    refresh: "更新",
+    plans: ["Tokyo September [下書き]", "Osaka Ready [準備完了]"],
     pageOne: "1 / 2 ページ",
     pageTwo: "2 / 2 ページ",
     next: "次へ",
@@ -319,11 +327,11 @@ async function assertUnclippedText(locator, label) {
   return measurement;
 }
 
-async function forceClick(locator, viewportWidth, label) {
+async function clickAction(locator, viewportWidth, label) {
   await locator.waitFor({ state: "visible" });
   const box = await assertHorizontalFit(locator, viewportWidth, label);
   assert(box.width > 0 && box.height > 0, `${label} has an empty hit area`);
-  await locator.click({ force: true });
+  await locator.click({ timeout: 10_000 });
 }
 
 async function assertPhoneTargets(page, root, label) {
@@ -341,7 +349,7 @@ async function assertPhoneTargets(page, root, label) {
 
 async function selectRows(page, viewport, language, mode) {
   const labels = copy[language];
-  const checkboxes = page.getByRole("checkbox", { name: "Select row" });
+  const checkboxes = page.getByRole("checkbox", { name: labels.selectRow });
   const first = mode === "list"
     ? checkboxes.nth(0)
     : page.getByRole("checkbox", { name: labels.selectAlpha });
@@ -354,7 +362,7 @@ async function selectRows(page, viewport, language, mode) {
   if (viewport.width < 640) {
     await assertTapTarget(first.locator("xpath=.."), `${language} first row selection handle`);
   }
-  await first.click({ force: true });
+  await first.click({ timeout: 10_000 });
   assert(await page.getByText(labels.selectedOne, { exact: true }).isVisible(), `${language} first selection missing`);
   assert(await page.locator('[data-slot="dialog-content"]').count() === 0, `${language} pointer selection opened detail`);
 
@@ -493,13 +501,23 @@ async function runJourney(browser, name, viewport, language, mode) {
   ).some((tab) =>
     tab.textContent?.trim() === expectedMode && tab.getAttribute("aria-selected") === "true"
   ), labels.modes[mode]);
+  for (const modeLabel of Object.values(labels.modes)) {
+    assert(
+      await page.getByRole("tab", { name: modeLabel, exact: true }).isVisible(),
+      `${name} lacks localized ${modeLabel} view control`,
+    );
+  }
+  const selectAll = page.getByRole("checkbox", { name: labels.selectAll, exact: true });
+  assert(await selectAll.isVisible(), `${name} lacks localized select-all control`);
+  const refreshButton = page.getByRole("button", { name: labels.refresh, exact: true });
+  assert(await refreshButton.isVisible(), `${name} refresh icon lacks an accessible name`);
   await assertNoHorizontalOverflow(page, `${name} initial`);
 
   const tapTargetCount = await selectRows(page, viewport, language, mode);
   const selectedScreenshot = `${artifactRoot}/sealed-bulk-${name}-selected.png`;
   await captureViewport(page, selectedScreenshot);
 
-  await forceClick(
+  await clickAction(
     page.getByRole("button", { name: labels.addToPlan }),
     viewport.width,
     `${name} Add to plan`,
@@ -509,10 +527,7 @@ async function runJourney(browser, name, viewport, language, mode) {
   const plan = dialog.locator("#add-to-plan-plan");
   await plan.locator('option[value="501"]').waitFor({ state: "attached" });
   assert((await plan.inputValue()) === "501", `${name} did not default to the intended plan`);
-  assertJson(await plan.locator("option").allTextContents(), [
-    "Tokyo September [draft]",
-    "Osaka Ready [ready]",
-  ], `${name} editable plan choices`);
+  assertJson(await plan.locator("option").allTextContents(), labels.plans, `${name} editable plan choices`);
   await plan.selectOption("502");
   assert((await plan.inputValue()) === "502", `${name} could not choose the ready plan`);
   await plan.selectOption("501");
@@ -554,7 +569,7 @@ async function runJourney(browser, name, viewport, language, mode) {
   const dialogScreenshot = `${artifactRoot}/sealed-bulk-${name}-dialog.png`;
   await captureViewport(page, dialogScreenshot);
 
-  await forceClick(addButton, viewport.width, `${name} submit bulk add`);
+  await clickAction(addButton, viewport.width, `${name} submit bulk add`);
   await page.getByText(labels.partial, { exact: true }).waitFor({ state: "visible" });
   assert(await dialog.getByText(labels.refusal, { exact: false }).isVisible(), `${name} refusal reason missing`);
   assert(await dialog.getByText(/cardrush.*¥1,200/).isVisible(), `${name} chosen source evidence missing`);
@@ -564,7 +579,7 @@ async function runJourney(browser, name, viewport, language, mode) {
 
   const retry = dialog.getByRole("button", { name: labels.retry });
   if (viewport.width < 640) await assertTapTarget(retry, `${name} retry`);
-  await forceClick(retry, viewport.width, `${name} retry unresolved variant`);
+  await clickAction(retry, viewport.width, `${name} retry unresolved variant`);
   await page.getByText(labels.complete, { exact: true }).waitFor({ state: "visible" });
   assert(await dialog.getByText(/shinsoku.*¥790/).isVisible(), `${name} retried source evidence missing`);
   assert((await dialog.getByRole("button", { name: labels.retry }).count()) === 0, `${name} kept retry after success`);
@@ -575,7 +590,7 @@ async function runJourney(browser, name, viewport, language, mode) {
     .locator('[data-slot="dialog-footer"]')
     .getByRole("button", { name: labels.close, exact: true });
   if (viewport.width < 640) await assertTapTarget(close, `${name} result close`);
-  await forceClick(close, viewport.width, `${name} close result`);
+  await clickAction(close, viewport.width, `${name} close result`);
   await dialog.waitFor({ state: "hidden" });
 
   const setFilter = page.getByPlaceholder(labels.setPlaceholder);
@@ -587,11 +602,11 @@ async function runJourney(browser, name, viewport, language, mode) {
   await pageSize.selectOption("10");
   await page.getByText(labels.pageOne, { exact: true }).waitFor({ state: "visible" });
   const pageChecks = mode === "list"
-    ? page.getByRole("checkbox", { name: "Select row" })
+    ? page.getByRole("checkbox", { name: labels.selectRow })
     : page.getByRole("checkbox", { name: labels.selectAlpha });
-  await forceClick(pageChecks.first(), viewport.width, `${name} pagination selection`);
+  await clickAction(pageChecks.first(), viewport.width, `${name} pagination selection`);
   await page.getByText(labels.selectedOne, { exact: true }).waitFor({ state: "visible" });
-  await forceClick(
+  await clickAction(
     page.locator("main").getByRole("button", { name: labels.next, exact: true }),
     viewport.width,
     `${name} next page`,
@@ -624,7 +639,7 @@ async function runJourney(browser, name, viewport, language, mode) {
     language,
     viewport,
     mode,
-    intendedPlan: { planId: 501, label: "Tokyo September [draft]" },
+    intendedPlan: { planId: 501, label: labels.plans[0] },
     rpcPayloads,
     tapTargets: tapTargetCount + dialogTapTargets + pageTapTargets,
     dialogBox,
@@ -676,6 +691,8 @@ try {
     assertions: [
       "table and grid selection retain exact product, condition, and edition",
       "pointer and keyboard checkbox selection never opens the detail dialog",
+      "localized list, grid, select-all, row-selection, and refresh accessible names are present",
+      "all pointer interactions pass normal Playwright actionability without force",
       "filter, page-size, and page changes clear selection",
       "draft and ready plans are visible and the intended draft plan is selected",
       "each selected variant has an independent bounded quantity and ceiling",

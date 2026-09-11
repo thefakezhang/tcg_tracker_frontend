@@ -132,7 +132,7 @@ export function DataTable<TData, TValue>({
                   <input
                     type="checkbox"
                     id="grid-select-all"
-                    aria-label="Select all rows on this page"
+                    aria-label={t("dataTable.selectAllOnPage")}
                     className="size-6 cursor-pointer align-middle sm:size-4"
                     checked={table.getIsAllPageRowsSelected()}
                     ref={(el) => {

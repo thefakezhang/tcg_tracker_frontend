@@ -76,7 +76,7 @@ vi.mock("./owned-inventory", () => ({
 vi.mock("./OwnedCountLine", () => ({ OwnedCountLine: () => null }));
 vi.mock("./columns", () => ({
   createSealedColumns: () => [],
-  selectColumn: {},
+  createSelectColumn: () => ({}),
   PriceCell: () => null,
 }));
 vi.mock("./SealedDetailModal", () => ({
@@ -152,6 +152,12 @@ beforeEach(() => {
 });
 
 describe("sealed browser purchase-plan selection", () => {
+  it("gives the icon-only refresh action a localized accessible name", () => {
+    render(<SealedBrowser />);
+
+    expect(screen.getByRole("button", { name: "refresh.confirm" })).toBeTruthy();
+  });
+
   it("keeps two exact variants of one product as separate selected items", async () => {
     render(<SealedBrowser />);
     fireEvent.click(screen.getByRole("button", { name: "Select list 41:shrink:1ed" }));

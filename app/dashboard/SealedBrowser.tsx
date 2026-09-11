@@ -49,7 +49,7 @@ import {
   type SealedEdition,
   type SealedRowData,
 } from "./use-sealed-data";
-import { createSealedColumns, PriceCell, selectColumn } from "./columns";
+import { createSealedColumns, createSelectColumn, PriceCell } from "./columns";
 import { DataTable, type GridSelection } from "./data-table";
 import { AddToPlanAction } from "./AddToPlanAction";
 import SealedDetailModal from "./SealedDetailModal";
@@ -186,7 +186,7 @@ export default function SealedBrowser() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const columns = useMemo(
-    () => [selectColumn, ...createSealedColumns(t, language, availableOnly)],
+    () => [createSelectColumn(t), ...createSealedColumns(t, language, availableOnly)],
     [availableOnly, language, t],
   );
 
@@ -318,7 +318,13 @@ export default function SealedBrowser() {
         <AlertDialog open={refreshOpen} onOpenChange={setRefreshOpen}>
           <AlertDialogTrigger
             render={
-              <Button variant="outline" size="icon" disabled={loading} className="shrink-0" />
+              <Button
+                variant="outline"
+                size="icon"
+                disabled={loading}
+                className="shrink-0"
+                aria-label={t("refresh.confirm")}
+              />
             }
           >
             <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
