@@ -32,7 +32,7 @@ import { createClient } from "@/lib/supabase/client";
 import { RefreshPricesAction } from "./RefreshPricesAction";
 import { RefreshInFlightStrip } from "./RefreshInFlightStrip";
 import { useLanguage } from "./LanguageContext";
-import { createColumns, createMtgColumns, PriceCell, selectColumn } from "./columns";
+import { createColumns, createMtgColumns, createSelectColumn, PriceCell } from "./columns";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
 import { Badge } from "@/components/ui/badge";
@@ -759,7 +759,7 @@ export default function CardBrowser() {
       {(!error || visibleData.length > 0) && <DataTable
         columns={activeGame === "mtg"
           ? createMtgColumns(t, language, availableOnly)
-          : [selectColumn, ...createColumns(
+          : [createSelectColumn(t), ...createColumns(
               t,
               language,
               availableOnly,

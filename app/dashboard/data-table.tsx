@@ -128,20 +128,22 @@ export function DataTable<TData, TValue>({
           <div className="space-y-3">
             {selectionEnabled && (
               <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="grid-select-all"
-                  aria-label="Select all rows on this page"
-                  className="size-6 cursor-pointer align-middle sm:size-4"
-                  checked={table.getIsAllPageRowsSelected()}
-                  ref={(el) => {
-                    if (el) {
-                      el.indeterminate =
-                        table.getIsSomePageRowsSelected() && !table.getIsAllPageRowsSelected();
-                    }
-                  }}
-                  onChange={(e) => table.toggleAllPageRowsSelected(e.target.checked)}
-                />
+                <label className="inline-flex size-11 cursor-pointer items-center justify-center sm:size-6">
+                  <input
+                    type="checkbox"
+                    id="grid-select-all"
+                    aria-label={t("dataTable.selectAllOnPage")}
+                    className="size-6 cursor-pointer align-middle sm:size-4"
+                    checked={table.getIsAllPageRowsSelected()}
+                    ref={(el) => {
+                      if (el) {
+                        el.indeterminate =
+                          table.getIsSomePageRowsSelected() && !table.getIsAllPageRowsSelected();
+                      }
+                    }}
+                    onChange={(e) => table.toggleAllPageRowsSelected(e.target.checked)}
+                  />
+                </label>
                 <label htmlFor="grid-select-all" className="text-muted-foreground cursor-pointer text-sm">
                   {t("dataTable.selectAllOnPage")}
                 </label>

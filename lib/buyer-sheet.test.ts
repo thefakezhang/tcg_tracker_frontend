@@ -32,6 +32,19 @@ describe("taking the list away as a sheet", () => {
     expect(r.unit_paid).toBeNull();
     expect(r.asking).toBe(8000);
   });
+
+  it("exports the exact sealed identity beside the stable line id", () => {
+    const [r] = toSheetRows(9, [line({
+      game: "pokemon_sealed",
+      card_name: "テストボックス",
+      card_number: null,
+      sealed_condition: "no_shrink",
+      variant_edition: "unlimited",
+    })], () => "-");
+    expect(r.id).toBe("plan:9#1");
+    expect(r.condition).toBe("no_shrink");
+    expect(r.edition).toBe("unlimited");
+  });
 });
 
 describe("bringing it back", () => {

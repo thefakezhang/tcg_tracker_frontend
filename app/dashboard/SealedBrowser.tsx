@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { RowSelectionState } from "@tanstack/react-table";
 import { ChevronDown, ImageOff, Layers, Package, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +34,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useTranslation } from "@/lib/i18n";
+import { activateOnEnterOrSpace } from "@/lib/keyboard-activation";
 import { useHeader } from "./HeaderContext";
 import { useLanguage } from "./LanguageContext";
 import { type CardRowData, type RegionFilter, getCardDisplayName } from "./use-card-data";
@@ -47,8 +49,9 @@ import {
   type SealedEdition,
   type SealedRowData,
 } from "./use-sealed-data";
-import { createSealedColumns, PriceCell } from "./columns";
-import { DataTable } from "./data-table";
+import { createSealedColumns, createSelectColumn, PriceCell } from "./columns";
+import { DataTable, type GridSelection } from "./data-table";
+import { AddToPlanAction } from "./AddToPlanAction";
 import SealedDetailModal from "./SealedDetailModal";
 import {
   ownedInventoryKey,
@@ -56,6 +59,10 @@ import {
   type OwnedInventoryIdentity,
 } from "./owned-inventory";
 import { OwnedCountLine } from "./OwnedCountLine";
+import {
+  SealedPlanningReadinessNotice,
+  useSealedPlanningReadiness,
+} from "./sealed-planning-readiness";
 
 import { formatRoi } from "@/lib/money";
 export default function SealedBrowser() {
@@ -83,8 +90,11 @@ export default function SealedBrowser() {
   const [sortAsc, setSortAsc] = useState(false);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [selectedCard, setSelectedCard] = useState<SealedRowData | null>(null);
   const [refreshOpen, setRefreshOpen] = useState(false);
+  const sealedPlanning = useSealedPlanningReadiness();
+  const sealedPlanningNoticeId = "sealed-planning-readiness";
 
   const { data, loading, error, totalCount, refresh } = useSealedData({
     search,
@@ -136,11 +146,29 @@ export default function SealedBrowser() {
     }),
     [data, ownedCounts],
   );
+  const selectedRows = useMemo(
+    () => dataWithOwned.filter((row) => rowSelection[row.key]),
+    [dataWithOwned, rowSelection],
+  );
+  const selectedProducts = useMemo(
+    () => selectedRows.map((row) => ({
+      id: Number(row.card.card_id),
+      name: getCardDisplayName(row.card, language),
+      sealedCondition: row.sealedCondition,
+      variantEdition: row.variantEdition,
+    })),
+    [language, selectedRows],
+  );
 
   // Reset page when filters change
   useEffect(() => {
     setPage(0);
-  }, [search, searchSetCode, condition, edition, sellRegion, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, pageSize]);
+    setRowSelection({});
+  }, [search, searchSetCode, condition, edition, sellRegion, minBuyPrice, minSellPrice, roiFloor, roiCeiling, availableOnly, sortColumn, sortAsc, pageSize]);
+
+  useEffect(() => {
+    setRowSelection({});
+  }, [page]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -163,6 +191,10 @@ export default function SealedBrowser() {
   );
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const columns = useMemo(
+    () => [createSelectColumn(t), ...createSealedColumns(t, language, availableOnly)],
+    [availableOnly, language, t],
+  );
 
   const conditionTriggerLabel =
     condition === "best"
@@ -285,14 +317,20 @@ export default function SealedBrowser() {
           className="shrink-0"
         >
           <TabsList>
-            <TabsTrigger value="list">{t("cardBrowser.list")}</TabsTrigger>
-            <TabsTrigger value="grid">{t("cardBrowser.grid")}</TabsTrigger>
+            <TabsTrigger value="list" className="min-w-11">{t("cardBrowser.list")}</TabsTrigger>
+            <TabsTrigger value="grid" className="min-w-11">{t("cardBrowser.grid")}</TabsTrigger>
           </TabsList>
         </Tabs>
         <AlertDialog open={refreshOpen} onOpenChange={setRefreshOpen}>
           <AlertDialogTrigger
             render={
-              <Button variant="outline" size="icon" disabled={loading} className="shrink-0" />
+              <Button
+                variant="outline"
+                size="icon"
+                disabled={loading}
+                className="shrink-0"
+                aria-label={t("refresh.confirm")}
+              />
             }
           >
             <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
@@ -314,14 +352,38 @@ export default function SealedBrowser() {
         <p className="text-destructive text-sm">{t("cardBrowser.error", { message: error })}</p>
       )}
 
+      <SealedPlanningReadinessNotice
+        id={sealedPlanningNoticeId}
+        state={sealedPlanning.state}
+        error={sealedPlanning.error}
+        retry={sealedPlanning.retry}
+      />
+
+      {selectedProducts.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3" data-testid="sealed-selection-actions">
+          <span className="text-muted-foreground text-xs">
+            {t("cardBrowser.selectedCount", { count: selectedProducts.length })}
+          </span>
+          <AddToPlanAction
+            sealedProducts={selectedProducts}
+            disabled={sealedPlanning.state !== "ready"}
+            disabledDescriptionId={sealedPlanningNoticeId}
+          />
+        </div>
+      )}
+
       <DataTable
-        columns={useMemo(() => createSealedColumns(t, language, availableOnly), [t, language, availableOnly])}
+        columns={columns}
         data={dataWithOwned as CardRowData[]}
         loading={loading}
         sorting={sorting}
         onSortingChange={handleSortingChange}
         onRowClick={(row) => setSelectedCard(row as SealedRowData)}
+        getRowAriaLabel={(row) => getCardDisplayName(row.card, language)}
         viewMode={viewMode}
+        getRowId={(row) => row.key}
+        rowSelection={rowSelection}
+        onRowSelectionChange={setRowSelection}
         serverPagination={{
           page,
           pageSize,
@@ -331,7 +393,7 @@ export default function SealedBrowser() {
           onPageSizeChange: setPageSize,
         }}
         renderGridItem={useCallback(
-          (cardRow: CardRowData) => {
+          (cardRow: CardRowData, selection?: GridSelection) => {
             const row = cardRow as SealedRowData;
             const misc =
               row.card.misc_info && row.card.misc_info !== "UNKNOWN"
@@ -347,9 +409,34 @@ export default function SealedBrowser() {
             return (
               <Card
                 size="sm"
-                className="h-full cursor-pointer gap-0 !py-0 transition-colors hover:bg-accent/50"
+                data-selected={selection?.selected ? "true" : undefined}
+                className={`relative h-full cursor-pointer gap-0 !py-0 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring ${
+                  selection?.selected ? "ring-2 ring-primary" : ""
+                }`}
+                role="button"
+                tabIndex={0}
+                aria-label={getCardDisplayName(row.card, language)}
                 onClick={() => setSelectedCard(row)}
+                onKeyDown={(event) => activateOnEnterOrSpace(
+                  event,
+                  () => setSelectedCard(row),
+                )}
               >
+                {selection && (
+                  <label
+                    className="absolute top-0 left-0 z-10 inline-flex size-11 cursor-pointer items-center justify-center"
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={t("cardBrowser.selectCard", { name: getCardDisplayName(row.card, language) })}
+                      className="size-6 cursor-pointer rounded bg-background/90 shadow-sm sm:size-5"
+                      checked={selection.selected}
+                      onChange={(event) => selection.toggle(event.target.checked)}
+                    />
+                  </label>
+                )}
                 {row.card.image_url ? (
                   <img
                     src={row.card.image_url}
@@ -404,7 +491,7 @@ export default function SealedBrowser() {
               </Card>
             );
           },
-          [t, language]
+          [availableOnly, language, t]
         )}
       />
 

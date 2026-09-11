@@ -131,7 +131,7 @@ describe("DataTable grid selection", () => {
   it("offers the same select-all the table header has", () => {
     const onChange = renderGrid({});
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Select all rows on this page" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "dataTable.selectAllOnPage" }));
 
     expect(onChange).toHaveBeenCalledWith({ "1": true, "2": true });
   });
@@ -139,7 +139,7 @@ describe("DataTable grid selection", () => {
   it("shows select-all as indeterminate on a partial selection", () => {
     renderGrid({ "1": true });
 
-    const all = screen.getByRole("checkbox", { name: "Select all rows on this page" }) as HTMLInputElement;
+    const all = screen.getByRole("checkbox", { name: "dataTable.selectAllOnPage" }) as HTMLInputElement;
     expect(all.checked).toBe(false);
     expect(all.indeterminate).toBe(true);
   });

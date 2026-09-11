@@ -206,37 +206,46 @@ function uidColumn(t: TranslateFn): ColumnDef<CardRowData> {
  * to their column list; views that don't are unaffected.
  * Clicks are stopped from bubbling so ticking a row never opens the detail modal.
  */
-export const selectColumn: ColumnDef<CardRowData> = {
-  id: "select",
-  enableSorting: false,
-  size: 32,
-  header: ({ table }) => (
-    <input
-      type="checkbox"
-      aria-label="Select all rows on this page"
-      className="size-6 cursor-pointer align-middle sm:size-4"
-      checked={table.getIsAllPageRowsSelected()}
-      ref={(el) => {
-        if (el) {
-          el.indeterminate =
-            table.getIsSomePageRowsSelected() && !table.getIsAllPageRowsSelected();
-        }
-      }}
-      onChange={(e) => table.toggleAllPageRowsSelected(e.target.checked)}
-      onClick={(e) => e.stopPropagation()}
-    />
-  ),
-  cell: ({ row }) => (
-    <input
-      type="checkbox"
-      aria-label="Select row"
-      className="size-6 cursor-pointer align-middle sm:size-4"
-      checked={row.getIsSelected()}
-      onChange={(e) => row.toggleSelected(e.target.checked)}
-      onClick={(e) => e.stopPropagation()}
-    />
-  ),
-};
+export function createSelectColumn(t: TranslateFn): ColumnDef<CardRowData> {
+  return {
+    id: "select",
+    enableSorting: false,
+    size: 32,
+    header: ({ table }) => (
+      <label className="inline-flex size-11 cursor-pointer items-center justify-center sm:size-6">
+        <input
+          type="checkbox"
+          aria-label={t("dataTable.selectAllOnPage")}
+          className="size-6 cursor-pointer align-middle sm:size-4"
+          checked={table.getIsAllPageRowsSelected()}
+          ref={(el) => {
+            if (el) {
+              el.indeterminate =
+                table.getIsSomePageRowsSelected() && !table.getIsAllPageRowsSelected();
+            }
+          }}
+          onChange={(e) => table.toggleAllPageRowsSelected(e.target.checked)}
+          onClick={(e) => e.stopPropagation()}
+        />
+      </label>
+    ),
+    cell: ({ row }) => (
+      <label
+        className="inline-flex size-11 cursor-pointer items-center justify-center sm:size-6"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        <input
+          type="checkbox"
+          aria-label={t("dataTable.selectRow")}
+          className="size-6 cursor-pointer align-middle sm:size-4"
+          checked={row.getIsSelected()}
+          onChange={(e) => row.toggleSelected(e.target.checked)}
+        />
+      </label>
+    ),
+  };
+}
 
 export function createColumns(
   t: TranslateFn,

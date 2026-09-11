@@ -22,6 +22,7 @@ import { planState, planStateKey } from "@/lib/plan-state";
 import { useTranslation } from "@/lib/i18n";
 import en from "@/lib/i18n/en";
 import ja from "@/lib/i18n/ja";
+import { conditionLabel, editionLabel } from "./use-sealed-data";
 
 // The buying agent's whole screen: the plans assigned to him, and a grid for
 // recording what he actually bought.
@@ -71,6 +72,10 @@ type Line = {
   delivery_status: string | null;
   delivery_status_at: string | null;
   delivery_flow: string | null;
+  game?: string;
+  product_id?: number | null;
+  sealed_condition?: string | null;
+  variant_edition?: string | null;
 };
 
 // Mirrors delivery_status_options() in the database, which is the authority.
@@ -327,7 +332,10 @@ export default function BuyerOrderView() {
     let live = true;
     const signature = (rows: Line[]) =>
       rows.map((r) => [r.plan_line_id, r.planned_quantity, r.unit_price_orig,
-                       r.source, r.source_listing_url, r.want_max].join(":")).sort().join("|");
+                       r.source, r.source_listing_url, r.want_max, r.game,
+                       r.product_id, r.sealed_condition, r.variant_edition].join(":"))
+        .sort()
+        .join("|");
     const check = async () => {
       const { data, error } = await createClient().rpc("buyer_plan_lines", { p_plan_id: activePlan });
       if (!live || error || !data) return;
@@ -857,6 +865,11 @@ function Row({
               {[line.set_code, line.card_number].filter(Boolean).join(" · ")}
               {line.card_english_name ? ` · ${line.card_english_name}` : ""}
             </div>
+            {line.game === "pokemon_sealed" && line.sealed_condition && line.variant_edition && (
+              <div className="truncate text-xs font-medium">
+                {editionLabel(t, line.variant_edition)} · {conditionLabel(t, line.sealed_condition)}
+              </div>
+            )}
             <div className="text-xs">
               {line.source_listing_url ? (
                 <a href={line.source_listing_url} target="_blank" rel="noreferrer"
@@ -1612,6 +1625,7 @@ function SheetExchange({
         t("buyer.colSet"), t("buyer.colNumber"), t("buyer.colWant"),
         t("buyer.colAsking"), t("buyer.colResult"), t("buyer.colQty"),
         t("buyer.colPaid"), t("buyer.colNote"), t("buyer.colListing"),
+        t("buyer.colSealedCondition"), t("buyer.colEdition"),
       ];
       const txt = (v: string) => ({ value: v, type: String as StringConstructor });
       const num = (v: number | null) =>
@@ -1624,13 +1638,13 @@ function SheetExchange({
         ...rows.map((r) => [
           txt(r.id), txt(r.shop), txt(r.card), txt(r.set), txt(r.number),
           num(r.want), num(r.asking), txt(r.outcome), num(r.qty), num(r.unit_paid),
-          txt(r.note), txt(r.listing),
+          txt(r.note), txt(r.listing), txt(r.condition), txt(r.edition),
         ]),
       ];
       const safe = planName.replace(/[^\p{L}\p{N}_-]+/gu, "_") || "list";
       // The browser build hands back a writer rather than saving by itself.
       await writeXlsx(data, {
-        columns: [16, 14, 26, 10, 12, 8, 12, 20, 8, 14, 30, 40].map((width) => ({ width })),
+        columns: [16, 14, 26, 10, 12, 8, 12, 20, 8, 14, 30, 40, 14, 14].map((width) => ({ width })),
       }).toFile(`${safe}-${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch (e) {
       onError(String(e));
@@ -1648,7 +1662,7 @@ function SheetExchange({
       // Read by POSITION, not by header text: his Excel may be in either
       // language, and he may have renamed the headers himself. The identity
       // column is what actually matters.
-      const keys = ["id","shop","card","set","number","want","asking","outcome","qty","unit_paid","note","listing"];
+      const keys = ["id","shop","card","set","number","want","asking","outcome","qty","unit_paid","note","listing","condition","edition"];
       const rows = grid.slice(1).map((r) =>
         Object.fromEntries(keys.map((k, i) => [k, r[i]])) as Record<string, unknown>);
 
