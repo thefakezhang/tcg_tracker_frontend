@@ -60,6 +60,19 @@ const healthRows = [
   },
   {
     ...commonHealth,
+    source: "fixture_wrong_source",
+    notes: {
+      collection_coverage: {
+        sell: {
+          status: "retired",
+          reason: "storefront_access_gate_http_401_since_2026_08_11",
+          last_good_at: "2026-08-10T14:30:00Z",
+        },
+      },
+    },
+  },
+  {
+    ...commonHealth,
     source: "torecabank",
     rows_written: 1200,
     freshness_p50_hours: 744,
@@ -125,35 +138,43 @@ async function runViewport(browser, name, viewport) {
 
   let localAPIRequests = 0;
   let unexpectedExternalRequests = 0;
-  await context.route("http://127.0.0.1:54321/**", async (route) => {
+  await context.route("**/*", async (route) => {
     const request = route.request();
-    if (request.method() === "OPTIONS") {
-      await route.fulfill({ status: 204, headers: corsHeaders });
+    const url = new URL(request.url());
+    if (url.hostname === "127.0.0.1" && url.port === "54321") {
+      if (request.method() === "OPTIONS") {
+        await route.fulfill({ status: 204, headers: corsHeaders });
+        return;
+      }
+      localAPIRequests += 1;
+      const pathname = url.pathname;
+      let data = [];
+      if (pathname.endsWith("/source_health")) {
+        data = healthRows;
+      } else if (pathname.endsWith("/rpc/source_run_control_snapshot")) {
+        data = {
+          server_time: now.toISOString(),
+          jobs: [],
+          runs: [],
+          hosts: [],
+          inventory: [],
+        };
+      }
+      await route.fulfill({
+        status: 200,
+        headers: { ...corsHeaders, "content-range": `0-${Array.isArray(data) ? Math.max(0, data.length - 1) : 0}/*` },
+        body: JSON.stringify(data),
+      });
       return;
     }
-    localAPIRequests += 1;
-    const pathname = new URL(request.url()).pathname;
-    let data = [];
-    if (pathname.endsWith("/source_health")) {
-      data = healthRows;
-    } else if (pathname.endsWith("/rpc/source_run_control_snapshot")) {
-      data = {
-        server_time: now.toISOString(),
-        jobs: [],
-        runs: [],
-        hosts: [],
-        inventory: [],
-      };
+
+    const isLoopback = ["127.0.0.1", "localhost", "::1", "[::1]"].includes(url.hostname);
+    if ((url.protocol === "http:" || url.protocol === "https:") && !isLoopback) {
+      unexpectedExternalRequests += 1;
+      await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+      return;
     }
-    await route.fulfill({
-      status: 200,
-      headers: { ...corsHeaders, "content-range": `0-${Array.isArray(data) ? Math.max(0, data.length - 1) : 0}/*` },
-      body: JSON.stringify(data),
-    });
-  });
-  await context.route("https://**/*", async (route) => {
-    unexpectedExternalRequests += 1;
-    await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+    await route.continue();
   });
 
   const page = await context.newPage();
@@ -179,6 +200,12 @@ async function runViewport(browser, name, viewport) {
   assert(
     await malformedRow.getByText("Sell retired", { exact: true }).count() === 0,
     `${name} malformed note rendered retired coverage`,
+  );
+  const wrongSourceRow = page.getByRole("row").filter({ hasText: "fixture_wrong_source" });
+  assert(await wrongSourceRow.count() === 1, `${name} wrong-source fixture row missing`);
+  assert(
+    await wrongSourceRow.getByText("Sell retired", { exact: true }).count() === 0,
+    `${name} wrong-source notes rendered retired coverage`,
   );
   const ordinaryRow = page.getByRole("row").filter({ hasText: "cardrush" });
   assert(await ordinaryRow.count() === 1, `${name} ordinary row missing`);
@@ -210,6 +237,10 @@ async function runViewport(browser, name, viewport) {
   assert(
     await malformedRow.getByText("販売価格の収集を廃止", { exact: true }).count() === 0,
     `${name} malformed note rendered Japanese retired coverage`,
+  );
+  assert(
+    await wrongSourceRow.getByText("販売価格の収集を廃止", { exact: true }).count() === 0,
+    `${name} wrong-source notes rendered Japanese retired coverage`,
   );
   const japaneseDimensions = await assertNoPageOverflow(page, `${name} Japanese`);
   await page.screenshot({
