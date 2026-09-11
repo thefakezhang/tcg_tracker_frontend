@@ -23,6 +23,12 @@ import {
   type JapanExclusivityDimension,
 } from "./japan-exclusivity";
 import type { PriceKind } from "@/lib/price-kind";
+import {
+  pokemonVariantLabel,
+  type PokemonEdition,
+  type PokemonFoilTreatment,
+  type PokemonVariantProjection,
+} from "@/lib/pokemon-variant";
 
 interface JapanExclusivityQueryBuilder {
   eq(column: string, value: boolean): unknown;
@@ -92,6 +98,9 @@ export interface CardDefinition {
   set_code: string;
   card_number: string | null;
   misc_info: string | null;
+  edition?: PokemonEdition | null;
+  foil_treatment?: PokemonFoilTreatment | null;
+  variant_attrs?: string[] | null;
   image_url: string | null;
   rarity?: string | null; // Pokémon only (from TCGPlayer); undefined for MTG
   is_cute?: boolean | null; // Pokémon only; manual curator flag (293)
@@ -115,26 +124,34 @@ export function getCardDisplayName(
   return card.regional_name;
 }
 
-// The variant tag worth showing — null for the plain base printing (misc_info is
-// 'UNKNOWN' for ~69% of cards, which we treat as "no variant").
-export function cardVariant(miscInfo?: string | null): string | null {
-  const v = (miscInfo ?? "").trim();
-  return v && v.toUpperCase() !== "UNKNOWN" ? v : null;
+// The typed Pokemon variant projection, with a legacy misc-only fallback for
+// MTG, sealed, and older API payloads.
+export function cardVariant(card: PokemonVariantProjection | string | null | undefined): string | null {
+  return pokemonVariantLabel(
+    typeof card === "string" || card == null ? { misc_info: card } : card,
+  );
 }
 
 // Muted subtitle for a card: "SET 123/456 · <variant>" (variant omitted when base).
 export function cardMeta(setCode?: string | null, cardNumber?: string | null, miscInfo?: string | null): string {
   const setNum = [setCode, cardNumber].filter(Boolean).join(" ");
-  return [setNum, cardVariant(miscInfo)].filter(Boolean).join(" · ");
+  return [setNum, pokemonVariantLabel({ misc_info: miscInfo })].filter(Boolean).join(" · ");
 }
 
 export const POKEMON_CARD_DEF_COLS =
-  "card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, image_url, rarity, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url, language";
+  "card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, edition, foil_treatment, variant_attrs, image_url, rarity, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url, language";
 export const MTG_CARD_DEF_COLS =
   "card_id, card_uid, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language";
 
 export function cardDefCols(game: Game): string {
   return game === "pokemon" ? POKEMON_CARD_DEF_COLS : MTG_CARD_DEF_COLS;
+}
+
+// One embedded card-definition projection shared by the Browser, detail-row
+// fetches, watchlists, and Buy Lists. Keeping this construction shared ensures
+// every Pokemon path carries the typed variant fields through PostgREST.
+export function cardSummarySelect(game: Game, cardTable: string): string {
+  return `*, ${cardTable}!inner(${cardDefCols(game)})`;
 }
 
 // "Promotional cards" in the catalog (Pokémon): any set_code ending in -P (the
@@ -393,7 +410,7 @@ export async function fetchCardRowById(
 
   const { data: sumRows } = await supabase
     .from(summaryTable)
-    .select(`*, ${cardTable}!inner(${cardDefCols(game)})`)
+    .select(cardSummarySelect(game, cardTable))
     .eq("card_id", cardId);
   const rows = (sumRows as SummaryRow[] | null) ?? [];
 
@@ -439,7 +456,7 @@ export async function fetchCardRowsByIds(
   const sumRows = await selectAllByIds<SummaryRow>(
     uniq,
     ["card_id", "tier", "psa_grade"],
-    (chunk) => supabase.from(summaryTable).select(`*, ${cardTable}!inner(${cardDefCols(game)})`).in("card_id", chunk),
+    (chunk) => supabase.from(summaryTable).select(cardSummarySelect(game, cardTable)).in("card_id", chunk),
   );
   const byCard = new Map<string, SummaryRow[]>();
   for (const r of sumRows) {
@@ -635,7 +652,7 @@ export function useCardData(options: {
     }
 
     // Build query with joined card definitions
-    const selectStr = `*, ${cardDefTable}!inner(${cardDefCols(activeGame)})`;
+    const selectStr = cardSummarySelect(activeGame, cardDefTable);
 
     let query = supabase
       .from(summariesTable)
