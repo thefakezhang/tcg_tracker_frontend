@@ -60,6 +60,14 @@ import {
   SealedPlanningReadinessNotice,
   useSealedPlanningReadiness,
 } from "./sealed-planning-readiness";
+import {
+  landedPerCardJpy,
+  loadCurrentPurchaseFeePolicy,
+  purchaseFeePercent,
+  type PurchaseFeePolicyState,
+} from "./purchase-fee-policy";
+
+export { landedPerCardJpy } from "./purchase-fee-policy";
 
 import { formatUsd } from "@/lib/money";
 const selectClass =
@@ -730,6 +738,10 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
   const [manualVariantEdition, setManualVariantEdition] = useState("standard");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [feePolicy, setFeePolicy] = useState<PurchaseFeePolicyState>({
+    status: "idle",
+    policy: null,
+  });
   const sealedPlanning = useSealedPlanningReadiness(open && game === "pokemon_sealed");
   const sealedPlanningBlocked = game === "pokemon_sealed" && sealedPlanning.state !== "ready";
   const sealedPlanningNoticeId = "planner-sealed-planning-readiness";
@@ -777,9 +789,26 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
   }, [chosen, sealedPlanning.state]);
 
   useEffect(() => {
+    if (!open || !chosen || chosen.game === "mtg") {
+      setFeePolicy({ status: "idle", policy: null });
+      return;
+    }
+    let live = true;
+    setFeePolicy({ status: "loading", policy: null });
+    void loadCurrentPurchaseFeePolicy().then((policy) => {
+      if (!live) return;
+      setFeePolicy(policy
+        ? { status: "ready", policy }
+        : { status: "unavailable", policy: null });
+    });
+    return () => { live = false; };
+  }, [chosen, open]);
+
+  useEffect(() => {
     if (!open) {
       setQuery(""); setResults([]); setChosen(null); setError(null);
       setCandidates(null); setPicked(new Map()); setManual(false);
+      setFeePolicy({ status: "idle", policy: null });
       // The hand-entry fields too. They used to survive the dialog closing, so
       // the next card opened with the previous card's shop, price, quantity
       // and - worst - its LISTING URL still filled in. A stale per-listing URL
@@ -867,17 +896,17 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+      <DialogContent className="min-w-0 max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t("purchasePlanner.addLine")}</DialogTitle>
           <DialogDescription>Search a card, then pick the listings to buy it from.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="grid grid-cols-[140px_1fr] gap-2">
-            <select className={selectClass} value={game} onChange={(event) => { setGame(event.target.value as CatalogResult["game"]); setChosen(null); setQuery(""); setCandidates(null); setPicked(new Map()); }}>
+        <div className="min-w-0 space-y-3">
+          <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[140px_1fr]">
+            <select className={`${selectClass} min-h-11 sm:min-h-9`} value={game} onChange={(event) => { setGame(event.target.value as CatalogResult["game"]); setChosen(null); setQuery(""); setCandidates(null); setPicked(new Map()); }}>
               {(["pokemon", "mtg", "pokemon_sealed"] as const).map((value) => <option key={value} value={value}>{t(`game.${value}` as never)}</option>)}
             </select>
-            <div className="relative"><Search className="absolute left-2 top-2.5 size-4 text-muted-foreground" /><Input className="pl-8" value={chosen?.label ?? query} onChange={(event) => { setChosen(null); setQuery(event.target.value); }} placeholder={t("purchasePlanner.searchCatalog")} disabled={sealedPlanningBlocked} aria-describedby={sealedPlanningBlocked ? sealedPlanningNoticeId : undefined} /></div>
+            <div className="relative"><Search className="absolute left-2 top-3.5 size-4 text-muted-foreground sm:top-2" /><Input className="min-h-11 pl-8 sm:min-h-8" value={chosen?.label ?? query} onChange={(event) => { setChosen(null); setQuery(event.target.value); }} placeholder={t("purchasePlanner.searchCatalog")} disabled={sealedPlanningBlocked} aria-describedby={sealedPlanningBlocked ? sealedPlanningNoticeId : undefined} /></div>
           </div>
           {game === "pokemon_sealed" && (
             <SealedPlanningReadinessNotice
@@ -890,9 +919,9 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
           {!chosen && results.length > 0 && <div className="max-h-44 overflow-y-auto rounded-md border">{results.map((result) => <button key={`${result.id}:${result.sealedCondition}:${result.variantEdition}`} type="button" className="block min-h-11 w-full border-b px-3 py-2 text-left text-xs last:border-0 hover:bg-muted" onClick={() => chooseResult(result)}>{result.label}</button>)}</div>}
 
           {chosen && game !== "pokemon_sealed" && (
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <Label className="text-xs">{t("purchasePlanner.grade")}</Label>
-              <select className={selectClass} value={grade} onChange={(event) => setGrade(event.target.value)}>
+              <select className={`${selectClass} min-h-11 min-w-0 flex-1 sm:min-h-9`} value={grade} onChange={(event) => setGrade(event.target.value)}>
                 <option value="0">{t("purchasePlanner.raw")}</option>
                 {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>PSA {value}</option>)}
               </select>
@@ -902,6 +931,7 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
           {chosen && (chosen.game === "pokemon" || chosen.game === "pokemon_sealed") && (
             <CandidatePicker
               candidates={candidates}
+              feePolicy={feePolicy}
               picked={picked}
               onToggle={(key, qty) => {
                 const next = new Map(picked);
@@ -1058,20 +1088,11 @@ export function manualPlanLine(
   };
 }
 
-// The buyer fees (3% handling + 100 JPY per purchased line) mean the cheapest
-// sticker price is not the cheapest landed cost, and that the flat line fee is
-// amortised by buying more copies from ONE listing. Showing per-card landed
-// cost makes that visible at the moment the choice is made, rather than at
-// reconciliation.
-export function landedPerCardJpy(price: number, qty: number): number {
-  if (qty <= 0) return 0;
-  return (price * qty * 1.03 + 100) / qty;
-}
-
-function CandidatePicker({
-  candidates, picked, onToggle, onQuantity,
+export function CandidatePicker({
+  candidates, feePolicy, picked, onToggle, onQuantity,
 }: {
   candidates: CandidateListing[] | null;
+  feePolicy: PurchaseFeePolicyState;
   picked: Map<string, number>;
   onToggle: (key: string, qty: number) => void;
   onQuantity: (key: string, qty: number) => void;
@@ -1090,6 +1111,15 @@ function CandidatePicker({
   // raw number would be meaningless.
   const jpy = candidates.filter((c) => c.currency === "JPY");
   const other = candidates.filter((c) => c.currency !== "JPY");
+  const policyNotice = feePolicy.status === "ready"
+    ? t("purchasePlanner.feePolicy", {
+        rate: purchaseFeePercent(feePolicy.policy),
+        amount: Math.round(feePolicy.policy.lineFeeJpy).toLocaleString(),
+        date: feePolicy.policy.effectiveFrom,
+      })
+    : feePolicy.status === "loading"
+      ? t("purchasePlanner.feePolicyLoading")
+      : t("purchasePlanner.feePolicyUnavailable");
 
   const row = (c: CandidateListing) => {
     const key = candidateListingKey(c);
@@ -1115,7 +1145,7 @@ function CandidatePicker({
           <input
             type="number" min="1" max="1000" step="1" value={qty} disabled={!on}
             onChange={(e) => onQuantity(key, Math.min(1000, Math.max(1, Math.floor(Number(e.target.value)))))}
-            className="w-16 bg-transparent text-right tabular-nums disabled:text-muted-foreground/40"
+            className="min-h-11 w-16 bg-transparent text-right tabular-nums disabled:text-muted-foreground/40 sm:min-h-0"
           />
         </td>
         <td className="px-2 py-1 text-right tabular-nums">
@@ -1135,21 +1165,42 @@ function CandidatePicker({
           )}
         </td>
         <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">
-          {c.currency === "JPY" ? `${Math.round(landedPerCardJpy(c.asking_price, qty)).toLocaleString()} /card` : "-"}
+          {c.currency !== "JPY"
+            ? "-"
+            : feePolicy.status === "ready"
+              ? t("purchasePlanner.perCardJpy", {
+                  amount: Math.round(landedPerCardJpy(
+                    c.asking_price,
+                    qty,
+                    feePolicy.policy,
+                  )).toLocaleString(),
+                })
+              : t("purchasePlanner.feeEstimateUnavailableShort")}
         </td>
         <td className="px-2 py-1 text-xs text-muted-foreground">
           {c.stale ? <span title={c.observed_at}>price may be stale</span> : new Date(c.observed_at).toLocaleDateString()}
         </td>
         <td className="px-2 py-1">
-          <a href={c.listing_url} target="_blank" rel="noreferrer" className="text-xs underline underline-offset-2 hover:text-primary">open</a>
+          <a href={c.listing_url} target="_blank" rel="noreferrer" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs underline underline-offset-2 hover:text-primary sm:min-h-0 sm:min-w-0">open</a>
         </td>
       </tr>
     );
   };
 
   return (
-    <div className="max-h-72 overflow-y-auto rounded-md border">
-      <table className="w-full text-sm">
+    <div className="space-y-2">
+      <p
+        className="text-xs text-muted-foreground"
+        role="status"
+        data-fee-policy-status={feePolicy.status}
+      >
+        {policyNotice}
+      </p>
+      <div
+        className="max-h-72 min-w-0 max-w-full overflow-x-auto overflow-y-auto rounded-md border"
+        data-testid="purchase-fee-candidates"
+      >
+        <table className="w-full min-w-[680px] text-sm">
         <thead className="text-xs text-muted-foreground">
           <tr>
             <th className="px-2 py-1"></th>
@@ -1173,8 +1224,9 @@ function CandidatePicker({
             </tr>
           )}
           {other.map(row)}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

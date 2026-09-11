@@ -23,6 +23,7 @@ import { useTranslation } from "@/lib/i18n";
 import en from "@/lib/i18n/en";
 import ja from "@/lib/i18n/ja";
 import { conditionLabel, editionLabel } from "./use-sealed-data";
+import { handlingRatePercent } from "./purchase-fee-policy";
 
 // The buying agent's whole screen: the plans assigned to him, and a grid for
 // recording what he actually bought.
@@ -1235,10 +1236,18 @@ type SourceTotals = {
   purchased_lines: number;
   cards_bought: number;
   card_value_jpy: number;
+  projected_handling_jpy?: number | string | null;
+  projected_line_fee_jpy?: number | string | null;
   shipping_jpy: number;
   other_costs_jpy: number;
   spent_total_jpy: number;
   agent_payout_jpy: number;
+  fee_policy_key?: string | null;
+  fee_policy_effective_from?: string | null;
+  fee_handling_rate?: number | string | null;
+  fee_per_line_jpy?: number | string | null;
+  fee_date?: string | null;
+  fee_policy_provenance?: string | null;
 };
 
 type Receipt = {
@@ -1322,18 +1331,23 @@ function SourceReceipts({
 
 const yen = (v: number | null | undefined) => "¥" + Math.round(Number(v ?? 0)).toLocaleString();
 
+const finiteNumber = (value: number | string | null | undefined): number | null => {
+  if (value == null) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
 // What this shop has cost him and what it has earned him, beside the shop it
 // belongs to - he checks out one at a time, so a plan-wide figure would be the
 // wrong grain.
 function ShopTotals({ totals, asking }: { totals?: SourceTotals; asking: number }) {
   const { t } = useTranslation();
   if (!totals) return null;
-  // The two halves of what he is owed, shown separately because they answer
-  // different questions: the line fee is his wage for working the shelf, the
-  // 3% is a commission on what he actually bought. A single number told him
-  // neither, and he cannot check a number he cannot take apart.
-  const lineFee = 100 * Number(totals.purchased_lines ?? 0);
-  const commission = Math.max(0, Number(totals.agent_payout_jpy ?? 0) - lineFee);
+  // The two halves come directly from the server allocation. Recalculating
+  // them here would repeat the pre-460 per-source rounding bug and would make
+  // a later effective policy display the wrong breakdown.
+  const lineFee = finiteNumber(totals.projected_line_fee_jpy);
+  const handling = finiteNumber(totals.projected_handling_jpy);
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
       <span className="text-muted-foreground">
@@ -1346,11 +1360,13 @@ function ShopTotals({ totals, asking }: { totals?: SourceTotals; asking: number 
         <b className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
           {yen(totals.agent_payout_jpy)}
         </b>{" "}
-        <span className="tabular-nums">
-          ({t("buyer.feePerRow", { n: String(totals.purchased_lines ?? 0), amount: yen(lineFee) })}
-          {" + "}
-          {t("buyer.feeCommission", { amount: yen(commission) })})
-        </span>
+        {lineFee != null && handling != null && (
+          <span className="tabular-nums">
+            ({t("buyer.feePerRow", { n: String(totals.purchased_lines ?? 0), amount: yen(lineFee) })}
+            {" + "}
+            {t("buyer.feeCommission", { amount: yen(handling) })})
+          </span>
+        )}
       </span>
     </span>
   );
@@ -1564,7 +1580,28 @@ function PlanTotals({ totals, asking }: { totals: SourceTotals[]; asking: number
     totals.reduce((n, x) => n + Number(pick(x) ?? 0), 0);
   const spent = sum((x) => x.spent_total_jpy);
   const fee = sum((x) => x.agent_payout_jpy);
-  const lineFee = 100 * sum((x) => x.purchased_lines);
+  const hasBreakdown = totals.every((row) =>
+    finiteNumber(row.projected_line_fee_jpy) != null
+    && finiteNumber(row.projected_handling_jpy) != null);
+  const lineFee = hasBreakdown
+    ? sum((x) => finiteNumber(x.projected_line_fee_jpy))
+    : null;
+  const handling = hasBreakdown
+    ? sum((x) => finiteNumber(x.projected_handling_jpy))
+    : null;
+  const policy = totals[0];
+  const policyRate = finiteNumber(policy.fee_handling_rate);
+  const policyLineFee = finiteNumber(policy.fee_per_line_jpy);
+  const policySummary = policy.fee_policy_provenance === "legacy_recorded_costs"
+    ? t("buyer.feePolicyLegacy")
+    : policy.fee_policy_key && policy.fee_policy_effective_from
+      && policyRate != null && policyLineFee != null
+      ? t("buyer.feePolicy", {
+          rate: handlingRatePercent(policyRate),
+          amount: Math.round(policyLineFee).toLocaleString(),
+          date: policy.fee_policy_effective_from,
+        })
+      : t("buyer.feePolicyUnavailable");
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
       <span className="text-muted-foreground">
@@ -1575,10 +1612,15 @@ function PlanTotals({ totals, asking }: { totals: SourceTotals[]; asking: number
       <span className="text-muted-foreground">
         {t("buyer.feeTotal")}{" "}
         <b className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{yen(fee)}</b>{" "}
-        <span className="text-xs tabular-nums">
-          ({t("buyer.feePerRow", { n: String(sum((x) => x.purchased_lines)), amount: yen(lineFee) })}
-          {" + "}{t("buyer.feeCommission", { amount: yen(Math.max(0, fee - lineFee)) })})
-        </span>
+        {lineFee != null && handling != null && (
+          <span className="text-xs tabular-nums">
+            ({t("buyer.feePerRow", { n: String(sum((x) => x.purchased_lines)), amount: yen(lineFee) })}
+            {" + "}{t("buyer.feeCommission", { amount: yen(handling) })})
+          </span>
+        )}
+      </span>
+      <span className="basis-full text-xs text-muted-foreground" data-fee-policy-provenance={policy.fee_policy_provenance ?? "unavailable"}>
+        {policySummary}
       </span>
     </span>
   );

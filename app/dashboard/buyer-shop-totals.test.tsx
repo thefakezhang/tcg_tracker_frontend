@@ -49,11 +49,19 @@ const totals = [
     source: "cardrush", total_lines: 1, recorded_lines: 1, purchased_lines: 1,
     cards_bought: 3, card_value_jpy: 30000, shipping_jpy: 800,
     other_costs_jpy: 0, spent_total_jpy: 30800, agent_payout_jpy: 1000,
+    projected_handling_jpy: 900, projected_line_fee_jpy: 100,
+    fee_policy_key: "jpy-buyer-fees-v1", fee_policy_effective_from: "2026-09-11",
+    fee_handling_rate: 0.03, fee_per_line_jpy: 100,
+    fee_policy_provenance: "effective_policy",
   },
   {
     source: "hareruya2", total_lines: 1, recorded_lines: 0, purchased_lines: 0,
     cards_bought: 0, card_value_jpy: 0, shipping_jpy: 0,
     other_costs_jpy: 0, spent_total_jpy: 0, agent_payout_jpy: 0,
+    projected_handling_jpy: 0, projected_line_fee_jpy: 0,
+    fee_policy_key: "jpy-buyer-fees-v1", fee_policy_effective_from: "2026-09-11",
+    fee_handling_rate: 0.03, fee_per_line_jpy: 100,
+    fee_policy_provenance: "effective_policy",
   },
 ];
 
@@ -184,6 +192,7 @@ describe("a cancelled card in the fee breakdown", () => {
     totals[0] = {
       ...totals[0], purchased_lines: 2,
       card_value_jpy: 30000, agent_payout_jpy: 200 + 600, spent_total_jpy: 30800,
+      projected_handling_jpy: 600, projected_line_fee_jpy: 200,
     };
     render(<BuyerOrderView />);
     const header = () => screen.getByRole("heading", { name: "cardrush" }).closest("header") as HTMLElement;
