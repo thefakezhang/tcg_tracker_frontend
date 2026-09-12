@@ -88,6 +88,15 @@ async function rpc(client, name, args) {
   assert.equal(error, null, `${name} failed`);
   return data;
 }
+async function postResponse(page, name, perform) {
+  // Observe both promises immediately. A failed action must not leave an
+  // unhandled response timeout that terminates Node before evidence is saved.
+  const [response] = await Promise.all([
+    page.waitForResponse((r) => r.url() === `${api.origin}/rest/v1/rpc/${name}` && r.request().method() === "POST"),
+    Promise.resolve().then(perform),
+  ]);
+  return response;
+}
 async function waitForSaved(client, lineId, quantity, price) {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
@@ -124,21 +133,20 @@ try {
   const send = operator.page.getByRole("button", { name: "Send to buyer", exact: true });
   await send.waitFor();
   assert(!(await rpc(buyer.session, "buyer_assigned_plans")).some((p) => p.plan_id === plan.planId), "assignment silently sent the plan");
-  const sent = operator.page.waitForResponse((r) => r.url().endsWith("/rpc/send_purchase_plan") && r.request().method() === "POST");
-  await send.click();
-  assert.equal((await sent).status(), 200);
+  const sent = await postResponse(operator.page, "send_purchase_plan", () => send.click());
+  assert.equal(sent.status(), 200);
   assert((await rpc(buyer.session, "buyer_assigned_plans")).some((p) => p.plan_id === plan.planId));
   assert(!(await rpc(other.session, "buyer_assigned_plans")).some((p) => p.plan_id === plan.planId));
   stage("operator assignment and deliberate send preserve buyer isolation");
-  const validationResponse = operator.page.waitForResponse((r) => r.url().endsWith("/rpc/validate_purchase_plan") && r.request().method() === "POST");
-  await operator.page.getByRole("button", { name: "Mark as ordered", exact: true }).click();
-  const validation = await (await validationResponse).json();
+  const validationResponse = await postResponse(operator.page, "validate_purchase_plan",
+    () => operator.page.getByRole("button", { name: "Mark as ordered", exact: true }).click());
+  const validation = await validationResponse.json();
   assert.equal(validation.valid, true, "synthetic plan has unresolved order blockers");
   const review = operator.page.getByRole("dialog");
   if (validation.warnings.length) await review.getByRole("checkbox").check();
-  const orderedResponse = operator.page.waitForResponse((r) => r.url().endsWith("/rpc/mark_purchase_plan_ordered") && r.request().method() === "POST");
-  await review.getByRole("button", { name: "Confirm ordered", exact: true }).click();
-  assert.equal((await orderedResponse).status(), 200);
+  const orderedResponse = await postResponse(operator.page, "mark_purchase_plan_ordered",
+    () => review.getByRole("button", { name: t("purchasePlanner.confirmOrdered"), exact: true }).click());
+  assert.equal(orderedResponse.status(), 200);
   stage("operator reviews and marks the synthetic purchase plan ordered");
 
   await buyer.page.goto(`${app.origin}/dashboard`, { waitUntil: "domcontentloaded" });
@@ -217,19 +225,19 @@ try {
   await buyer.page.screenshot({ path: `${artifactRoot}/${label}-buyer-saved.png`, fullPage: true });
   for (const [key, kind, amount] of [["buyer.costShipping", "shipping", "110"], ["buyer.costPaymentFee", "payment_fee", "50"]]) {
     await buyer.page.getByRole("button", { name: `+ ${t(key)}`, exact: true }).first().click();
-    const savedCost = buyer.page.waitForResponse((response) => response.url().endsWith("/rpc/buyer_record_source_cost") && response.request().method() === "POST");
     await buyer.page.getByLabel(t(key), { exact: true }).fill(amount);
-    await buyer.page.getByLabel(t(key), { exact: true }).press("Enter");
-    assert.equal((await savedCost).status(), 204);
+    const savedCost = await postResponse(buyer.page, "buyer_record_source_cost",
+      () => buyer.page.getByLabel(t(key), { exact: true }).press("Enter"));
+    assert.equal(savedCost.status(), 204);
     const savedCosts = await rpc(buyer.session, "buyer_source_costs", { p_plan_id: plan.planId });
     const saved = savedCosts.find((cost) => cost.source === "cardrush" && cost.kind === kind);
     assert(saved, `saved ${kind} cost is missing`);
     assert.equal(Number(saved.amount_jpy), Number(amount));
   }
   stage(`${label}: buyer records source costs without operator retyping`);
-  const handedBack = buyer.page.waitForResponse((r) => r.url().endsWith("/rpc/buyer_hand_back_plan") && r.request().method() === "POST");
-  await buyer.page.getByRole("button", { name: t("buyer.handBackList"), exact: true }).click();
-  assert.equal((await handedBack).status(), 200);
+  const handedBack = await postResponse(buyer.page, "buyer_hand_back_plan",
+    () => buyer.page.getByRole("button", { name: t("buyer.handBackList"), exact: true }).click());
+  assert.equal(handedBack.status(), 200);
   await operator.page.reload({ waitUntil: "domcontentloaded" });
   await operator.page.locator(`select:has(option[value="${plan.planId}"])`).selectOption(String(plan.planId));
   await operator.page.getByText(t("reconciliation.handedBack"), { exact: true }).waitFor();
@@ -300,9 +308,8 @@ try {
   assert.equal(await reconciliation.locator("#reconcile-cardrush-purchased_on").inputValue(), "2026-07-01");
   assert.equal(await reconciliation.locator("#reconcile-cardrush-rate_reference").inputValue(), `${label} fixture purchase-date bank rate`);
   await operator.page.screenshot({ path: `${artifactRoot}/${label}-operator-lost-response.png`, fullPage: true });
-  const retainedReview = operator.page.waitForResponse((response) => response.url().endsWith("/rpc/review_purchase_plan_inventory") && response.request().method() === "POST");
-  await reconciliation.getByRole("button", { name: t("reconciliation.reviewCosts"), exact: true }).click();
-  const response = await retainedReview;
+  const response = await postResponse(operator.page, "review_purchase_plan_inventory",
+    () => reconciliation.getByRole("button", { name: t("reconciliation.reviewCosts"), exact: true }).click());
   assert.equal(response.status(), 200);
   const result = await response.json();
   assert.equal(finalizationRequests, 1);
@@ -372,9 +379,8 @@ try {
     await route.continue({ headers: { ...route.request().headers(), authorization: `Bearer ${expired.expiredAccessToken}` } });
   };
   await operator.page.route(reviewUrl, sendExpiredToken);
-  const expiredResponse = operator.page.waitForResponse((response) => response.url() === reviewUrl && response.request().method() === "POST");
-  await operator.page.getByRole("button", { name: t("reconciliation.view"), exact: true }).click();
-  const denied = await expiredResponse;
+  const denied = await postResponse(operator.page, "review_purchase_plan_inventory",
+    () => operator.page.getByRole("button", { name: t("reconciliation.view"), exact: true }).click());
   assert.equal(denied.status(), 401);
   const deniedBody = await denied.json();
   assert.match(deniedBody.message, /JWT.*expired|expired.*JWT/i);
@@ -388,6 +394,7 @@ try {
   report.resilience.at(-1).serverExpiryConfirmed = true;
   report.resilience.at(-1).expiredRequests = expiredRequests;
   report.scenarios.push({ label, inventoryQuantity: 3, lots: result.lots, passed: true });
+  writeFileSync(`${artifactRoot}/journey.json`, JSON.stringify(report, null, 2) + "\n");
   await Promise.all([operator.context.close(), buyer.context.close(), other.context.close()]);
   await browser.close();
   browser = undefined;
@@ -418,7 +425,10 @@ try {
   }
   throw error;
 } finally {
-  for (const context of contexts) await context.close();
-  await browser?.close();
-  writeFileSync(`${artifactRoot}/journey.json`, JSON.stringify(report, null, 2) + "\n");
+  try {
+    for (const context of contexts) await context.close();
+    await browser?.close();
+  } finally {
+    writeFileSync(`${artifactRoot}/journey.json`, JSON.stringify(report, null, 2) + "\n");
+  }
 }
