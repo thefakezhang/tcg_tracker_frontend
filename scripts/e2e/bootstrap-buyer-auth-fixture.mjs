@@ -82,6 +82,13 @@ for (const [name, account] of Object.entries(fixture.users)) {
   const claims = JSON.parse(Buffer.from(data.session.access_token.split(".")[1], "base64url").toString());
   assert.equal(claims.role, account.principal, `${name} custom access-token hook was not applied`);
   assert.equal(claims.sub, data.user.id);
+  if (name === "operator") {
+    // Private fixture input only. The browser later sends this genuinely
+    // expired GoTrue token to the real PostgREST endpoint exactly once per case.
+    assert(claims.exp - claims.iat <= 120, "disposable short token lifetime is required");
+    account.expiredAccessToken = data.session.access_token;
+    account.accessTokenExpiresAt = claims.exp;
+  }
   const verified = await api.auth.getUser();
   assert.equal(verified.error, null);
   assert.equal(verified.data.user?.id, data.user.id);

@@ -27,6 +27,8 @@ const require = process.env.TCG_FRONTEND_DEPENDENCY_ROOT
 const { chromium } = require("playwright");
 const { createServerClient } = require("@supabase/ssr");
 const report = { runId: fixture.runId, authentication: "GoTrue-issued sessions with Supabase SSR cookies", stages: [], externalRequests: [], errors: [] };
+report.resilience = [];
+report.expectedConsoleErrors = [];
 const browser = await chromium.launch({ headless: true });
 const contexts = [];
 const stage = (name) => { report.stages.push(name); console.log(name); };
@@ -66,10 +68,19 @@ async function signedInContext(name, viewport, language) {
   });
   const page = await context.newPage();
   page.on("pageerror", (error) => report.errors.push(error.message));
-  page.on("console", (message) => { if (message.type() === "error") report.errors.push(message.text()); });
+  const expectedConsoleErrors = [];
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    const expected = expectedConsoleErrors.find((entry) => !entry.seen
+      && message.location().url === entry.url && message.text().includes(entry.text));
+    if (expected) {
+      expected.seen = true;
+      report.expectedConsoleErrors.push({ name: expected.name, path: new URL(expected.url).pathname });
+    } else report.errors.push(message.text());
+  });
   page.on("dialog", (dialog) => dialog.dismiss());
   stage(`${name} authenticated through GoTrue`);
-  return { context, page, session };
+  return { context, page, session, expectedConsoleErrors };
 }
 
 async function rpc(client, name, args) {
@@ -178,12 +189,16 @@ try {
   assert.equal(receipts.length, 1);
   stage("keyboard receipt chooser uploaded and registered through real Storage and RPC");
   await buyer.page.screenshot({ path: `${artifactRoot}/${label}-buyer-saved.png`, fullPage: true });
-  for (const [key, amount] of [["buyer.costShipping", "110"], ["buyer.costPaymentFee", "50"]]) {
+  for (const [key, kind, amount] of [["buyer.costShipping", "shipping", "110"], ["buyer.costPaymentFee", "payment_fee", "50"]]) {
     await buyer.page.getByRole("button", { name: `+ ${t(key)}`, exact: true }).first().click();
     const savedCost = buyer.page.waitForResponse((response) => response.url().endsWith("/rpc/buyer_record_source_cost") && response.request().method() === "POST");
     await buyer.page.getByLabel(t(key), { exact: true }).fill(amount);
     await buyer.page.getByLabel(t(key), { exact: true }).press("Enter");
-    assert.equal((await savedCost).status(), 200);
+    assert.equal((await savedCost).status(), 204);
+    const savedCosts = await rpc(buyer.session, "buyer_source_costs", { p_plan_id: plan.planId });
+    const saved = savedCosts.find((cost) => cost.source === "cardrush" && cost.kind === kind);
+    assert(saved, `saved ${kind} cost is missing`);
+    assert.equal(Number(saved.amount_jpy), Number(amount));
   }
   stage(`${label}: buyer records source costs without operator retyping`);
   const handedBack = buyer.page.waitForResponse((r) => r.url().endsWith("/rpc/buyer_hand_back_plan") && r.request().method() === "POST");
@@ -236,11 +251,37 @@ try {
     }
   }
   await operator.page.screenshot({ path: `${artifactRoot}/${label}-operator-reviewed.png`, fullPage: true });
-  const finalResponse = operator.page.waitForResponse((response) => response.url().endsWith("/rpc/reconcile_purchase_plan_inventory") && response.request().method() === "POST");
+  const finalizeUrl = `${api.origin}/rest/v1/rpc/reconcile_purchase_plan_inventory`;
+  let finalizationRequests = 0;
+  let committedResult;
+  operator.expectedConsoleErrors.push({ name: `${label}: intentionally lost finalization response`, url: finalizeUrl, text: "net::ERR_FAILED" });
+  const loseCommittedResponse = async (route) => {
+    finalizationRequests += 1;
+    assert.equal(finalizationRequests, 1, "finalization automatically retried after a lost response");
+    const actualResponse = await route.fetch({ timeout: 15_000 });
+    assert.equal(actualResponse.status(), 200);
+    committedResult = await actualResponse.json();
+    assert.equal(committedResult.inventory_finalized, true);
+    // The real server has committed. Lose only its response on the way back
+    // to the browser; no success or error payload is fabricated.
+    await route.abort("failed");
+  };
+  await operator.page.route(finalizeUrl, loseCommittedResponse);
   await finalize.click();
-  const response = await finalResponse;
+  await reconciliation.getByText(t("reconciliation.retryHelp"), { exact: true }).waitFor();
+  assert(await finalize.isDisabled());
+  assert.equal(await reconciliation.locator("#reconcile-cardrush-purchased_on").inputValue(), "2026-07-01");
+  assert.equal(await reconciliation.locator("#reconcile-cardrush-rate_reference").inputValue(), `${label} fixture purchase-date bank rate`);
+  await operator.page.screenshot({ path: `${artifactRoot}/${label}-operator-lost-response.png`, fullPage: true });
+  const retainedReview = operator.page.waitForResponse((response) => response.url().endsWith("/rpc/review_purchase_plan_inventory") && response.request().method() === "POST");
+  await reconciliation.getByRole("button", { name: t("reconciliation.reviewCosts"), exact: true }).click();
+  const response = await retainedReview;
   assert.equal(response.status(), 200);
   const result = await response.json();
+  assert.equal(finalizationRequests, 1);
+  assert.deepEqual(result.lots, committedResult.lots, "recovery did not return the already committed inventory");
+  await operator.page.unroute(finalizeUrl, loseCommittedResponse);
+  report.resilience.push({ label, lostResponseRecovered: true, finalizationRequests });
   assert.equal(result.finalized, true);
   assert.equal(result.inventory_finalized, true);
   assert.equal(result.lots.length, 2);
@@ -270,10 +311,41 @@ try {
   await operator.page.getByRole("button", { name: t("reconciliation.view"), exact: true }).click();
   await operator.page.getByRole("dialog").getByText(t("reconciliation.success"), { exact: true }).waitFor();
   stage(`${label}: actual dated inventory, costs and retained result survive reload`);
+  await operator.page.getByRole("dialog").getByRole("button", { name: t("common.close"), exact: true }).last().click();
+  const expired = fixture.users.operator;
+  assert(Number.isInteger(expired.accessTokenExpiresAt));
+  assert(Date.now() / 1000 > expired.accessTokenExpiresAt + 2, "the retained GoTrue token has not expired yet");
+  const reviewUrl = `${api.origin}/rest/v1/rpc/review_purchase_plan_inventory`;
+  let expiredRequests = 0;
+  operator.expectedConsoleErrors.push({ name: `${label}: real expired-token rejection`, url: reviewUrl, text: "401" });
+  const sendExpiredToken = async (route) => {
+    expiredRequests += 1;
+    assert.equal(expiredRequests, 1);
+    // Substitute only the credential, never the response. PostgREST verifies
+    // this GoTrue-issued token's real expired signature/claims itself.
+    await route.continue({ headers: { ...route.request().headers(), authorization: `Bearer ${expired.expiredAccessToken}` } });
+  };
+  await operator.page.route(reviewUrl, sendExpiredToken);
+  const expiredResponse = operator.page.waitForResponse((response) => response.url() === reviewUrl && response.request().method() === "POST");
+  await operator.page.getByRole("button", { name: t("reconciliation.view"), exact: true }).click();
+  const denied = await expiredResponse;
+  assert.equal(denied.status(), 401);
+  const deniedBody = await denied.json();
+  assert.match(deniedBody.message, /JWT.*expired|expired.*JWT/i);
+  const expiredDialog = operator.page.getByRole("dialog");
+  await expiredDialog.getByText(t("common.sessionExpired"), { exact: true }).waitFor();
+  assert.equal(await expiredDialog.getByRole("link", { name: t("common.signInAgain"), exact: true }).getAttribute("href"), "/login");
+  assert.equal(await expiredDialog.getByRole("button", { name: t("reconciliation.finalize"), exact: true }).count(), 0);
+  await operator.page.screenshot({ path: `${artifactRoot}/${label}-operator-expired-session.png`, fullPage: true });
+  await operator.page.unroute(reviewUrl, sendExpiredToken);
+  report.resilience.at(-1).expiredTokenRejected = true;
+  report.resilience.at(-1).expiredRequests = expiredRequests;
   report.scenarios.push({ label, inventoryQuantity: 3, lots: result.lots, passed: true });
   await Promise.all([operator.context.close(), buyer.context.close(), other.context.close()]);
  }
  assert.equal(report.scenarios.length, 4);
+ assert.equal(report.resilience.length, 4);
+ assert(report.resilience.every((row) => row.lostResponseRecovered && row.finalizationRequests === 1 && row.expiredTokenRejected && row.expiredRequests === 1));
  assert.equal(report.errors.length, 0);
  assert.equal(report.externalRequests.length, 0);
   report.passed = true;
