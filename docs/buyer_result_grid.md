@@ -67,3 +67,12 @@ Pure tests cover paste validation, bilingual outcomes, purchase completeness, a 
 Component tests cover initial-load failure and retry, actual cell edits, the fully filled shared-want boundary, left and right movement, valid and invalid paste, condition restoration, retry, plan-change flushing, and the Japanese empty state.
 The controlled browser fixture uses intercepted local RPC responses and makes no database or external requests.
 It drives the same buyer shell and result view at desktop and phone viewports and records screenshots plus a JSON evidence report under `docs/evidence/buyer-result-grid/`.
+
+## Receipt registration retry
+
+The #1236 increment extracts `BuyerSourceReceipts` as the owner of one plan/source upload and registration attempt.
+Once upload succeeds, a failed registration keeps that exact path available for retry without uploading the bytes again.
+Upload failures never register metadata, obsolete completions cannot affect another plan, and closed plans expose no retry mutation.
+The pending path is in-memory state; reload or navigation may leave an unregistered object, which is retained for separate operational reconciliation rather than deleted automatically.
+Database migration 000464 supplies the authoritative plan/source/lifecycle checks on both Storage and registration; frontend controls are not an authorization boundary.
+The complete authenticated buyer-order journey remains separately gated under #939.

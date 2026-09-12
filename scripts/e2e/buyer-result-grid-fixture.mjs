@@ -142,6 +142,11 @@ async function runViewport(browser, viewportName, viewport) {
     [8, [planLine(201, "ミュウ")]],
   ]);
   const successfulWrites = [];
+  const receiptUploads = [];
+  const receiptRegistrations = [];
+  const savedReceipts = [];
+  let expectedReceiptFailures = 0;
+  let observedReceiptFailureResponses = 0;
   const writeAttempts = [];
   const lineReads = [];
   let mockedRpcRequests = 0;
@@ -162,6 +167,13 @@ async function runViewport(browser, viewportName, viewport) {
     }
     mockedRpcRequests += 1;
     const url = new URL(request.url());
+    if (url.pathname.startsWith("/storage/v1/object/lot-receipts/") && request.method() === "POST") {
+      const path = decodeURIComponent(url.pathname.slice("/storage/v1/object/lot-receipts/".length));
+      assert(/^plan-receipts\/7\/cardrush\/[a-z0-9-]+-receipt\.pdf$/.test(path), `unexpected upload path ${path}`);
+      receiptUploads.push(path);
+      await route.fulfill({ status: 200, headers: corsHeaders, body: JSON.stringify({ Key: `lot-receipts/${path}` }) });
+      return;
+    }
     const rpcName = url.pathname.split("/").at(-1);
     const body = request.postDataJSON?.() ?? {};
     const fulfill = (data) => route.fulfill({
@@ -190,7 +202,23 @@ async function runViewport(browser, viewportName, viewport) {
       await fulfill(linesByPlan.get(planId) ?? []);
       return;
     }
-    if (rpcName === "buyer_source_totals" || rpcName === "buyer_source_receipts" || rpcName === "buyer_source_costs") {
+    if (rpcName === "buyer_record_source_receipt") {
+      receiptRegistrations.push(body);
+      assert(body.p_plan_id === 7 && body.p_source === "cardrush" && receiptUploads.includes(body.p_storage_path), "registration is not bound to the uploaded object");
+      if (receiptRegistrations.length === 1) {
+        expectedReceiptFailures += 1;
+        await route.fulfill({ status: 503, headers: corsHeaders, body: JSON.stringify({ message: "fixture receipt save failed", code: "P0001" }) });
+        return;
+      }
+      savedReceipts.push({ receipt_id: 1, source: "cardrush", storage_path: body.p_storage_path, original_name: body.p_original_name, uploaded_at: "2026-09-12T00:00:00Z" });
+      await fulfill(null);
+      return;
+    }
+    if (rpcName === "buyer_source_receipts") {
+      await fulfill(body.p_plan_id === 7 ? savedReceipts : []);
+      return;
+    }
+    if (rpcName === "buyer_source_totals" || rpcName === "buyer_source_costs") {
       await fulfill([]);
       return;
     }
@@ -248,6 +276,7 @@ async function runViewport(browser, viewportName, viewport) {
   let observedPlanLoadFailureResponses = 0;
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("response", (response) => {
+    if (response.url().endsWith("/rpc/buyer_record_source_receipt") && response.status() === 503) observedReceiptFailureResponses += 1;
     if (response.url().endsWith("/rpc/buyer_record_result") && response.status() === 503) {
       observedSaveFailureResponses += 1;
     }
@@ -260,7 +289,7 @@ async function runViewport(browser, viewportName, viewport) {
     const text = message.text();
     if (
       text === "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
-      && observedExpectedRpcConsoleErrors < expectedSaveFailures + expectedPlanLoadFailures
+      && observedExpectedRpcConsoleErrors < expectedSaveFailures + expectedPlanLoadFailures + expectedReceiptFailures
     ) {
       observedExpectedRpcConsoleErrors += 1;
       expectedConsoleErrors.push(text);
@@ -296,6 +325,21 @@ async function runViewport(browser, viewportName, viewport) {
   await sharedWantNotes.first().waitFor();
   assert(await sharedWantNotes.count() === 2, `${viewportName} did not explain both shared wants`);
   stage("verified initial load failure and retry");
+
+  await page.locator('#receipt-7-cardrush').setInputFiles({ name: "receipt.pdf", mimeType: "application/pdf", buffer: Buffer.from("disposable receipt fixture") });
+  await page.getByRole("alert").filter({ hasText: "fixture receipt save failed" }).waitFor();
+  const receiptRetry = page.getByRole("button", { name: "領収書の登録を再試行" });
+  await receiptRetry.waitFor();
+  if (viewport.width === 390) await assertTapTarget(receiptRetry, `${viewportName} receipt retry`);
+  const receiptPendingOverflow = await assertNoOverflow(page, `${viewportName} pending receipt`);
+  const receiptPendingScreenshot = `${artifactRoot}/${viewportName}-receipt-retry.png`;
+  await captureFullPage(context, page, receiptPendingScreenshot);
+  await clickStableTarget(page, receiptRetry, `${viewportName} receipt retry`);
+  await page.getByText("領収書 1件", { exact: true }).waitFor();
+  assert(receiptUploads.length === 1 && receiptRegistrations.length === 2, `${viewportName} receipt retry duplicated upload or registration`);
+  assert(JSON.stringify(receiptRegistrations[0]) === JSON.stringify(receiptRegistrations[1]), `${viewportName} receipt retry changed its uploaded path`);
+  assert(expectedReceiptFailures === 1 && observedReceiptFailureResponses === 1, `${viewportName} expected receipt failure was not observed exactly once`);
+  stage("verified same-object receipt retry");
 
   const filledOutcome = page.locator('[data-cell="103:outcome"]');
   const attemptsBeforeFilledWant = writeAttempts.length;
@@ -418,6 +462,11 @@ async function runViewport(browser, viewportName, viewport) {
     viewportName,
     viewport,
     mockedRpcRequests,
+    receiptUploads,
+    receiptRegistrations,
+    observedReceiptFailureResponses,
+    receiptPendingOverflow,
+    receiptPendingScreenshot,
     writeAttempts: writeAttempts.length,
     successfulWrites: successfulWrites.length,
     lineReads,
@@ -447,6 +496,7 @@ try {
     externalRequests: 0,
     journey: [
       "initial plan-load failure and retry",
+      "receipt registration failure and same-object retry",
       "fully filled shared-want boundary",
       "condition restoration",
       "visible stale timestamp and shared-want context",
