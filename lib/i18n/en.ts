@@ -274,6 +274,8 @@ const en = {
   "evidence.listingFreshness": "Listing freshness is shown on each market listing",
   "evidence.exitBasis": "Exit basis",
   "evidence.none": "No computed grade signals are available for this card yet.",
+  "evidence.loading": "Cards are ready. Grade evidence is still loading.",
+  "evidence.unavailable": "Cards are ready, but grade evidence is temporarily unavailable.",
   "evidence.weakFilter": "High value, weak evidence",
   "evidence.weakFilterHelp": "Show loaded rows with a median grade exit of at least $300 and no Tier 1 or Tier 2 evidence.",
   "evidence.raw": "Raw",

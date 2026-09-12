@@ -456,7 +456,10 @@ A failed flag write now shows the RPC error inline next to the switches instead 
 ### Per-grade evidence panel (S3)
 
 - `GradeEvidencePanel.tsx` reads the latest `pokemon_grade_signals` model row per card and grade, Card Ladder sold comps, bid locations, and applicable market events.
-All data-dependent reads page through `selectAll`; browser-page signal fanout uses `selectAllByIds`.
+All data-dependent reads page through `selectAll` where a table or view may exceed the PostgREST row cap.
+The Card Browser summary stays server-filtered, server-sorted, counted, and paged, then one bounded authenticated RPC reads latest-model grade evidence for at most the 100 distinct card IDs on that page.
+Summary rows render while the bounded enrichment is loading and remain visible with an explicit unavailable state if that optional read fails.
+Evidence-dependent sorts, filters, Watch, and Dismiss wait for complete enrichment so they never record or present a false no-signal result.
 - Each grade keeps its evidence components visible: P10/P25/P50/P75 bands, trend, recent and lifetime comp counts, demand, JP bid and held age, population, population velocity, price per population, cohort, and warning flags.
 A missing sold-comp series renders a source-only summary instead of a fabricated sparkline.
 - Sold-comp sparklines are inline SVG and mark global, matching-set, and explicit-card events when they fall inside the observed date range.

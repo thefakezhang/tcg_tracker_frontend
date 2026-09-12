@@ -169,6 +169,7 @@ const knownTables = new Set([
 
 const knownRpcs = new Set([
   "card_refresh_targets",
+  "pokemon_card_browser_enrichment",
   "record_deal_opportunity_exposures",
 ]);
 
@@ -354,6 +355,19 @@ async function runJourney(browser, name, viewport, language) {
 
     if (segments.includes("rpc")) {
       if (!knownRpcs.has(table)) unknownRequests.push({ method, table, url: request.url() });
+      if (table === "pokemon_card_browser_enrichment") {
+        await route.fulfill({
+          status: 200,
+          headers: responseHeaders(),
+          body: JSON.stringify({
+            signals: [],
+            exit_cost_profile: null,
+            exchange_rate: null,
+            changepoints: [],
+          }),
+        });
+        return;
+      }
       await fulfillRows(route, []);
       return;
     }

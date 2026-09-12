@@ -12,8 +12,11 @@ const mocks = vi.hoisted(() => ({
   tcgResult: { data: [] as Record<string, unknown>[], error: null as unknown },
   collectrResult: { data: [] as Record<string, unknown>[], error: null as unknown },
   useEnglishCounterparts: vi.fn(),
+  browserOpportunityPayloads: vi.fn(() => []),
+  recordOpportunityExposures: vi.fn().mockResolvedValue(undefined),
   language: "en" as "en" | "ja",
   activeGame: "pokemon" as "pokemon" | "mtg" | "pokemon_sealed",
+  setPsaMode: vi.fn(),
 }));
 const translate = (key: string, values?: Record<string, string | number>) => {
   if (values?.message) return `${key}: ${values.message}`;
@@ -26,7 +29,7 @@ const translate = (key: string, values?: Record<string, string | number>) => {
 vi.mock("@/lib/i18n", () => ({ useTranslation: () => ({ t: translate }) }));
 vi.mock("./LanguageContext", () => ({ useLanguage: () => ({ language: mocks.language }) }));
 vi.mock("./GameContext", () => ({
-  useGame: () => ({ activeGame: mocks.activeGame, psaMode: "psa", setPsaMode: vi.fn() }),
+  useGame: () => ({ activeGame: mocks.activeGame, psaMode: "psa", setPsaMode: mocks.setPsaMode }),
 }));
 vi.mock("./ExitBasisContext", () => ({
   useExitBasis: () => ({ exitPercentile: "p25", setExitPercentile: vi.fn() }),
@@ -52,11 +55,12 @@ vi.mock("./use-card-data", async () => {
 // the row, so grid tiles rendered here could never be selected and the tests
 // could not see that grid mode had no selection at all.
 vi.mock("./data-table", () => ({
-  DataTable: ({ viewMode, data, columns, renderGridItem, sorting, rowSelection, onRowSelectionChange, getRowId }: { viewMode: "list" | "grid"; data: unknown[]; columns: { id?: string; cell?: unknown }[]; renderGridItem: (row: unknown, selection?: { selected: boolean; toggle: (value?: boolean) => void }) => React.ReactNode; sorting: { id: string; desc: boolean }[]; rowSelection?: Record<string, boolean>; onRowSelectionChange?: (next: Record<string, boolean>) => void; getRowId?: (row: unknown, index: number) => string }) => {
+  DataTable: ({ viewMode, data, columns, renderGridItem, sorting, onSortingChange, rowSelection, onRowSelectionChange, getRowId }: { viewMode: "list" | "grid"; data: { key?: string }[]; columns: { id?: string; cell?: unknown }[]; renderGridItem: (row: unknown, selection?: { selected: boolean; toggle: (value?: boolean) => void }) => React.ReactNode; sorting: { id: string; desc: boolean }[]; onSortingChange?: (sorting: { id: string; desc: boolean }[]) => void; rowSelection?: Record<string, boolean>; onRowSelectionChange?: (next: Record<string, boolean>) => void; getRowId?: (row: unknown, index: number) => string }) => {
     const nameCell = columns.find((column) => column.id === "regional_name")?.cell;
     return (
-      <div data-testid="browse-table" data-count={data.length} data-view-mode={viewMode} data-sort={`${sorting[0]?.id}:${sorting[0]?.desc ? "desc" : "asc"}`}>
+      <div data-testid="browse-table" data-count={data.length} data-keys={data.map((row) => row.key).join(",")} data-view-mode={viewMode} data-sort={`${sorting[0]?.id}:${sorting[0]?.desc ? "desc" : "asc"}`}>
         browse table
+        <button type="button" data-testid="sort-conservative-exit" onClick={() => onSortingChange?.([{ id: "conservativeExit", desc: true }])}>sort conservative exit</button>
         {viewMode === "list" && typeof nameCell === "function"
           ? data.map((row, index) => (
               <div key={index}>{nameCell({ row: { original: row } })}</div>
@@ -80,15 +84,35 @@ vi.mock("./data-table", () => ({
   },
 }));
 vi.mock("./DecisionActions", () => ({ DecisionActions: () => <div><button>decision.watch</button><button aria-label="decision.dismissOpportunity" /></div> }));
-vi.mock("./opportunity-exposures", () => ({ browserOpportunityPayloads: () => [], recordOpportunityExposures: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("./opportunity-exposures", () => ({
+  browserOpportunityPayloads: mocks.browserOpportunityPayloads,
+  recordOpportunityExposures: mocks.recordOpportunityExposures,
+}));
 vi.mock("./DecisionWatchlist", () => ({ default: () => <div>watchlist surface</div> }));
 vi.mock("./RefreshPricesAction", () => ({ RefreshPricesAction: () => null }));
 vi.mock("./AddToPlanAction", () => ({ AddToPlanAction: ({ cards }: { cards: { id: number; name: string }[] }) => <button>add to plan ({cards.map((c) => c.name).join(", ")})</button> }));
 vi.mock("./RefreshInFlightStrip", () => ({ RefreshInFlightStrip: () => null }));
 vi.mock("./CardDetailModal", () => ({
-  default: ({ card, open, onClose }: { card: { card: { card_id: string } } | null; open: boolean; onClose: () => void }) => open ? (
+  default: ({ card, open, onClose }: {
+    card: {
+      card: { card_id: string };
+      enrichmentStatus?: "loading" | "ready" | "unavailable";
+      signal?: { modelVersion?: string } | null;
+    } | null;
+    open: boolean;
+    onClose: () => void;
+  }) => open ? (
     <div role="dialog" aria-label="card detail">
       <span>{card?.card.card_id}</span>
+      <span data-testid="detail-enrichment-status">{card?.enrichmentStatus ?? "legacy"}</span>
+      <span data-testid="detail-signal-model">{card?.signal?.modelVersion ?? "none"}</span>
+      <button
+        type="button"
+        data-testid="detail-decision-watch"
+        disabled={card?.enrichmentStatus === "loading" || card?.enrichmentStatus === "unavailable"}
+      >
+        decision.watch
+      </button>
       <button type="button" onClick={onClose}>close detail</button>
     </div>
   ) : null,
@@ -119,6 +143,8 @@ beforeEach(() => {
   mocks.tcgResult = { data: [], error: null };
   mocks.collectrResult = { data: [], error: null };
   mocks.useEnglishCounterparts.mockReset();
+  mocks.browserOpportunityPayloads.mockClear();
+  mocks.recordOpportunityExposures.mockClear();
   mocks.useEnglishCounterparts.mockReturnValue({
     byCardId: new Map(),
     isLoading: false,
@@ -218,6 +244,69 @@ describe("CardBrowser surfaces", () => {
     render(<CardBrowser />);
 
     expect(screen.getByTestId("browse-table").getAttribute("data-sort")).toBe("roi:desc");
+  });
+
+  it("renders summary cards while enrichment loads and delays evidence snapshots", async () => {
+    mocks.useCardData.mockReturnValue({
+      ...mocks.useCardData(),
+      data: [{
+        ...mocks.useCardData().data[0],
+        enrichmentStatus: "loading",
+      }],
+    });
+
+    render(<CardBrowser />);
+
+    expect(screen.getByTestId("browse-table").getAttribute("data-count")).toBe("1");
+    expect(screen.getByRole("status").textContent).toBe("evidence.loading");
+    await waitFor(() => expect(mocks.recordOpportunityExposures).not.toHaveBeenCalled());
+  });
+
+  it("keeps summary order visible and retryable without classifying an unavailable dependent filter or sort", async () => {
+    const first = {
+      ...mocks.useCardData().data[0],
+      enrichmentStatus: "unavailable" as const,
+    };
+    mocks.useCardData.mockReturnValue({
+      ...mocks.useCardData(),
+      data: [first, { ...first, key: "41:10", card: { ...first.card, card_id: "41" } }],
+      totalCount: 2,
+    });
+
+    render(<CardBrowser />);
+
+    expect(screen.getByTestId("browse-table").getAttribute("data-count")).toBe("2");
+    expect(screen.getByTestId("browse-table").getAttribute("data-keys")).toBe("42:10,41:10");
+    expect(screen.getByRole("status").textContent).toContain("evidence.unavailable");
+    await waitFor(() => expect(mocks.recordOpportunityExposures).not.toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "evidence.weakFilter" }));
+    expect(screen.getByTestId("browse-table").getAttribute("data-count")).toBe("2");
+    await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      waitForEnrichment: true,
+    })));
+
+    fireEvent.click(screen.getByTestId("sort-conservative-exit"));
+    expect(screen.getByTestId("browse-table").getAttribute("data-keys")).toBe("42:10,41:10");
+    await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      sortColumn: "conservativeExit",
+      waitForEnrichment: true,
+    })));
+
+    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(mocks.refetch).toHaveBeenCalledOnce();
+  });
+
+  it("requests a complete enrichment result before applying an evidence-dependent filter", async () => {
+    render(<CardBrowser />);
+
+    expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      waitForEnrichment: false,
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "evidence.weakFilter" }));
+    await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+        waitForEnrichment: true,
+      })));
   });
 
   it("switches from Browse to Watchlist without changing the hook count", () => {
@@ -387,6 +476,42 @@ describe("CardBrowser surfaces", () => {
 
     expect(screen.getByRole("dialog", { name: "card detail" })).toBeTruthy();
   });
+
+  it.each(["ready", "unavailable"] as const)(
+    "keeps a detail opened during loading synchronized when enrichment becomes %s",
+    async (enrichmentStatus) => {
+      vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
+      const baseResult = mocks.useCardData();
+      const loadingRow = {
+        ...baseResult.data[0],
+        enrichmentStatus: "loading" as const,
+      };
+      mocks.useCardData.mockReturnValue({ ...baseResult, data: [loadingRow] });
+      const { rerender } = render(<CardBrowser />);
+
+      await waitFor(() => expect(screen.getByTestId("browse-table").getAttribute("data-view-mode")).toBe("grid"));
+      fireEvent.click(screen.getByRole("button", { name: "cardBrowser.openDetails" }));
+      expect(screen.getByTestId("detail-enrichment-status").textContent).toBe("loading");
+      expect((screen.getByTestId("detail-decision-watch") as HTMLButtonElement).disabled).toBe(true);
+
+      const replacement = {
+        ...loadingRow,
+        enrichmentStatus,
+        signal: enrichmentStatus === "ready"
+          ? { modelVersion: "v2" }
+          : null,
+      };
+      mocks.useCardData.mockReturnValue({ ...baseResult, data: [replacement] });
+      rerender(<CardBrowser />);
+
+      expect(screen.getByRole("dialog", { name: "card detail" })).toBeTruthy();
+      expect(screen.getByTestId("detail-enrichment-status").textContent).toBe(enrichmentStatus);
+      expect(screen.getByTestId("detail-signal-model").textContent)
+        .toBe(enrichmentStatus === "ready" ? "v2" : "none");
+      expect((screen.getByTestId("detail-decision-watch") as HTMLButtonElement).disabled)
+        .toBe(enrichmentStatus !== "ready");
+    },
+  );
 
   it("does not open phone card details from a nested decision control key press", async () => {
     vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
