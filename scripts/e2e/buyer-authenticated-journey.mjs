@@ -152,7 +152,14 @@ try {
     await quantity.fill(String(index + 1));
     await quantity.press("Tab");
     const price = buyer.page.locator(`[data-cell="${line.lineId}:price"]`);
-    await price.fill(String(1000 + index * 100));
+    const selectedPrice = await price.evaluate((input) => ({
+      focused: document.activeElement === input,
+      start: input.selectionStart, end: input.selectionEnd, length: input.value.length,
+    }));
+    assert(selectedPrice.focused && selectedPrice.start === 0 && selectedPrice.end === selectedPrice.length,
+      "Tab into price lost the whole-value selection after removing grouping");
+    await buyer.page.keyboard.type(String(1000 + index * 100));
+    assert.equal(await price.inputValue(), String(1000 + index * 100));
     await price.press("Tab");
     await waitForSaved(buyer.session, line.lineId, index + 1, 1000 + index * 100);
   }

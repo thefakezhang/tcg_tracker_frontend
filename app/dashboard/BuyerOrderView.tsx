@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatDateTime } from "@/lib/dates";
 import { formatMutationError } from "@/lib/mutation-error";
@@ -1064,28 +1064,33 @@ function NumberCell({
   groupThousands?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
-  const display = (next: number | null) =>
-    next == null ? "" : groupThousands && !focused ? next.toLocaleString() : String(next);
-  const [draft, setDraft] = useState<string>(display(value));
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState<string>(value == null ? "" : String(value));
   useEffect(() => {
-    setDraft(display(value));
-  }, [focused, groupThousands, value]);
+    setDraft(value == null ? "" : String(value));
+  }, [value]);
+  useLayoutEffect(() => {
+    // Select after React commits the ungrouped edit value. Selecting the old
+    // grouped text first lets the value change collapse the caret to the end.
+    if (focused) inputRef.current?.select();
+  }, [focused]);
 
   return (
     <td className="min-w-0 py-1 md:table-cell md:px-3 md:text-right">
       <MobileLabel>{label}</MobileLabel>
       <input
+        ref={inputRef}
         data-cell={`${line.plan_line_id}:${column}`}
         aria-label={label}
         disabled={readOnly}
         inputMode="numeric"
-        value={draft}
+        value={focused ? draft : value == null ? "" : groupThousands ? value.toLocaleString() : String(value)}
         onChange={(event) => {
           const next = event.target.value.replace(/\D/g, "");
           setDraft(next);
           onEdit(next === "" ? null : Number(next));
         }}
-        onFocus={(event) => { setFocused(true); event.currentTarget.select(); }}
+        onFocus={() => { setDraft(value == null ? "" : String(value)); setFocused(true); }}
         onBlur={() => {
           setFocused(false);
           onFlush();

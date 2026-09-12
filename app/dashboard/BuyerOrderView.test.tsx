@@ -186,6 +186,20 @@ describe("BuyerOrderView", () => {
     );
   });
 
+  it("keeps the whole price selected when focus removes thousands separators", async () => {
+    render(<BuyerOrderView />);
+    await screen.findByText("cardrush");
+    fireEvent.change(document.querySelector('[data-cell="1:outcome"]')!, { target: { value: "purchased" } });
+    const price = document.querySelector<HTMLInputElement>('[data-cell="1:price"]')!;
+    await waitFor(() => expect(price.value).toBe("1,000"));
+
+    act(() => price.focus());
+
+    await waitFor(() => expect(price.value).toBe("1000"));
+    expect(price.selectionStart).toBe(0);
+    expect(price.selectionEnd).toBe(4);
+  });
+
   it("moves DOWN the column on Enter, the way a spreadsheet does", async () => {
     // The whole point of the grid is that an Excel user never reaches for the
     // mouse. Enter must land on the same column of the next row, not the next

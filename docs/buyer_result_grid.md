@@ -49,6 +49,8 @@ When a shared want has no remaining quantity, choosing a bought result is refuse
 
 The table uses one set of controls at every viewport.
 Below the `md` breakpoint, each semantic row becomes a two-column card and each result control carries its visible field label.
+Price cells display thousands separators while idle.
+Entering a numeric cell commits the raw edit value before selecting it, so the next typed value replaces the whole price instead of appending to the old amount.
 Editing controls and primary actions use a minimum 44-pixel height on phones.
 Stale-price warnings show the source observation time as visible text.
 Shared want progress also carries a visible explanation instead of relying on pointer-only title text.
