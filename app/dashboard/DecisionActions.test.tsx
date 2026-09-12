@@ -73,4 +73,25 @@ describe("decisionSnapshot", () => {
       }),
     ));
   });
+
+  it.each(["loading", "unavailable"] as const)(
+    "does not record a no-signal decision while enrichment is %s",
+    (enrichmentStatus) => {
+      const row = {
+        key: "42:10",
+        card: { card_id: "42", regional_name: "Test", set_code: "M6", card_number: "1", misc_info: null, image_url: null },
+        psaGrade: 10,
+        prices: { lowestSell: null, highestBuy: null },
+        roi: null,
+        enrichmentStatus,
+      };
+
+      render(<DecisionActions row={row} />);
+
+      expect((screen.getByRole("button", { name: "decision.watch" }) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole("button", { name: "decision.dismissOpportunity" }) as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(screen.getByRole("button", { name: "decision.watch" }));
+      expect(mocks.rpc).not.toHaveBeenCalled();
+    },
+  );
 });

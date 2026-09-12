@@ -143,7 +143,10 @@ export default function CardBrowser() {
   const [sortAsc, setSortAsc] = useState(false);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
-  const [selectedCard, setSelectedCard] = useState<CardRowData | null>(null);
+  const [selectedCardIdentity, setSelectedCardIdentity] = useState<{
+    key: string;
+    snapshot: CardRowData;
+  } | null>(null);
   // #2 (show feedback): a per-card tcgplayer market value (USD), fetched for the
   // loaded page from the pokemon_tcgplayer_market view, so the browse can show
   // it prominently on mobile and sum it across a multi-selection.
@@ -164,6 +167,11 @@ export default function CardBrowser() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const selectionEnabled = activeGame === "pokemon";
   const availableSources = useAvailableCardSources(activeGame, sourceSide);
+  const waitForEnrichment = activeGame === "pokemon" && (
+    weakEvidenceOnly
+    || sortColumn === "conservativeExit"
+    || (sortColumn === "dealNet" && exitPercentile !== 25)
+  );
 
   const { data, loading, error, availableTiers, totalCount, refetch, refresh } =
     useCardData({
@@ -190,7 +198,13 @@ export default function CardBrowser() {
       exitPercentile,
       page,
       pageSize,
+      waitForEnrichment,
     });
+
+  const enrichmentLoading = activeGame === "pokemon"
+    && data.some((row) => row.enrichmentStatus === "loading");
+  const enrichmentUnavailable = activeGame === "pokemon"
+    && data.some((row) => row.enrichmentStatus === "unavailable");
 
   const ownedIdentities = useMemo<OwnedInventoryIdentity[]>(
     () => data.map((row) => ({
@@ -222,13 +236,21 @@ export default function CardBrowser() {
     }),
     [activeGame, data, ownedCounts, observations],
   );
+  const selectedCard = useMemo(() => {
+    if (!selectedCardIdentity) return null;
+    return dataWithOwned.find((row) => row.key === selectedCardIdentity.key)
+      ?? selectedCardIdentity.snapshot;
+  }, [dataWithOwned, selectedCardIdentity]);
+  const openCardDetail = useCallback((row: CardRowData) => {
+    setSelectedCardIdentity({ key: row.key, snapshot: row });
+  }, []);
   const visibleData = useMemo(
-    () => weakEvidenceOnly
+    () => weakEvidenceOnly && !enrichmentLoading && !enrichmentUnavailable
       ? dataWithOwned.filter((row) =>
           isHighValueWeakEvidence(row.signal, row.jpyUsd)
         )
       : dataWithOwned,
-    [dataWithOwned, weakEvidenceOnly],
+    [dataWithOwned, enrichmentLoading, enrichmentUnavailable, weakEvidenceOnly],
   );
 
   // A card can occupy two rows (PSA and non-PSA share a card_id), so dedupe -
@@ -345,12 +367,12 @@ export default function CardBrowser() {
   }, [setHeaderActions]);
 
   useEffect(() => {
-    if (activeGame !== "pokemon" || loading || surface !== "browse") return;
+    if (activeGame !== "pokemon" || loading || enrichmentLoading || enrichmentUnavailable || surface !== "browse") return;
     const exposures = browserOpportunityPayloads(visibleData, viewMode === "grid" ? "browser_grid" : "browser_list");
     void recordOpportunityExposures(exposures).catch((exposureError) => {
       console.error("Failed to record displayed opportunities:", exposureError);
     });
-  }, [activeGame, loading, surface, viewMode, visibleData]);
+  }, [activeGame, enrichmentLoading, enrichmentUnavailable, loading, surface, viewMode, visibleData]);
 
   const handleSortingChange = useCallback(
     (sorting: { id: string; desc: boolean }[]) => {
@@ -712,8 +734,8 @@ export default function CardBrowser() {
               className="shrink-0"
             >
               <TabsList className="h-11 sm:h-8">
-                <TabsTrigger value="non-psa">{t("modal.tabNonPsa")}</TabsTrigger>
-                <TabsTrigger value="psa">{t("modal.tabPsa")}</TabsTrigger>
+                <TabsTrigger className="min-w-11 sm:min-w-0" value="non-psa">{t("modal.tabNonPsa")}</TabsTrigger>
+                <TabsTrigger className="min-w-11 sm:min-w-0" value="psa">{t("modal.tabPsa")}</TabsTrigger>
               </TabsList>
             </Tabs>
           )}
@@ -722,6 +744,20 @@ export default function CardBrowser() {
 
       {error && (
         <QueryError error={error} onRetry={refetch} />
+      )}
+
+      {enrichmentLoading && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {t("evidence.loading")}
+        </p>
+      )}
+      {enrichmentUnavailable && (
+        <div role="status" className="flex flex-wrap items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
+          <span>{t("evidence.unavailable")}</span>
+          <Button type="button" variant="outline" size="sm" className="min-h-11 sm:min-h-7" onClick={refetch}>
+            {t("common.retry")}
+          </Button>
+        </div>
       )}
 
       {/* Multi-select refresh (redesign R6). The action hides itself when none of
@@ -771,7 +807,7 @@ export default function CardBrowser() {
         sorting={sorting}
         onSortingChange={handleSortingChange}
         columnVisibility={columnVisibility}
-        onRowClick={setSelectedCard}
+        onRowClick={openCardDetail}
         getRowAriaLabel={cardDetailLabel}
         viewMode={viewMode}
         getRowId={(row) => row.key}
@@ -817,10 +853,10 @@ export default function CardBrowser() {
                 role="button"
                 tabIndex={0}
                 aria-label={cardDetailLabel(row)}
-                onClick={() => setSelectedCard(row)}
+                onClick={() => openCardDetail(row)}
                 onKeyDown={(event) => activateOnEnterOrSpace(
                   event,
-                  () => setSelectedCard(row),
+                  () => openCardDetail(row),
                 )}
               >
                 {selection && (
@@ -923,7 +959,7 @@ export default function CardBrowser() {
       <CardDetailModal
         card={selectedCard}
         open={!!selectedCard}
-        onClose={() => setSelectedCard(null)}
+        onClose={() => setSelectedCardIdentity(null)}
         initialPsaMode={psaMode}
         initialTier={selectedTier}
       />

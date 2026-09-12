@@ -1,6 +1,11 @@
 import { createClient } from "@/lib/supabase/client";
 import { decisionSnapshot } from "./DecisionActions";
-import type { CardRowData, LocationInfo, MarketListing } from "./use-card-data";
+import {
+  type CardRowData,
+  type LocationInfo,
+  type MarketListing,
+} from "./use-card-data";
+import { isCardEvidenceUnresolved } from "./card-evidence-state";
 
 export interface OpportunityExposurePayload {
   candidate_key: string;
@@ -36,6 +41,7 @@ export function browserOpportunityPayloads(
   observedDay = new Date().toISOString().slice(0, 10),
 ): OpportunityExposurePayload[] {
   return rows.flatMap((row) => {
+    if (isCardEvidenceUnresolved(row)) return [];
     const listing = row.prices.lowestSell;
     if (!listing || listing.price <= 0 || !isPurchasableOpportunitySource(listing.locationName)) return [];
     const grade = row.psaGrade ?? 0;
@@ -59,6 +65,7 @@ export function detailOpportunityPayloads(
   listings: MarketListing[],
   locations: Map<number, LocationInfo>,
 ): OpportunityExposurePayload[] {
+  if (isCardEvidenceUnresolved(card)) return [];
   return listings.flatMap((listing) => {
     const sourceName = locations.get(listing.location_id)?.name ?? null;
     if (listing.price_type !== "Sell" || listing.price <= 0 || !isPurchasableOpportunitySource(sourceName)) return [];

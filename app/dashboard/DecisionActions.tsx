@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import type { CardRowData } from "./use-card-data";
+import { isCardEvidenceUnresolved } from "./card-evidence-state";
 import type { GradeSignal } from "./grade-signals";
 
 export function decisionSnapshot(row: CardRowData, signal: GradeSignal | null | undefined) {
@@ -36,9 +37,10 @@ export function DecisionActions({ row, grade, signal, compact = false }: {
   const [saved, setSaved] = useState<"dismissed" | "watched" | null>(null);
   const activeSignal = signal === undefined ? row.signal : signal;
   const snapshot = decisionSnapshot(row, activeSignal);
+  const evidenceIncomplete = isCardEvidenceUnresolved(row);
 
   async function watch() {
-    if (busy) return;
+    if (busy || evidenceIncomplete) return;
     setBusy(true);
     setError(null);
     const { error } = await createClient().rpc("record_deal_decision", {
@@ -60,7 +62,7 @@ export function DecisionActions({ row, grade, signal, compact = false }: {
   }
 
   async function dismiss() {
-    if (busy || reason.trim() === "") return;
+    if (busy || evidenceIncomplete || reason.trim() === "") return;
     setBusy(true);
     setError(null);
     const { error } = await createClient().rpc("dismiss_deal_opportunity", {
@@ -82,12 +84,14 @@ export function DecisionActions({ row, grade, signal, compact = false }: {
   return (
     <div className="flex max-w-full flex-wrap items-center justify-end gap-1" onClick={(event) => event.stopPropagation()}>
       <div className="flex items-center gap-1">
-        <Button variant="outline" size="sm" disabled={busy} className={compact ? "h-11 px-3 text-sm sm:h-7 sm:px-2 sm:text-xs" : "h-11 px-3 text-sm sm:h-7 sm:px-2.5 sm:text-[0.8rem]"} onClick={watch}>
+        <Button variant="outline" size="sm" disabled={busy || evidenceIncomplete} className={compact ? "h-11 px-3 text-sm sm:h-7 sm:px-2 sm:text-xs" : "h-11 px-3 text-sm sm:h-7 sm:px-2.5 sm:text-[0.8rem]"} onClick={watch}>
           {saved === "watched" ? <Check className="size-3.5" /> : <Eye className="size-3.5" />}
           {saved === "watched" ? t("decision.watching") : t("decision.watch")}
         </Button>
-        <Popover open={dismissOpen} onOpenChange={setDismissOpen}>
-          <PopoverTrigger render={<Button variant="ghost" size="icon" className="size-11 sm:size-7" aria-label={saved === "dismissed" ? t("decision.dismissed") : t("decision.dismissOpportunity")} />}>
+        <Popover open={dismissOpen} onOpenChange={(open) => {
+          if (!evidenceIncomplete) setDismissOpen(open);
+        }}>
+          <PopoverTrigger render={<Button variant="ghost" size="icon" disabled={evidenceIncomplete} className="size-11 sm:size-7" aria-label={saved === "dismissed" ? t("decision.dismissed") : t("decision.dismissOpportunity")} />}>
             {saved === "dismissed" ? <Check className="size-3.5" /> : <X className="size-3.5" />}
           </PopoverTrigger>
           <PopoverContent className="w-[calc(100vw-2rem)] max-w-72 p-3" align="end">
@@ -95,7 +99,7 @@ export function DecisionActions({ row, grade, signal, compact = false }: {
             <p className="text-xs text-muted-foreground">{t("decision.dismissHelp")}</p>
             <label className="text-xs text-muted-foreground">{t("decision.dismissReason")}</label>
             <Input className="h-11 sm:h-8" required value={reason} placeholder={t("decision.dismissReasonPlaceholder")} onChange={(event) => setReason(event.target.value)} />
-            <Button className="min-h-11 w-full whitespace-normal sm:min-h-8" variant="outline" disabled={busy || reason.trim() === ""} onClick={dismiss}>
+            <Button className="min-h-11 w-full whitespace-normal sm:min-h-8" variant="outline" disabled={busy || evidenceIncomplete || reason.trim() === ""} onClick={dismiss}>
               <X className="size-4" />
               {busy ? t("decision.dismissing") : t("decision.dismiss")}
             </Button>

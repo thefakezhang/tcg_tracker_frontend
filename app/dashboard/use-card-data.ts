@@ -217,6 +217,10 @@ export interface CardRowData {
   rawToGradeEvUsd?: number | null;
   rawToGradeNetUsd?: number | null;
   dealRelativeValuePct?: number | null;
+  // Summary prices are useful before the bounded evidence response completes.
+  // Keep that transition explicit so a missing signal is never presented as
+  // final while the request is still in flight.
+  enrichmentStatus?: "loading" | "ready" | "unavailable";
   exitCostProfile?: ExitCostProfile | null;
   jpyUsd?: number | null;
   fxAsOf?: string | null;
@@ -350,6 +354,216 @@ interface SummaryRow {
   deal_updated_at: string | null;
   // Joined card definition (keyed by the actual table name at runtime)
   [key: string]: unknown;
+}
+
+export interface CardBrowserEnrichmentResponse {
+  signals: Record<string, unknown>[];
+  exit_cost_profile: Record<string, unknown> | null;
+  exchange_rate: Record<string, unknown> | null;
+  changepoints: Record<string, unknown>[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isFiniteNumberValue(value: unknown): boolean {
+  if (typeof value === "number") return Number.isFinite(value);
+  return typeof value === "string"
+    && value.trim() !== ""
+    && Number.isFinite(Number(value));
+}
+
+function isIntegerValue(value: unknown): boolean {
+  return isFiniteNumberValue(value) && Number.isInteger(Number(value));
+}
+
+function isNullableFiniteNumberValue(value: unknown): boolean {
+  return value == null || isFiniteNumberValue(value);
+}
+
+function isNonBlankString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function isValidTimestamp(value: unknown): value is string {
+  return isNonBlankString(value)
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+    && isValidCalendarDate(value.slice(0, 10))
+    && Number.isFinite(Date.parse(value));
+}
+
+function isValidCalendarDate(value: unknown): value is string {
+  if (!isNonBlankString(value) || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function isValidSignalRecord(value: Record<string, unknown>): boolean {
+  const numericFields = [
+    "best_jp_bid_jpy", "best_jp_bid_location", "best_jp_bid_age_days",
+    "band_p10", "band_p25", "band_p50", "band_p75", "last_sale_jpy",
+    "trend_slope", "comp_count_recent", "comp_count_lifetime", "listing_count",
+    "sell_through", "clearing_vs_ask", "days_to_exit_est", "pop",
+    "pop_velocity", "entry_at_default", "net_at_default", "annualized_at_default",
+    "raw_to_grade_ev_usd", "relative_value_pct", "recent_volatility",
+  ];
+  return isIntegerValue(value.card_id)
+    && Number(value.card_id) > 0
+    && isIntegerValue(value.psa_grade)
+    && Number(value.psa_grade) >= 0
+    && isNonBlankString(value.model_version)
+    && isValidTimestamp(value.computed_at)
+    && (value.flags == null || isRecord(value.flags))
+    && numericFields.every((field) => isNullableFiniteNumberValue(value[field]));
+}
+
+function isValidProfileRecord(value: Record<string, unknown>): boolean {
+  return value.platform === "ebay"
+    && ["fee_pct", "fixed_fee", "shipping_jpy", "margin_pct", "floor_usd"]
+      .every((field) => isFiniteNumberValue(value[field]))
+    && ["grading_cost_jpy", "grading_days"]
+      .every((field) => isNullableFiniteNumberValue(value[field]))
+    && isValidTimestamp(value.updated_at);
+}
+
+function isValidRateRecord(value: Record<string, unknown>): boolean {
+  return isFiniteNumberValue(value.rate)
+    && Number(value.rate) > 0
+    && isValidTimestamp(value.last_updated);
+}
+
+function isValidChangepointRecord(value: Record<string, unknown>): boolean {
+  return isNonBlankString(value.cohort)
+    && isValidCalendarDate(value.detected_on)
+    && isNonBlankString(value.direction)
+    && isFiniteNumberValue(value.magnitude)
+    && (value.event_title == null || typeof value.event_title === "string")
+    && typeof value.unexplained === "boolean";
+}
+
+export function normalizeCardBrowserEnrichment(value: unknown): CardBrowserEnrichmentResponse {
+  if (!isRecord(value)
+      || !Array.isArray(value.signals)
+      || !value.signals.every((row) => isRecord(row) && isValidSignalRecord(row))
+      || !Array.isArray(value.changepoints)
+      || !value.changepoints.every((row) => isRecord(row) && isValidChangepointRecord(row))
+      || (value.exit_cost_profile != null
+        && (!isRecord(value.exit_cost_profile) || !isValidProfileRecord(value.exit_cost_profile)))
+      || (value.exchange_rate != null
+        && (!isRecord(value.exchange_rate) || !isValidRateRecord(value.exchange_rate)))) {
+    throw new Error("Card Browser enrichment returned an invalid response");
+  }
+  return {
+    signals: value.signals,
+    exit_cost_profile: value.exit_cost_profile ?? null,
+    exchange_rate: value.exchange_rate ?? null,
+    changepoints: value.changepoints,
+  };
+}
+
+export function applyCardBrowserEnrichment(
+  rows: CardRowData[],
+  value: unknown,
+  exitPercentile: ExitPercentile,
+): CardRowData[] {
+  const response = normalizeCardBrowserEnrichment(value);
+  const signals = latestSignals(response.signals);
+  const profile = response.exit_cost_profile
+    ? parseExitCostProfile(response.exit_cost_profile)
+    : null;
+  const jpyUsd = response.exchange_rate?.rate == null
+    ? null
+    : Number(response.exchange_rate.rate);
+  const fxAsOf = response.exchange_rate?.last_updated == null
+    ? null
+    : String(response.exchange_rate.last_updated);
+  if (jpyUsd != null && (!Number.isFinite(jpyUsd) || jpyUsd <= 0)) {
+    throw new Error("Card Browser enrichment returned an invalid exchange rate");
+  }
+
+  const byCard = new Map<number, GradeSignal[]>();
+  for (const signal of signals) {
+    const list = byCard.get(signal.cardId) ?? [];
+    list.push(signal);
+    byCard.set(signal.cardId, list);
+  }
+
+  const changepoints = new Map<string, {
+    detectedOn: string;
+    direction: string;
+    magnitude: number;
+    eventTitle: string | null;
+    unexplained: boolean;
+  }>();
+  for (const row of response.changepoints) {
+    const cohort = row.cohort == null ? "" : String(row.cohort);
+    const detectedOn = row.detected_on == null ? "" : String(row.detected_on);
+    const magnitude = Number(row.magnitude);
+    if (!cohort || !detectedOn || !Number.isFinite(magnitude)) {
+      throw new Error("Card Browser enrichment returned an invalid changepoint");
+    }
+    if (!changepoints.has(cohort)) {
+      changepoints.set(cohort, {
+        detectedOn,
+        direction: String(row.direction),
+        magnitude,
+        eventTitle: row.event_title == null ? null : String(row.event_title),
+        unexplained: Boolean(row.unexplained),
+      });
+    }
+  }
+
+  return rows.map((row) => {
+    const cardSignals = byCard.get(Number(row.card.card_id)) ?? [];
+    const deal = profile && jpyUsd
+      ? bestOpportunity(cardSignals, exitPercentile, profile, jpyUsd)
+      : null;
+    const rawEV = cardSignals.find((signal) => signal.rawToGradeEvUsd != null)?.rawToGradeEvUsd
+      ?? row.rawToGradeEvUsd
+      ?? null;
+    const rawEntry = row.psaGrade == null
+      ? row.prices.lowestSell?.normalizedPrice ?? null
+      : null;
+    return {
+      ...row,
+      signal: signalForRow(row, signals),
+      deal,
+      rawToGradeEvUsd: rawEV,
+      rawToGradeNetUsd: rawEV != null && rawEntry != null ? rawEV - rawEntry : null,
+      dealRelativeValuePct: deal?.signal.relativeValuePct ?? row.dealRelativeValuePct ?? null,
+      enrichmentStatus: "ready" as const,
+      exitCostProfile: profile,
+      jpyUsd,
+      fxAsOf,
+      changepoint: deal?.signal.cohort
+        ? changepoints.get(deal.signal.cohort) ?? null
+        : null,
+    };
+  });
+}
+
+export function sortCardBrowserEnrichment(
+  rows: CardRowData[],
+  sortColumn: string,
+  sortAsc: boolean,
+  exitPercentile: ExitPercentile,
+): CardRowData[] {
+  if (sortColumn !== "conservativeExit" && !(exitPercentile !== 25 && sortColumn === "dealNet")) {
+    return rows;
+  }
+  return [...rows].sort((a, b) => {
+    const av = sortColumn === "conservativeExit"
+      ? exitValue(a.signal, exitPercentile)
+      : a.deal?.netPnlUsd ?? null;
+    const bv = sortColumn === "conservativeExit"
+      ? exitValue(b.signal, exitPercentile)
+      : b.deal?.netPnlUsd ?? null;
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return sortAsc ? av - bv : bv - av;
+  });
 }
 
 function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRowData {
@@ -566,6 +780,7 @@ export function useCardData(options: {
   exitPercentile: ExitPercentile;
   page: number;
   pageSize: number;
+  waitForEnrichment?: boolean;
 }): {
   data: CardRowData[];
   loading: boolean;
@@ -599,6 +814,7 @@ export function useCardData(options: {
     exitPercentile,
     page,
     pageSize,
+    waitForEnrichment = false,
   } = options;
   const [data, setData] = useState<CardRowData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -619,7 +835,7 @@ export function useCardData(options: {
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, japanExclusivity, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, japanExclusivity, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize, waitForEnrichment]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -781,75 +997,38 @@ export function useCardData(options: {
 
     if (activeGame === "pokemon" && cardRows.length > 0) {
       const cardIds = [...new Set(cardRows.map((row) => Number(row.card.card_id)))];
+      cardRows = cardRows.map((row) => ({ ...row, enrichmentStatus: "loading" }));
+      if (!waitForEnrichment) {
+        setData(cardRows);
+        setTotalCount(count ?? 0);
+        setLoading(false);
+      }
       try {
         const changepointCutoff = new Date();
         changepointCutoff.setDate(changepointCutoff.getDate() - 180);
-        const [signalRows, profileResult, fxResult, changepointResult] = await Promise.all([
-          selectAllByIds<Record<string, unknown>>(
-            cardIds,
-            ["card_id", "psa_grade", "model_version"],
-            (chunk) => supabase
-              .from("pokemon_grade_signals")
-              .select("card_id, psa_grade, model_version, computed_at, tier, best_jp_bid_jpy, best_jp_bid_location, best_jp_bid_age_days, band_p10, band_p25, band_p50, band_p75, last_sale_jpy, last_sale_at, trend_slope, trend_direction, comp_count_recent, comp_count_lifetime, listing_count, sell_through, clearing_vs_ask, days_to_exit_est, cohort, pop, pop_velocity, entry_at_default, net_at_default, annualized_at_default, exit_platform, raw_to_grade_ev_usd, relative_value_pct, recent_volatility, slab_confidence, flags")
-              .in("card_id", chunk),
-          ),
-          supabase.from("exit_cost_profiles").select("platform, fee_pct, fixed_fee, shipping_jpy, grading_cost_jpy, grading_days, margin_pct, floor_usd, updated_at").eq("platform", "ebay").maybeSingle(),
-          supabase.from("exchange_rates").select("rate, last_updated").eq("from_currency", "JPY").eq("to_currency", "USD").maybeSingle(),
-          supabase.from("cohort_changepoint_annotations_v").select("cohort, detected_on, direction, magnitude, event_title, unexplained").gte("detected_on", changepointCutoff.toISOString().slice(0, 10)).order("detected_on", { ascending: false }),
-        ]);
+        const enrichmentResult = await supabase
+          .rpc("pokemon_card_browser_enrichment", {
+            p_card_ids: cardIds,
+            p_changepoint_since: changepointCutoff.toISOString().slice(0, 10),
+          })
+          .abortSignal(abort.signal);
         if (abort.signal.aborted) return;
-        const signals = latestSignals(signalRows);
-        const profile = profileResult.data ? parseExitCostProfile(profileResult.data as Record<string, unknown>) : null;
-        const jpyUsd = fxResult.data?.rate == null ? null : Number(fxResult.data.rate);
-        const fxAsOf = fxResult.data?.last_updated == null ? null : String(fxResult.data.last_updated);
-        const byCard = new Map<number, GradeSignal[]>();
-        const changepoints = new Map<string, { detectedOn: string; direction: string; magnitude: number; eventTitle: string | null; unexplained: boolean }>();
-        for (const row of (changepointResult.data ?? []) as Record<string, unknown>[]) {
-          const cohort = String(row.cohort);
-          if (!changepoints.has(cohort)) changepoints.set(cohort, {
-            detectedOn: String(row.detected_on), direction: String(row.direction), magnitude: Number(row.magnitude),
-            eventTitle: row.event_title == null ? null : String(row.event_title), unexplained: Boolean(row.unexplained),
-          });
+        if (enrichmentResult.error) {
+          throw new Error(enrichmentResult.error.message);
         }
-        for (const signal of signals) {
-          const list = byCard.get(signal.cardId) ?? [];
-          list.push(signal);
-          byCard.set(signal.cardId, list);
-        }
-        cardRows = cardRows.map((row) => {
-          const cardSignals = byCard.get(Number(row.card.card_id)) ?? [];
-          const deal = profile && jpyUsd ? bestOpportunity(cardSignals, exitPercentile, profile, jpyUsd) : null;
-          const rawEV = cardSignals.find((signal) => signal.rawToGradeEvUsd != null)?.rawToGradeEvUsd ?? row.rawToGradeEvUsd ?? null;
-          const rawEntry = row.psaGrade == null ? row.prices.lowestSell?.normalizedPrice ?? null : null;
-          return {
-            ...row,
-            signal: signalForRow(row, signals),
-            deal,
-            rawToGradeEvUsd: rawEV,
-            rawToGradeNetUsd: rawEV != null && rawEntry != null ? rawEV - rawEntry : null,
-            dealRelativeValuePct: deal?.signal.relativeValuePct ?? row.dealRelativeValuePct ?? null,
-            exitCostProfile: profile,
-            jpyUsd,
-            fxAsOf,
-            changepoint: deal?.signal.cohort ? changepoints.get(deal.signal.cohort) ?? null : null,
-          };
-        });
-        if (sortColumn === "conservativeExit" || (exitPercentile !== 25 && sortColumn === "dealNet")) {
-          cardRows.sort((a, b) => {
-            const av = sortColumn === "conservativeExit"
-              ? exitValue(a.signal, exitPercentile)
-              : a.deal?.netPnlUsd ?? null;
-            const bv = sortColumn === "conservativeExit"
-              ? exitValue(b.signal, exitPercentile)
-              : b.deal?.netPnlUsd ?? null;
-            if (av == null && bv == null) return 0;
-            if (av == null) return 1;
-            if (bv == null) return -1;
-            return sortAsc ? av - bv : bv - av;
-          });
-        }
+        cardRows = sortCardBrowserEnrichment(
+          applyCardBrowserEnrichment(cardRows, enrichmentResult.data, exitPercentile),
+          sortColumn,
+          sortAsc,
+          exitPercentile,
+        );
       } catch (signalError) {
-        console.error("Failed to load grade signals:", signalError);
+        if (abort.signal.aborted) return;
+        console.warn("Card Browser enrichment is unavailable:", signalError);
+        cardRows = cardRows.map((row) => ({
+          ...row,
+          enrichmentStatus: "unavailable",
+        }));
       }
     }
 

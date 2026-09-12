@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import BuyListView from "@/app/dashboard/BuyListView";
 import CardBrowser from "@/app/dashboard/CardBrowser";
 import { useGame } from "@/app/dashboard/GameContext";
@@ -11,7 +11,14 @@ type FixtureSurface = "browser" | "buylist" | "index";
 
 export function PokemonVariantProjectionFixture() {
   const [surface, setSurface] = useState<FixtureSurface>("browser");
+  const [hydrated, setHydrated] = useState(false);
   const { activeGame, setActiveGame } = useGame();
+
+  // The production dashboard waits until client URL state is hydrated before
+  // mounting its active surface. Mirror that lifecycle here so Base UI creates
+  // composite control IDs once, on the client, instead of across an artificial
+  // fixture-only server render.
+  useLayoutEffect(() => setHydrated(true), []);
 
   return (
     <main
@@ -83,9 +90,9 @@ export function PokemonVariantProjectionFixture() {
       </section>
 
       <section className="min-w-0" data-testid={`fixture-production-${surface}`}>
-        {surface === "browser" && <CardBrowser key={`browser-${activeGame}`} />}
-        {surface === "buylist" && <BuyListView buylistId={77} />}
-        {surface === "index" && <PokemonCardIndex />}
+        {hydrated && surface === "browser" && <CardBrowser key={`browser-${activeGame}`} />}
+        {hydrated && surface === "buylist" && <BuyListView buylistId={77} />}
+        {hydrated && surface === "index" && <PokemonCardIndex />}
       </section>
     </main>
   );

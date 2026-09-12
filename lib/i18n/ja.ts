@@ -276,6 +276,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "evidence.listingFreshness": "リスティングの鮮度は各マーケット行に表示",
   "evidence.exitBasis": "売却基準",
   "evidence.none": "このカードにはまだ計算済みのグレードシグナルがありません。",
+  "evidence.loading": "カードを表示しました。グレード別エビデンスを読み込んでいます。",
+  "evidence.unavailable": "カードを表示しましたが、グレード別エビデンスは一時的に利用できません。",
   "evidence.weakFilter": "高額・弱いエビデンス",
   "evidence.weakFilterHelp": "グレード別の中央値売却価格が300米ドル以上で、Tier 1またはTier 2の根拠がない行を表示します。",
   "evidence.raw": "未鑑定",

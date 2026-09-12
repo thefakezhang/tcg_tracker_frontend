@@ -24,6 +24,11 @@ describe("opportunity exposure payloads", () => {
       entry_price: 100,
       entry_currency: "USD",
     }));
+    expect(browserOpportunityPayloads(
+      [{ ...card, enrichmentStatus: "ready" }],
+      "browser_list",
+      "2026-07-21",
+    )).toHaveLength(1);
 
     const indicator = {
       ...card,
@@ -31,6 +36,32 @@ describe("opportunity exposure payloads", () => {
     };
     expect(browserOpportunityPayloads([indicator], "browser_grid", "2026-07-21")).toEqual([]);
   });
+
+  it.each(["loading", "unavailable"] as const)(
+    "does not record browser or detail exposure while enrichment is %s",
+    (enrichmentStatus) => {
+      const incomplete = { ...card, enrichmentStatus };
+      const listing = {
+        card_id: 42,
+        price_type: "Sell" as const,
+        price: 12000,
+        currency: "JPY",
+        currency_symbol: "¥",
+        psa_grade: 10,
+        condition: null,
+        location_id: 5,
+        listing_url: "https://shop.example/card/42",
+        last_updated: "2026-07-21T00:00:00Z",
+      };
+
+      expect(browserOpportunityPayloads([incomplete], "browser_list", "2026-07-21")).toEqual([]);
+      expect(detailOpportunityPayloads(
+        incomplete,
+        [listing],
+        new Map([[5, { name: "cardrush", marketRegion: "JP" }]]),
+      )).toEqual([]);
+    },
+  );
 
   it("records only buyable Sell rows from card detail", () => {
     const baseListing = {
