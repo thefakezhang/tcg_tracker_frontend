@@ -136,12 +136,32 @@ try {
   await buyer.page.locator('h2, #buyer-plan').first().waitFor();
   if (await buyer.page.locator('#buyer-plan').count()) await buyer.page.locator('#buyer-plan').selectOption(String(plan.planId));
   await buyer.page.getByRole("heading", { name: plan.name, exact: true }).waitFor();
+  for (const [index, line] of plan.lines.entries()) {
+    await buyer.page.locator(`[data-cell="${line.lineId}:qty"]`).waitFor();
+    assert.equal(await buyer.page.locator(`[data-cell="${line.lineId}:qty"]`).inputValue(), String(index + 1));
+  }
   stage("buyer keyboard edits autosave and survive an authenticated reload");
+  await buyer.page.bringToFront();
   const upload = buyer.page.getByRole("button", { name: "Upload order receipt", exact: true }).first();
-  await upload.focus();
-  const chooserPromise = buyer.page.waitForEvent("filechooser");
-  await buyer.page.keyboard.press("Enter");
-  const chooser = await chooserPromise;
+  let uploadReachedByTab = false;
+  for (let presses = 0; presses < 100; presses += 1) {
+    await buyer.page.keyboard.press("Tab");
+    if (await upload.evaluate((element) => document.activeElement === element)) {
+      uploadReachedByTab = true;
+      break;
+    }
+  }
+  assert(uploadReachedByTab, "receipt upload is unreachable through keyboard Tab");
+  report.receiptTrigger = await upload.evaluate((element) => ({
+    focused: document.activeElement === element,
+    disabled: element.disabled,
+    text: element.textContent,
+  }));
+  await buyer.page.screenshot({ path: `${artifactRoot}/buyer-before-upload.png`, fullPage: true });
+  const [chooser] = await Promise.all([
+    buyer.page.waitForEvent("filechooser"),
+    buyer.page.keyboard.press("Enter"),
+  ]);
   await chooser.setFiles({ name: "synthetic.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\nSynthetic browser receipt\n%%EOF\n") });
   await buyer.page.getByRole("button", { name: "Add another", exact: true }).first().waitFor();
   const receipts = await rpc(buyer.session, "buyer_source_receipts", { p_plan_id: plan.planId });
@@ -162,6 +182,24 @@ try {
   assert(!report.missingReconcileControl,
     "operator reconciliation control missing after authenticated buyer hand-back");
   report.passed = true;
+} catch (error) {
+  report.failure = error.message;
+  for (const [index, context] of contexts.entries()) {
+    const page = context.pages()[0];
+    if (!page || page.isClosed()) continue;
+    await page.screenshot({ path: `${artifactRoot}/failure-context-${index}.png`, fullPage: true }).catch(() => {});
+    report[`context${index}`] = await page.evaluate(() => ({
+      path: location.pathname,
+      activeElement: {
+        tag: document.activeElement?.tagName,
+        role: document.activeElement?.getAttribute("role"),
+        cell: document.activeElement?.getAttribute("data-cell"),
+        text: document.activeElement?.textContent?.slice(0, 200),
+      },
+      alerts: [...document.querySelectorAll('[role="alert"]')].map((e) => e.textContent),
+    })).catch(() => ({ unavailable: true }));
+  }
+  throw error;
 } finally {
   for (const context of contexts) await context.close();
   await browser.close();
