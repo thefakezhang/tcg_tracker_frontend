@@ -334,6 +334,10 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
   const externalRequests = [];
   let currentCardIds = [];
   let detailOpen = false;
+  let releaseInitialEnrichment = null;
+  const initialEnrichmentGate = expectedMode === "bounded" && journey === "default" && sampleIndex === 0
+    ? new Promise((resolve) => { releaseInitialEnrichment = resolve; })
+    : null;
   async function fulfill(route, body, { delay = 0, total = null, rangeOffset = 0, endpoint, kind = "support" } = {}) {
     if (delay) await sleep(delay);
     const request = route.request();
@@ -387,8 +391,9 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
         assert(new Set(ids).size === ids.length, `bounded RPC ids are not unique: ${JSON.stringify(ids)}`);
         assert(isISODate(body?.p_changepoint_since), `bounded RPC cutoff invalid: ${JSON.stringify(body)}`);
         const transitionDelay = journey === "default" && sampleIndex === 0 ? 1500 : 430;
+        if (initialEnrichmentGate) await initialEnrichmentGate;
+        else await sleep(transitionDelay);
         if (forceUnavailable) {
-          await sleep(transitionDelay);
           const serialized = JSON.stringify({ message: "function is unavailable in fixture" });
           await route.fulfill({ status: 404, headers: responseHeaders(), body: serialized });
           records.push({ endpoint, kind: "bounded", method: request.method(), url: request.url(), requestBody: body, bytes: Buffer.byteLength(serialized), completedAt: Date.now(), status: 404 });
@@ -400,7 +405,7 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
           exit_cost_profile: profile,
           exchange_rate: rate,
           changepoints: pageChangepoints,
-        }, { delay: transitionDelay, endpoint, kind: "bounded" });
+        }, { endpoint, kind: "bounded" });
         return;
       }
       if (["record_deal_opportunity_exposures", "card_refresh_targets"].includes(endpoint)) {
@@ -546,6 +551,34 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
     }
   });
 
+  async function captureFailure(error, phase) {
+    const failureStem = `failure-${expectedMode}-${matrix.name}-${journey}-${sampleIndex + 1}-${phase}`;
+    const screenshot = `${artifactRoot}/${failureStem}.png`;
+    await page.screenshot({ path: `${artifactWriteRoot}/${failureStem}.png`, animations: "disabled", caret: "hide", fullPage: false }).catch(() => {});
+    writeFileSync(`${artifactWriteRoot}/${failureStem}.json`, `${JSON.stringify({
+      phase,
+      expectedText,
+      pageUrl: page.url(),
+      bodyText: await page.locator("body").innerText().catch(() => ""),
+      records,
+      responseStatuses,
+      requestEvents,
+      pendingRequests: [...pendingRequests.values()],
+      performanceResources: await page.evaluate(() => performance.getEntriesByType("resource").map((entry) => ({
+        name: entry.name,
+        duration: entry.duration,
+        initiatorType: entry.initiatorType,
+        transferSize: "transferSize" in entry ? entry.transferSize : null,
+      }))).catch(() => []),
+      unexpectedRequests,
+      externalRequests,
+      pageErrors,
+      consoleErrors,
+      screenshot,
+      error: error instanceof Error ? error.message : String(error),
+    }, null, 2)}\n`);
+  }
+
   const routeUrl = `${appUrl}/e2e/pokemon-variant-projection`;
   let startedAt;
   let expectedText;
@@ -603,30 +636,7 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
   try {
     await expected.waitFor({ state: "visible", timeout: 20_000 });
   } catch (error) {
-    const failureStem = `failure-${expectedMode}-${matrix.name}-${journey}-${sampleIndex + 1}`;
-    const screenshot = `${artifactRoot}/${failureStem}.png`;
-    await page.screenshot({ path: `${artifactWriteRoot}/${failureStem}.png`, animations: "disabled", caret: "hide", fullPage: false }).catch(() => {});
-    writeFileSync(`${artifactWriteRoot}/${failureStem}.json`, `${JSON.stringify({
-      expectedText,
-      pageUrl: page.url(),
-      bodyText: await page.locator("body").innerText().catch(() => ""),
-      records,
-      responseStatuses,
-      requestEvents,
-      pendingRequests: [...pendingRequests.values()],
-      performanceResources: await page.evaluate(() => performance.getEntriesByType("resource").map((entry) => ({
-        name: entry.name,
-        duration: entry.duration,
-        initiatorType: entry.initiatorType,
-        transferSize: "transferSize" in entry ? entry.transferSize : null,
-      }))).catch(() => []),
-      unexpectedRequests,
-      externalRequests,
-      pageErrors,
-      consoleErrors,
-      screenshot,
-      error: error instanceof Error ? error.message : String(error),
-    }, null, 2)}\n`);
+    await captureFailure(error, "expected-row");
     throw error;
   }
   const firstUsefulMS = Date.now() - startedAt;
@@ -634,20 +644,32 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
   let detailDialog = null;
   let detailWatch = null;
   let detailTransition = null;
+  let loadingObserved = false;
   if (expectedMode === "bounded" && journey === "default" && sampleIndex === 0) {
-    await page.getByText(labels.loading, { exact: true }).waitFor({ state: "visible" });
-    detailOpen = true;
-    const detailTrigger = expected.locator("xpath=ancestor::*[@role='button'][1]");
-    await detailTrigger.click();
-    detailDialog = page.getByRole("dialog").first();
-    await detailDialog.waitFor({ state: "visible" });
-    detailWatch = detailDialog.getByRole("button", { name: labels.watch, exact: true }).first();
-    await detailWatch.waitFor({ state: "visible" });
-    assert(await detailWatch.isDisabled(), `${matrix.name} detail Watch was enabled while enrichment loaded`);
-    detailTransition = { openedWhile: "loading", finalStatus: null };
+    try {
+      const loadingStatus = page.getByText(labels.loading, { exact: true });
+      await loadingStatus.waitFor({ state: "visible" });
+      loadingObserved = true;
+      detailOpen = true;
+      const detailTrigger = expected.locator("xpath=ancestor::*[@role='button'][1]");
+      await detailTrigger.click();
+      detailDialog = page.getByRole("dialog").first();
+      await detailDialog.waitFor({ state: "visible" });
+      detailWatch = detailDialog.getByRole("button", { name: labels.watch, exact: true }).first();
+      await detailWatch.waitFor({ state: "visible" });
+      const loadingVisible = await loadingStatus.isVisible();
+      const initialWatchDisabled = await detailWatch.isDisabled();
+      detailTransition = { openedWhile: "loading", loadingVisible, initialWatchDisabled, finalStatus: null };
+      assert(loadingVisible, `${matrix.name} loading status disappeared before the detail action check`);
+      assert(initialWatchDisabled, `${matrix.name} detail Watch was enabled while enrichment loaded`);
+    } catch (error) {
+      await captureFailure(error, "detail-loading-action");
+      throw error;
+    }
+    releaseInitialEnrichment?.();
   }
 
-  if (expectedMode === "bounded" && journey !== "empty" && !forceUnavailable) {
+  if (expectedMode === "bounded" && journey !== "empty" && !forceUnavailable && !loadingObserved) {
     await page.getByText(labels.loading, { exact: true }).waitFor({ state: "visible" });
   }
 

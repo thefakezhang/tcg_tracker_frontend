@@ -106,6 +106,13 @@ vi.mock("./CardDetailModal", () => ({
       <span>{card?.card.card_id}</span>
       <span data-testid="detail-enrichment-status">{card?.enrichmentStatus ?? "legacy"}</span>
       <span data-testid="detail-signal-model">{card?.signal?.modelVersion ?? "none"}</span>
+      <button
+        type="button"
+        data-testid="detail-decision-watch"
+        disabled={card?.enrichmentStatus === "loading" || card?.enrichmentStatus === "unavailable"}
+      >
+        decision.watch
+      </button>
       <button type="button" onClick={onClose}>close detail</button>
     </div>
   ) : null,
@@ -485,6 +492,7 @@ describe("CardBrowser surfaces", () => {
       await waitFor(() => expect(screen.getByTestId("browse-table").getAttribute("data-view-mode")).toBe("grid"));
       fireEvent.click(screen.getByRole("button", { name: "cardBrowser.openDetails" }));
       expect(screen.getByTestId("detail-enrichment-status").textContent).toBe("loading");
+      expect((screen.getByTestId("detail-decision-watch") as HTMLButtonElement).disabled).toBe(true);
 
       const replacement = {
         ...loadingRow,
@@ -500,6 +508,8 @@ describe("CardBrowser surfaces", () => {
       expect(screen.getByTestId("detail-enrichment-status").textContent).toBe(enrichmentStatus);
       expect(screen.getByTestId("detail-signal-model").textContent)
         .toBe(enrichmentStatus === "ready" ? "v2" : "none");
+      expect((screen.getByTestId("detail-decision-watch") as HTMLButtonElement).disabled)
+        .toBe(enrichmentStatus !== "ready");
     },
   );
 
