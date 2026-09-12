@@ -29,7 +29,7 @@ const { createServerClient } = require("@supabase/ssr");
 const report = { runId: fixture.runId, authentication: "GoTrue-issued sessions with Supabase SSR cookies", stages: [], externalRequests: [], errors: [] };
 report.resilience = [];
 report.expectedConsoleErrors = [];
-const browser = await chromium.launch({ headless: true });
+let browser;
 const contexts = [];
 const stage = (name) => { report.stages.push(name); console.log(name); };
 
@@ -108,6 +108,9 @@ let plan;
 report.scenarios = [];
 try {
  for (plan of fixture.browserPlans) {
+  // Each language/viewport case owns its native picker and download state.
+  // Keep the real keyboard chooser, but do not share browser process state.
+  browser = await chromium.launch({ headless: true });
   const label = `${plan.language}-${plan.viewport}`;
   const t = translations(plan.language);
   const viewport = plan.viewport === "phone" ? { width: 390, height: 844 } : { width: 1440, height: 900 };
@@ -164,6 +167,19 @@ try {
   stage("buyer keyboard edits autosave and survive an authenticated reload");
   await buyer.page.bringToFront();
   const upload = buyer.page.getByRole("button", { name: t("buyer.uploadReceipt"), exact: true }).first();
+  await upload.evaluate((button) => {
+    window.__receiptKeyboardTrace = [];
+    for (const type of ["keydown", "keyup", "click"]) {
+      document.addEventListener(type, (event) => {
+        const target = event.target;
+        if (target !== button && !(target instanceof HTMLInputElement && target.type === "file")) return;
+        window.__receiptKeyboardTrace.push({ type, key: event.key, tag: target.tagName,
+          inputType: target instanceof HTMLInputElement ? target.type : undefined,
+          focused: document.activeElement === button, documentFocused: document.hasFocus(),
+          disabled: target.disabled, trusted: event.isTrusted, active: navigator.userActivation.isActive });
+      }, true);
+    }
+  });
   let uploadReachedByTab = false;
   for (let presses = 0; presses < 100; presses += 1) {
     await buyer.page.keyboard.press("Tab");
@@ -175,6 +191,7 @@ try {
   assert(uploadReachedByTab, "receipt upload is unreachable through keyboard Tab");
   report.receiptTrigger = await upload.evaluate((element) => ({
     focused: document.activeElement === element,
+    documentFocused: document.hasFocus(),
     disabled: element.disabled,
     text: element.textContent,
   }));
@@ -184,6 +201,8 @@ try {
     buyer.page.keyboard.press("Enter"),
   ]);
   await chooser.setFiles({ name: "synthetic.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\nSynthetic browser receipt\n%%EOF\n") });
+  report.receiptKeyboardTraces ??= [];
+  report.receiptKeyboardTraces.push({ label, events: await buyer.page.evaluate(() => window.__receiptKeyboardTrace) });
   await buyer.page.getByRole("button", { name: t("buyer.addReceipt"), exact: true }).first().waitFor();
   const receipts = await rpc(buyer.session, "buyer_source_receipts", { p_plan_id: plan.planId });
   assert.equal(receipts.length, 1);
@@ -363,6 +382,8 @@ try {
   report.resilience.at(-1).expiredRequests = expiredRequests;
   report.scenarios.push({ label, inventoryQuantity: 3, lots: result.lots, passed: true });
   await Promise.all([operator.context.close(), buyer.context.close(), other.context.close()]);
+  await browser.close();
+  browser = undefined;
  }
  assert.equal(report.scenarios.length, 4);
  assert.equal(report.resilience.length, 4);
@@ -385,11 +406,12 @@ try {
         text: document.activeElement?.textContent?.slice(0, 200),
       },
       alerts: [...document.querySelectorAll('[role="alert"]')].map((e) => e.textContent),
+      receiptKeyboardTrace: window.__receiptKeyboardTrace,
     })).catch(() => ({ unavailable: true }));
   }
   throw error;
 } finally {
   for (const context of contexts) await context.close();
-  await browser.close();
+  await browser?.close();
   writeFileSync(`${artifactRoot}/journey.json`, JSON.stringify(report, null, 2) + "\n");
 }

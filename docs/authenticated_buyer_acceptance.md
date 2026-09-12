@@ -23,6 +23,8 @@ No cloud database, catalog mirror, real receipt, order, source request, or deplo
 Its report contains synthetic case labels and statuses, never tokens, passwords, or object bytes.
 
 `buyer-authenticated-journey.mjs` signs in through GoTrue and gives isolated browser contexts the resulting Supabase SSR cookies.
+Each language and viewport scenario owns a fresh Chromium process so native receipt-picker and download state cannot carry between scenarios.
+Receipt evidence records native keyboard and click metadata without file contents or credentials, while upload still requires Tab navigation, Enter activation, a real file chooser and authenticated Storage registration.
 The production middleware still verifies the session.
 It checks deliberate assignment/send, buyer isolation, keyboard autosave and reload, keyboard receipt upload, and the operator's hand-back view.
 The baseline at frontend `08bd60bd599c7c22eed79d59051deddfb6060267` reached hand-back and reproduced the missing reconciliation control in hosted run [34698287603](https://github.com/thefakezhang/tcg_tracker/actions/runs/34698287603).
