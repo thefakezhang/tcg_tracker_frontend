@@ -24,6 +24,29 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("buyer receipt upload and registration", () => {
+  it("provides an enabled native button to open the receipt chooser", () => {
+    render(<BuyerSourceReceipts {...props()} />);
+    const input = screen.getByLabelText("buyer.uploadReceipt");
+    const click = vi.spyOn(input, "click");
+    const trigger = screen.getByRole("button", { name: "buyer.uploadReceipt" });
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+    fireEvent.click(trigger);
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels registration-only work without implying another upload", async () => {
+    let finish!: (value: { error: null }) => void;
+    mocks.rpc.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    render(<BuyerSourceReceipts {...props()} />);
+    uploadFile();
+    const saving = await screen.findByRole("button", { name: "buyer.registeringReceipt" });
+    expect(saving).toHaveProperty("disabled", true);
+    expect(screen.queryByText("buyer.uploading")).toBeNull();
+    expect(mocks.upload).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ error: null }));
+  });
+
   it("retries a failed registration with the exact uploaded path and no second upload", async () => {
     const input = props();
     mocks.rpc.mockResolvedValueOnce({ error: { message: "registration unavailable" } });

@@ -56,8 +56,10 @@ Shared want progress also carries a visible explanation instead of relying on po
 ## Non-goals
 
 - This surface does not add a new buyer capability or bypass scoped RPCs.
-- It does not change purchase-plan lines, reconciliation, delivery transitions, receipts, or shop costs.
-- This phase does not change or verify storage-bucket authorization for the existing receipt upload path.
+- The original result-grid phase does not change purchase-plan lines, reconciliation, delivery transitions, or shop costs.
+Receipt retry and read-error behavior are covered by the later #1236 increment below.
+- The frontend browser fixture mocks Storage and RPC HTTP.
+Backend #1236 verifies the real buyer role against storage.objects RLS and receipt RPCs in a disposable PostgreSQL schema; it does not prove GoTrue or Storage HTTP behavior.
 - It does not provide formulas, arbitrary columns, offline edits, or conflict merging across devices.
 - It does not apply migrations, use a shared Supabase stack, or mutate cloud data.
 
@@ -76,3 +78,9 @@ Upload failures never register metadata, obsolete completions cannot affect anot
 The pending path is in-memory state; reload or navigation may leave an unregistered object, which is retained for separate operational reconciliation rather than deleted automatically.
 Database migration 000464 supplies the authoritative plan/source/lifecycle checks on both Storage and registration; frontend controls are not an authorization boundary.
 The complete authenticated buyer-order journey remains separately gated under #939.
+
+The receipt upload trigger is a keyboard-reachable native button; the browser fixture reaches it using Tab and opens the real file chooser using Enter.
+Registration retries display saving status and reuse the same uploaded path.
+Receipt-list read failures remain visible with translated retry or sign-in guidance rather than appearing as an empty list.
+The fixture exercises a transient receipt read failure and a401 response after registration, then restores only its mocked session.
+Actual authenticated Storage HTTP and the complete operator/buyer/reconciliation journey remain #939 gates.

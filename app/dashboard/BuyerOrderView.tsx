@@ -23,6 +23,7 @@ import { useTranslation } from "@/lib/i18n";
 import en from "@/lib/i18n/en";
 import ja from "@/lib/i18n/ja";
 import { BuyerSourceReceipts } from "./BuyerSourceReceipts";
+import { QueryError } from "./use-query";
 import { conditionLabel, editionLabel } from "./use-sealed-data";
 
 // The buying agent's whole screen: the plans assigned to him, and a grid for
@@ -145,6 +146,7 @@ export default function BuyerOrderView() {
   const activePlanRef = useRef(activePlan);
   activePlanRef.current = activePlan;
   const [error, setError] = useState<string | null>(null);
+  const [receiptLoadError, setReceiptLoadError] = useState<{ planId: number; error: unknown } | null>(null);
   const [receiptResult, setReceiptResult] = useState<PlanResource<Receipt> | null>(null);
   const [upstreamChanged, setUpstreamChanged] = useState(false);
   const [totalsResult, setTotalsResult] = useState<PlanResource<SourceTotals> | null>(null);
@@ -305,9 +307,16 @@ export default function BuyerOrderView() {
   const receiptsLoadToken = useRef(0);
   const loadReceipts = useCallback(async (planId: number) => {
     const token = ++receiptsLoadToken.current;
-    const { data } = await createClient().rpc("buyer_source_receipts", { p_plan_id: planId });
-    if (token !== receiptsLoadToken.current || activePlanRef.current !== planId) return;
-    setReceiptResult({ planId, rows: (data ?? []) as Receipt[] });
+    const isCurrent = () => token === receiptsLoadToken.current && activePlanRef.current === planId;
+    try {
+      const { data, error: receiptError, status } = await createClient().rpc("buyer_source_receipts", { p_plan_id: planId });
+      if (!isCurrent()) return;
+      if (receiptError) throw { ...receiptError, status };
+      setReceiptResult({ planId, rows: (data ?? []) as Receipt[] });
+      setReceiptLoadError(null);
+    } catch (caught) {
+      if (isCurrent()) setReceiptLoadError({ planId, error: caught });
+    }
   }, []);
 
   useEffect(() => { void loadPlans(); }, [loadPlans]);
@@ -635,6 +644,13 @@ export default function BuyerOrderView() {
             />
           )}
         </div>
+      )}
+
+      {receiptLoadError?.planId === activePlan && activePlan != null && (
+        <section aria-label={t("buyer.receiptLoadFailed")} className="space-y-2">
+          <p className="text-sm">{t("buyer.receiptLoadFailed")}</p>
+          <QueryError error={receiptLoadError.error} onRetry={() => void loadReceipts(activePlan)} />
+        </section>
       )}
 
       {loadingPlanId === activePlan && (

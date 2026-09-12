@@ -34,6 +34,7 @@ export function BuyerSourceReceipts({
   const [pending, setPending] = useState<PendingReceipt | null>(null);
   const receipt = pending?.context === context ? pending : null;
   const busy = busyContext === context;
+  const inputRef = useRef<HTMLInputElement>(null);
   const inputId = `receipt-${planId}-${canonicalSource}`;
 
   useEffect(() => () => { sequence.current += 1; }, [context]);
@@ -90,17 +91,18 @@ export function BuyerSourceReceipts({
           {!readOnly && (
             <button type="button" disabled={busy} onClick={() => void save()}
               className="min-h-11 rounded border px-3 hover:bg-accent disabled:opacity-50">
-              {busy ? t("buyer.uploading") : t("buyer.retryReceipt")}
+              {busy ? t("buyer.registeringReceipt") : t("buyer.retryReceipt")}
             </button>
           )}
         </>
       )}
       {!readOnly && !receipt && (
         <>
-          <label htmlFor={inputId} className="flex min-h-11 cursor-pointer items-center rounded border px-3 hover:bg-accent sm:min-h-0 sm:px-2 sm:py-0.5">
+          <button type="button" disabled={busy} onClick={() => inputRef.current?.click()}
+            className="flex min-h-11 items-center rounded border px-3 hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 sm:min-h-0 sm:px-2 sm:py-0.5">
             {busy ? t("buyer.uploading") : receiptCount ? t("buyer.addReceipt") : t("buyer.uploadReceipt")}
-          </label>
-          <input id={inputId} type="file" accept="image/*,application/pdf" className="hidden" disabled={busy}
+          </button>
+          <input ref={inputRef} id={inputId} aria-label={t("buyer.uploadReceipt")} type="file" accept="image/*,application/pdf" className="hidden" disabled={busy}
             onChange={(event) => {
               const file = event.target.files?.[0];
               event.target.value = "";
