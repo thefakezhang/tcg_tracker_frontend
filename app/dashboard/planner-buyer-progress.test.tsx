@@ -18,7 +18,8 @@ vi.mock("@/lib/i18n", () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 vi.mock("./TripContext", () => ({ useTrips: () => ({ trips: [], activeTripId: null }) }));
-vi.mock("./use-query", () => ({
+vi.mock("./use-query", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./use-query")>(),
   useSupabaseQuery: () => ({
     data: { plans: mocks.plans, lines: [], allocations: [], coverage: [] },
     error: null, isLoading: false, retry: vi.fn(),
@@ -85,13 +86,13 @@ describe("the operator watching the buyer", () => {
   it("says plainly when the agent has finished, because nothing else does", async () => {
     mocks.plans = [{ ...mocks.plans[0], handed_back_at: "2026-09-08T04:00:00Z" }];
     render(<PurchasePlannerView />);
-    expect(await screen.findByText("The buyer has finished with this list")).toBeTruthy();
+    expect(await screen.findByText("reconciliation.handedBack")).toBeTruthy();
   });
 
   it("says nothing while he is still working", async () => {
     render(<PurchasePlannerView />);
     await screen.findByText("snkrdunk");
-    expect(screen.queryByText("The buyer has finished with this list")).toBeNull();
+    expect(screen.queryByText("reconciliation.handedBack")).toBeNull();
   });
 
   it("breaks the spend down by shop, where the agent actually checks out", async () => {

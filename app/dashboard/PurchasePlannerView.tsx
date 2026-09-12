@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
-import { planState, planStateLabel } from "@/lib/plan-state";
+import { PurchaseReconciliationDialog } from "./PurchaseReconciliationDialog";
 import { useTrips } from "./TripContext";
 import { useTranslation } from "@/lib/i18n";
 import {
@@ -253,6 +253,7 @@ export default function PurchasePlannerView() {
   const [lineOpen, setLineOpen] = useState(false);
   const [allocationLine, setAllocationLine] = useState<PurchasePlanLine | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [reconciliationOpen, setReconciliationOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   // Plans are bound to a trip. Without this the selector accumulates every
   // plan ever made, and after a handful of trips it is unusable.
@@ -362,7 +363,7 @@ export default function PurchasePlannerView() {
           >
             {visiblePlans.map((row) => (
               <option key={row.plan_id} value={row.plan_id}>
-                {row.name} [{planStateLabel(planState({ status: row.status }))}]
+                {row.name} [{t(`purchasePlanner.status.${row.status}`)}]
               </option>
             ))}
           </select>
@@ -417,14 +418,19 @@ export default function PurchasePlannerView() {
         // to reconcile, and nothing else on this screen says so.
         <div className="flex flex-wrap items-center gap-3 rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-sm">
           <span className="font-medium text-emerald-700 dark:text-emerald-400">
-            The buyer has finished with this list
+            {t("reconciliation.handedBack")}
           </span>
           <span className="text-muted-foreground">
-            handed back {new Date(plan.handed_back_at).toLocaleString()}
+            {t("reconciliation.handedBackAt", { date: new Date(plan.handed_back_at).toLocaleString() })}
           </span>
         </div>
       )}
       {plan && (plan.status === "ordered" || plan.status === "reconciled") && <BuyerProgressStrip planId={plan.plan_id} />}
+      {((plan.status === "ordered" && plan.handed_back_at) || plan.status === "reconciled") && (
+        <Button className="min-h-11" onClick={() => setReconciliationOpen(true)}>
+          {t(plan.status === "reconciled" ? "reconciliation.view" : "reconciliation.open")}
+        </Button>
+      )}
 
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
             <div className="flex items-center gap-2 text-sm">
@@ -504,6 +510,7 @@ export default function PurchasePlannerView() {
       {plan && <AddLineDialog planId={plan.plan_id} open={lineOpen} onOpenChange={setLineOpen} onAdded={retry} />}
       <AllocationDialog line={allocationLine} allocations={allocations} editable={editable} open={allocationLine != null} onOpenChange={(open) => !open && setAllocationLine(null)} onChanged={retry} />
       {plan && <ReviewDialog plan={plan} open={reviewOpen} onOpenChange={setReviewOpen} onChanged={retry} />}
+      {plan && <PurchaseReconciliationDialog key={plan.plan_id} planId={plan.plan_id} open={reconciliationOpen} onOpenChange={setReconciliationOpen} onFinalized={retry} />}
       {plan && <DispositionDialog planId={plan.plan_id} demand={disposition} open={disposition != null} onOpenChange={(open) => !open && setDisposition(null)} onChanged={retry} />}
     </div>
   );

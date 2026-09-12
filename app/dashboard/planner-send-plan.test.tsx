@@ -21,7 +21,8 @@ vi.mock("@/lib/i18n", () => ({
   }),
 }));
 vi.mock("./TripContext", () => ({ useTrips: () => ({ trips: [], activeTripId: null }) }));
-vi.mock("./use-query", () => ({
+vi.mock("./use-query", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./use-query")>(),
   useSupabaseQuery: () => ({
     data: { plans: mocks.plans, lines: [], allocations: [], coverage: [] },
     error: null, isLoading: false, retry: vi.fn(),

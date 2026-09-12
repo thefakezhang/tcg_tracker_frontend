@@ -87,12 +87,22 @@ async function waitForSaved(client, lineId, quantity, price) {
   }
   throw new Error("buyer autosave did not persist the entered row");
 }
-const plan = fixture.browserPlans.find((p) => p.language === "en" && p.viewport === "desktop");
-assert(plan);
+function translations(language) {
+  const contents = readFileSync(new URL(`../../lib/i18n/${language}.ts`, import.meta.url), "utf8");
+  const entries = [...contents.matchAll(/^  "([^"]+)": ("(?:[^"\\]|\\.)*"),?$/gm)];
+  const values = Object.fromEntries(entries.map((match) => [match[1], JSON.parse(match[2])]));
+  return (key) => { assert.equal(typeof values[key], "string", `missing translation ${language}:${key}`); return values[key]; };
+}
+let plan;
+report.scenarios = [];
 try {
-  const operator = await signedInContext("operator", { width: 1440, height: 900 }, "en");
-  const buyer = await signedInContext("buyerA", { width: 1440, height: 900 }, "en");
-  const other = await signedInContext("buyerB", { width: 1440, height: 900 }, "en");
+ for (plan of fixture.browserPlans) {
+  const label = `${plan.language}-${plan.viewport}`;
+  const t = translations(plan.language);
+  const viewport = plan.viewport === "phone" ? { width: 390, height: 844 } : { width: 1440, height: 900 };
+  const operator = await signedInContext("operator", viewport, plan.language);
+  const buyer = await signedInContext("buyerA", viewport, plan.language);
+  const other = await signedInContext("buyerB", viewport, plan.language);
   assert(!(await rpc(buyer.session, "buyer_assigned_plans")).some((p) => p.plan_id === plan.planId));
   await operator.page.goto(`${app.origin}/dashboard?view=planner`, { waitUntil: "domcontentloaded" });
   await operator.page.locator(`select:has(option[value="${plan.planId}"])`).selectOption(String(plan.planId));
@@ -142,7 +152,7 @@ try {
   }
   stage("buyer keyboard edits autosave and survive an authenticated reload");
   await buyer.page.bringToFront();
-  const upload = buyer.page.getByRole("button", { name: "Upload order receipt", exact: true }).first();
+  const upload = buyer.page.getByRole("button", { name: t("buyer.uploadReceipt"), exact: true }).first();
   let uploadReachedByTab = false;
   for (let presses = 0; presses < 100; presses += 1) {
     await buyer.page.keyboard.press("Tab");
@@ -157,30 +167,115 @@ try {
     disabled: element.disabled,
     text: element.textContent,
   }));
-  await buyer.page.screenshot({ path: `${artifactRoot}/buyer-before-upload.png`, fullPage: true });
+  await buyer.page.screenshot({ path: `${artifactRoot}/${label}-buyer-before-upload.png`, fullPage: true });
   const [chooser] = await Promise.all([
     buyer.page.waitForEvent("filechooser"),
     buyer.page.keyboard.press("Enter"),
   ]);
   await chooser.setFiles({ name: "synthetic.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\nSynthetic browser receipt\n%%EOF\n") });
-  await buyer.page.getByRole("button", { name: "Add another", exact: true }).first().waitFor();
+  await buyer.page.getByRole("button", { name: t("buyer.addReceipt"), exact: true }).first().waitFor();
   const receipts = await rpc(buyer.session, "buyer_source_receipts", { p_plan_id: plan.planId });
   assert.equal(receipts.length, 1);
   stage("keyboard receipt chooser uploaded and registered through real Storage and RPC");
-  await buyer.page.screenshot({ path: `${artifactRoot}/buyer-saved.png`, fullPage: true });
+  await buyer.page.screenshot({ path: `${artifactRoot}/${label}-buyer-saved.png`, fullPage: true });
+  for (const [key, amount] of [["buyer.costShipping", "110"], ["buyer.costPaymentFee", "50"]]) {
+    await buyer.page.getByRole("button", { name: `+ ${t(key)}`, exact: true }).first().click();
+    const savedCost = buyer.page.waitForResponse((response) => response.url().endsWith("/rpc/buyer_record_source_cost") && response.request().method() === "POST");
+    await buyer.page.getByLabel(t(key), { exact: true }).fill(amount);
+    await buyer.page.getByLabel(t(key), { exact: true }).press("Enter");
+    assert.equal((await savedCost).status(), 200);
+  }
+  stage(`${label}: buyer records source costs without operator retyping`);
   const handedBack = buyer.page.waitForResponse((r) => r.url().endsWith("/rpc/buyer_hand_back_plan") && r.request().method() === "POST");
-  await buyer.page.getByRole("button", { name: "Mark finished", exact: true }).click();
+  await buyer.page.getByRole("button", { name: t("buyer.handBackList"), exact: true }).click();
   assert.equal((await handedBack).status(), 200);
   await operator.page.reload({ waitUntil: "domcontentloaded" });
   await operator.page.locator(`select:has(option[value="${plan.planId}"])`).selectOption(String(plan.planId));
-  await operator.page.getByText("The buyer has finished with this list", { exact: true }).waitFor();
-  await operator.page.screenshot({ path: `${artifactRoot}/operator-hand-back.png`, fullPage: true });
+  await operator.page.getByText(t("reconciliation.handedBack"), { exact: true }).waitFor();
+  await operator.page.screenshot({ path: `${artifactRoot}/${label}-operator-hand-back.png`, fullPage: true });
   stage("operator sees the completed buyer hand-back");
   assert.equal(report.externalRequests.length, 0);
   assert.equal(report.errors.length, 0);
-  report.missingReconcileControl = await operator.page.getByRole("button", { name: /reconcile/i }).count() === 0;
-  assert(!report.missingReconcileControl,
-    "operator reconciliation control missing after authenticated buyer hand-back");
+  await operator.page.getByRole("button", { name: t("reconciliation.open"), exact: true }).click();
+  const reconciliation = operator.page.getByRole("dialog");
+  await reconciliation.getByRole("heading", { name: "cardrush", exact: true }).waitFor();
+  const finalize = reconciliation.getByRole("button", { name: t("reconciliation.finalize"), exact: true });
+  assert(await finalize.isDisabled(), "unreviewed historical inputs were finalizable");
+  for (const [index, source] of ["cardrush", "hareruya2"].entries()) {
+    const fields = { purchased_on: `2026-07-0${index + 1}`, jpy_per_usd: String(index ? 160 : 150),
+      rate_reference: `${label} fixture purchase-date bank rate`, receipt_total_jpy: String(index ? 2200 : 1160) };
+    for (const [key, value] of Object.entries(fields)) {
+      const field = reconciliation.locator(`#reconcile-${source}-${key}`);
+      assert.equal(await field.inputValue(), "", "historical evidence was silently prefilled");
+      await field.fill(value);
+    }
+  }
+  for (const line of plan.lines) {
+    const condition = reconciliation.locator(`#reconcile-condition-${line.lineId}`);
+    const nm = await condition.locator("option").evaluateAll((options) => options.find((option) => / · NM$/.test(option.textContent))?.value);
+    assert(nm, "actual NM inventory condition is missing");
+    await condition.selectOption(nm);
+  }
+  // A real Storage read by the authenticated operator, using the UI download.
+  const [download] = await Promise.all([
+    operator.page.waitForEvent("download"),
+    reconciliation.getByRole("button", { name: `${t("reconciliation.receipt")} · synthetic.pdf`, exact: true }).click(),
+  ]);
+  assert.equal(download.suggestedFilename(), "synthetic.pdf");
+  await reconciliation.getByRole("button", { name: t("reconciliation.reviewCosts"), exact: true }).click();
+  await reconciliation.getByLabel(t("reconciliation.acknowledge"), { exact: true }).waitFor();
+  assert(await finalize.isDisabled(), "unacknowledged receipt warning was finalizable");
+  await reconciliation.getByLabel(t("reconciliation.acknowledge"), { exact: true }).check();
+  if (plan.viewport === "phone") {
+    const geometry = await reconciliation.evaluate((dialog) => ({ width: dialog.getBoundingClientRect().width, scrollWidth: dialog.scrollWidth, clientWidth: dialog.clientWidth }));
+    assert(geometry.width <= viewport.width && geometry.scrollWidth <= geometry.clientWidth + 1, "reconciliation dialog overflows the phone");
+    for (const button of await reconciliation.getByRole("button").all()) {
+      if (!(await button.isVisible())) continue;
+      const box = await button.boundingBox();
+      assert(box && box.height >= 44 && box.width >= 44, "reconciliation action is smaller than a phone tap target");
+    }
+  }
+  await operator.page.screenshot({ path: `${artifactRoot}/${label}-operator-reviewed.png`, fullPage: true });
+  const finalResponse = operator.page.waitForResponse((response) => response.url().endsWith("/rpc/reconcile_purchase_plan_inventory") && response.request().method() === "POST");
+  await finalize.click();
+  const response = await finalResponse;
+  assert.equal(response.status(), 200);
+  const result = await response.json();
+  assert.equal(result.finalized, true);
+  assert.equal(result.inventory_finalized, true);
+  assert.equal(result.lots.length, 2);
+  await reconciliation.getByText(t("reconciliation.success"), { exact: true }).waitFor();
+  const expected = [{ source: "cardrush", date: "2026-07-01", direct: 6.67, expenses: 1.93, landed: 8.60 },
+    { source: "hareruya2", date: "2026-07-02", direct: 13.75, expenses: 1.04, landed: 14.79 }];
+  for (const want of expected) {
+    const lot = result.lots.find((row) => row.source === want.source);
+    assert(lot);
+    assert(lot.acquired_at.startsWith(want.date));
+    assert.equal(Number(lot.direct_purchase_usd), want.direct);
+    assert.equal(Number(lot.acquisition_expenses_usd), want.expenses);
+    assert.equal(Number(lot.landed_cost_usd), want.landed);
+    assert.equal(lot.purchase_provenance.purchased_on, want.date);
+    assert.equal(lot.purchase_provenance.rate_reference, `${label} fixture purchase-date bank rate`);
+  }
+  const { data: inventory, error: inventoryError } = await operator.session.from("pokemon_lot_lines")
+    .select("purchase_plan_line_id,qty_remaining,condition_id,finalized_at").in("purchase_plan_line_id", plan.lines.map((line) => line.lineId));
+  assert.equal(inventoryError, null);
+  assert.equal(inventory.length, 2);
+  assert.equal(inventory.reduce((sum, row) => sum + Number(row.qty_remaining), 0), 3);
+  assert(inventory.every((row) => row.condition_id != null && row.finalized_at));
+  await operator.page.screenshot({ path: `${artifactRoot}/${label}-operator-finalized.png`, fullPage: true });
+  await reconciliation.getByRole("button", { name: t("common.close"), exact: true }).last().click();
+  await operator.page.reload({ waitUntil: "domcontentloaded" });
+  await operator.page.locator(`select:has(option[value="${plan.planId}"])`).selectOption(String(plan.planId));
+  await operator.page.getByRole("button", { name: t("reconciliation.view"), exact: true }).click();
+  await operator.page.getByRole("dialog").getByText(t("reconciliation.success"), { exact: true }).waitFor();
+  stage(`${label}: actual dated inventory, costs and retained result survive reload`);
+  report.scenarios.push({ label, inventoryQuantity: 3, lots: result.lots, passed: true });
+  await Promise.all([operator.context.close(), buyer.context.close(), other.context.close()]);
+ }
+ assert.equal(report.scenarios.length, 4);
+ assert.equal(report.errors.length, 0);
+ assert.equal(report.externalRequests.length, 0);
   report.passed = true;
 } catch (error) {
   report.failure = error.message;

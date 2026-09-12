@@ -25,7 +25,10 @@ Its report contains synthetic case labels and statuses, never tokens, passwords,
 `buyer-authenticated-journey.mjs` signs in through GoTrue and gives isolated browser contexts the resulting Supabase SSR cookies.
 The production middleware still verifies the session.
 It checks deliberate assignment/send, buyer isolation, keyboard autosave and reload, keyboard receipt upload, and the operator's hand-back view.
-Its initial acceptance assertion exposes the missing operator reconciliation control; it must not be counted as a complete journey until reconciliation and its authoritative inventory/cost outcome pass.
+The baseline at frontend `08bd60bd599c7c22eed79d59051deddfb6060267` reached hand-back and reproduced the missing reconciliation control in hosted run [34698287603](https://github.com/thefakezhang/tcg_tracker/actions/runs/34698287603).
+The current positive fixture continues through recorded buyer source costs, an operator receipt download, explicit dates and FX, actual condition confirmation, warning acknowledgement and finalized inventory.
+It asserts the retained cost facts and inventory quantities, reloads the result, and repeats for English and Japanese at desktop and phone sizes.
+The positive fixture is under verification and has not yet passed its hosted runtime gate.
 
 The scripts require `GITHUB_ACTIONS=true`, `RUNNER_ENVIRONMENT=github-hosted`, a matching `TCG_DISPOSABLE_FIXTURE_RUN_ID`, and private fixture input.
 The workflow pins the backend and frontend commits, records executed assertions and failures, and verifies project container, volume, and network cleanup.
@@ -36,3 +39,13 @@ Do not run this stack on a host where browser acquisition is active.
 The acceptance gate must eventually cover the complete #939 operator and buyer journeys, including the existing effective-dated fee contract and receipt privacy changes.
 Component tests, SQL role tests, and a partial browser run remain supporting evidence.
 This fixture does not apply migrations to an application database, activate a source, place an order, upload a real receipt, or merge a pull request.
+
+## Operator interface
+
+`PurchaseReconciliationDialog` offers a review after an ordered plan is handed back.
+The backend calculates fees and costs; the browser submits explicit dates, JPY per USD rates, rate references, optional receipt totals and condition confirmations.
+Editing those inputs invalidates the reviewed digest and warning acknowledgement immediately.
+A lost response preserves the inputs and offers another server review to discover any completed inventory write before another confirmation.
+The planner's selector reports the stored order status without guessing that an ordered buyer has not started.
+The implementation requires unapplied backend migration 000466 and the reviewed fee and receipt-privacy prerequisites.
+The legacy backend reconciliation RPC remains a compatibility path; this component exclusively uses the new atomic inventory endpoint.

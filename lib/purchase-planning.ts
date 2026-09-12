@@ -1,6 +1,5 @@
-// `reconciled` is set by reconcile_purchase_plan when the trip closes. Before
-// it existed, a finished plan still read "ordered" forever, so a completed trip
-// was indistinguishable from one still being bought.
+// Reconciliation is an explicit operator action after buyer hand-back.
+// Closing a trip does not reconcile its purchase plans.
 export type PlanStatus = "draft" | "ready" | "ordered" | "reconciled" | "cancelled";
 export type DemandIntent = "interest" | "requested" | "committed";
 export type DemandType = "wishlist" | "criteria";
