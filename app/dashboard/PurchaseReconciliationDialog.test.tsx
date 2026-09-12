@@ -10,7 +10,7 @@ const initial = {
   finalized: false, plan: { plan_id: 7, name: "Dated purchases" },
   sources: [{ source: "cardrush", card_value_jpy: 2000, handling_jpy: 60, line_fee_jpy: 100, shipping_jpy: 110, other_costs_jpy: 50, direct_total_usd: null, expense_total_usd: null }],
   lines: [{ plan_line_id: 71, item_name: "Fixture card", source: "cardrush", standing: true, game: "pokemon", purchased_quantity: 2, unit_price_jpy: 1000, condition_id: null, condition_seen: "NM" }],
-  condition_options: [{ condition_id: 1, standard: "TCGplayer", code: "NM" }],
+  condition_options: [{ condition_id: 1, standard: "tcgplayer", code: "NM" }],
   blockers: ["purchase_inputs_required", "condition_review_required"], warnings: ["receipt_missing:cardrush"],
 };
 const ready = { ...initial, can_finalize: true, review_digest: "review-one", blockers: [], sources: [{ ...initial.sources[0], direct_total_usd: 13.33, expense_total_usd: 2.13 }] };
@@ -35,6 +35,19 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("operator dated inventory review", () => {
+  it("requires review of a shop condition and excludes source grades from inventory choices", async () => {
+    mocks.rpc.mockResolvedValueOnce({ error: null, data: { ...initial,
+      lines: [{ ...initial.lines[0], condition_id: 9, condition_seen: null, planned_condition: { standard: "cardrush_mtg", code: "NM", display_name: "Near Mint" } }],
+      condition_options: [...initial.condition_options, { condition_id: 9, standard: "cardrush_mtg", code: "NM" }],
+    } });
+    render(<PurchaseReconciliationDialog {...props()} />);
+    await screen.findByText("Fixture card");
+    const condition = screen.getByLabelText("reconciliation.condition") as HTMLSelectElement;
+    expect(condition.value).toBe("");
+    expect(screen.getByText("reconciliation.sourceCondition: cardrush_mtg · NM")).toBeTruthy();
+    expect([...condition.options].map((option) => option.textContent)).toEqual(["reconciliation.chooseCondition", "TCGplayer · NM"]);
+    expect(screen.getByRole("button", { name: "reconciliation.finalize" })).toHaveProperty("disabled", true);
+  });
   it("requires explicit historical inputs and warning acknowledgement before atomic finalization", async () => {
     const input = props(); render(<PurchaseReconciliationDialog {...input} />);
     await screen.findByText("Fixture card");

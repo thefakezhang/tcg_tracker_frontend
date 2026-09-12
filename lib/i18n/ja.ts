@@ -1,6 +1,7 @@
 import type en from "./en";
 
 const ja: { [K in keyof typeof en]: string } = {
+  "reconciliation.sourceCondition": "注文時に記録された状態",
   "reconciliation.excludedResults": "在庫を作成しない結果",
   "reconciliation.plannedPrice": "予定価格 {amount}、確認日 {date}",
   "reconciliation.dateUnknown": "日付不明",

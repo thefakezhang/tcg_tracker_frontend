@@ -111,10 +111,11 @@ WITH inserted AS (
   RETURNING card_id
 ) SELECT card_id, row_number() OVER (ORDER BY card_id) AS position FROM inserted;
 INSERT INTO public.purchase_plan_lines
-  (plan_id, game, card_id, psa_grade, planned_quantity, source, source_listing_url, unit_price_orig, currency)
+  (plan_id, game, card_id, psa_grade, planned_quantity, source, source_listing_url, unit_price_orig, currency, condition_id)
 SELECT p.plan_id, 'pokemon', c.card_id, 0, 2,
        CASE c.position WHEN 1 THEN 'cardrush' ELSE 'hareruya2' END,
-       'https://example.test/listing', 1000, 'JPY'
+       'https://example.test/listing', 1000, 'JPY',
+       CASE WHEN c.position=1 THEN (SELECT condition_id FROM public.conditions WHERE standard='cardrush_other' AND code='A') END
 FROM fixture_plan_id p CROSS JOIN fixture_card_ids c;
 UPDATE public.purchase_plans SET status='ready' WHERE plan_id=(SELECT plan_id FROM fixture_plan_id);
 ${sent ? "DO $fixture$ BEGIN PERFORM public.send_purchase_plan((SELECT plan_id FROM fixture_plan_id)); END $fixture$;" : ""}

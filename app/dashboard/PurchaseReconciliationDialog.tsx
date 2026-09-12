@@ -30,6 +30,7 @@ interface ReviewLine {
   source_observed_at?: string | null;
   unit_price_jpy: number | null;
   condition_id: number | null;
+  planned_condition?: { standard: string; code: string; display_name: string | null } | null;
   condition_seen: string | null;
   delivery_status?: string | null;
   sealed_condition?: string | null;
@@ -264,6 +265,7 @@ export function PurchaseReconciliationDialog({ planId, open, onOpenChange, onFin
           {(review.lines ?? []).filter((line) => line.source?.trim().toLowerCase() === source.source).map((line) => <div key={line.plan_line_id} className="min-w-0 space-y-1 border-t pt-3 text-sm">
             <p className="break-words font-medium">{line.item_name}</p>
             {line.unit_price_orig != null && <p className="text-xs text-muted-foreground">{t("reconciliation.plannedPrice", { amount: yen(line.unit_price_orig), date: line.source_observed_at?.slice(0, 10) ?? t("reconciliation.dateUnknown") })}</p>}
+            {line.planned_condition && <p className="break-words text-sm">{t("reconciliation.sourceCondition")}: {line.planned_condition.standard} · {line.planned_condition.code}</p>}
             <p>{line.standing ? `${line.purchased_quantity} × ${yen(line.unit_price_jpy ?? 0)}` : t("reconciliation.noInventory")}{line.condition_seen ? ` · ${line.condition_seen}` : ""}</p>
             {line.note && <p className="break-words text-muted-foreground">{line.note}</p>}
             {line.game === "pokemon_sealed" && <p>{line.sealed_condition} · {line.variant_edition}</p>}
@@ -272,8 +274,8 @@ export function PurchaseReconciliationDialog({ planId, open, onOpenChange, onFin
               <select id={`reconcile-condition-${line.plan_line_id}`} className={selectClass} value={conditions[String(line.plan_line_id)] ?? ""} onChange={(event) => {
                 invalidate(); setConditions((current) => { const next = { ...current }; if (event.target.value) next[String(line.plan_line_id)] = Number(event.target.value); else delete next[String(line.plan_line_id)]; return next; });
               }}>
-                <option value="">{t(line.condition_id && !line.condition_seen ? "reconciliation.plannedCondition" : "reconciliation.chooseCondition")}</option>
-                {(review.condition_options ?? []).map((condition) => <option key={condition.condition_id} value={condition.condition_id}>{condition.standard} · {condition.code}</option>)}
+                <option value="">{t(!line.condition_seen && (review.condition_options ?? []).some((condition) => condition.standard === "tcgplayer" && condition.condition_id === line.condition_id) ? "reconciliation.plannedCondition" : "reconciliation.chooseCondition")}</option>
+                {(review.condition_options ?? []).filter((condition) => condition.standard === "tcgplayer").map((condition) => <option key={condition.condition_id} value={condition.condition_id}>TCGplayer · {condition.code}</option>)}
               </select></>}
           </div>)}
           {confirmedDigest && source.direct_total_usd != null && source.expense_total_usd != null && <p className="font-semibold">{t("reconciliation.landed")}: {formatUsd(Number(source.direct_total_usd) + Number(source.expense_total_usd))}</p>}

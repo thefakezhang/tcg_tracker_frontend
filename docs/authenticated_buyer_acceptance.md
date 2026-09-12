@@ -48,6 +48,8 @@ This fixture does not apply migrations to an application database, activate a so
 
 `PurchaseReconciliationDialog` offers a review after an ordered plan is handed back.
 The backend calculates fees and costs; the browser submits explicit dates, JPY per USD rates, rate references, optional receipt totals and condition confirmations.
+Inventory condition choices use the canonical TCGplayer standard, consistent with manual intake.
+A shop-specific planned condition requires explicit inventory condition review and remains unchanged on the original order.
 Editing those inputs invalidates the reviewed digest and warning acknowledgement immediately.
 A lost response preserves the inputs and offers another server review to discover any completed inventory write before another confirmation.
 The planner's selector reports the stored order status without guessing that an ordered buyer has not started.

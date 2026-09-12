@@ -1,4 +1,5 @@
 const en = {
+  "reconciliation.sourceCondition": "Condition recorded on the order",
   "reconciliation.excludedResults": "Results that will not create inventory",
   "reconciliation.plannedPrice": "Planned price {amount}, observed {date}",
   "reconciliation.dateUnknown": "date unknown",

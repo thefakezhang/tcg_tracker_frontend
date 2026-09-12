@@ -214,6 +214,7 @@ try {
   await operator.page.getByRole("button", { name: t("reconciliation.open"), exact: true }).click();
   const reconciliation = operator.page.getByRole("dialog");
   await reconciliation.getByRole("heading", { name: "cardrush", exact: true }).waitFor();
+  await reconciliation.getByText(`${t("reconciliation.sourceCondition")}: cardrush_other · A`, { exact: true }).waitFor();
   const finalize = reconciliation.getByRole("button", { name: t("reconciliation.finalize"), exact: true });
   assert(await finalize.isDisabled(), "unreviewed historical inputs were finalizable");
   for (const [index, source] of ["cardrush", "hareruya2"].entries()) {
@@ -227,7 +228,7 @@ try {
   }
   for (const line of plan.lines) {
     const condition = reconciliation.locator(`#reconcile-condition-${line.lineId}`);
-    const nm = await condition.locator("option").evaluateAll((options) => options.find((option) => / · NM$/.test(option.textContent))?.value);
+    const nm = await condition.locator("option").evaluateAll((options) => options.find((option) => option.textContent === "TCGplayer · NM")?.value);
     assert(nm, "actual NM inventory condition is missing");
     await condition.selectOption(nm);
   }
@@ -304,6 +305,12 @@ try {
   assert.equal(inventory.length, 2);
   assert.equal(inventory.reduce((sum, row) => sum + Number(row.qty_remaining), 0), 3);
   assert(inventory.every((row) => row.condition_id != null && row.finalized_at));
+  const { data: actualConditions, error: actualConditionError } = await operator.session.from("conditions")
+    .select("condition_id,standard,code").in("condition_id", inventory.map((row) => row.condition_id));
+  assert.equal(actualConditionError, null);
+  assert.equal(actualConditions.length, 1);
+  assert.equal(actualConditions[0].standard, "tcgplayer");
+  assert.equal(actualConditions[0].code, "NM");
   await operator.page.screenshot({ path: `${artifactRoot}/${label}-operator-finalized.png`, fullPage: true });
   await reconciliation.getByRole("button", { name: t("common.close"), exact: true }).last().click();
   await operator.page.reload({ waitUntil: "domcontentloaded" });
@@ -314,6 +321,12 @@ try {
   await operator.page.getByRole("dialog").getByRole("button", { name: t("common.close"), exact: true }).last().click();
   const expired = fixture.users.operator;
   assert(Number.isInteger(expired.accessTokenExpiresAt));
+  const expiryDeadline = (expired.accessTokenExpiresAt + 3) * 1000;
+  assert(expiryDeadline - Date.now() <= 125_000, "unexpected disposable token lifetime");
+  if (Date.now() < expiryDeadline) stage(`${label}: waiting for the retained token's recorded expiry`);
+  while (Date.now() < expiryDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, Math.min(1000, expiryDeadline - Date.now())));
+  }
   assert(Date.now() / 1000 > expired.accessTokenExpiresAt + 2, "the retained GoTrue token has not expired yet");
   const reviewUrl = `${api.origin}/rest/v1/rpc/review_purchase_plan_inventory`;
   let expiredRequests = 0;
