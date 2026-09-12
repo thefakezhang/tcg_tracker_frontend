@@ -4,7 +4,9 @@ import { createRequire } from "node:module";
 
 import {
   classifyConsoleEvidence,
+  recordsMatchingExactCardIdCohort,
   recordsStartedInSample,
+  retainEnrichmentRequestEvidence,
 } from "./card-browser-performance-console-evidence.mjs";
 
 const dependencyRoot = process.env.TCG_FRONTEND_DEPENDENCY_ROOT;
@@ -654,6 +656,7 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
     throw error;
   }
   const firstUsefulMS = Date.now() - startedAt;
+  const finalSummaryCardIds = [...currentCardIds];
 
   let detailDialog = null;
   let detailWatch = null;
@@ -737,6 +740,12 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
   const summaryRecords = measuredRecords.filter((record) => record.kind === "summary");
   assert(summaryRecords.length >= 1, `${matrix.name} ${journey} captured no summary request`);
   const enrichmentRecords = measuredRecords.filter((record) => record.kind === (expectedMode === "bounded" ? "bounded" : "legacy"));
+  const resultCohortRecords = expectedMode === "bounded"
+    ? recordsMatchingExactCardIdCohort(enrichmentRecords, finalSummaryCardIds)
+    : [];
+  const nonResultCohortRecords = expectedMode === "bounded"
+    ? enrichmentRecords.filter((record) => !resultCohortRecords.includes(record))
+    : [];
   const optionalCompleteMS = enrichmentRecords.length === 0
     ? firstUsefulMS
     : Math.max(...enrichmentRecords.map((record) => record.completedAt - startedAt));
@@ -755,6 +764,13 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
       `${matrix.name} ${journey} unexpected console errors: ${consoleEvidence.unexpectedConsoleErrors.join(" | ")}`,
     );
     assert(pageErrors.length === 0, `${matrix.name} ${journey} page errors: ${pageErrors.join(" | ")}`);
+    if (expectedMode === "bounded") {
+      const expectedResultCohortRequests = finalSummaryCardIds.length === 0 ? 0 : 1;
+      assert(
+        resultCohortRecords.length === expectedResultCohortRequests,
+        `${matrix.name} ${journey} used ${resultCohortRecords.length} bounded requests for its exact final summary cohort; expected ${expectedResultCohortRequests}`,
+      );
+    }
   } catch (error) {
     await captureFailure(error, "terminal-invariants");
     throw error;
@@ -786,10 +802,22 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
     responseBytes: measuredRecords.reduce((total, record) => total + record.bytes, 0),
     enrichmentRequestCount: enrichmentRecords.length,
     enrichmentBytes: enrichmentRecords.reduce((total, record) => total + record.bytes, 0),
+    rawEnrichmentRequestCount: enrichmentRecords.length,
+    rawEnrichmentBytes: enrichmentRecords.reduce((total, record) => total + record.bytes, 0),
     summaryEndpoints: [...new Set(summaryRecords.map((record) => record.endpoint))],
     enrichmentEndpoints: [...new Set(enrichmentRecords.map((record) => record.endpoint))],
     summaryRequests: summaryRecords.map(({ method, url }) => ({ method, url })),
-    enrichmentRequests: enrichmentRecords.map(({ method, url, requestBody }) => ({ method, url, requestBody })),
+    enrichmentRequests: enrichmentRecords.map(retainEnrichmentRequestEvidence),
+    rawEnrichmentRequests: enrichmentRecords.map(retainEnrichmentRequestEvidence),
+    ...(expectedMode === "bounded" ? {
+      finalSummaryCardIds,
+      resultCohortRequestCount: resultCohortRecords.length,
+      resultCohortBytes: resultCohortRecords.reduce((total, record) => total + record.bytes, 0),
+      resultCohortRequests: resultCohortRecords.map(retainEnrichmentRequestEvidence),
+      nonResultCohortRequestCount: nonResultCohortRecords.length,
+      nonResultCohortBytes: nonResultCohortRecords.reduce((total, record) => total + record.bytes, 0),
+      nonResultCohortRequests: nonResultCohortRecords.map(retainEnrichmentRequestEvidence),
+    } : {}),
     geometry,
     phoneTargets,
     screenshot,
@@ -883,6 +911,14 @@ try {
       responseBytes: summarize(samples, "responseBytes"),
       enrichmentRequestCount: summarize(samples, "enrichmentRequestCount"),
       enrichmentBytes: summarize(samples, "enrichmentBytes"),
+      rawEnrichmentRequestCount: summarize(samples, "rawEnrichmentRequestCount"),
+      rawEnrichmentBytes: summarize(samples, "rawEnrichmentBytes"),
+      ...(expectedMode === "bounded" ? {
+        resultCohortRequestCount: summarize(samples, "resultCohortRequestCount"),
+        resultCohortBytes: summarize(samples, "resultCohortBytes"),
+        nonResultCohortRequestCount: summarize(samples, "nonResultCohortRequestCount"),
+        nonResultCohortBytes: summarize(samples, "nonResultCohortBytes"),
+      } : {}),
     };
   }));
   let comparison = null;
@@ -906,9 +942,17 @@ try {
       const before = baselineByKey.get(`${after.matrix}:${after.journey}`);
       assert(before, `comparison baseline lacks ${after.matrix}:${after.journey}`);
       if (after.journey !== "empty") {
-        assert(after.enrichmentRequestCount.median === 1, `${after.matrix} ${after.journey} did not use one bounded enrichment request`);
+        assert(
+          after.resultCohortRequestCount.min === 1 && after.resultCohortRequestCount.max === 1,
+          `${after.matrix} ${after.journey} did not use exactly one bounded request for every final summary cohort`,
+        );
         assert(after.enrichmentRequestCount.median < before.enrichmentRequestCount.median, `${after.matrix} ${after.journey} did not reduce enrichment request count`);
         assert(after.enrichmentBytes.median < before.enrichmentBytes.median, `${after.matrix} ${after.journey} did not reduce enrichment bytes`);
+      } else {
+        assert(
+          after.resultCohortRequestCount.min === 0 && after.resultCohortRequestCount.max === 0,
+          `${after.matrix} empty result issued a bounded request for an empty final summary cohort`,
+        );
       }
       return {
         matrix: after.matrix,
@@ -920,6 +964,12 @@ try {
         responseBytes: metric(before.responseBytes.median, after.responseBytes.median),
         enrichmentRequestCount: metric(before.enrichmentRequestCount.median, after.enrichmentRequestCount.median),
         enrichmentBytes: metric(before.enrichmentBytes.median, after.enrichmentBytes.median),
+        rawEnrichmentRequestCount: after.rawEnrichmentRequestCount,
+        rawEnrichmentBytes: after.rawEnrichmentBytes,
+        resultCohortRequestCount: after.resultCohortRequestCount,
+        resultCohortBytes: after.resultCohortBytes,
+        nonResultCohortRequestCount: after.nonResultCohortRequestCount,
+        nonResultCohortBytes: after.nonResultCohortBytes,
       };
     });
     comparison = {
@@ -948,6 +998,7 @@ try {
       "latest-model signal payloads retain card, grade, JP bid, profile, FX, and page-cohort evidence",
       "a detail opened during enrichment stays open and its Watch action follows ready or unavailable row replacement",
       "rapid filter replacement leaves only the final requested cards visible",
+      "raw enrichment traffic stays retained while each non-empty final summary cohort has exactly one ordered, duplicate-free bounded request and an empty cohort has none",
       "phone controls are at least 44 by 44 pixels and production content stays inside the viewport",
       "no unexpected database surface or external HTTP or HTTPS request is permitted",
     ],

@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   classifyConsoleEvidence,
   expectedUnavailableConsoleError,
+  recordsMatchingExactCardIdCohort,
   recordsStartedInSample,
+  retainEnrichmentRequestEvidence,
 } from "./card-browser-performance-console-evidence.mjs";
 
 const rpcURL = "http://127.0.0.1:54321/rest/v1/rpc/pokemon_card_browser_enrichment";
@@ -96,4 +98,99 @@ test("attributes records by request start instead of completion time", () => {
 
 test("rejects a non-finite sample boundary", () => {
   assert.throws(() => recordsStartedInSample([], Number.NaN), /finite timestamp/);
+});
+
+test("attributes exactly one request to an ordered final card cohort", () => {
+  const records = [
+    { endpoint: "initial", requestBody: { p_card_ids: [3, 2, 1] } },
+    { endpoint: "result", requestBody: { p_card_ids: [6, 5, 4] } },
+  ];
+  assert.deepEqual(
+    recordsMatchingExactCardIdCohort(records, [6, 5, 4]).map((record) => record.endpoint),
+    ["result"],
+  );
+});
+
+test("retains duplicate requests for the exact cohort so the caller can fail closed", () => {
+  const records = [
+    { endpoint: "result-1", requestBody: { p_card_ids: [6, 5, 4] } },
+    { endpoint: "result-2", requestBody: { p_card_ids: [6, 5, 4] } },
+  ];
+  assert.deepEqual(
+    recordsMatchingExactCardIdCohort(records, [6, 5, 4]).map((record) => record.endpoint),
+    ["result-1", "result-2"],
+  );
+});
+
+test("does not mask duplicate, reordered, malformed, or different-size cohorts", () => {
+  const records = [
+    { endpoint: "duplicate", requestBody: { p_card_ids: [6, 5, 5] } },
+    { endpoint: "reordered", requestBody: { p_card_ids: [4, 5, 6] } },
+    { endpoint: "string", requestBody: { p_card_ids: [6, 5, "4"] } },
+    { endpoint: "short", requestBody: { p_card_ids: [6, 5] } },
+    { endpoint: "missing", requestBody: {} },
+  ];
+  assert.deepEqual(recordsMatchingExactCardIdCohort(records, [6, 5, 4]), []);
+  assert.throws(
+    () => recordsMatchingExactCardIdCohort(records, [6, 5, 5]),
+    /unique positive-integer cohort/,
+  );
+});
+
+test("matches no request for an empty final cohort unless an empty RPC was recorded", () => {
+  const records = [
+    { endpoint: "initial", requestBody: { p_card_ids: [3, 2, 1] } },
+  ];
+  assert.deepEqual(recordsMatchingExactCardIdCohort(records, []), []);
+  assert.deepEqual(
+    recordsMatchingExactCardIdCohort([
+      ...records,
+      { endpoint: "invalid-empty-rpc", requestBody: { p_card_ids: [] } },
+    ], []).map((record) => record.endpoint),
+    ["invalid-empty-rpc"],
+  );
+});
+
+test("retains request timing, status, body, and per-request bytes", () => {
+  assert.deepEqual(retainEnrichmentRequestEvidence({
+    method: "POST",
+    url: rpcURL,
+    requestBody: { p_card_ids: [3, 2, 1] },
+    requestedAt: 100,
+    completedAt: 130,
+    status: 404,
+    bytes: 37,
+    ignored: "not durable",
+  }), {
+    method: "POST",
+    url: rpcURL,
+    requestBody: { p_card_ids: [3, 2, 1] },
+    requestedAt: 100,
+    completedAt: 130,
+    status: 404,
+    bytes: 37,
+  });
+});
+
+test("fails closed when retained timestamps or bytes are missing or malformed", () => {
+  const complete = {
+    method: "POST",
+    url: rpcURL,
+    requestBody: { p_card_ids: [3, 2, 1] },
+    requestedAt: 100,
+    completedAt: 130,
+    bytes: 37,
+  };
+  assert.throws(
+    () => retainEnrichmentRequestEvidence({ ...complete, requestedAt: Number.NaN }),
+    /timestamps must be finite/,
+  );
+  assert.throws(
+    () => retainEnrichmentRequestEvidence({ ...complete, bytes: undefined }),
+    /bytes must be a nonnegative integer/,
+  );
+  assert.throws(
+    () => retainEnrichmentRequestEvidence({ ...complete, bytes: -1 }),
+    /bytes must be a nonnegative integer/,
+  );
 });

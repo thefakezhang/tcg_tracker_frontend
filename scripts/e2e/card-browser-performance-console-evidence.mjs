@@ -51,3 +51,47 @@ export function recordsStartedInSample(records, sampleStartedAt) {
     Number.isFinite(record.requestedAt) && record.requestedAt >= sampleStartedAt
   ));
 }
+
+function isUniqueCardIdCohort(cardIds) {
+  return Array.isArray(cardIds)
+    && cardIds.every((cardId) => Number.isSafeInteger(cardId) && cardId > 0)
+    && new Set(cardIds).size === cardIds.length;
+}
+
+export function recordsMatchingExactCardIdCohort(records, finalCardIds) {
+  if (!isUniqueCardIdCohort(finalCardIds)) {
+    throw new TypeError("finalCardIds must be a unique positive-integer cohort");
+  }
+  return records.filter((record) => {
+    const requestedCardIds = record.requestBody?.p_card_ids;
+    return isUniqueCardIdCohort(requestedCardIds)
+      && requestedCardIds.length === finalCardIds.length
+      && requestedCardIds.every((cardId, index) => cardId === finalCardIds[index]);
+  });
+}
+
+export function retainEnrichmentRequestEvidence({
+  method,
+  url,
+  requestBody,
+  requestedAt,
+  completedAt,
+  status,
+  bytes,
+}) {
+  if (!Number.isFinite(requestedAt) || !Number.isFinite(completedAt)) {
+    throw new TypeError("retained request timestamps must be finite");
+  }
+  if (!Number.isSafeInteger(bytes) || bytes < 0) {
+    throw new TypeError("retained request bytes must be a nonnegative integer");
+  }
+  return {
+    method,
+    url,
+    requestBody,
+    requestedAt,
+    completedAt,
+    status: status ?? 200,
+    bytes,
+  };
+}
