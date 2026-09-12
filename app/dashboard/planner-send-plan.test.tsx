@@ -7,8 +7,11 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import en from "@/lib/i18n/en";
+import ja from "@/lib/i18n/ja";
 
 const mocks = vi.hoisted(() => ({
+  language: "en" as "en" | "ja",
   plans: [] as Array<Record<string, unknown>>,
   calls: [] as Array<{ fn: string; args: unknown }>,
   rpcError: null as { message: string } | null,
@@ -17,11 +20,17 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/i18n", () => ({
   useTranslation: () => ({
-    t: (k: string, p?: Record<string, string>) => (p?.name ? `${k}:${p.name}` : k),
+    language: mocks.language,
+    t: (key: string, params: Record<string, string> = {}) => {
+      const dictionary = (mocks.language === "ja" ? ja : en) as Record<string, string>;
+      const value = key.startsWith("purchasePlanner.") ? dictionary[key] ?? key : key;
+      return value.replace(/\{(\w+)\}/g, (_, name) => params[name] ?? `{${name}}`);
+    },
   }),
 }));
 vi.mock("./TripContext", () => ({ useTrips: () => ({ trips: [], activeTripId: null }) }));
-vi.mock("./use-query", () => ({
+vi.mock("./use-query", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./use-query")>(),
   useSupabaseQuery: () => ({
     data: { plans: mocks.plans, lines: [], allocations: [], coverage: [] },
     error: null, isLoading: false, retry: vi.fn(),
@@ -75,6 +84,7 @@ const base = {
 
 afterEach(cleanup);
 beforeEach(() => {
+  mocks.language = "en";
   mocks.calls = [];
   mocks.assigned = [];
   mocks.rpcError = null;
@@ -84,6 +94,19 @@ beforeEach(() => {
 const sendButton = () => screen.findByRole("button", { name: "Send to buyer" });
 
 describe("sending a plan to the buying agent", () => {
+  it("localizes the buyer assignment and hand-back actions in Japanese", async () => {
+    mocks.language = "ja";
+    mocks.plans = [{ ...base, status: "ordered", assigned_buyer_email: "agent@example.test", sent_at: "2026-09-07T02:00:00Z" }];
+    render(<PurchasePlannerView />);
+    expect(await screen.findByRole("group", { name: "担当バイヤー" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "担当バイヤー" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "送信を取り消す" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "バイヤー画面を開く" }).getAttribute("href")).toBe("/dashboard/buyer-view");
+    expect(screen.getByText("注文済み - バイヤーが購入中のため明細は変更できません")).toBeTruthy();
+    expect(screen.queryByText("Buying agent")).toBeNull();
+    expect(screen.queryByText("See his screen")).toBeNull();
+  });
+
   it("offers a send button once an agent is chosen", async () => {
     render(<PurchasePlannerView />);
     expect(await sendButton()).toBeTruthy();

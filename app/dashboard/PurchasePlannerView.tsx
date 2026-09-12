@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
-import { planState, planStateLabel } from "@/lib/plan-state";
+import { PurchaseReconciliationDialog } from "./PurchaseReconciliationDialog";
 import { useTrips } from "./TripContext";
 import { useTranslation } from "@/lib/i18n";
 import {
@@ -60,6 +60,14 @@ import {
   SealedPlanningReadinessNotice,
   useSealedPlanningReadiness,
 } from "./sealed-planning-readiness";
+import {
+  landedPerCardJpy,
+  loadCurrentPurchaseFeePolicy,
+  purchaseFeePercent,
+  type PurchaseFeePolicyState,
+} from "./purchase-fee-policy";
+
+export { landedPerCardJpy } from "./purchase-fee-policy";
 
 import { formatUsd } from "@/lib/money";
 const selectClass =
@@ -245,6 +253,7 @@ export default function PurchasePlannerView() {
   const [lineOpen, setLineOpen] = useState(false);
   const [allocationLine, setAllocationLine] = useState<PurchasePlanLine | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [reconciliationOpen, setReconciliationOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   // Plans are bound to a trip. Without this the selector accumulates every
   // plan ever made, and after a handful of trips it is unusable.
@@ -354,7 +363,7 @@ export default function PurchasePlannerView() {
           >
             {visiblePlans.map((row) => (
               <option key={row.plan_id} value={row.plan_id}>
-                {row.name} [{planStateLabel(planState({ status: row.status }))}]
+                {row.name} [{t(`purchasePlanner.status.${row.status}`)}]
               </option>
             ))}
           </select>
@@ -371,7 +380,7 @@ export default function PurchasePlannerView() {
               <ShieldCheck className="size-4" />
               {/* It never sent anything. Sending is the Send button beside the
                   buying agent; this advances the operator's own workflow. */}
-              {plan.status === "ready" ? "Mark as ordered" : "Review"}
+              {t(plan.status === "ready" ? "purchasePlanner.markAsOrdered" : "purchasePlanner.reviewPlan")}
             </Button>
           )}
         </div>
@@ -409,14 +418,19 @@ export default function PurchasePlannerView() {
         // to reconcile, and nothing else on this screen says so.
         <div className="flex flex-wrap items-center gap-3 rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-sm">
           <span className="font-medium text-emerald-700 dark:text-emerald-400">
-            The buyer has finished with this list
+            {t("reconciliation.handedBack")}
           </span>
           <span className="text-muted-foreground">
-            handed back {new Date(plan.handed_back_at).toLocaleString()}
+            {t("reconciliation.handedBackAt", { date: new Date(plan.handed_back_at).toLocaleString() })}
           </span>
         </div>
       )}
       {plan && (plan.status === "ordered" || plan.status === "reconciled") && <BuyerProgressStrip planId={plan.plan_id} />}
+      {((plan.status === "ordered" && plan.handed_back_at) || plan.status === "reconciled") && (
+        <Button className="min-h-11" onClick={() => setReconciliationOpen(true)}>
+          {t(plan.status === "reconciled" ? "reconciliation.view" : "reconciliation.open")}
+        </Button>
+      )}
 
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
             <div className="flex items-center gap-2 text-sm">
@@ -438,8 +452,8 @@ export default function PurchasePlannerView() {
               // working from a list that changed - so say that instead.
               <span className="text-xs text-muted-foreground">
                 {plan.status === "ordered"
-                  ? "Ordered - lines are frozen while the buyer is shopping"
-                  : `${plan.status} - lines are frozen`}
+                  ? t("purchasePlanner.orderedFrozen")
+                  : t("purchasePlanner.linesFrozen", { status: t(`purchasePlanner.status.${plan.status}`) })}
               </span>
             )}
           </div>
@@ -496,6 +510,7 @@ export default function PurchasePlannerView() {
       {plan && <AddLineDialog planId={plan.plan_id} open={lineOpen} onOpenChange={setLineOpen} onAdded={retry} />}
       <AllocationDialog line={allocationLine} allocations={allocations} editable={editable} open={allocationLine != null} onOpenChange={(open) => !open && setAllocationLine(null)} onChanged={retry} />
       {plan && <ReviewDialog plan={plan} open={reviewOpen} onOpenChange={setReviewOpen} onChanged={retry} />}
+      {plan && <PurchaseReconciliationDialog key={plan.plan_id} planId={plan.plan_id} open={reconciliationOpen} onOpenChange={setReconciliationOpen} onFinalized={retry} />}
       {plan && <DispositionDialog planId={plan.plan_id} demand={disposition} open={disposition != null} onOpenChange={(open) => !open && setDisposition(null)} onChanged={retry} />}
     </div>
   );
@@ -697,7 +712,7 @@ function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpe
               <option value="">Nobody yet - assign later</option>
               {buyers.map((b) => (
                 <option key={b.email} value={b.email}>
-                  {b.email}{b.has_account ? "" : " (has not signed in yet)"}
+                  {b.email}{b.has_account ? "" : t("purchasePlanner.buyerNoAccount")}
                 </option>
               ))}
             </select>
@@ -730,6 +745,10 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
   const [manualVariantEdition, setManualVariantEdition] = useState("standard");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [feePolicy, setFeePolicy] = useState<PurchaseFeePolicyState>({
+    status: "idle",
+    policy: null,
+  });
   const sealedPlanning = useSealedPlanningReadiness(open && game === "pokemon_sealed");
   const sealedPlanningBlocked = game === "pokemon_sealed" && sealedPlanning.state !== "ready";
   const sealedPlanningNoticeId = "planner-sealed-planning-readiness";
@@ -777,9 +796,26 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
   }, [chosen, sealedPlanning.state]);
 
   useEffect(() => {
+    if (!open || !chosen || chosen.game === "mtg") {
+      setFeePolicy({ status: "idle", policy: null });
+      return;
+    }
+    let live = true;
+    setFeePolicy({ status: "loading", policy: null });
+    void loadCurrentPurchaseFeePolicy().then((policy) => {
+      if (!live) return;
+      setFeePolicy(policy
+        ? { status: "ready", policy }
+        : { status: "unavailable", policy: null });
+    });
+    return () => { live = false; };
+  }, [chosen, open]);
+
+  useEffect(() => {
     if (!open) {
       setQuery(""); setResults([]); setChosen(null); setError(null);
       setCandidates(null); setPicked(new Map()); setManual(false);
+      setFeePolicy({ status: "idle", policy: null });
       // The hand-entry fields too. They used to survive the dialog closing, so
       // the next card opened with the previous card's shop, price, quantity
       // and - worst - its LISTING URL still filled in. A stale per-listing URL
@@ -867,17 +903,17 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+      <DialogContent className="min-w-0 max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t("purchasePlanner.addLine")}</DialogTitle>
           <DialogDescription>Search a card, then pick the listings to buy it from.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="grid grid-cols-[140px_1fr] gap-2">
-            <select className={selectClass} value={game} onChange={(event) => { setGame(event.target.value as CatalogResult["game"]); setChosen(null); setQuery(""); setCandidates(null); setPicked(new Map()); }}>
+        <div className="min-w-0 space-y-3">
+          <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[140px_1fr]">
+            <select className={`${selectClass} min-h-11 sm:min-h-9`} value={game} onChange={(event) => { setGame(event.target.value as CatalogResult["game"]); setChosen(null); setQuery(""); setCandidates(null); setPicked(new Map()); }}>
               {(["pokemon", "mtg", "pokemon_sealed"] as const).map((value) => <option key={value} value={value}>{t(`game.${value}` as never)}</option>)}
             </select>
-            <div className="relative"><Search className="absolute left-2 top-2.5 size-4 text-muted-foreground" /><Input className="pl-8" value={chosen?.label ?? query} onChange={(event) => { setChosen(null); setQuery(event.target.value); }} placeholder={t("purchasePlanner.searchCatalog")} disabled={sealedPlanningBlocked} aria-describedby={sealedPlanningBlocked ? sealedPlanningNoticeId : undefined} /></div>
+            <div className="relative"><Search className="absolute left-2 top-3.5 size-4 text-muted-foreground sm:top-2" /><Input className="min-h-11 pl-8 sm:min-h-8" value={chosen?.label ?? query} onChange={(event) => { setChosen(null); setQuery(event.target.value); }} placeholder={t("purchasePlanner.searchCatalog")} disabled={sealedPlanningBlocked} aria-describedby={sealedPlanningBlocked ? sealedPlanningNoticeId : undefined} /></div>
           </div>
           {game === "pokemon_sealed" && (
             <SealedPlanningReadinessNotice
@@ -890,9 +926,9 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
           {!chosen && results.length > 0 && <div className="max-h-44 overflow-y-auto rounded-md border">{results.map((result) => <button key={`${result.id}:${result.sealedCondition}:${result.variantEdition}`} type="button" className="block min-h-11 w-full border-b px-3 py-2 text-left text-xs last:border-0 hover:bg-muted" onClick={() => chooseResult(result)}>{result.label}</button>)}</div>}
 
           {chosen && game !== "pokemon_sealed" && (
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <Label className="text-xs">{t("purchasePlanner.grade")}</Label>
-              <select className={selectClass} value={grade} onChange={(event) => setGrade(event.target.value)}>
+              <select className={`${selectClass} min-h-11 min-w-0 flex-1 sm:min-h-9`} value={grade} onChange={(event) => setGrade(event.target.value)}>
                 <option value="0">{t("purchasePlanner.raw")}</option>
                 {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>PSA {value}</option>)}
               </select>
@@ -902,6 +938,7 @@ function AddLineDialog({ planId, open, onOpenChange, onAdded }: { planId: number
           {chosen && (chosen.game === "pokemon" || chosen.game === "pokemon_sealed") && (
             <CandidatePicker
               candidates={candidates}
+              feePolicy={feePolicy}
               picked={picked}
               onToggle={(key, qty) => {
                 const next = new Map(picked);
@@ -1058,20 +1095,11 @@ export function manualPlanLine(
   };
 }
 
-// The buyer fees (3% handling + 100 JPY per purchased line) mean the cheapest
-// sticker price is not the cheapest landed cost, and that the flat line fee is
-// amortised by buying more copies from ONE listing. Showing per-card landed
-// cost makes that visible at the moment the choice is made, rather than at
-// reconciliation.
-export function landedPerCardJpy(price: number, qty: number): number {
-  if (qty <= 0) return 0;
-  return (price * qty * 1.03 + 100) / qty;
-}
-
-function CandidatePicker({
-  candidates, picked, onToggle, onQuantity,
+export function CandidatePicker({
+  candidates, feePolicy, picked, onToggle, onQuantity,
 }: {
   candidates: CandidateListing[] | null;
+  feePolicy: PurchaseFeePolicyState;
   picked: Map<string, number>;
   onToggle: (key: string, qty: number) => void;
   onQuantity: (key: string, qty: number) => void;
@@ -1090,6 +1118,15 @@ function CandidatePicker({
   // raw number would be meaningless.
   const jpy = candidates.filter((c) => c.currency === "JPY");
   const other = candidates.filter((c) => c.currency !== "JPY");
+  const policyNotice = feePolicy.status === "ready"
+    ? t("purchasePlanner.feePolicy", {
+        rate: purchaseFeePercent(feePolicy.policy),
+        amount: Math.round(feePolicy.policy.lineFeeJpy).toLocaleString(),
+        date: feePolicy.policy.effectiveFrom,
+      })
+    : feePolicy.status === "loading"
+      ? t("purchasePlanner.feePolicyLoading")
+      : t("purchasePlanner.feePolicyUnavailable");
 
   const row = (c: CandidateListing) => {
     const key = candidateListingKey(c);
@@ -1115,7 +1152,7 @@ function CandidatePicker({
           <input
             type="number" min="1" max="1000" step="1" value={qty} disabled={!on}
             onChange={(e) => onQuantity(key, Math.min(1000, Math.max(1, Math.floor(Number(e.target.value)))))}
-            className="w-16 bg-transparent text-right tabular-nums disabled:text-muted-foreground/40"
+            className="min-h-11 w-16 bg-transparent text-right tabular-nums disabled:text-muted-foreground/40 sm:min-h-0"
           />
         </td>
         <td className="px-2 py-1 text-right tabular-nums">
@@ -1135,21 +1172,42 @@ function CandidatePicker({
           )}
         </td>
         <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">
-          {c.currency === "JPY" ? `${Math.round(landedPerCardJpy(c.asking_price, qty)).toLocaleString()} /card` : "-"}
+          {c.currency !== "JPY"
+            ? "-"
+            : feePolicy.status === "ready"
+              ? t("purchasePlanner.perCardJpy", {
+                  amount: Math.round(landedPerCardJpy(
+                    c.asking_price,
+                    qty,
+                    feePolicy.policy,
+                  )).toLocaleString(),
+                })
+              : t("purchasePlanner.feeEstimateUnavailableShort")}
         </td>
         <td className="px-2 py-1 text-xs text-muted-foreground">
           {c.stale ? <span title={c.observed_at}>price may be stale</span> : new Date(c.observed_at).toLocaleDateString()}
         </td>
         <td className="px-2 py-1">
-          <a href={c.listing_url} target="_blank" rel="noreferrer" className="text-xs underline underline-offset-2 hover:text-primary">open</a>
+          <a href={c.listing_url} target="_blank" rel="noreferrer" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs underline underline-offset-2 hover:text-primary sm:min-h-0 sm:min-w-0">open</a>
         </td>
       </tr>
     );
   };
 
   return (
-    <div className="max-h-72 overflow-y-auto rounded-md border">
-      <table className="w-full text-sm">
+    <div className="space-y-2">
+      <p
+        className="text-xs text-muted-foreground"
+        role="status"
+        data-fee-policy-status={feePolicy.status}
+      >
+        {policyNotice}
+      </p>
+      <div
+        className="max-h-72 min-w-0 max-w-full overflow-x-auto overflow-y-auto rounded-md border"
+        data-testid="purchase-fee-candidates"
+      >
+        <table className="w-full min-w-[680px] text-sm">
         <thead className="text-xs text-muted-foreground">
           <tr>
             <th className="px-2 py-1"></th>
@@ -1173,8 +1231,9 @@ function CandidatePicker({
             </tr>
           )}
           {other.map(row)}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1415,6 +1474,7 @@ function DispositionDialog({ planId, demand, open, onOpenChange, onChanged }: { 
 // fee projection uses the same rules reconciliation applies, so the total shown
 // here is the total that will land.
 function BuyerProgressStrip({ planId }: { planId: number }) {
+  const { t } = useTranslation();
   const [row, setRow] = useState<{
     purchased_lines: number; open_lines: number; unavailable_lines: number;
     cards_bought: number; card_value_jpy: number; projected_handling_jpy: number;
@@ -1473,24 +1533,24 @@ function BuyerProgressStrip({ planId }: { planId: number }) {
     row.projected_total_jpy > row.budget_amount;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-md border px-3 py-2 text-sm">
-      <span className="font-medium">Buyer progress</span>
-      <span>{row.purchased_lines} bought / {row.open_lines} open / {row.unavailable_lines} unavailable</span>
-      <span>{row.cards_bought} cards</span>
+    <div role="region" aria-label={t("purchasePlanner.buyerProgress")} className="flex min-w-0 flex-wrap items-center gap-x-6 gap-y-1 rounded-md border px-3 py-2 text-sm">
+      <span className="font-medium">{t("purchasePlanner.buyerProgress")}</span>
+      <span>{t("purchasePlanner.progressCounts", { bought: String(row.purchased_lines), open: String(row.open_lines), unavailable: String(row.unavailable_lines) })}</span>
+      <span>{t("purchasePlanner.cardsBought", { count: String(row.cards_bought) })}</span>
       <span className="text-muted-foreground">
-        cards {jpy(row.card_value_jpy)} + handling {jpy(row.projected_handling_jpy)} + line fees {jpy(row.projected_line_fee_jpy)}
+        {t("purchasePlanner.progressCosts", { cards: jpy(row.card_value_jpy), handling: jpy(row.projected_handling_jpy), fees: jpy(row.projected_line_fee_jpy) })}
       </span>
       <span className={overBudget ? "font-semibold text-destructive" : "font-semibold"}>
-        projected {jpy(row.projected_total_jpy)}
+        {t("purchasePlanner.projectedCost", { amount: jpy(row.projected_total_jpy) })}
         {row.budget_amount != null && row.budget_currency === "JPY" && (
           <span className="ml-2 font-normal text-muted-foreground">
-            of {jpy(row.budget_amount)} budget
+            {t("purchasePlanner.ofBudget", { amount: jpy(row.budget_amount) })}
           </span>
         )}
       </span>
       {overBudget && (
         <span className="rounded bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive">
-          over budget by {jpy(row.projected_total_jpy - (row.budget_amount ?? 0))}
+          {t("purchasePlanner.overBudgetBy", { amount: jpy(row.projected_total_jpy - (row.budget_amount ?? 0)) })}
         </span>
       )}
 
@@ -1502,14 +1562,14 @@ function BuyerProgressStrip({ planId }: { planId: number }) {
         <table className="w-full min-w-[36rem] text-xs tabular-nums">
           <thead className="text-muted-foreground">
             <tr className="text-left">
-              <th className="py-1 pr-3 font-normal">Shop</th>
-              <th className="py-1 pr-3 font-normal">Worked</th>
-              <th className="py-1 pr-3 font-normal">Bought</th>
-              <th className="py-1 pr-3 text-right font-normal">Cards</th>
-              <th className="py-1 pr-3 text-right font-normal">Shipping</th>
-              <th className="py-1 pr-3 text-right font-normal">Other</th>
-              <th className="py-1 pr-3 text-right font-normal">His fee</th>
-              <th className="py-1 text-right font-normal">Spent</th>
+              <th className="py-1 pr-3 font-normal">{t("purchasePlanner.progressShop")}</th>
+              <th className="py-1 pr-3 font-normal">{t("purchasePlanner.progressWorked")}</th>
+              <th className="py-1 pr-3 font-normal">{t("purchasePlanner.progressBought")}</th>
+              <th className="py-1 pr-3 text-right font-normal">{t("purchasePlanner.progressCards")}</th>
+              <th className="py-1 pr-3 text-right font-normal">{t("purchasePlanner.progressShipping")}</th>
+              <th className="py-1 pr-3 text-right font-normal">{t("purchasePlanner.progressOther")}</th>
+              <th className="py-1 pr-3 text-right font-normal">{t("purchasePlanner.progressFee")}</th>
+              <th className="py-1 text-right font-normal">{t("purchasePlanner.progressSpent")}</th>
             </tr>
           </thead>
           <tbody>
@@ -1560,6 +1620,7 @@ type AssignableBuyer = { email: string; has_account: boolean; last_sign_in: stri
 function PlanBuyerControl({
   plan, onChanged, canReassign,
 }: { plan: PurchasePlan; onChanged: () => void; canReassign: boolean }) {
+  const { t, language } = useTranslation();
   const [buyers, setBuyers] = useState<AssignableBuyer[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1607,18 +1668,19 @@ function PlanBuyerControl({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs">
-      <span className="text-muted-foreground">Buying agent</span>
+    <div role="group" aria-label={t("purchasePlanner.buyingAgent")} className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
+      <label htmlFor={`plan-buyer-${plan.plan_id}`} className="text-muted-foreground">{t("purchasePlanner.buyingAgent")}</label>
       <select
-        className={selectClass}
+        id={`plan-buyer-${plan.plan_id}`}
+        className={`${selectClass} min-h-11 min-w-0`}
         value={plan.assigned_buyer_email ?? ""}
         disabled={saving || !canReassign}
         onChange={(e) => void assign(e.target.value)}
       >
-        <option value="">Nobody yet</option>
+        <option value="">{t("purchasePlanner.nobodyYet")}</option>
         {buyers.map((b) => (
           <option key={b.email} value={b.email}>
-            {b.email}{b.has_account ? "" : " (has not signed in yet)"}
+            {b.email}{b.has_account ? "" : t("purchasePlanner.buyerNoAccount")}
           </option>
         ))}
       </select>
@@ -1629,13 +1691,13 @@ function PlanBuyerControl({
             className="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-600 dark:text-emerald-400"
             title={new Date(plan.sent_at!).toLocaleString()}
           >
-            Sent {new Date(plan.sent_at!).toLocaleDateString()}
+            {t("purchasePlanner.sentOn", { date: new Date(plan.sent_at!).toLocaleDateString(language === "ja" ? "ja-JP" : "en-US") })}
           </span>
           {/* Recall refuses server-side once he has recorded anything, because
               by then he is standing in a shop working from the list. The
               button stays visible so the refusal can say that. */}
-          <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => void recall()}>
-            Recall
+          <Button type="button" size="sm" variant="outline" className="min-h-11 min-w-11" disabled={saving} onClick={() => void recall()}>
+            {t("purchasePlanner.recallPlan")}
           </Button>
           {/* The screen he is actually looking at, from here. Not having this
               is why a Google-translated page with an unreadable dropdown went
@@ -1645,9 +1707,9 @@ function PlanBuyerControl({
             href="/dashboard/buyer-view"
             target="_blank"
             rel="noreferrer"
-            className="rounded border px-2 py-0.5 underline-offset-2 hover:bg-accent hover:underline"
+            className="inline-flex min-h-11 min-w-11 items-center rounded border px-3 py-2 underline-offset-2 hover:bg-accent hover:underline"
           >
-            See his screen
+            {t("purchasePlanner.seeBuyerScreen")}
           </a>
         </>
       ) : (
@@ -1655,15 +1717,16 @@ function PlanBuyerControl({
           <Button
             type="button"
             size="sm"
+            className="min-h-11 min-w-11"
             disabled={saving || !plan.assigned_buyer_email}
             onClick={() => void send()}
           >
-            Send to buyer
+            {t("purchasePlanner.sendToBuyer")}
           </Button>
           <span className="text-muted-foreground">
             {plan.assigned_buyer_email
-              ? "Not on his screen until you send it"
-              : "Choose a buying agent first"}
+              ? t("purchasePlanner.notSentHelp")
+              : t("purchasePlanner.chooseBuyerFirst")}
           </span>
         </>
       )}

@@ -15,7 +15,8 @@ vi.mock("./TripContext", () => ({
   // every plan belongs somewhere else.
   useTrips: () => ({ trips: [{ trip_id: 9, name: "September" }], activeTripId: 9 }),
 }));
-vi.mock("./use-query", () => ({
+vi.mock("./use-query", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./use-query")>(),
   useSupabaseQuery: () => ({
     data: { plans: mocks.plans, lines: [], allocations: [], coverage: [] },
     error: null, isLoading: false, retry: vi.fn(),

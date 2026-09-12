@@ -15,7 +15,8 @@ const retry = vi.fn();
 
 vi.mock("@/lib/i18n", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("./TripContext", () => ({ useTrips: () => ({ trips: [], activeTripId: -14 }) }));
-vi.mock("./use-query", () => ({
+vi.mock("./use-query", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./use-query")>(),
   useSupabaseQuery: () => ({
     data: {
       plans: [{ plan_id: 1, name: "P", status: "draft", trip_id: null, line_count: 0, want_count: 0 }],

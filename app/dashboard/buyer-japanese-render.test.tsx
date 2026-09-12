@@ -34,6 +34,10 @@ const totals = [{
   source: "snkrdunk", total_lines: 1, recorded_lines: 1, purchased_lines: 1,
   cards_bought: 1, card_value_jpy: 30000, shipping_jpy: 900,
   other_costs_jpy: 220, spent_total_jpy: 32120, agent_payout_jpy: 1000,
+  projected_handling_jpy: 900, projected_line_fee_jpy: 100,
+  fee_policy_key: "jpy-buyer-fees-v1", fee_policy_effective_from: "2026-09-11",
+  fee_handling_rate: 0.03, fee_per_line_jpy: 100,
+  fee_policy_provenance: "effective_policy",
 }];
 
 beforeEach(() => {
@@ -95,8 +99,9 @@ describe("the agent's screen in Japanese", () => {
     expect(screen.getByRole("button", { name: /決済手数料 ¥220/ })).toBeTruthy();
     // And his fee is itemised: what the rows earned, and what the 3% came to.
     // Twice over on a single-shop list: once for the shop, once for the plan.
-    expect(screen.getAllByText(/1行 ¥100/).length).toBe(2);
-    expect(screen.getAllByText(/3% ¥900/).length).toBe(2);
+    expect(screen.getAllByText(/購入明細1行 ¥100/).length).toBe(2);
+    expect(screen.getAllByText(/取扱手数料 ¥900/).length).toBe(2);
+    expect(screen.getByText(/ポリシー: 取扱手数料3%/)).toBeTruthy();
   });
 
   it("puts no US dollar figure anywhere on his screen", async () => {

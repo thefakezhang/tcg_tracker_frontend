@@ -108,6 +108,7 @@ app/
     AddToLotPopover.tsx   # Popover that adds a browsed card to an open acquisition lot
     BalanceSheetCard.tsx  # Business-wide balance sheet card (get_balance_sheet RPC)
     BuyerOrderView.tsx    # Buyer result-entry grid, save states, paste, and plan-switch fencing
+    BuyerSourceReceipts.tsx # Plan/source receipt upload and same-object registration retry
     BuyerShell.tsx        # Minimal translated buyer shell and administrator preview wrapper
     BuyListContext.tsx    # Buy list state + CRUD operations (fetch, create, delete, add/remove entries)
     BuyListView.tsx       # Buy list card view (merges pokemon + mtg + sealed entries, list/grid with compact toggle)
@@ -814,3 +815,10 @@ Bake its data in at build time rather than adding anon grants.
 | `E2E_AUTH_ENABLED` | Enables the local-only guarded browser-auth seam when set to `1` outside production |
 | `E2E_AUTH_SECRET` | Strong shared secret presented only by a local browser runner |
 | `E2E_AUTH_EMAIL` / `E2E_AUTH_PASSWORD` | Disposable local GoTrue account used by browser acceptance |
+
+### Purchase reconciliation
+
+`PurchaseReconciliationDialog` reads an operator-only review from `review_purchase_plan_inventory` and submits the unchanged review digest to `reconcile_purchase_plan_inventory`.
+Purchase dates, JPY per USD rates, rate references and condition confirmations are explicit operator inputs.
+Editing invalidates the review; a failed finalization preserves inputs and requires another server review, which can recover an already completed result.
+The server owns fee selection, exact-cent allocation and the atomic transition into inventory.

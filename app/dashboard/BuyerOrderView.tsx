@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatDateTime } from "@/lib/dates";
 import { formatMutationError } from "@/lib/mutation-error";
@@ -22,7 +22,10 @@ import { planState, planStateKey } from "@/lib/plan-state";
 import { useTranslation } from "@/lib/i18n";
 import en from "@/lib/i18n/en";
 import ja from "@/lib/i18n/ja";
+import { BuyerSourceReceipts } from "./BuyerSourceReceipts";
+import { QueryError } from "./use-query";
 import { conditionLabel, editionLabel } from "./use-sealed-data";
+import { handlingRatePercent } from "./purchase-fee-policy";
 
 // The buying agent's whole screen: the plans assigned to him, and a grid for
 // recording what he actually bought.
@@ -144,6 +147,7 @@ export default function BuyerOrderView() {
   const activePlanRef = useRef(activePlan);
   activePlanRef.current = activePlan;
   const [error, setError] = useState<string | null>(null);
+  const [receiptLoadError, setReceiptLoadError] = useState<{ planId: number; error: unknown } | null>(null);
   const [receiptResult, setReceiptResult] = useState<PlanResource<Receipt> | null>(null);
   const [upstreamChanged, setUpstreamChanged] = useState(false);
   const [totalsResult, setTotalsResult] = useState<PlanResource<SourceTotals> | null>(null);
@@ -304,9 +308,16 @@ export default function BuyerOrderView() {
   const receiptsLoadToken = useRef(0);
   const loadReceipts = useCallback(async (planId: number) => {
     const token = ++receiptsLoadToken.current;
-    const { data } = await createClient().rpc("buyer_source_receipts", { p_plan_id: planId });
-    if (token !== receiptsLoadToken.current || activePlanRef.current !== planId) return;
-    setReceiptResult({ planId, rows: (data ?? []) as Receipt[] });
+    const isCurrent = () => token === receiptsLoadToken.current && activePlanRef.current === planId;
+    try {
+      const { data, error: receiptError, status } = await createClient().rpc("buyer_source_receipts", { p_plan_id: planId });
+      if (!isCurrent()) return;
+      if (receiptError) throw { ...receiptError, status };
+      setReceiptResult({ planId, rows: (data ?? []) as Receipt[] });
+      setReceiptLoadError(null);
+    } catch (caught) {
+      if (isCurrent()) setReceiptLoadError({ planId, error: caught });
+    }
   }, []);
 
   useEffect(() => { void loadPlans(); }, [loadPlans]);
@@ -636,6 +647,13 @@ export default function BuyerOrderView() {
         </div>
       )}
 
+      {receiptLoadError?.planId === activePlan && activePlan != null && (
+        <section aria-label={t("buyer.receiptLoadFailed")} className="space-y-2">
+          <p className="text-sm">{t("buyer.receiptLoadFailed")}</p>
+          <QueryError error={receiptLoadError.error} onRetry={() => void loadReceipts(activePlan)} />
+        </section>
+      )}
+
       {loadingPlanId === activePlan && (
         <div role="status" className="rounded border border-dashed p-6 text-center text-sm text-muted-foreground">
           {t("buyer.loadingLines")}
@@ -709,10 +727,11 @@ export default function BuyerOrderView() {
                 }}
                 onError={setError}
               />
-              <SourceReceipts
+              <BuyerSourceReceipts
+                key={`${activePlan}/${source}`}
                 planId={activePlan!}
                 source={source}
-                receipts={receipts.filter((r) => r.source === source)}
+                receiptCount={receipts.filter((r) => r.source === source.trim().toLowerCase()).length}
                 readOnly={readOnly}
                 onUploaded={() => activePlan != null && void loadReceipts(activePlan)}
                 onError={setError}
@@ -1045,28 +1064,33 @@ function NumberCell({
   groupThousands?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
-  const display = (next: number | null) =>
-    next == null ? "" : groupThousands && !focused ? next.toLocaleString() : String(next);
-  const [draft, setDraft] = useState<string>(display(value));
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState<string>(value == null ? "" : String(value));
   useEffect(() => {
-    setDraft(display(value));
-  }, [focused, groupThousands, value]);
+    setDraft(value == null ? "" : String(value));
+  }, [value]);
+  useLayoutEffect(() => {
+    // Select after React commits the ungrouped edit value. Selecting the old
+    // grouped text first lets the value change collapse the caret to the end.
+    if (focused) inputRef.current?.select();
+  }, [focused]);
 
   return (
     <td className="min-w-0 py-1 md:table-cell md:px-3 md:text-right">
       <MobileLabel>{label}</MobileLabel>
       <input
+        ref={inputRef}
         data-cell={`${line.plan_line_id}:${column}`}
         aria-label={label}
         disabled={readOnly}
         inputMode="numeric"
-        value={draft}
+        value={focused ? draft : value == null ? "" : groupThousands ? value.toLocaleString() : String(value)}
         onChange={(event) => {
           const next = event.target.value.replace(/\D/g, "");
           setDraft(next);
           onEdit(next === "" ? null : Number(next));
         }}
-        onFocus={(event) => { setFocused(true); event.currentTarget.select(); }}
+        onFocus={() => { setDraft(value == null ? "" : String(value)); setFocused(true); }}
         onBlur={() => {
           setFocused(false);
           onFlush();
@@ -1235,10 +1259,18 @@ type SourceTotals = {
   purchased_lines: number;
   cards_bought: number;
   card_value_jpy: number;
+  projected_handling_jpy?: number | string | null;
+  projected_line_fee_jpy?: number | string | null;
   shipping_jpy: number;
   other_costs_jpy: number;
   spent_total_jpy: number;
   agent_payout_jpy: number;
+  fee_policy_key?: string | null;
+  fee_policy_effective_from?: string | null;
+  fee_handling_rate?: number | string | null;
+  fee_per_line_jpy?: number | string | null;
+  fee_date?: string | null;
+  fee_policy_provenance?: string | null;
 };
 
 type Receipt = {
@@ -1249,78 +1281,13 @@ type Receipt = {
   uploaded_at: string;
 };
 
-// One checkout per shop means one receipt per shop, uploaded when he finishes
-// that source rather than at the end of the trip.
-//
-// The receipt is what the operator reconciles the entered prices against: it
-// is evidence, checked against data, which catches a mistyped price far more
-// reliably than anyone re-reading the grid. So it belongs beside the source,
-// while he still has it open.
-function SourceReceipts({
-  planId, source, receipts, readOnly, onUploaded, onError,
-}: {
-  planId: number;
-  source: string;
-  receipts: Receipt[];
-  readOnly: boolean;
-  onUploaded: () => void;
-  onError: (message: string) => void;
-}) {
-  const { t } = useTranslation();
-  const [busy, setBusy] = useState(false);
-  const inputId = `receipt-${planId}-${source}`;
-
-  async function upload(file: File) {
-    setBusy(true);
-    const supabase = createClient();
-    // Path is prefixed per plan and source so the storage policy can scope the
-    // buyer to his own uploads without trusting the filename.
-    const safe = file.name.replace(/[^\w.\-]/g, "_");
-    const path = `plan-receipts/${planId}/${source}/${Date.now()}-${safe}`;
-    const { error: upErr } = await supabase.storage.from("lot-receipts").upload(path, file);
-    if (upErr) { setBusy(false); onError(upErr.message); return; }
-    const { error: recErr } = await supabase.rpc("buyer_record_source_receipt", {
-      p_plan_id: planId, p_source: source, p_storage_path: path, p_original_name: file.name,
-    });
-    setBusy(false);
-    if (recErr) { onError(recErr.message); return; }
-    onUploaded();
-  }
-
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      {receipts.length > 0 && (
-        <span className="text-muted-foreground">
-          {t("buyer.receiptCount", { count: String(receipts.length) })}
-        </span>
-      )}
-      {!readOnly && (
-        <>
-          <label
-            htmlFor={inputId}
-            className="flex min-h-11 cursor-pointer items-center rounded border px-3 hover:bg-accent sm:min-h-0 sm:px-2 sm:py-0.5"
-          >
-            {busy ? t("buyer.uploading") : receipts.length ? t("buyer.addReceipt") : t("buyer.uploadReceipt")}
-          </label>
-          <input
-            id={inputId}
-            type="file"
-            accept="image/*,application/pdf"
-            className="hidden"
-            disabled={busy}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-              if (file) void upload(file);
-            }}
-          />
-        </>
-      )}
-    </div>
-  );
-}
-
 const yen = (v: number | null | undefined) => "¥" + Math.round(Number(v ?? 0)).toLocaleString();
+
+const finiteNumber = (value: number | string | null | undefined): number | null => {
+  if (value == null) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
 
 // What this shop has cost him and what it has earned him, beside the shop it
 // belongs to - he checks out one at a time, so a plan-wide figure would be the
@@ -1328,12 +1295,11 @@ const yen = (v: number | null | undefined) => "¥" + Math.round(Number(v ?? 0)).
 function ShopTotals({ totals, asking }: { totals?: SourceTotals; asking: number }) {
   const { t } = useTranslation();
   if (!totals) return null;
-  // The two halves of what he is owed, shown separately because they answer
-  // different questions: the line fee is his wage for working the shelf, the
-  // 3% is a commission on what he actually bought. A single number told him
-  // neither, and he cannot check a number he cannot take apart.
-  const lineFee = 100 * Number(totals.purchased_lines ?? 0);
-  const commission = Math.max(0, Number(totals.agent_payout_jpy ?? 0) - lineFee);
+  // The two halves come directly from the server allocation. Recalculating
+  // them here would repeat the pre-460 per-source rounding bug and would make
+  // a later effective policy display the wrong breakdown.
+  const lineFee = finiteNumber(totals.projected_line_fee_jpy);
+  const handling = finiteNumber(totals.projected_handling_jpy);
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
       <span className="text-muted-foreground">
@@ -1346,11 +1312,13 @@ function ShopTotals({ totals, asking }: { totals?: SourceTotals; asking: number 
         <b className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
           {yen(totals.agent_payout_jpy)}
         </b>{" "}
-        <span className="tabular-nums">
-          ({t("buyer.feePerRow", { n: String(totals.purchased_lines ?? 0), amount: yen(lineFee) })}
-          {" + "}
-          {t("buyer.feeCommission", { amount: yen(commission) })})
-        </span>
+        {lineFee != null && handling != null && (
+          <span className="tabular-nums">
+            ({t("buyer.feePerRow", { n: String(totals.purchased_lines ?? 0), amount: yen(lineFee) })}
+            {" + "}
+            {t("buyer.feeCommission", { amount: yen(handling) })})
+          </span>
+        )}
       </span>
     </span>
   );
@@ -1564,7 +1532,28 @@ function PlanTotals({ totals, asking }: { totals: SourceTotals[]; asking: number
     totals.reduce((n, x) => n + Number(pick(x) ?? 0), 0);
   const spent = sum((x) => x.spent_total_jpy);
   const fee = sum((x) => x.agent_payout_jpy);
-  const lineFee = 100 * sum((x) => x.purchased_lines);
+  const hasBreakdown = totals.every((row) =>
+    finiteNumber(row.projected_line_fee_jpy) != null
+    && finiteNumber(row.projected_handling_jpy) != null);
+  const lineFee = hasBreakdown
+    ? sum((x) => finiteNumber(x.projected_line_fee_jpy))
+    : null;
+  const handling = hasBreakdown
+    ? sum((x) => finiteNumber(x.projected_handling_jpy))
+    : null;
+  const policy = totals[0];
+  const policyRate = finiteNumber(policy.fee_handling_rate);
+  const policyLineFee = finiteNumber(policy.fee_per_line_jpy);
+  const policySummary = policy.fee_policy_provenance === "legacy_recorded_costs"
+    ? t("buyer.feePolicyLegacy")
+    : policy.fee_policy_key && policy.fee_policy_effective_from
+      && policyRate != null && policyLineFee != null
+      ? t("buyer.feePolicy", {
+          rate: handlingRatePercent(policyRate),
+          amount: Math.round(policyLineFee).toLocaleString(),
+          date: policy.fee_policy_effective_from,
+        })
+      : t("buyer.feePolicyUnavailable");
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
       <span className="text-muted-foreground">
@@ -1575,10 +1564,15 @@ function PlanTotals({ totals, asking }: { totals: SourceTotals[]; asking: number
       <span className="text-muted-foreground">
         {t("buyer.feeTotal")}{" "}
         <b className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{yen(fee)}</b>{" "}
-        <span className="text-xs tabular-nums">
-          ({t("buyer.feePerRow", { n: String(sum((x) => x.purchased_lines)), amount: yen(lineFee) })}
-          {" + "}{t("buyer.feeCommission", { amount: yen(Math.max(0, fee - lineFee)) })})
-        </span>
+        {lineFee != null && handling != null && (
+          <span className="text-xs tabular-nums">
+            ({t("buyer.feePerRow", { n: String(sum((x) => x.purchased_lines)), amount: yen(lineFee) })}
+            {" + "}{t("buyer.feeCommission", { amount: yen(handling) })})
+          </span>
+        )}
+      </span>
+      <span className="basis-full text-xs text-muted-foreground" data-fee-policy-provenance={policy.fee_policy_provenance ?? "unavailable"}>
+        {policySummary}
       </span>
     </span>
   );
