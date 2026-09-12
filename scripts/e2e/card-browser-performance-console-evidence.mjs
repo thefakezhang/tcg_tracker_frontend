@@ -42,3 +42,12 @@ export function classifyConsoleEvidence({ forceUnavailable, consoleErrors, recor
     expectedMessageCount: expectedMessageIndexes.length,
   };
 }
+
+export function recordsStartedInSample(records, sampleStartedAt) {
+  if (!Number.isFinite(sampleStartedAt)) {
+    throw new TypeError("sampleStartedAt must be a finite timestamp");
+  }
+  return records.filter((record) => (
+    Number.isFinite(record.requestedAt) && record.requestedAt >= sampleStartedAt
+  ));
+}

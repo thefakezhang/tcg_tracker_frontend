@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
-import { classifyConsoleEvidence } from "./card-browser-performance-console-evidence.mjs";
+import {
+  classifyConsoleEvidence,
+  recordsStartedInSample,
+} from "./card-browser-performance-console-evidence.mjs";
 
 const dependencyRoot = process.env.TCG_FRONTEND_DEPENDENCY_ROOT;
 const require = dependencyRoot
@@ -340,9 +343,16 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
   const initialEnrichmentGate = expectedMode === "bounded" && journey === "default" && sampleIndex === 0
     ? new Promise((resolve) => { releaseInitialEnrichment = resolve; })
     : null;
-  async function fulfill(route, body, { delay = 0, total = null, rangeOffset = 0, endpoint, kind = "support" } = {}) {
-    if (delay) await sleep(delay);
+  async function fulfill(route, body, {
+    delay = 0,
+    total = null,
+    rangeOffset = 0,
+    endpoint,
+    kind = "support",
+    requestedAt = Date.now(),
+  } = {}) {
     const request = route.request();
+    if (delay) await sleep(delay);
     const serialized = request.method() === "HEAD" ? "" : JSON.stringify(body);
     const headers = responseHeaders(total == null ? {} : {
       "content-range": Array.isArray(body) && body.length > 0
@@ -364,6 +374,7 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
         kind,
         method: request.method(),
         url: request.url(),
+        requestedAt,
         bytes: Buffer.byteLength(serialized),
         completedAt: Date.now(),
         requestBody,
@@ -387,6 +398,7 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
     const endpoint = decodeURIComponent(url.pathname.split("/").filter(Boolean).at(-1) ?? "");
     if (url.pathname.includes("/rpc/")) {
       if (endpoint === "pokemon_card_browser_enrichment") {
+        const requestedAt = Date.now();
         const body = request.postDataJSON();
         const ids = Array.isArray(body?.p_card_ids) ? body.p_card_ids.map(Number) : [];
         assert(ids.length > 0 && ids.length <= 100, `bounded RPC ids invalid: ${JSON.stringify(body)}`);
@@ -398,7 +410,7 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
         if (forceUnavailable) {
           const serialized = JSON.stringify({ message: "function is unavailable in fixture" });
           await route.fulfill({ status: 404, headers: responseHeaders(), body: serialized });
-          records.push({ endpoint, kind: "bounded", method: request.method(), url: request.url(), requestBody: body, bytes: Buffer.byteLength(serialized), completedAt: Date.now(), status: 404 });
+          records.push({ endpoint, kind: "bounded", method: request.method(), url: request.url(), requestBody: body, requestedAt, bytes: Buffer.byteLength(serialized), completedAt: Date.now(), status: 404 });
           return;
         }
         const signals = ids.flatMap((id) => Array.from({ length: 11 }, (_, grade) => signal(id, grade, "v2")));
@@ -407,7 +419,7 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
           exit_cost_profile: profile,
           exchange_rate: rate,
           changepoints: pageChangepoints,
-        }, { endpoint, kind: "bounded" });
+        }, { endpoint, kind: "bounded", requestedAt });
         return;
       }
       if (["record_deal_opportunity_exposures", "card_refresh_targets"].includes(endpoint)) {
@@ -720,7 +732,7 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
     await detailDialog.waitFor({ state: "hidden" });
     detailOpen = false;
   }
-  const sampleRecords = records.filter((record) => record.completedAt >= startedAt);
+  const sampleRecords = recordsStartedInSample(records, startedAt);
   const measuredRecords = sampleRecords.filter((record) => record.kind !== "detail");
   const summaryRecords = measuredRecords.filter((record) => record.kind === "summary");
   assert(summaryRecords.length >= 1, `${matrix.name} ${journey} captured no summary request`);
@@ -846,6 +858,17 @@ try {
       unavailable.push({ matrix: matrix.name, ...result });
     }
   }
+
+  writeFileSync(`${artifactWriteRoot}/sample-results.json`, `${JSON.stringify({
+    schemaVersion: 1,
+    artifactRoot,
+    expectedMode,
+    sampleCount,
+    matrices: matrices.map((matrix) => matrix.name),
+    journeys,
+    results,
+    unavailable,
+  }, null, 2)}\n`);
 
   const summaries = matrices.flatMap((matrix) => journeys.map((journey) => {
     const samples = results.filter((result) => result.matrix === matrix.name && result.journey === journey);

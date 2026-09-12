@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   classifyConsoleEvidence,
   expectedUnavailableConsoleError,
+  recordsStartedInSample,
 } from "./card-browser-performance-console-evidence.mjs";
 
 const rpcURL = "http://127.0.0.1:54321/rest/v1/rpc/pokemon_card_browser_enrichment";
@@ -78,4 +79,21 @@ test("retains every additional or duplicate console error as unexpected", () => 
   assert.equal(duplicate.hasExactUnavailableEvidence, false);
   assert.deepEqual(duplicate.expectedConsoleErrors, []);
   assert.deepEqual(duplicate.unexpectedConsoleErrors, [expectedUnavailableConsoleError, expectedUnavailableConsoleError]);
+});
+
+test("attributes records by request start instead of completion time", () => {
+  const records = [
+    { endpoint: "initial", requestedAt: 90, completedAt: 130 },
+    { endpoint: "boundary", requestedAt: 100, completedAt: 140 },
+    { endpoint: "measured", requestedAt: 110, completedAt: 120 },
+    { endpoint: "missing-start", completedAt: 150 },
+  ];
+  assert.deepEqual(
+    recordsStartedInSample(records, 100).map((record) => record.endpoint),
+    ["boundary", "measured"],
+  );
+});
+
+test("rejects a non-finite sample boundary", () => {
+  assert.throws(() => recordsStartedInSample([], Number.NaN), /finite timestamp/);
 });
