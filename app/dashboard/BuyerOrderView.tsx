@@ -22,6 +22,8 @@ import { planState, planStateKey } from "@/lib/plan-state";
 import { useTranslation } from "@/lib/i18n";
 import en from "@/lib/i18n/en";
 import ja from "@/lib/i18n/ja";
+import { BuyerSourceReceipts } from "./BuyerSourceReceipts";
+import { QueryError } from "./use-query";
 import { conditionLabel, editionLabel } from "./use-sealed-data";
 
 // The buying agent's whole screen: the plans assigned to him, and a grid for
@@ -144,6 +146,7 @@ export default function BuyerOrderView() {
   const activePlanRef = useRef(activePlan);
   activePlanRef.current = activePlan;
   const [error, setError] = useState<string | null>(null);
+  const [receiptLoadError, setReceiptLoadError] = useState<{ planId: number; error: unknown } | null>(null);
   const [receiptResult, setReceiptResult] = useState<PlanResource<Receipt> | null>(null);
   const [upstreamChanged, setUpstreamChanged] = useState(false);
   const [totalsResult, setTotalsResult] = useState<PlanResource<SourceTotals> | null>(null);
@@ -304,9 +307,16 @@ export default function BuyerOrderView() {
   const receiptsLoadToken = useRef(0);
   const loadReceipts = useCallback(async (planId: number) => {
     const token = ++receiptsLoadToken.current;
-    const { data } = await createClient().rpc("buyer_source_receipts", { p_plan_id: planId });
-    if (token !== receiptsLoadToken.current || activePlanRef.current !== planId) return;
-    setReceiptResult({ planId, rows: (data ?? []) as Receipt[] });
+    const isCurrent = () => token === receiptsLoadToken.current && activePlanRef.current === planId;
+    try {
+      const { data, error: receiptError, status } = await createClient().rpc("buyer_source_receipts", { p_plan_id: planId });
+      if (!isCurrent()) return;
+      if (receiptError) throw { ...receiptError, status };
+      setReceiptResult({ planId, rows: (data ?? []) as Receipt[] });
+      setReceiptLoadError(null);
+    } catch (caught) {
+      if (isCurrent()) setReceiptLoadError({ planId, error: caught });
+    }
   }, []);
 
   useEffect(() => { void loadPlans(); }, [loadPlans]);
@@ -636,6 +646,13 @@ export default function BuyerOrderView() {
         </div>
       )}
 
+      {receiptLoadError?.planId === activePlan && activePlan != null && (
+        <section aria-label={t("buyer.receiptLoadFailed")} className="space-y-2">
+          <p className="text-sm">{t("buyer.receiptLoadFailed")}</p>
+          <QueryError error={receiptLoadError.error} onRetry={() => void loadReceipts(activePlan)} />
+        </section>
+      )}
+
       {loadingPlanId === activePlan && (
         <div role="status" className="rounded border border-dashed p-6 text-center text-sm text-muted-foreground">
           {t("buyer.loadingLines")}
@@ -709,10 +726,11 @@ export default function BuyerOrderView() {
                 }}
                 onError={setError}
               />
-              <SourceReceipts
+              <BuyerSourceReceipts
+                key={`${activePlan}/${source}`}
                 planId={activePlan!}
                 source={source}
-                receipts={receipts.filter((r) => r.source === source)}
+                receiptCount={receipts.filter((r) => r.source === source.trim().toLowerCase()).length}
                 readOnly={readOnly}
                 onUploaded={() => activePlan != null && void loadReceipts(activePlan)}
                 onError={setError}
@@ -1248,77 +1266,6 @@ type Receipt = {
   original_name: string | null;
   uploaded_at: string;
 };
-
-// One checkout per shop means one receipt per shop, uploaded when he finishes
-// that source rather than at the end of the trip.
-//
-// The receipt is what the operator reconciles the entered prices against: it
-// is evidence, checked against data, which catches a mistyped price far more
-// reliably than anyone re-reading the grid. So it belongs beside the source,
-// while he still has it open.
-function SourceReceipts({
-  planId, source, receipts, readOnly, onUploaded, onError,
-}: {
-  planId: number;
-  source: string;
-  receipts: Receipt[];
-  readOnly: boolean;
-  onUploaded: () => void;
-  onError: (message: string) => void;
-}) {
-  const { t } = useTranslation();
-  const [busy, setBusy] = useState(false);
-  const inputId = `receipt-${planId}-${source}`;
-
-  async function upload(file: File) {
-    setBusy(true);
-    const supabase = createClient();
-    // Path is prefixed per plan and source so the storage policy can scope the
-    // buyer to his own uploads without trusting the filename.
-    const safe = file.name.replace(/[^\w.\-]/g, "_");
-    const path = `plan-receipts/${planId}/${source}/${Date.now()}-${safe}`;
-    const { error: upErr } = await supabase.storage.from("lot-receipts").upload(path, file);
-    if (upErr) { setBusy(false); onError(upErr.message); return; }
-    const { error: recErr } = await supabase.rpc("buyer_record_source_receipt", {
-      p_plan_id: planId, p_source: source, p_storage_path: path, p_original_name: file.name,
-    });
-    setBusy(false);
-    if (recErr) { onError(recErr.message); return; }
-    onUploaded();
-  }
-
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      {receipts.length > 0 && (
-        <span className="text-muted-foreground">
-          {t("buyer.receiptCount", { count: String(receipts.length) })}
-        </span>
-      )}
-      {!readOnly && (
-        <>
-          <label
-            htmlFor={inputId}
-            className="flex min-h-11 cursor-pointer items-center rounded border px-3 hover:bg-accent sm:min-h-0 sm:px-2 sm:py-0.5"
-          >
-            {busy ? t("buyer.uploading") : receipts.length ? t("buyer.addReceipt") : t("buyer.uploadReceipt")}
-          </label>
-          <input
-            id={inputId}
-            type="file"
-            accept="image/*,application/pdf"
-            className="hidden"
-            disabled={busy}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-              if (file) void upload(file);
-            }}
-          />
-        </>
-      )}
-    </div>
-  );
-}
 
 const yen = (v: number | null | undefined) => "¥" + Math.round(Number(v ?? 0)).toLocaleString();
 

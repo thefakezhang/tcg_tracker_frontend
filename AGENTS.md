@@ -108,6 +108,7 @@ app/
     AddToLotPopover.tsx   # Popover that adds a browsed card to an open acquisition lot
     BalanceSheetCard.tsx  # Business-wide balance sheet card (get_balance_sheet RPC)
     BuyerOrderView.tsx    # Buyer result-entry grid, save states, paste, and plan-switch fencing
+    BuyerSourceReceipts.tsx # Plan/source receipt upload and same-object registration retry
     BuyerShell.tsx        # Minimal translated buyer shell and administrator preview wrapper
     BuyListContext.tsx    # Buy list state + CRUD operations (fetch, create, delete, add/remove entries)
     BuyListView.tsx       # Buy list card view (merges pokemon + mtg + sealed entries, list/grid with compact toggle)
