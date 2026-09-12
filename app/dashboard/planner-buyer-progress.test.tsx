@@ -6,8 +6,11 @@
 
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import en from "@/lib/i18n/en";
+import ja from "@/lib/i18n/ja";
 
 const mocks = vi.hoisted(() => ({
+  language: "en" as "en" | "ja",
   plans: [] as Array<Record<string, unknown>>,
   progress: null as Record<string, unknown> | null,
   shops: [] as Array<Record<string, unknown>>,
@@ -15,7 +18,14 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/i18n", () => ({
-  useTranslation: () => ({ t: (k: string) => k }),
+  useTranslation: () => ({
+    language: mocks.language,
+    t: (key: string, params: Record<string, string> = {}) => {
+      const dictionary = (mocks.language === "ja" ? ja : en) as Record<string, string>;
+      const value = key.startsWith("purchasePlanner.") ? dictionary[key] ?? key : key;
+      return value.replace(/\{(\w+)\}/g, (_, name) => params[name] ?? `{${name}}`);
+    },
+  }),
 }));
 vi.mock("./TripContext", () => ({ useTrips: () => ({ trips: [], activeTripId: null }) }));
 vi.mock("./use-query", async (importOriginal) => ({
@@ -61,6 +71,7 @@ import PurchasePlannerView from "./PurchasePlannerView";
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 beforeEach(() => {
+  mocks.language = "en";
   mocks.progressReads = 0;
   mocks.plans = [{
     plan_id: 1, name: "August trip", status: "ordered", trip_id: null,
@@ -83,6 +94,17 @@ beforeEach(() => {
 });
 
 describe("the operator watching the buyer", () => {
+  it("localizes progress counts and shop costs in Japanese", async () => {
+    mocks.language = "ja";
+    render(<PurchasePlannerView />);
+    expect(await screen.findByRole("region", { name: "バイヤーの進捗" })).toBeTruthy();
+    expect(screen.getByText("購入済み 3 / 未完了 1 / 入手不可 0")).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "バイヤー手数料" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "送料" })).toBeTruthy();
+    expect(screen.queryByText("Buyer progress")).toBeNull();
+    expect(screen.queryByText("His fee")).toBeNull();
+  });
+
   it("says plainly when the agent has finished, because nothing else does", async () => {
     mocks.plans = [{ ...mocks.plans[0], handed_back_at: "2026-09-08T04:00:00Z" }];
     render(<PurchasePlannerView />);

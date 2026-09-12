@@ -56,5 +56,7 @@ A shop-specific planned condition requires explicit inventory condition review a
 Editing those inputs invalidates the reviewed digest and warning acknowledgement immediately.
 A lost response preserves the inputs and offers another server review to discover any completed inventory write before another confirmation.
 The planner's selector reports the stored order status without guessing that an ordered buyer has not started.
+Buyer progress, shop costs, assignment actions and the frozen-order explanation follow the selected language.
+The authenticated phone gate checks assignment, order-confirmation and hand-back controls, including the buyer-screen link, for 44-pixel targets and checks that the hand-back page does not overflow.
 The implementation requires unapplied backend migration 000466 and the reviewed fee and receipt-privacy prerequisites.
 The legacy backend reconciliation RPC remains a compatibility path; this component exclusively uses the new atomic inventory endpoint.

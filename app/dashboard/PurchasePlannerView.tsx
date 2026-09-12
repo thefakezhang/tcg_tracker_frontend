@@ -380,7 +380,7 @@ export default function PurchasePlannerView() {
               <ShieldCheck className="size-4" />
               {/* It never sent anything. Sending is the Send button beside the
                   buying agent; this advances the operator's own workflow. */}
-              {plan.status === "ready" ? "Mark as ordered" : "Review"}
+              {t(plan.status === "ready" ? "purchasePlanner.markAsOrdered" : "purchasePlanner.reviewPlan")}
             </Button>
           )}
         </div>
@@ -452,8 +452,8 @@ export default function PurchasePlannerView() {
               // working from a list that changed - so say that instead.
               <span className="text-xs text-muted-foreground">
                 {plan.status === "ordered"
-                  ? "Ordered - lines are frozen while the buyer is shopping"
-                  : `${plan.status} - lines are frozen`}
+                  ? t("purchasePlanner.orderedFrozen")
+                  : t("purchasePlanner.linesFrozen", { status: t(`purchasePlanner.status.${plan.status}`) })}
               </span>
             )}
           </div>
@@ -712,7 +712,7 @@ function NewPlanDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpe
               <option value="">Nobody yet - assign later</option>
               {buyers.map((b) => (
                 <option key={b.email} value={b.email}>
-                  {b.email}{b.has_account ? "" : " (has not signed in yet)"}
+                  {b.email}{b.has_account ? "" : t("purchasePlanner.buyerNoAccount")}
                 </option>
               ))}
             </select>
@@ -1474,6 +1474,7 @@ function DispositionDialog({ planId, demand, open, onOpenChange, onChanged }: { 
 // fee projection uses the same rules reconciliation applies, so the total shown
 // here is the total that will land.
 function BuyerProgressStrip({ planId }: { planId: number }) {
+  const { t } = useTranslation();
   const [row, setRow] = useState<{
     purchased_lines: number; open_lines: number; unavailable_lines: number;
     cards_bought: number; card_value_jpy: number; projected_handling_jpy: number;
@@ -1532,24 +1533,24 @@ function BuyerProgressStrip({ planId }: { planId: number }) {
     row.projected_total_jpy > row.budget_amount;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-md border px-3 py-2 text-sm">
-      <span className="font-medium">Buyer progress</span>
-      <span>{row.purchased_lines} bought / {row.open_lines} open / {row.unavailable_lines} unavailable</span>
-      <span>{row.cards_bought} cards</span>
+    <div role="region" aria-label={t("purchasePlanner.buyerProgress")} className="flex min-w-0 flex-wrap items-center gap-x-6 gap-y-1 rounded-md border px-3 py-2 text-sm">
+      <span className="font-medium">{t("purchasePlanner.buyerProgress")}</span>
+      <span>{t("purchasePlanner.progressCounts", { bought: String(row.purchased_lines), open: String(row.open_lines), unavailable: String(row.unavailable_lines) })}</span>
+      <span>{t("purchasePlanner.cardsBought", { count: String(row.cards_bought) })}</span>
       <span className="text-muted-foreground">
-        cards {jpy(row.card_value_jpy)} + handling {jpy(row.projected_handling_jpy)} + line fees {jpy(row.projected_line_fee_jpy)}
+        {t("purchasePlanner.progressCosts", { cards: jpy(row.card_value_jpy), handling: jpy(row.projected_handling_jpy), fees: jpy(row.projected_line_fee_jpy) })}
       </span>
       <span className={overBudget ? "font-semibold text-destructive" : "font-semibold"}>
-        projected {jpy(row.projected_total_jpy)}
+        {t("purchasePlanner.projectedCost", { amount: jpy(row.projected_total_jpy) })}
         {row.budget_amount != null && row.budget_currency === "JPY" && (
           <span className="ml-2 font-normal text-muted-foreground">
-            of {jpy(row.budget_amount)} budget
+            {t("purchasePlanner.ofBudget", { amount: jpy(row.budget_amount) })}
           </span>
         )}
       </span>
       {overBudget && (
         <span className="rounded bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive">
-          over budget by {jpy(row.projected_total_jpy - (row.budget_amount ?? 0))}
+          {t("purchasePlanner.overBudgetBy", { amount: jpy(row.projected_total_jpy - (row.budget_amount ?? 0)) })}
         </span>
       )}
 
@@ -1561,14 +1562,14 @@ function BuyerProgressStrip({ planId }: { planId: number }) {
         <table className="w-full min-w-[36rem] text-xs tabular-nums">
           <thead className="text-muted-foreground">
             <tr className="text-left">
-              <th className="py-1 pr-3 font-normal">Shop</th>
-              <th className="py-1 pr-3 font-normal">Worked</th>
-              <th className="py-1 pr-3 font-normal">Bought</th>
-              <th className="py-1 pr-3 text-right font-normal">Cards</th>
-              <th className="py-1 pr-3 text-right font-normal">Shipping</th>
-              <th className="py-1 pr-3 text-right font-normal">Other</th>
-              <th className="py-1 pr-3 text-right font-normal">His fee</th>
-              <th className="py-1 text-right font-normal">Spent</th>
+              <th className="py-1 pr-3 font-normal">{t("purchasePlanner.progressShop")}</th>
+              <th className="py-1 pr-3 font-normal">{t("purchasePlanner.progressWorked")}</th>
+              <th className="py-1 pr-3 font-normal">{t("purchasePlanner.progressBought")}</th>
+              <th className="py-1 pr-3 text-right font-normal">{t("purchasePlanner.progressCards")}</th>
+              <th className="py-1 pr-3 text-right font-normal">{t("purchasePlanner.progressShipping")}</th>
+              <th className="py-1 pr-3 text-right font-normal">{t("purchasePlanner.progressOther")}</th>
+              <th className="py-1 pr-3 text-right font-normal">{t("purchasePlanner.progressFee")}</th>
+              <th className="py-1 text-right font-normal">{t("purchasePlanner.progressSpent")}</th>
             </tr>
           </thead>
           <tbody>
@@ -1619,6 +1620,7 @@ type AssignableBuyer = { email: string; has_account: boolean; last_sign_in: stri
 function PlanBuyerControl({
   plan, onChanged, canReassign,
 }: { plan: PurchasePlan; onChanged: () => void; canReassign: boolean }) {
+  const { t, language } = useTranslation();
   const [buyers, setBuyers] = useState<AssignableBuyer[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1666,18 +1668,19 @@ function PlanBuyerControl({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs">
-      <span className="text-muted-foreground">Buying agent</span>
+    <div role="group" aria-label={t("purchasePlanner.buyingAgent")} className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
+      <label htmlFor={`plan-buyer-${plan.plan_id}`} className="text-muted-foreground">{t("purchasePlanner.buyingAgent")}</label>
       <select
-        className={selectClass}
+        id={`plan-buyer-${plan.plan_id}`}
+        className={`${selectClass} min-h-11 min-w-0`}
         value={plan.assigned_buyer_email ?? ""}
         disabled={saving || !canReassign}
         onChange={(e) => void assign(e.target.value)}
       >
-        <option value="">Nobody yet</option>
+        <option value="">{t("purchasePlanner.nobodyYet")}</option>
         {buyers.map((b) => (
           <option key={b.email} value={b.email}>
-            {b.email}{b.has_account ? "" : " (has not signed in yet)"}
+            {b.email}{b.has_account ? "" : t("purchasePlanner.buyerNoAccount")}
           </option>
         ))}
       </select>
@@ -1688,13 +1691,13 @@ function PlanBuyerControl({
             className="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-600 dark:text-emerald-400"
             title={new Date(plan.sent_at!).toLocaleString()}
           >
-            Sent {new Date(plan.sent_at!).toLocaleDateString()}
+            {t("purchasePlanner.sentOn", { date: new Date(plan.sent_at!).toLocaleDateString(language === "ja" ? "ja-JP" : "en-US") })}
           </span>
           {/* Recall refuses server-side once he has recorded anything, because
               by then he is standing in a shop working from the list. The
               button stays visible so the refusal can say that. */}
-          <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => void recall()}>
-            Recall
+          <Button type="button" size="sm" variant="outline" className="min-h-11 min-w-11" disabled={saving} onClick={() => void recall()}>
+            {t("purchasePlanner.recallPlan")}
           </Button>
           {/* The screen he is actually looking at, from here. Not having this
               is why a Google-translated page with an unreadable dropdown went
@@ -1704,9 +1707,9 @@ function PlanBuyerControl({
             href="/dashboard/buyer-view"
             target="_blank"
             rel="noreferrer"
-            className="rounded border px-2 py-0.5 underline-offset-2 hover:bg-accent hover:underline"
+            className="inline-flex min-h-11 min-w-11 items-center rounded border px-3 py-2 underline-offset-2 hover:bg-accent hover:underline"
           >
-            See his screen
+            {t("purchasePlanner.seeBuyerScreen")}
           </a>
         </>
       ) : (
@@ -1714,15 +1717,16 @@ function PlanBuyerControl({
           <Button
             type="button"
             size="sm"
+            className="min-h-11 min-w-11"
             disabled={saving || !plan.assigned_buyer_email}
             onClick={() => void send()}
           >
-            Send to buyer
+            {t("purchasePlanner.sendToBuyer")}
           </Button>
           <span className="text-muted-foreground">
             {plan.assigned_buyer_email
-              ? "Not on his screen until you send it"
-              : "Choose a buying agent first"}
+              ? t("purchasePlanner.notSentHelp")
+              : t("purchasePlanner.chooseBuyerFirst")}
           </span>
         </>
       )}

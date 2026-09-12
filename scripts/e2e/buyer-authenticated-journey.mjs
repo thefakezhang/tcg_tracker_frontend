@@ -115,6 +115,19 @@ function translations(language) {
 }
 let plan;
 report.scenarios = [];
+async function checkPhoneActions(container, stageName) {
+  if (plan.viewport !== "phone") return;
+  const targets = [];
+  for (const control of await container.locator("button,a,select").all()) {
+    if (!(await control.isVisible())) continue;
+    const box = await control.boundingBox();
+    assert(box && box.height >= 44 && box.width >= 44, `${stageName}: phone action smaller than 44px`);
+    targets.push({ tag: await control.evaluate((element) => element.tagName), width: box.width, height: box.height });
+  }
+  assert(targets.length > 0, `${stageName}: no visible actions were checked`);
+  report.phoneActionTargets ??= [];
+  report.phoneActionTargets.push({ label: `${plan.language}-${plan.viewport}`, stage: stageName, targets });
+}
 try {
  for (plan of fixture.browserPlans) {
   // Each language/viewport case owns its native picker and download state.
@@ -130,8 +143,9 @@ try {
   await operator.page.goto(`${app.origin}/dashboard?view=planner`, { waitUntil: "domcontentloaded" });
   await operator.page.locator(`select:has(option[value="${plan.planId}"])`).selectOption(String(plan.planId));
   await operator.page.locator(`select:has(option[value="${fixture.users.buyerA.email}"])`).selectOption(fixture.users.buyerA.email);
-  const send = operator.page.getByRole("button", { name: "Send to buyer", exact: true });
+  const send = operator.page.getByRole("button", { name: t("purchasePlanner.sendToBuyer"), exact: true });
   await send.waitFor();
+  await checkPhoneActions(operator.page.getByRole("group", { name: t("purchasePlanner.buyingAgent"), exact: true }), "assignment");
   assert(!(await rpc(buyer.session, "buyer_assigned_plans")).some((p) => p.plan_id === plan.planId), "assignment silently sent the plan");
   const sent = await postResponse(operator.page, "send_purchase_plan", () => send.click());
   assert.equal(sent.status(), 200);
@@ -139,11 +153,12 @@ try {
   assert(!(await rpc(other.session, "buyer_assigned_plans")).some((p) => p.plan_id === plan.planId));
   stage("operator assignment and deliberate send preserve buyer isolation");
   const validationResponse = await postResponse(operator.page, "validate_purchase_plan",
-    () => operator.page.getByRole("button", { name: "Mark as ordered", exact: true }).click());
+    () => operator.page.getByRole("button", { name: t("purchasePlanner.markAsOrdered"), exact: true }).click());
   const validation = await validationResponse.json();
   assert.equal(validation.valid, true, "synthetic plan has unresolved order blockers");
   const review = operator.page.getByRole("dialog");
   if (validation.warnings.length) await review.getByRole("checkbox").check();
+  await checkPhoneActions(review, "order confirmation");
   const orderedResponse = await postResponse(operator.page, "mark_purchase_plan_ordered",
     () => review.getByRole("button", { name: t("purchasePlanner.confirmOrdered"), exact: true }).click());
   assert.equal(orderedResponse.status(), 200);
@@ -241,6 +256,20 @@ try {
   await operator.page.reload({ waitUntil: "domcontentloaded" });
   await operator.page.locator(`select:has(option[value="${plan.planId}"])`).selectOption(String(plan.planId));
   await operator.page.getByText(t("reconciliation.handedBack"), { exact: true }).waitFor();
+  const progress = operator.page.getByRole("region", { name: t("purchasePlanner.buyerProgress"), exact: true });
+  await progress.waitFor();
+  for (const key of ["progressShop", "progressWorked", "progressBought", "progressCards", "progressShipping", "progressOther", "progressFee", "progressSpent"]) {
+    await progress.getByRole("columnheader", { name: t(`purchasePlanner.${key}`), exact: true }).waitFor();
+  }
+  const buyerControls = operator.page.getByRole("group", { name: t("purchasePlanner.buyingAgent"), exact: true });
+  await buyerControls.getByRole("link", { name: t("purchasePlanner.seeBuyerScreen"), exact: true }).waitFor();
+  await buyerControls.getByRole("button", { name: t("purchasePlanner.recallPlan"), exact: true }).waitFor();
+  await operator.page.getByText(t("purchasePlanner.orderedFrozen"), { exact: true }).waitFor();
+  await checkPhoneActions(buyerControls, "hand-back actions");
+  if (plan.viewport === "phone") {
+    const pageWidth = await operator.page.evaluate(() => document.documentElement.scrollWidth);
+    assert(pageWidth <= viewport.width + 1, "operator hand-back overflows the phone page");
+  }
   await operator.page.screenshot({ path: `${artifactRoot}/${label}-operator-hand-back.png`, fullPage: true });
   stage("operator sees the completed buyer hand-back");
   assert.equal(report.externalRequests.length, 0);
