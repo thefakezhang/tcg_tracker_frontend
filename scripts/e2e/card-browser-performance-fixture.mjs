@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
+import { classifyConsoleEvidence } from "./card-browser-performance-console-evidence.mjs";
+
 const dependencyRoot = process.env.TCG_FRONTEND_DEPENDENCY_ROOT;
 const require = dependencyRoot
   ? createRequire(`${dependencyRoot}/package.json`)
@@ -728,10 +730,23 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
     : Math.max(...enrichmentRecords.map((record) => record.completedAt - startedAt));
   const summaryMS = Math.min(...summaryRecords.map((record) => record.completedAt - startedAt));
 
-  assert(unexpectedRequests.length === 0, `${matrix.name} ${journey} unexpected requests: ${JSON.stringify(unexpectedRequests)}`);
-  assert(externalRequests.length === 0, `${matrix.name} ${journey} external requests: ${JSON.stringify(externalRequests)}`);
-  assert(consoleErrors.length === 0, `${matrix.name} ${journey} console errors: ${consoleErrors.join(" | ")}`);
-  assert(pageErrors.length === 0, `${matrix.name} ${journey} page errors: ${pageErrors.join(" | ")}`);
+  const consoleEvidence = classifyConsoleEvidence({ forceUnavailable, consoleErrors, records: sampleRecords, responseStatuses });
+  try {
+    assert(
+      consoleEvidence.hasExactUnavailableEvidence === forceUnavailable,
+      `${matrix.name} ${journey} forced unavailable evidence mismatch: ${JSON.stringify(consoleEvidence)}`,
+    );
+    assert(unexpectedRequests.length === 0, `${matrix.name} ${journey} unexpected requests: ${JSON.stringify(unexpectedRequests)}`);
+    assert(externalRequests.length === 0, `${matrix.name} ${journey} external requests: ${JSON.stringify(externalRequests)}`);
+    assert(
+      consoleEvidence.unexpectedConsoleErrors.length === 0,
+      `${matrix.name} ${journey} unexpected console errors: ${consoleEvidence.unexpectedConsoleErrors.join(" | ")}`,
+    );
+    assert(pageErrors.length === 0, `${matrix.name} ${journey} page errors: ${pageErrors.join(" | ")}`);
+  } catch (error) {
+    await captureFailure(error, "terminal-invariants");
+    throw error;
+  }
 
   const root = page.getByTestId("fixture-production-browser");
   const geometry = await assertNoOverflow(page, root, `${matrix.name} ${journey}`);
@@ -769,6 +784,14 @@ async function runSample(browser, matrix, journey, sampleIndex, forceUnavailable
     detailTransition,
     pageErrors,
     consoleErrors,
+    expectedConsoleErrors: consoleEvidence.expectedConsoleErrors,
+    unexpectedConsoleErrors: consoleEvidence.unexpectedConsoleErrors,
+    unavailableConsoleEvidence: {
+      hasExactEvidence: consoleEvidence.hasExactUnavailableEvidence,
+      recordCount: consoleEvidence.unavailableRecordCount,
+      responseCount: consoleEvidence.unavailableResponseCount,
+      messageCount: consoleEvidence.expectedMessageCount,
+    },
     unexpectedRequests,
     externalRequests,
   };
