@@ -667,6 +667,20 @@ Stale line-reader responses carry a request token and cannot replace the newly s
 - Empty assignment and empty-plan states explain what the operator needs to do in both supported languages.
 - Architecture, goals, non-goals, and browser evidence are documented in `docs/buyer_result_grid.md`.
 
+### Scan review (scanner batch intake)
+
+Operator surface where a scanned card capture becomes a decided card.
+Sidebar group **Trips**, after Inventory (sentinel `-19`, slug `scan-review`).
+Full architecture in `docs/scan_review.md`; backend design is `docs/scanner_review_screen.md` in `tcg_tracker`.
+
+- Reads staged proposals from `scanner_batches` / `scanner_batch_captures`.
+Writes **only** through `decide_scanner_batch_capture` and `clear_scanner_batch_capture_decision`.
+The RPC derives confirmed-vs-corrected from the stored proposal, so a direct column write would let a client claim it confirmed something it overrode and would destroy the drift signal.
+- Quantity is a batch-level constraint. `countClaims()` re-derives claims from the captures after every decision instead of decrementing, so an undo restores the count exactly, and `remainingFor()` returns `null` (not `0`) for a listing group whose availability we have not been told.
+- Capture images are in the **private** `inventory-card-media` bucket and need signed URLs, minted once per batch via `createSignedUrls`. Not `/api/proxy-image`, which is restricted to public hosts on purpose.
+- Only the `high` band gets a one-click confirm. Everywhere else the drawer's action stays disabled until a card is chosen, which is deliberate: an easy confirm is the failure mode this screen exists to prevent.
+- `CardCandidatePicker.tsx` is a pipeline-agnostic presentational component (image + ranked candidates + search -> chosen card). If it ever needs to know which pipeline it serves, it was shared too deeply and should be split.
+
 ### Sealed Products (Pokémon)
 
 The **Sealed** tab is a parallel path to the card browser (`Game` union includes `"pokemon_sealed"`),
