@@ -321,14 +321,21 @@ try {
   await operator.page.getByRole("dialog").getByRole("button", { name: t("common.close"), exact: true }).last().click();
   const expired = fixture.users.operator;
   assert(Number.isInteger(expired.accessTokenExpiresAt));
-  const expiryDeadline = (expired.accessTokenExpiresAt + 3) * 1000;
-  assert(expiryDeadline - Date.now() <= 125_000, "unexpected disposable token lifetime");
+  // PostgREST allows 30 seconds of clock skew after exp. Cross that actual
+  // validation boundary too: https://postgrest.org/en/stable/references/auth.html
+  const expiryDeadline = (expired.accessTokenExpiresAt + 35) * 1000;
+  assert(expiryDeadline - Date.now() <= 157_000, "unexpected disposable token lifetime");
   if (Date.now() < expiryDeadline) stage(`${label}: waiting for the retained token's recorded expiry`);
   while (Date.now() < expiryDeadline) {
     await new Promise((resolve) => setTimeout(resolve, Math.min(1000, expiryDeadline - Date.now())));
   }
-  assert(Date.now() / 1000 > expired.accessTokenExpiresAt + 2, "the retained GoTrue token has not expired yet");
+  assert(Date.now() / 1000 > expired.accessTokenExpiresAt + 30, "the retained token is still within PostgREST clock-skew tolerance");
   const reviewUrl = `${api.origin}/rest/v1/rpc/review_purchase_plan_inventory`;
+  const expiredProbe = await fetch(reviewUrl, { method: "POST", redirect: "error", signal: AbortSignal.timeout(15_000),
+    headers: { apikey: fixture.anonKey, authorization: `Bearer ${expired.expiredAccessToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ p_plan_id: plan.planId }) });
+  assert.equal(expiredProbe.status, 401, "real server still accepts retained token");
+  assert.match((await expiredProbe.json()).message, /JWT.*expired|expired.*JWT/i);
   let expiredRequests = 0;
   operator.expectedConsoleErrors.push({ name: `${label}: real expired-token rejection`, url: reviewUrl, text: "401" });
   const sendExpiredToken = async (route) => {
@@ -352,6 +359,7 @@ try {
   await operator.page.screenshot({ path: `${artifactRoot}/${label}-operator-expired-session.png`, fullPage: true });
   await operator.page.unroute(reviewUrl, sendExpiredToken);
   report.resilience.at(-1).expiredTokenRejected = true;
+  report.resilience.at(-1).serverExpiryConfirmed = true;
   report.resilience.at(-1).expiredRequests = expiredRequests;
   report.scenarios.push({ label, inventoryQuantity: 3, lots: result.lots, passed: true });
   await Promise.all([operator.context.close(), buyer.context.close(), other.context.close()]);

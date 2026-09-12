@@ -31,7 +31,7 @@ It asserts the retained cost facts and inventory quantities, reloads the result,
 The positive fixture is under verification and has not yet passed its hosted runtime gate.
 The resilience cases let the real finalization commit and then discard only its response, requiring the screen to retain inputs and discover the same inventory through review without a second write.
 The disposable project uses 120-second tokens and keeps the first GoTrue-issued operator token only in its private fixture file.
-After that token has actually expired, one review request per scenario sends it to the real PostgREST endpoint and verifies its 401 response and the localized sign-in prompt.
+After that token has expired beyond PostgREST's documented 30-second clock-skew tolerance, a direct read probe confirms rejection before one browser review request per scenario verifies the real 401 response and localized sign-in prompt.
 Only the exact injected request's expected console error is classified separately; unrelated browser errors still fail the run.
 
 The scripts require `GITHUB_ACTIONS=true`, `RUNNER_ENVIRONMENT=github-hosted`, a matching `TCG_DISPOSABLE_FIXTURE_RUN_ID`, and private fixture input.
