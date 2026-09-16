@@ -29,6 +29,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { AddToLotPopover } from "./AddToLotPopover";
+import { MtgPrintingBadges } from "./MtgPrintingBadges";
 import { useGame } from "./GameContext";
 import { useCurrency } from "./CurrencyContext";
 import { useBuyList } from "./BuyListContext";
@@ -662,6 +663,7 @@ export default function CardDetailModal({
                   <Layers className="size-3" />
                   {def.set_code}
                 </Badge>
+                {activeGame === "mtg" && <MtgPrintingBadges card={def} />}
                 {def.rarity && (
                   <Badge variant="secondary" className="h-auto px-1.5 py-px">
                     <Sparkles className="size-3" />

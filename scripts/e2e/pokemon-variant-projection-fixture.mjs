@@ -270,6 +270,18 @@ async function capture(page, name) {
   return path;
 }
 
+async function assertMtgPrintingBadges(root, viewportWidth, label) {
+  const language = root.getByTestId("mtg-language-badge");
+  assert(await language.count() === 1, `${label} shows ${await language.count()} language badges, want 1`);
+  assert(await language.isVisible(), `${label} language badge is hidden`);
+  assert((await language.textContent()) === "EN", `${label} language badge reads ${await language.textContent()}`);
+  await assertFits(language, viewportWidth, `${label} language badge`);
+  const foil = root.getByTestId("mtg-foil-badge");
+  assert(await foil.count() === 1 && await foil.isVisible(), `${label} foil badge missing`);
+  assert((await foil.textContent()) === mtgCard.foil_type, `${label} foil badge reads ${await foil.textContent()}`);
+  await assertFits(foil, viewportWidth, `${label} foil badge`);
+}
+
 function cardTile(root, name) {
   return root
     .getByText(name, { exact: true })
@@ -489,9 +501,19 @@ async function runJourney(browser, name, viewport, language) {
   await page.getByTestId("fixture-game-mtg").click();
   const mtgRoot = page.getByTestId("fixture-production-browser");
   await mtgRoot.getByText(mtgCard.regional_name, { exact: true }).first().waitFor({ state: "visible" });
+  // An MTG row is one (language, finish) variant of a printing, so the name
+  // alone does not say which deal it is. The badges must be visible wherever
+  // the card is identified, at every width.
+  let mtgListScreenshot = null;
+  if (viewport.width >= 640) {
+    const mtgRow = mtgRoot.getByText(mtgCard.regional_name, { exact: true }).first().locator("xpath=ancestor::tr[1]");
+    await assertMtgPrintingBadges(mtgRow, viewport.width, `${name} Browser MTG list row`);
+    mtgListScreenshot = await capture(page, `${name}-browser-mtg-list`);
+  }
   await mtgRoot.getByRole("tab", { name: labels.grid, exact: true }).click();
   const mtgTile = cardTile(mtgRoot, mtgCard.regional_name);
   await mtgTile.waitFor({ state: "visible" });
+  await assertMtgPrintingBadges(mtgTile, viewport.width, `${name} Browser MTG tile`);
   assert(await mtgTile.getByText(mtgLabel, { exact: true }).count() === 1, `${name} Browser changed MTG misc label`);
   await assertFits(mtgTile.getByText(mtgLabel, { exact: true }), viewport.width, `${name} Browser MTG label`);
   if (viewport.width < 640) {
@@ -505,7 +527,9 @@ async function runJourney(browser, name, viewport, language) {
   dialog = page.getByRole("dialog");
   await dialog.getByText(mtgLabel, { exact: true }).waitFor({ state: "visible" });
   assert(await dialog.getByRole("heading", { name: mtgCard.regional_name, exact: true }).isVisible(), `${name} MTG detail title missing`);
+  await assertMtgPrintingBadges(dialog, viewport.width, `${name} Browser MTG detail`);
   await assertNoHorizontalOverflow(page, dialog, `${name} Browser MTG detail`);
+  const mtgDetailScreenshot = await capture(page, `${name}-browser-mtg-detail`);
   await dialog.getByRole("button", { name: "Close" }).click();
   await dialog.waitFor({ state: "hidden" });
 
@@ -578,6 +602,8 @@ async function runJourney(browser, name, viewport, language) {
       oldDetail: oldDetailScreenshot,
       residualDetail: residualDetailScreenshot,
       mtg: mtgScreenshot,
+      mtgList: mtgListScreenshot,
+      mtgDetail: mtgDetailScreenshot,
       buylist: buylistScreenshot,
       index: indexScreenshot,
     },

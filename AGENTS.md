@@ -152,6 +152,7 @@ app/
     MatchReviewView.tsx   # Match review queue for pending external-identifier candidates
     MtgAliasesTab.tsx     # MTG text-variance alias manager (mtg_card_aliases)
     MtgCardIndex.tsx      # MTG catalog tab of the Card Index
+    MtgPrintingBadges.tsx # EN/JP language and foil badges beside an MTG card's name (table, tile, detail)
     OwnedCountLine.tsx    # One-line owned/incoming signal on browse tiles and rows
     PokemonCardIndex.tsx  # Pokemon catalog tab of the Card Index (create/edit/merge/link attach/curator flags)
     PokemonCuratorFlags.tsx # Shared JP-exclusive / Cute flag switches, row chips, and RPC writer (Card Detail Modal + Card Index)
@@ -687,6 +688,9 @@ own data hook and modal, because sealed products differ structurally from cards:
   entries. `addToBuylist` takes an optional `{ sealedCondition, variantEdition }` for sealed inserts.
 - The Sealed browser has parity with the card browser for the shared inventory signal: the same `Available only` toggle, landed cost and consigned counts on rows and tiles, phone-height inputs, and the phone card-grid default.
 `createMtgColumns` / `createSealedColumns` defer their secondary columns behind breakpoints like `createColumns` does (`columns-responsive.test.ts` pins all three), and `createBuylistColumns` drops the columns buy-list rows can never fill.
+- An MTG card row is one (language, finish) variant of a printing, so English and Japanese copies of one printing are separate rows with separate deals.
+`MtgPrintingBadges` shows the language (`EN`/`JP`) and, for foils, the finish next to the name in the MTG table, the grid tile, and the detail header, because the Language and Foil Type columns hide below `xl` and `lg`.
+The catalog stores `jp`, not the UI locale `ja`; `mtgLanguageLabel` is the one place that maps it, and the Language column uses it too.
 - The Sealed browser multi-select keys every row by `product_id + sealed_condition + variant_edition`, works in list and grid layouts without opening the detail dialog, and clears when a page, page size, filter, or sort changes.
 `AddToPlanAction` sends bounded per-variant quantities and ceilings to `add_sealed_to_purchase_plan`, keeps partial failures visible, and retries only unresolved exact variants.
 - The Purchase Planner reads exact sealed candidates from `pokemon_sealed_purchase_candidate_listings_v` and writes condition and edition for both selected and manually entered lines.

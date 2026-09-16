@@ -33,6 +33,7 @@ import { RefreshPricesAction } from "./RefreshPricesAction";
 import { RefreshInFlightStrip } from "./RefreshInFlightStrip";
 import { useLanguage } from "./LanguageContext";
 import { createColumns, createMtgColumns, createSelectColumn, PriceCell } from "./columns";
+import { MtgPrintingBadges } from "./MtgPrintingBadges";
 import { DataTable } from "./data-table";
 import CardDetailModal from "./CardDetailModal";
 import { Badge } from "@/components/ui/badge";
@@ -855,6 +856,7 @@ export default function CardBrowser() {
                 <CardHeader className="pt-1">
                   <CardAction>
                     <div className="flex flex-col items-end gap-1">
+                      {activeGame === "mtg" && <MtgPrintingBadges card={row.card} />}
                       {compactIdentity && (
                         <Badge variant="secondary" className="h-auto px-1.5 py-px">
                           <Hash className="size-3" />

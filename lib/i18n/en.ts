@@ -257,6 +257,8 @@ const en = {
   "column.language": "Language",
   "foil.foil": "Foil",
   "foil.nonFoil": "Non-foil",
+  "cardLanguage.en": "English",
+  "cardLanguage.jp": "Japanese",
   "modal.set": "Set Code",
   "modal.tabNonPsa": "Raw",
   "modal.tabPsa": "PSA",
