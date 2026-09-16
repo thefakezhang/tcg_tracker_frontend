@@ -312,6 +312,73 @@ describe("CardBrowser surfaces", () => {
     expect(screen.getByText("Showcase,etched")).toBeTruthy();
   });
 
+  // An English and a Japanese copy of one printing are two rows with the same
+  // name, set and number. The Language column hides below xl and the grid tile
+  // never had one, so the badge is what tells the two deals apart.
+  it.each([
+    { viewport: "desktop", width: 1440, mobile: false },
+    { viewport: "phone", width: 390, mobile: true },
+  ] as const)("tells EN and JP copies of one MTG printing apart on $viewport", async ({ width, mobile }) => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: mobile } as MediaQueryList);
+    mocks.activeGame = "mtg";
+    const printing = { regional_name: "Swords to Plowshares", set_code: "J13", card_number: "1", misc_info: null, image_url: null, foil_type: "STANDARD" };
+    mocks.useCardData.mockReturnValue({
+      ...mocks.useCardData(),
+      data: [
+        { key: "11", card: { ...printing, card_id: "11", language: "en", is_foil: true }, prices: { highestBuy: null, lowestSell: null }, roi: null },
+        { key: "12", card: { ...printing, card_id: "12", language: "jp", is_foil: false }, prices: { highestBuy: null, lowestSell: null }, roi: null },
+      ],
+    });
+
+    render(<CardBrowser />);
+
+    await waitFor(() => expect(screen.getByTestId("browse-table").getAttribute("data-view-mode")).toBe(mobile ? "grid" : "list"));
+    const languages = screen.getAllByTestId("mtg-language-badge");
+    expect(languages.map((badge) => badge.textContent)).toEqual(["EN", "JP"]);
+    expect(languages.map((badge) => badge.getAttribute("aria-label"))).toEqual(["cardLanguage.en", "cardLanguage.jp"]);
+    // Only the foil copy carries a finish badge; nonfoil is the default reading.
+    expect(screen.getAllByTestId("mtg-foil-badge").map((badge) => badge.textContent)).toEqual(["foil.foil"]);
+  });
+
+  it("names a special MTG foil treatment instead of a bare foil badge", async () => {
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: false } as MediaQueryList);
+    mocks.activeGame = "mtg";
+    mocks.useCardData.mockReturnValue({
+      ...mocks.useCardData(),
+      data: [{
+        key: "13",
+        card: { card_id: "13", regional_name: "Card", set_code: "WHO", card_number: "1", misc_info: null, image_url: null, language: "en", is_foil: true, foil_type: "サージ" },
+        prices: { highestBuy: null, lowestSell: null },
+        roi: null,
+      }],
+    });
+
+    render(<CardBrowser />);
+
+    expect((await screen.findByTestId("mtg-foil-badge")).textContent).toBe("サージ");
+  });
+
+  it("does not badge Pokemon cards with an MTG language", async () => {
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
+    mocks.useCardData.mockReturnValue({
+      ...mocks.useCardData(),
+      data: [{
+        key: "14:0",
+        card: { card_id: "14", regional_name: "Card", set_code: "SV-P", card_number: "1", misc_info: null, image_url: null, language: "jp" },
+        psaGrade: 0,
+        prices: { highestBuy: null, lowestSell: null },
+        roi: null,
+        signal: null,
+      }],
+    });
+
+    render(<CardBrowser />);
+
+    await screen.findByText("Card");
+    expect(screen.queryByTestId("mtg-language-badge")).toBeNull();
+  });
+
   it("calls out Collectr-only raw estimates on phones", async () => {
     vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
     mocks.useCardData.mockReturnValue({
