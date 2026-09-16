@@ -90,6 +90,34 @@ export const LISTINGS_TABLE_MAP: Record<Game, string> = {
   pokemon_sealed: "pokemon_sealed_market_listings",
 };
 
+// Columns read from the per-game market_listings tables.
+//
+// available_quantity exists ONLY on pokemon_market_listings. Migration 000408
+// added it there for the purchase planner, to carry the stock counts JP shops
+// publish (shinsoku "在庫数 3点", big_tcg, cardkingdom, hareruya2). Neither
+// mtg_market_listings nor pokemon_sealed_market_listings has those sources, or
+// the column.
+//
+// PostgREST rejects the WHOLE query when a selected column is missing
+// ("column mtg_market_listings.available_quantity does not exist"), so asking
+// for it unconditionally returned zero listings for every MTG card rather than
+// just a null quantity.
+const LISTING_COLS_COMMON =
+  "card_id, price_type, price_kind, price, currency, psa_grade, condition, location_id, listing_url, last_updated";
+
+const LISTING_HAS_AVAILABLE_QUANTITY: Record<Game, boolean> = {
+  pokemon: true,
+  mtg: false,
+  pokemon_sealed: false,
+};
+
+export function listingCols(game: Game): string {
+  const quantity = LISTING_HAS_AVAILABLE_QUANTITY[game]
+    ? ", available_quantity"
+    : "";
+  return `${LISTING_COLS_COMMON}${quantity}, currencies(symbol)`;
+}
+
 export interface CardDefinition {
   card_id: string;
   card_uid?: string | null; // durable identity (H3); sealed aliases product_uid here

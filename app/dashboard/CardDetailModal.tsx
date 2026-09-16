@@ -56,6 +56,7 @@ import {
   type MarketListing,
   type LocationInfo,
   LISTINGS_TABLE_MAP,
+  listingCols,
   fetchRateMap,
   fetchLocationMap,
   refreshLocationMap,
@@ -341,9 +342,7 @@ export default function CardDetailModal({
         await Promise.all([
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
-            .select(
-              "card_id, price_type, price_kind, price, currency, psa_grade, condition, location_id, listing_url, last_updated, available_quantity, currencies(symbol)"
-            )
+            .select(listingCols(activeGame))
             .eq("card_id", card!.card.card_id),
           fetchRateMap(supabase),
           fetchLocationMap(supabase),
