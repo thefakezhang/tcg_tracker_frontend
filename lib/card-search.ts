@@ -108,18 +108,28 @@ export function identifierOrParts(
   return idParts;
 }
 
+//
+// tokenFilters adds disjuncts per token beyond the text columns. A Pokemon
+// card-definition search passes pokemonVariantSearchFilters, so a token such as
+// "1ED" also matches the typed edition once the backend's Phase 3 moves it out
+// of misc_info. Only pass it for a table that has those columns: PostgREST
+// rejects the whole query when a filter names a missing column.
 export function smartSearchFilters(
   term: string,
   textCols: string[],
   uidCol: string,
   idCol: string,
   extIds: number[],
+  tokenFilters?: (token: string) => string[],
 ): string[] {
   const t = term.trim();
   if (!t) return [];
   const idParts = identifierOrParts(t, uidCol, idCol, extIds);
   if (idParts.length) return [idParts.join(",")];
-  return tokenizeSearchTerm(t).map(
-    (token) => textCols.map((col) => `${col}.ilike.%${token}%`).join(","),
+  return tokenizeSearchTerm(t).map((token) =>
+    [
+      ...textCols.map((col) => `${col}.ilike.%${token}%`),
+      ...(tokenFilters?.(token) ?? []),
+    ].join(","),
   );
 }

@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAllByIds } from "@/lib/supabase/select-all";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
-import { useDebouncedValue, fetchLocationMap, fetchRateMap, fetchConditionsCache } from "./use-card-data";
+import { useDebouncedValue, fetchLocationMap, fetchRateMap, fetchConditionsCache, viewVariantLabel, POKEMON_VARIANT_COLS } from "./use-card-data";
+import { pokemonVariantLabel, pokemonVariantSearchFilters, type PokemonVariantProjection } from "@/lib/pokemon-variant";
 import { ListingTable, type DetailListing } from "./CardDetailModal";
 import { formatUsdWhole, toUsd } from "@/lib/money";
 import { Input } from "@/components/ui/input";
@@ -109,6 +110,8 @@ interface PurchaseRow {
   set_code: string;
   card_number: string | null;
   misc_info: string | null;
+  // Composed from the typed Pokemon axes by sales_ledger_v; see viewVariantLabel.
+  variant_label: string | null;
   sold_at: string;
   quantity: number;
   gross_usd: number;
@@ -117,7 +120,8 @@ interface PurchaseRow {
 function purchaseLabel(p: PurchaseRow): string {
   const name = p.english_name || p.regional_name;
   const set = p.set_code && p.set_code !== "UNKNOWN" ? ` · ${p.set_code}${p.card_number ? ` ${p.card_number}` : ""}` : "";
-  return `${name}${set}`;
+  const variant = viewVariantLabel(p);
+  return `${name}${set}${variant ? ` (${variant})` : ""}`;
 }
 
 const GAMES = ["pokemon_sealed", "pokemon", "mtg"] as const;
@@ -214,12 +218,21 @@ async function searchCatalog(
   }
 
   // Pokemon singles.
+  // A word also matches the typed edition and finish, so "1ED" or "ミラー" keep
+  // finding cards once the backend's Phase 3 moves them out of misc_info.
   let q = supabase
     .from("pokemon_card_definitions")
-    .select("card_id, regional_name, english_name, set_code, card_number, misc_info");
+    .select(`card_id, regional_name, english_name, set_code, card_number, ${POKEMON_VARIANT_COLS}`);
   for (const t of tokens) {
     q = q.or(
-      `regional_name.ilike.%${t}%,english_name.ilike.%${t}%,set_code.ilike.%${t}%,card_number.ilike.%${t}%,misc_info.ilike.%${t}%`,
+      [
+        `regional_name.ilike.%${t}%`,
+        `english_name.ilike.%${t}%`,
+        `set_code.ilike.%${t}%`,
+        `card_number.ilike.%${t}%`,
+        `misc_info.ilike.%${t}%`,
+        ...pokemonVariantSearchFilters(t),
+      ].join(","),
     );
   }
   const { data } = await q.limit(8);
@@ -230,14 +243,19 @@ async function searchCatalog(
       english_name: string | null;
       set_code: string;
       card_number: string;
-      misc_info?: string | null;
-    }) => ({
+    } & PokemonVariantProjection) => ({
       id: r.card_id,
-      label: `${r.english_name || r.regional_name} · ${r.set_code} ${r.card_number}${
-        r.misc_info && r.misc_info !== "UNKNOWN" ? ` (${r.misc_info})` : ""
-      }`,
+      label: `${r.english_name || r.regional_name}${pokemonSuffix(r)}`,
     }),
   );
+}
+
+// The label comes from the typed Pokemon projection (POKEMON_VARIANT_COLS), so
+// a card reads the same before and after the backend's Phase 3 rewrites
+// misc_info into the residue.
+function pokemonSuffix(r: { set_code: string; card_number: string } & PokemonVariantProjection): string {
+  const variant = pokemonVariantLabel(r);
+  return ` · ${r.set_code} ${r.card_number}${variant ? ` (${variant})` : ""}`;
 }
 
 // resolveWishlist attaches display labels to a customer's wishlist rows.
@@ -249,18 +267,19 @@ async function resolveWishlist(items: WishlistItem[]): Promise<WishlistItem[]> {
   const meta = new Map<string, { label: string; image_url: string | null }>();
   const idsFor = (game: string, key: "card_id" | "product_id") =>
     items.filter((i) => i.game === game && i[key]).map((i) => i[key] as number);
+  // MTG has no typed variant axes; its stored misc_info is the label.
   const suffix = (r: { set_code: string; card_number: string; misc_info?: string | null }) =>
     ` · ${r.set_code} ${r.card_number}${r.misc_info && r.misc_info !== "UNKNOWN" ? ` (${r.misc_info})` : ""}`;
   const pk = idsFor("pokemon", "card_id");
   if (pk.length) {
     const rows = await selectAllByIds<{
       card_id: number; regional_name: string; english_name: string | null;
-      set_code: string; card_number: string; misc_info?: string | null; image_url: string | null;
-    }>(pk, ["card_id"], (chunk) => supabase
+      set_code: string; card_number: string; image_url: string | null;
+    } & PokemonVariantProjection>(pk, ["card_id"], (chunk) => supabase
       .from("pokemon_card_definitions")
-      .select("card_id, regional_name, english_name, set_code, card_number, misc_info, image_url")
+      .select(`card_id, regional_name, english_name, set_code, card_number, ${POKEMON_VARIANT_COLS}, image_url`)
       .in("card_id", chunk));
-    for (const r of rows) meta.set(`pokemon:${r.card_id}`, { label: `${r.english_name || r.regional_name}${suffix(r)}`, image_url: r.image_url });
+    for (const r of rows) meta.set(`pokemon:${r.card_id}`, { label: `${r.english_name || r.regional_name}${pokemonSuffix(r)}`, image_url: r.image_url });
   }
   // The MTG view carries local_name, not english_name - the same shape split the
   // wishlist search box already makes; a shared select 400s on this table.
@@ -561,7 +580,7 @@ function CustomerDetail({
         );
       supabase
         .from("sales_ledger_v")
-        .select("sale_id, game, regional_name, english_name, set_code, card_number, misc_info, sold_at, quantity, gross_usd, margin_usd")
+        .select("sale_id, game, regional_name, english_name, set_code, card_number, misc_info, variant_label, sold_at, quantity, gross_usd, margin_usd")
         .eq("customer_id", customer.customer_id)
         .eq("is_reverted", false)
         .order("sold_at", { ascending: false })

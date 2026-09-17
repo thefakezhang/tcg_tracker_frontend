@@ -15,7 +15,7 @@ import { useTranslation } from "@/lib/i18n";
 import { useSaving } from "@/lib/use-saving";
 import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
 import { useLanguage } from "../LanguageContext";
-import { getCardDisplayName, cardMeta } from "../use-card-data";
+import { getCardDisplayName, cardMeta, viewVariantLabel } from "../use-card-data";
 import {
   buildSaleLotRequestShape,
   explicitGrossMatches,
@@ -60,6 +60,8 @@ interface Holding {
   set_code: string;
   card_number: string | null;
   misc_info: string | null;
+  // Composed from the typed Pokemon axes by the view; see viewVariantLabel.
+  variant_label: string | null;
   condition_id: number | null;
   psa_grade: number | null;
   sealed_condition: string | null;
@@ -106,7 +108,7 @@ type LedgerSaleRow = {
   sale_id: number; kind: "single" | "sealed"; game: string; sale_group: number | null;
   card_id: number | null; product_id: number | null; condition_id: number | null; psa_grade: number | null;
   sealed_condition: string | null; variant_edition: string | null;
-  regional_name: string; set_code: string; card_number: string | null; misc_info: string | null; image_url: string | null;
+  regional_name: string; set_code: string; card_number: string | null; misc_info: string | null; variant_label: string | null; image_url: string | null;
   sold_at: string; quantity: number; gross_usd: number; fees_usd: number; cogs_usd: number; margin_usd: number;
   orig_currency: string; proceeds_orig: number; fx_rate_used: number; is_reverted: boolean; customer_id: number | null;
   lot_status: string | null;
@@ -203,7 +205,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     const holdingsData = await selectAll<Omit<Holding, "imageUrl" | "englishName">>(
       () => supabase
         .from("inventory_holdings_v")
-        .select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd"),
+        .select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, variant_label, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd"),
       ["game", "item_type", "leg", "card_id", "product_id", "condition_id", "psa_grade", "sealed_condition", "variant_edition"],
     );
     const rows = holdingsData
@@ -245,7 +247,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
       rows = await selectAll<LedgerSaleRow>(
         () => supabase
           .from("sales_ledger_v")
-          .select("sale_id, kind, game, sale_group, card_id, product_id, condition_id, psa_grade, sealed_condition, variant_edition, regional_name, set_code, card_number, misc_info, image_url, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted, customer_id, lot_status"),
+          .select("sale_id, kind, game, sale_group, card_id, product_id, condition_id, psa_grade, sealed_condition, variant_edition, regional_name, set_code, card_number, misc_info, variant_label, image_url, sold_at, quantity, gross_usd, fees_usd, cogs_usd, margin_usd, orig_currency, proceeds_orig, fx_rate_used, is_reverted, customer_id, lot_status"),
         ["game", "sale_id"],
       );
     } catch { setSales([]); return; }
@@ -268,7 +270,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
         key: `${r.game}-${r.sale_id}`, kind: r.kind, game: r.game, sale_id: r.sale_id,
         card_id: r.card_id, product_id: r.product_id, condition_id: r.condition_id, psa_grade: r.psa_grade,
         sealed_condition: r.sealed_condition, variant_edition: r.variant_edition,
-        name: `${r.regional_name} · ${cardMeta(r.set_code, r.card_number, r.misc_info)}`.trim(),
+        name: `${r.regional_name} · ${cardMeta(r.set_code, r.card_number, viewVariantLabel(r))}`.trim(),
         sold_at: r.sold_at, quantity: r.quantity,
         gross_usd: r.gross_usd, cogs_usd: r.cogs_usd, margin_usd: r.margin_usd,
         marginPct: r.gross_usd ? Math.round((r.margin_usd / r.gross_usd) * 1000) / 10 : 0,
@@ -497,7 +499,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
   const holdingMeta = (h: Holding) =>
     h.item_type === "sealed"
       ? [h.set_code, [h.sealed_condition, h.variant_edition].filter(Boolean).join("/")].filter(Boolean).join(" · ")
-      : cardMeta(h.set_code, h.card_number, h.misc_info);
+      : cardMeta(h.set_code, h.card_number, viewVariantLabel(h));
   const qtyOf = (h: Holding) => Math.max(1, Math.min(h.qty_on_hand, Math.floor(Number(lotQty[holdingKey(h)]) || h.qty_on_hand)));
 
   function setSort(col: "name" | "leg" | "qty" | "avg") {
@@ -855,7 +857,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                 </div>
                 <CardContent className="space-y-1 p-2">
                   <div className="truncate text-xs font-medium">{label(h)}</div>
-                  {h.item_type !== "sealed" && <div className="truncate text-[10px] text-muted-foreground">{cardMeta(h.set_code, h.card_number, h.misc_info)}</div>}
+                  {h.item_type !== "sealed" && <div className="truncate text-[10px] text-muted-foreground">{cardMeta(h.set_code, h.card_number, viewVariantLabel(h))}</div>}
                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
                     <Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge>
                     <span className="truncate">{h.item_type === "sealed" ? `${h.sealed_condition}/${h.variant_edition}` : h.psa_grade ? `PSA ${h.psa_grade}` : ""}</span>
@@ -892,7 +894,7 @@ export default function SalesTab({ tripId }: { tripId: number }) {
                 </label>
               </TableCell>
               <TableCell className="truncate max-w-[280px]">
-                {label(h)} <span className="text-muted-foreground">· {cardMeta(h.set_code, h.card_number, h.misc_info)}</span>
+                {label(h)} <span className="text-muted-foreground">· {cardMeta(h.set_code, h.card_number, viewVariantLabel(h))}</span>
                 {h.item_type === "sealed" && <span className="text-muted-foreground"> ({h.sealed_condition}/{h.variant_edition})</span>}
                 {h.psa_grade ? <span className="text-muted-foreground"> PSA {h.psa_grade}</span> : ""}
               </TableCell>

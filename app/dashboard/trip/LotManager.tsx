@@ -5,7 +5,8 @@ import { Plus, Trash2, Check, Pencil, Upload, ImageOff, RotateCcw, Loader2, Doll
 import { createClient } from "@/lib/supabase/client";
 import { selectAll, selectAllByIds } from "@/lib/supabase/select-all";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
-import { getCardDisplayName, cardMeta, useDebouncedValue } from "../use-card-data";
+import { getCardDisplayName, cardMeta, cardVariant, useDebouncedValue, POKEMON_VARIANT_COLS } from "../use-card-data";
+import { pokemonVariantSearchFilters, type PokemonVariantProjection } from "@/lib/pokemon-variant";
 import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { bumpOwnedInventory } from "../owned-inventory";
 import { useLanguage } from "../LanguageContext";
@@ -122,7 +123,8 @@ interface LotLine {
   englishName: string | null;
   setCode: string;
   cardNumber: string | null;
-  miscInfo: string | null;
+  // The composed variant label (cardVariant), not the stored misc_info.
+  variantLabel: string | null;
   imageUrl: string | null;
 }
 
@@ -338,18 +340,18 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       if (rows.length === 0) continue;
       const nameTable = game === "pokemon" ? "pokemon_card_definitions" : "mtg_card_definitions_v";
       const cols = game === "pokemon"
-        ? "card_id, regional_name, english_name, set_code, card_number, misc_info, image_url"
+        ? `card_id, regional_name, english_name, set_code, card_number, ${POKEMON_VARIANT_COLS}, image_url`
         : "card_id, regional_name, set_code, card_number, image_url";
       // Def lookup is 1 row per id, but a big lot's id list would overflow the
       // .in() URL and a >1000 result would truncate; chunk + page it.
-      const defs = await selectAllByIds<{ card_id: number; regional_name: string; english_name?: string | null; set_code: string; card_number: string | null; misc_info?: string | null; image_url: string | null }>(
+      const defs = await selectAllByIds<{ card_id: number; regional_name: string; english_name?: string | null; set_code: string; card_number: string | null; image_url: string | null } & PokemonVariantProjection>(
         rows.map((r) => r.card_id),
         ["card_id"],
         (chunk) => supabase.from(nameTable).select(cols).in("card_id", chunk),
       );
-      const defMap = new Map<number, { regionalName: string; englishName: string | null; setCode: string; cardNumber: string | null; miscInfo: string | null; imageUrl: string | null }>();
+      const defMap = new Map<number, { regionalName: string; englishName: string | null; setCode: string; cardNumber: string | null; variantLabel: string | null; imageUrl: string | null }>();
       for (const d of defs) {
-        defMap.set(d.card_id, { regionalName: d.regional_name, englishName: d.english_name ?? null, setCode: d.set_code, cardNumber: d.card_number, miscInfo: d.misc_info ?? null, imageUrl: d.image_url });
+        defMap.set(d.card_id, { regionalName: d.regional_name, englishName: d.english_name ?? null, setCode: d.set_code, cardNumber: d.card_number, variantLabel: cardVariant(d), imageUrl: d.image_url });
       }
       for (const r of rows) {
         const d = defMap.get(r.card_id);
@@ -592,6 +594,9 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     set_code: string;
     card_number: string | null;
     misc_info: string | null;
+    edition?: string | null;
+    foil_treatment?: string | null;
+    variant_attrs?: string[] | null;
     image_url: string | null;
     sealed_condition?: string;
     variant_edition?: string;
@@ -613,11 +618,11 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       if (searchGame === "pokemon") {
         const extIds = await externalIdMatches(supabase, "pokemon_external_identifiers", "card_id", s);
         let q = supabase.from("pokemon_card_definitions")
-          .select("card_id, regional_name, english_name, set_code, card_number, misc_info, image_url");
+          .select(`card_id, regional_name, english_name, set_code, card_number, ${POKEMON_VARIANT_COLS}, image_url`);
         for (const f of smartSearchFilters(
           s,
           ["regional_name", "english_name", "set_code", "card_number", "misc_info"],
-          "card_uid", "card_id", extIds,
+          "card_uid", "card_id", extIds, pokemonVariantSearchFilters,
         )) q = q.or(f);
         const { data } = await q.limit(25).abortSignal(ac.signal);
         hits = ((data as Array<Omit<SearchHit, "kind" | "item_id"> & { card_id: number }>) ?? [])
@@ -1269,7 +1274,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                         {" · "}
                         {r.kind === "sealed"
                           ? [r.set_code, r.product_type, `${r.sealed_condition}/${r.variant_edition}`].filter(Boolean).join(" · ")
-                          : cardMeta(r.set_code, r.card_number, r.misc_info)}
+                          : cardMeta(r.set_code, r.card_number, r)}
                       </span>
                       <Plus className="size-4 shrink-0" />
                     </button>
@@ -1323,7 +1328,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                   <CardContent className="space-y-1 p-2">
                     <div className="truncate text-xs font-medium">{lineLabel(ln)}</div>
                     <div className="truncate text-xs text-muted-foreground">
-                      {ln.kind === "sealed" ? `${ln.setCode} · ${ln.sealedLabel}` : `${cardMeta(ln.setCode, ln.cardNumber, ln.miscInfo)} · ${lotLineGradeLabel(ln.psa_grade ?? 0)}`}
+                      {ln.kind === "sealed" ? `${ln.setCode} · ${ln.sealedLabel}` : `${cardMeta(ln.setCode, ln.cardNumber, ln.variantLabel)} · ${lotLineGradeLabel(ln.psa_grade ?? 0)}`}
                     </div>
                     <div className="flex items-center justify-between gap-1 text-xs">
                       <span>×{ln.quantity}</span>
@@ -1396,7 +1401,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
               {lines.map((ln) => (
                 <TableRow key={`${ln.table}-${ln.line_id}`}>
                   <TableCell className="max-w-[280px]">
-                    <div className="truncate">{lineLabel(ln)} <span className="text-muted-foreground">· {ln.kind === "sealed" ? `${ln.setCode} · ${ln.sealedLabel}` : cardMeta(ln.setCode, ln.cardNumber, ln.miscInfo)}</span></div>
+                    <div className="truncate">{lineLabel(ln)} <span className="text-muted-foreground">· {ln.kind === "sealed" ? `${ln.setCode} · ${ln.sealedLabel}` : cardMeta(ln.setCode, ln.cardNumber, ln.variantLabel)}</span></div>
                     {lot.lines_imported && (
                       <ConsignmentControl game={gameForLine(ln)} lineId={ln.line_id} qtyRemaining={ln.qty_remaining} />
                     )}
@@ -1591,7 +1596,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                   <div className="min-w-0 flex-1">
                     <div className="truncate">{lineLabel(c.line)}</div>
                     <div className="text-[11px] text-muted-foreground">
-                      {c.line.kind === "sealed" ? `${c.line.setCode} · ${c.line.sealedLabel}` : cardMeta(c.line.setCode, c.line.cardNumber, c.line.miscInfo)}
+                      {c.line.kind === "sealed" ? `${c.line.setCode} · ${c.line.sealedLabel}` : cardMeta(c.line.setCode, c.line.cardNumber, c.line.variantLabel)}
                       {" · "}{t("trips.sellRemaining", { n: c.line.qty_remaining ?? 0 })}
                     </div>
                   </div>

@@ -6,6 +6,7 @@ import {
   tokenizeSearchTerm,
   uidOrParts,
 } from "./card-search";
+import { pokemonVariantSearchFilters } from "./pokemon-variant";
 
 describe("tokenizeSearchTerm", () => {
   it("splits on whitespace and drops empties", () => {
@@ -139,5 +140,30 @@ describe("externalIdMatches", () => {
       message: "External identifier lookup is temporarily unavailable.",
     });
     await expect(result).rejects.not.toThrow(/permission denied|pokemon_external_identifiers/);
+  });
+});
+
+describe("smartSearchFilters token filters", () => {
+  const COLS = ["regional_name", "misc_info"];
+
+  it("adds the typed variant disjuncts to each token's text columns", () => {
+    expect(
+      smartSearchFilters("リザードン 1ED", COLS, "card_uid", "card_id", [], pokemonVariantSearchFilters),
+    ).toEqual([
+      "regional_name.ilike.%リザードン%,misc_info.ilike.%リザードン%",
+      "regional_name.ilike.%1ED%,misc_info.ilike.%1ED%,edition.in.(first)",
+    ]);
+  });
+
+  it("leaves an identifier paste alone", () => {
+    expect(
+      smartSearchFilters("da807f6b", COLS, "card_uid", "card_id", [], pokemonVariantSearchFilters),
+    ).toEqual(smartSearchFilters("da807f6b", COLS, "card_uid", "card_id", []));
+  });
+
+  it("adds nothing without the hook, so tables without typed columns stay valid", () => {
+    expect(smartSearchFilters("1ED", COLS, "card_uid", "card_id", [])).toEqual([
+      "regional_name.ilike.%1ED%,misc_info.ilike.%1ED%",
+    ]);
   });
 });

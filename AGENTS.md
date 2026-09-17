@@ -708,7 +708,7 @@ The authoritative schema is `docs/schema.md` in the backend repository; this tab
 
 | Table | Key Columns |
 |-------|-------------|
-| `pokemon_card_definitions` | card_id, regional_name, english_name, set_code, card_number, misc_info, image_url |
+| `pokemon_card_definitions` | card_id, regional_name, english_name, set_code, card_number, misc_info, edition, foil_treatment, variant_attrs, image_url |
 | `mtg_card_definitions` | card_id, regional_name, set_code, card_number, misc_info, image_url |
 | `pokemon_market_listings` / `mtg_market_listings` | card_id, price_type (Buy/Sell), price, currency, psa_grade, condition, location_id |
 | `currencies` | code (PK), symbol |
@@ -747,13 +747,13 @@ The authoritative schema is `docs/schema.md` in the backend repository; this tab
 | `customers` | customer registry behind the CRM, wishlist, and sale attribution surfaces |
 | `source_health` | one materialized daily row per (run_date, source): listing count, match coverage, freshness |
 | `owned_inventory_counts_v` (view) | qty_owned / qty_incoming / qty_consigned / qty_available plus cost basis, per catalog identity |
-| `inventory_holdings_v` (view) | current on-hand holdings at exact identity with allocated cost |
+| `inventory_holdings_v` (view) | current on-hand holdings at exact identity with allocated cost; `variant_label` is the composed Pokemon variant label |
 | `inventory_economics_v` (view) | line-level lifecycle economics (direct, landed, sale, profit) for Finances |
 | `inventory_theoretical_roi_v` (view) | mark-to-market ROI per finalized lot line, valued at the leg's exit market |
 | `active_deal_watchlist_v` (view) | active watch rules joined to the latest D1 price event |
 | `trip_deal_watchlist_v` (view) | trip-scoped watchlist with each observed card's arbitrage figures |
 | `card_browser_source_options_v` (view) | source and side combinations that currently have summary evidence |
-| `sales_ledger_v` (view) | resolved sale rows (identity, name, proceeds, expenses, profit) behind all sales history |
+| `sales_ledger_v` (view) | resolved sale rows (identity, name, proceeds, expenses, profit) behind all sales history; `variant_label` is the composed Pokemon variant label |
 
 Sealed enums: `sealed_condition_enum` (shrink/no_shrink/standard), `sealed_edition_enum` (1ed/unlimited/standard).
 
@@ -778,6 +778,12 @@ Bake its data in at build time rather than adding anon grants.
 ## Conventions
 
 - **"UNKNOWN" as null**: Card fields (`card_number`, `misc_info`) may contain the string `"UNKNOWN"`. Treat these as null/empty throughout the UI. Never display "UNKNOWN" to users.
+- **Pokemon variant labels come from the typed axes, never from `misc_info` alone.**
+  The backend variant refactor (backend `docs/variant_axes_separation.md`) moves edition and finish out of `misc_info` into `edition` and `foil_treatment`, and its Phase 3 rewrites `misc_info` into the residue, so a label read from the string would lose `1ED` and `ミラー`.
+  - A card-definition read selects `edition, foil_treatment, variant_attrs` beside `misc_info` and renders `pokemonVariantLabel` (`lib/pokemon-variant.ts`), or `cardVariant` for a definition row.
+  - A read of `inventory_holdings_v` or `sales_ledger_v` selects `variant_label`, which the database composes the same way (NULL for MTG, sealed and a plain card), and renders `viewVariantLabel`, which falls back to `misc_info` for MTG and sealed rows.
+  - A search that matches `misc_info` text also adds `pokemonVariantSearchFilters(word)`, so `1ED` or `ミラー` keep finding cards after the rewrite.
+  - MTG has no typed axes; its `misc_info` stays the label.
 - **"use client"**: All dashboard components are client components. Server components are only used for layouts and the auth callback route.
 - **localStorage keys**: `language`, `displayCurrency` — used for persisting user preferences.
 - **Tests**: vitest runs with `npm test` (`*.test.ts` next to the code under test).

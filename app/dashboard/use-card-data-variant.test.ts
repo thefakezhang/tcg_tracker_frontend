@@ -5,6 +5,8 @@ import {
   cardDefCols,
   cardSummarySelect,
   fetchCardRowById,
+  cardMeta,
+  viewVariantLabel,
 } from "./use-card-data";
 import { buylistSummaryQuery } from "./BuyListView";
 
@@ -98,5 +100,24 @@ describe("Pokemon card-definition variant propagation", () => {
       `*, pokemon_card_definitions!inner(${POKEMON_CARD_DEF_COLS})`,
     );
     expect(builder.in).toHaveBeenCalledWith("card_id", [42]);
+  });
+});
+
+describe("viewVariantLabel", () => {
+  it("shows the label the view composed from the typed axes", () => {
+    // Phase 3 leaves only the residue in misc_info; the view label still
+    // carries the finish and the edition.
+    const row = { variant_label: "SA,ミラー,1ED", misc_info: "SA" };
+    expect(viewVariantLabel(row)).toBe("SA,ミラー,1ED");
+    expect(cardMeta("SV-P", "124", viewVariantLabel(row))).toBe("SV-P 124 · SA,ミラー,1ED");
+  });
+
+  it("falls back to misc_info where the view has no label", () => {
+    // MTG and sealed rows: the stored string is the label.
+    expect(viewVariantLabel({ variant_label: null, misc_info: "Borderless" })).toBe("Borderless");
+    // A plain Pokemon card says nothing either way.
+    expect(viewVariantLabel({ variant_label: null, misc_info: "UNKNOWN" })).toBeNull();
+    expect(viewVariantLabel({ variant_label: null, misc_info: "" })).toBeNull();
+    expect(cardMeta("SV-P", "124", viewVariantLabel({ variant_label: null, misc_info: "UNKNOWN" }))).toBe("SV-P 124");
   });
 });
