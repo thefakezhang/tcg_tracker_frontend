@@ -106,3 +106,33 @@ export function pokemonVariantLabel(card: PokemonVariantProjection): string | nu
 
   return parts.length > 0 ? parts.join(",") : null;
 }
+
+const EDITION_LABELS: Record<string, string> = {
+  first: "1ED",
+  unlimited: "アンリミ",
+};
+
+// PostgREST `or` fragments that match a search word against the typed Pokemon
+// variant axes, for use beside `misc_info.ilike`.
+//
+// A word used to find a card by substring of its compound misc_info, so "1ED"
+// or "ミラー" found every first edition or mirror. The backend's Phase 3
+// (docs/variant_axes_separation.md) rewrites misc_info into the residue, and
+// those words would then find nothing. This matches the word against the same
+// labels pokemonVariantLabel renders, so a word finds the cards whose label
+// contains it, before and after the rewrite. "ミラー" therefore finds every
+// named mirror too, as the substring did.
+export function pokemonVariantSearchFilters(word: string): string[] {
+  const needle = word.trim().toLowerCase();
+  if (!needle) return [];
+  const editions = Object.entries(EDITION_LABELS)
+    .filter(([, label]) => label.toLowerCase().includes(needle))
+    .map(([edition]) => edition);
+  const foils = Object.entries(FOIL_LABELS)
+    .filter(([foil, label]) => label !== null && foil !== "other" && label.toLowerCase().includes(needle))
+    .map(([foil]) => foil);
+  const filters: string[] = [];
+  if (editions.length > 0) filters.push(`edition.in.(${editions.join(",")})`);
+  if (foils.length > 0) filters.push(`foil_treatment.in.(${foils.join(",")})`);
+  return filters;
+}
