@@ -7,6 +7,7 @@ import { useTranslation } from "@/lib/i18n";
 import { Badge } from "@/components/ui/badge";
 
 import { formatUsdWhole } from "@/lib/money";
+import { viewVariantLabel } from "../use-card-data";
 // Trip reach-out (docs/customers_crm.md, Phase 4): the "when traveling" panel.
 // customer_trip_match_v = customers whose active wishlist matches what you bought /
 // are buying on THIS trip, plus follow-ups due by the trip's end.
@@ -25,6 +26,8 @@ interface TripMatchRow {
   set_code: string | null;
   card_number: string | null;
   misc_info: string | null;
+  // Composed from the typed Pokemon axes by the view (backend 000487).
+  variant_label?: string | null;
   qty_on_trip: number;
 }
 interface FollowupRow {
@@ -45,8 +48,8 @@ function itemMeta(r: TripMatchRow): string {
   const parts: string[] = [];
   if (r.set_code && r.set_code !== "UNKNOWN") parts.push(r.set_code);
   if (r.card_number) parts.push(r.card_number);
-  const misc = r.misc_info && r.misc_info !== "UNKNOWN" ? ` (${r.misc_info})` : "";
-  return parts.join(" ") + misc;
+  const variant = viewVariantLabel(r);
+  return parts.join(" ") + (variant ? ` (${variant})` : "");
 }
 function contactOf(handles: Record<string, string> | null): string {
   return Object.entries(handles ?? {}).map(([k, v]) => `${k}: ${v}`).join(" · ");

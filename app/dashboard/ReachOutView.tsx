@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
+import { viewVariantLabel } from "./use-card-data";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 
@@ -28,6 +29,8 @@ interface ReachoutRow {
   set_code: string | null;
   card_number: string | null;
   misc_info: string | null;
+  // Composed from the typed Pokemon axes by the view (backend 000487).
+  variant_label?: string | null;
   qty_on_hand: number;
   avg_cost_usd: number | null;
   // Discriminator + optional criterion label so grouped rendering can label
@@ -53,6 +56,8 @@ interface CriteriaReachoutRaw {
   set_code: string | null;
   card_number: string | null;
   misc_info: string | null;
+  // Composed from the typed Pokemon axes by the view (backend 000487).
+  variant_label?: string | null;
   rarity: string | null;
   qty_on_hand: number;
   avg_cost_usd: number | null;
@@ -72,8 +77,8 @@ function itemMeta(r: ReachoutRow): string {
   if (r.set_code && r.set_code !== "UNKNOWN") parts.push(r.set_code);
   if (r.card_number) parts.push(r.card_number);
   const base = parts.join(" ");
-  const misc = r.misc_info && r.misc_info !== "UNKNOWN" ? ` (${r.misc_info})` : "";
-  return base + misc;
+  const variant = viewVariantLabel(r);
+  return base + (variant ? ` (${variant})` : "");
 }
 
 async function fetchReachout(): Promise<ReachoutRow[]> {
@@ -111,6 +116,7 @@ async function fetchReachout(): Promise<ReachoutRow[]> {
     set_code: r.set_code,
     card_number: r.card_number,
     misc_info: r.misc_info,
+    variant_label: r.variant_label ?? null,
     qty_on_hand: r.qty_on_hand,
     avg_cost_usd: r.avg_cost_usd,
     origin: "criteria" as const,

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { viewVariantLabel } from "./use-card-data";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll } from "@/lib/supabase/select-all";
 import { formatUsd } from "@/lib/money";
@@ -38,6 +39,7 @@ export interface EnglishCounterpartReviewRow {
   japanese_set_code: string | null;
   japanese_card_number: string | null;
   japanese_misc_info: string | null;
+  japanese_variant_label?: string | null;
   japanese_image_url: string | null;
   japan_exclusive_artwork: boolean;
   japan_exclusive_stamps: boolean;
@@ -47,6 +49,7 @@ export interface EnglishCounterpartReviewRow {
   proposed_english_set_code: string | null;
   proposed_english_card_number: string | null;
   proposed_english_misc_info: string | null;
+  proposed_english_variant_label?: string | null;
   proposed_english_image_url: string | null;
   gate_status: string | null;
   completeness: EnglishCounterpartCompleteness | null;
@@ -73,12 +76,15 @@ function numberOrNull(value: number | string | null | undefined): number | null 
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+// The label is the view's composed variant (backend 000487); the stored
+// string stands in only where the view has none.
 function printingIdentity(
   setCode: string | null,
   cardNumber: string | null,
   miscInfo: string | null,
+  variantLabel?: string | null,
 ): string {
-  return [setCode, cardNumber, miscInfo && miscInfo !== "UNKNOWN" ? miscInfo : null]
+  return [setCode, cardNumber, viewVariantLabel({ variant_label: variantLabel, misc_info: miscInfo })]
     .filter(Boolean)
     .join(" · ");
 }
@@ -178,7 +184,7 @@ export function EnglishCounterpartCandidateCard({
           <div className="min-w-0 text-sm">
             <div className="font-medium">{t("counterpart.japanesePrinting")}</div>
             <div className="mt-1 break-words text-muted-foreground">
-              {printingIdentity(row.japanese_set_code, row.japanese_card_number, row.japanese_misc_info) || t("common.unknown")}
+              {printingIdentity(row.japanese_set_code, row.japanese_card_number, row.japanese_misc_info, row.japanese_variant_label) || t("common.unknown")}
             </div>
             <div className="mt-1 break-all text-xs text-muted-foreground">ID {row.japanese_card_id}</div>
           </div>
@@ -194,7 +200,7 @@ export function EnglishCounterpartCandidateCard({
               <>
                 <div className="mt-1 break-words">{row.proposed_english_name}</div>
                 <div className="break-words text-muted-foreground">
-                  {printingIdentity(row.proposed_english_set_code, row.proposed_english_card_number, row.proposed_english_misc_info)}
+                  {printingIdentity(row.proposed_english_set_code, row.proposed_english_card_number, row.proposed_english_misc_info, row.proposed_english_variant_label)}
                 </div>
                 <div className="mt-1 break-all text-xs text-muted-foreground">ID {row.proposed_english_card_id}</div>
               </>
