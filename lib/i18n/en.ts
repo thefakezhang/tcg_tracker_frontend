@@ -1992,5 +1992,9 @@ const en = {
   "scanReview.park.below_min_score": "Best match scored below the assignment floor",
   "scanReview.park.ambiguous": "Two candidates were too close to separate",
   "scanReview.park.inventory_exhausted": "No unassigned copy left in inventory",
+  "scanReview.mediaRegistered": "Listing imagery attached ({count}).",
+  "scanReview.mediaFailed": "Capture {ordinal} was decided, but its listing imagery was not attached - {detail}",
+  "scanReview.mediaAttached": "Imagery attached",
+  "scanReview.undoLocked": "Cannot undo: this capture's imagery is registered to a listing.",
 } as const;
 export default en;

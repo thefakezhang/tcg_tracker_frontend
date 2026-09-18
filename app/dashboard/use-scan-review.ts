@@ -18,8 +18,10 @@ import {
   type Candidate,
   type Decision,
   type ScanCapture,
+  type MediaSide,
   asParkReason,
   parseCandidates,
+  registerableMedia,
 } from "@/lib/scan-review";
 import { POKEMON_CARD_DEF_COLS, type CardDefinition } from "./use-card-data";
 import { useSupabaseQuery } from "./use-query";
@@ -123,6 +125,10 @@ interface CaptureRow {
   ordinal: number;
   front_object_key: string | null;
   back_object_key: string | null;
+  front_sha256: string | null;
+  back_sha256: string | null;
+  front_byte_size: number | null;
+  back_byte_size: number | null;
   mime_type: string | null;
   candidates: unknown;
   proposed_card_uid: string | null;
@@ -136,7 +142,7 @@ interface CaptureRow {
 }
 
 const CAPTURE_COLS =
-  "capture_id, ordinal, front_object_key, back_object_key, mime_type, candidates, proposed_card_uid, proposed_score, top_margin, park_reason, park_detail, decision, decided_card_uid, decided_condition_id";
+  "capture_id, ordinal, front_object_key, back_object_key, front_sha256, back_sha256, front_byte_size, back_byte_size, mime_type, candidates, proposed_card_uid, proposed_score, top_margin, park_reason, park_detail, decision, decided_card_uid, decided_condition_id";
 
 function toCapture(row: CaptureRow): ScanCapture {
   return {
@@ -144,6 +150,10 @@ function toCapture(row: CaptureRow): ScanCapture {
     ordinal: row.ordinal,
     frontObjectKey: row.front_object_key,
     backObjectKey: row.back_object_key,
+    frontSha256: row.front_sha256,
+    backSha256: row.back_sha256,
+    frontByteSize: row.front_byte_size,
+    backByteSize: row.back_byte_size,
     mimeType: row.mime_type,
     candidates: parseCandidates(row.candidates),
     proposedCardUid: row.proposed_card_uid,
@@ -234,6 +244,10 @@ export interface ScanBatchData {
   captures: ScanCapture[];
   cards: Map<string, CandidateCard>;
   images: Map<string, CaptureImages>;
+  /** Sides already registered as listing imagery, per capture. A capture with
+   *  any registered media can no longer be undecided: the listing media row
+   *  names it as its source, so clear_scanner_batch_capture_decision refuses. */
+  media: Map<string, MediaSide[]>;
 }
 
 export function useScanBatch(batchId: string | null) {
@@ -276,7 +290,28 @@ export function useScanBatch(batchId: string | null) {
         });
       }
 
-      return { captures, cards, images };
+      // Which captures already have listing imagery. Read rather than inferred,
+      // because it decides whether a decision can still be undone.
+      const media = new Map<string, MediaSide[]>();
+      if (captures.length > 0) {
+        const mediaRows = await selectAllByIds<{ capture_id: string; media_kind: MediaSide }>(
+          captures.map((c) => c.captureId),
+          ["media_id"],
+          (chunk) =>
+            supabase
+              .from("inventory_listing_media")
+              .select("media_id, capture_id, media_kind")
+              .in("capture_id", chunk),
+        );
+        for (const row of mediaRows) {
+          if (!row.capture_id) continue;
+          const sides = media.get(row.capture_id) ?? [];
+          if (!sides.includes(row.media_kind)) sides.push(row.media_kind);
+          media.set(row.capture_id, sides);
+        }
+      }
+
+      return { captures, cards, images, media };
     },
   );
 }
@@ -319,6 +354,11 @@ export interface DecideResult {
   replayed: boolean;
 }
 
+export interface MediaRegistrationResult {
+  registered: MediaSide[];
+  failures: { side: MediaSide; message: string }[];
+}
+
 export function useScanDecisions() {
   const decide = useCallback(
     async (captureId: string, cardUid: string, conditionId: number): Promise<DecideResult> => {
@@ -357,7 +397,41 @@ export function useScanDecisions() {
     if (error) throw error;
   }, []);
 
-  return { decide, clear };
+  // Register the decided capture's imagery as this listing's front and back.
+  //
+  // Deliberately NOT folded into decide(): the decision is authoritative on its
+  // own, and registration can legitimately fail while it stands - most often
+  // because another capture already supplied imagery for the same card and
+  // condition, which the RPC refuses rather than overwrites. Rolling back a
+  // correct identity because of that would be strictly worse, so this reports
+  // per side and lets the caller surface it.
+  //
+  // The RPC is idempotent: re-registering identical bytes returns the existing
+  // media_id, so a retry after a partial failure is safe.
+  const registerMedia = useCallback(
+    async (capture: ScanCapture): Promise<MediaRegistrationResult> => {
+      const supabase = createClient();
+      const registered: MediaSide[] = [];
+      const failures: { side: MediaSide; message: string }[] = [];
+
+      for (const upload of registerableMedia(capture)) {
+        const { error } = await supabase.rpc("register_scanner_capture_media", {
+          p_capture_id: capture.captureId,
+          p_media_kind: upload.side,
+          p_object_key: upload.objectKey,
+          p_mime_type: upload.mimeType,
+          p_byte_size: upload.byteSize,
+          p_sha256: upload.sha256,
+        });
+        if (error) failures.push({ side: upload.side, message: error.message });
+        else registered.push(upload.side);
+      }
+      return { registered, failures };
+    },
+    [],
+  );
+
+  return { decide, clear, registerMedia };
 }
 
 export type { Candidate };

@@ -1988,5 +1988,9 @@ const ja: { [K in keyof typeof en]: string } = {
   "scanReview.park.below_min_score": "最有力候補が基準スコア未満です",
   "scanReview.park.ambiguous": "上位2件の差が小さすぎます",
   "scanReview.park.inventory_exhausted": "在庫に未割当のコピーがありません",
+  "scanReview.mediaRegistered": "出品画像を登録しました（{count}）。",
+  "scanReview.mediaFailed": "キャプチャ {ordinal} は確定しましたが、出品画像を登録できませんでした - {detail}",
+  "scanReview.mediaAttached": "画像登録済み",
+  "scanReview.undoLocked": "取り消し不可：このキャプチャの画像は出品に登録済みです。",
 } as const;
 export default ja;

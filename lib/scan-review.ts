@@ -39,6 +39,10 @@ export interface ScanCapture {
   ordinal: number;
   frontObjectKey: string | null;
   backObjectKey: string | null;
+  frontSha256: string | null;
+  backSha256: string | null;
+  frontByteSize: number | null;
+  backByteSize: number | null;
   mimeType: string | null;
   candidates: Candidate[];
   proposedCardUid: string | null;
@@ -215,4 +219,70 @@ export function batchProgress(captures: ScanCapture[]): BatchProgress {
 // must end with a card.
 export function isBatchComplete(captures: ScanCapture[]): boolean {
   return captures.length > 0 && captures.every((capture) => capture.decision != null);
+}
+
+// ---------------------------------------------------------------------------
+// Listing media registration
+//
+// Deciding a capture says which card it is. Registering its imagery is what
+// makes those bytes the listing's front and back, and it is a separate RPC
+// because inventory_listing_media is keyed on the card and condition that only
+// exist once a person has chosen them.
+//
+// The eBay offer stager refuses a capture with missing listing media, so a
+// decision that never registers leaves a hole between the review screen and
+// anything downstream of it.
+
+export type MediaSide = "front" | "back";
+
+export interface CaptureMediaUpload {
+  side: MediaSide;
+  objectKey: string;
+  sha256: string;
+  byteSize: number;
+  mimeType: string;
+}
+
+// The sides of a capture that carry everything register_scanner_capture_media
+// asserts: an object key, the checksum staged for that side, a byte size and a
+// mime type. A side missing any of them is not registerable, and calling anyway
+// would trade a clear local skip for an opaque server-side exception.
+export function registerableMedia(capture: ScanCapture): CaptureMediaUpload[] {
+  const mimeType = capture.mimeType;
+  if (!mimeType) return [];
+  const sides: Array<[MediaSide, string | null, string | null, number | null]> = [
+    ["front", capture.frontObjectKey, capture.frontSha256, capture.frontByteSize],
+    ["back", capture.backObjectKey, capture.backSha256, capture.backByteSize],
+  ];
+  const out: CaptureMediaUpload[] = [];
+  for (const [side, objectKey, sha256, byteSize] of sides) {
+    if (!objectKey || !sha256 || byteSize == null || byteSize <= 0) continue;
+    out.push({ side, objectKey, sha256, byteSize, mimeType });
+  }
+  return out;
+}
+
+// The object key the RPC will insist on: content-addressed and owner-prefixed,
+// so bytes staged before review are already at their final key and nothing is
+// uploaded twice. Checked here only to fail with something a person can read.
+const MIME_EXTENSION: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+};
+
+export function expectedObjectKey(
+  ownerId: string,
+  sha256: string,
+  mimeType: string,
+): string | null {
+  const ext = MIME_EXTENSION[mimeType];
+  return ext ? `${ownerId}/${sha256.toLowerCase()}${ext}` : null;
+}
+
+// Both sides registered is what the offer stager requires. Reported rather than
+// enforced here: a decision stands on its own even when its imagery does not,
+// and rolling back a correct identity because an image failed would be worse.
+export function mediaComplete(registered: readonly MediaSide[]): boolean {
+  return registered.includes("front") && registered.includes("back");
 }
