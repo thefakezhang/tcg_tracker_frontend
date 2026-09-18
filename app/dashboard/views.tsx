@@ -1,10 +1,11 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import {
   Boxes, CalendarDays, ClipboardCheck, DollarSign, Filter, Landmark, Library,
-  Languages, Map as MapIcon, Receipt, ScanSearch, Send, ShieldCheck, ShoppingBasket, Users, Activity, type LucideIcon } from "lucide-react";
+  Languages, Map as MapIcon, Receipt, ScanLine, ScanSearch, Send, ShieldCheck, ShoppingBasket, Users, Activity, type LucideIcon } from "lucide-react";
 import type { TranslationKey } from "@/lib/i18n";
 import TripsOverview from "./TripsOverview";
 import InventoryView from "./InventoryView";
+import ScanReviewView from "./ScanReviewView";
 import SalesView from "./SalesView";
 import CurationView from "./CurationView";
 import SealedCurationView from "./SealedCurationView";
@@ -73,6 +74,7 @@ export const VIEWS: ViewDef[] = [
   { sentinel: -14, slug: "planner", group: "customers.section", icon: ShoppingBasket, sidebarKey: "purchasePlanner.title", titleKey: "purchasePlanner.title", render: () => <PurchasePlannerView key="purchase-planner" /> },
   { sentinel: 0, slug: "trips", group: "sidebar.trips", icon: MapIcon, sidebarKey: "trips.overviewTitle", titleKey: "trips.overviewTitle", render: () => <TripsOverview key="trips-overview" /> },
   { sentinel: -1, slug: "inventory", group: "sidebar.trips", icon: Boxes, sidebarKey: "inventory.title", titleKey: "inventory.title", render: () => <InventoryView key="inventory" /> },
+  { sentinel: -19, slug: "scan-review", group: "sidebar.trips", icon: ScanLine, sidebarKey: "scanReview.nav", titleKey: "scanReview.title", render: () => <ScanReviewView key="scan-review" /> },
   { sentinel: -2, slug: "sales", group: "sidebar.trips", icon: DollarSign, sidebarKey: "sales.allTitle", titleKey: "sales.allTitle", render: () => <SalesView key="sales" /> },
   { sentinel: -4, slug: "expenses", group: "sidebar.trips", icon: Receipt, sidebarKey: "expenses.title", titleKey: "expenses.title", render: () => <div key="expenses" className="p-4"><ExpensesTab tripId={null} /></div> },
   { sentinel: -11, slug: "finances", group: "sidebar.trips", icon: Landmark, sidebarKey: "finances.title", titleKey: "finances.title", render: () => <FinancesView key="finances" /> },
