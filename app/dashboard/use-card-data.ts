@@ -25,6 +25,7 @@ import {
 import type { PriceKind } from "@/lib/price-kind";
 import {
   pokemonVariantLabel,
+  pokemonVariantSearchFilters,
   type PokemonEdition,
   type PokemonFoilTreatment,
   type PokemonVariantProjection,
@@ -90,6 +91,34 @@ export const LISTINGS_TABLE_MAP: Record<Game, string> = {
   pokemon_sealed: "pokemon_sealed_market_listings",
 };
 
+// Columns read from the per-game market_listings tables.
+//
+// available_quantity exists ONLY on pokemon_market_listings. Migration 000408
+// added it there for the purchase planner, to carry the stock counts JP shops
+// publish (shinsoku "在庫数 3点", big_tcg, cardkingdom, hareruya2). Neither
+// mtg_market_listings nor pokemon_sealed_market_listings has those sources, or
+// the column.
+//
+// PostgREST rejects the WHOLE query when a selected column is missing
+// ("column mtg_market_listings.available_quantity does not exist"), so asking
+// for it unconditionally returned zero listings for every MTG card rather than
+// just a null quantity.
+const LISTING_COLS_COMMON =
+  "card_id, price_type, price_kind, price, currency, psa_grade, condition, location_id, listing_url, last_updated";
+
+const LISTING_HAS_AVAILABLE_QUANTITY: Record<Game, boolean> = {
+  pokemon: true,
+  mtg: false,
+  pokemon_sealed: false,
+};
+
+export function listingCols(game: Game): string {
+  const quantity = LISTING_HAS_AVAILABLE_QUANTITY[game]
+    ? ", available_quantity"
+    : "";
+  return `${LISTING_COLS_COMMON}${quantity}, currencies(symbol)`;
+}
+
 export interface CardDefinition {
   card_id: string;
   card_uid?: string | null; // durable identity (H3); sealed aliases product_uid here
@@ -132,14 +161,37 @@ export function cardVariant(card: PokemonVariantProjection | string | null | und
   );
 }
 
-// Muted subtitle for a card: "SET 123/456 · <variant>" (variant omitted when base).
-export function cardMeta(setCode?: string | null, cardNumber?: string | null, miscInfo?: string | null): string {
-  const setNum = [setCode, cardNumber].filter(Boolean).join(" ");
-  return [setNum, pokemonVariantLabel({ misc_info: miscInfo })].filter(Boolean).join(" · ");
+// The variant label of a row read from inventory_holdings_v or sales_ledger_v.
+// Those views carry variant_label, which the database composes from the typed
+// Pokemon axes (backend migration 000484), so it reads the same before and
+// after the backend's Phase 3 rewrites misc_info into the residue. It is NULL
+// for MTG and sealed rows, whose misc_info is still the label, and for a
+// Pokemon card with no variant, whose misc_info then says nothing either.
+export function viewVariantLabel(row: { variant_label?: string | null; misc_info?: string | null }): string | null {
+  return row.variant_label?.trim() || cardVariant(row.misc_info);
 }
 
+// Muted subtitle for a card: "SET 123/456 · <variant>" (variant omitted when base).
+// variant is either a row carrying the typed Pokemon projection
+// (POKEMON_VARIANT_COLS), which is what a Pokemon card-definition read passes,
+// or an already-composed label such as viewVariantLabel's. An MTG row passes
+// its misc_info, which is its label.
+export function cardMeta(
+  setCode?: string | null,
+  cardNumber?: string | null,
+  variant?: PokemonVariantProjection | string | null,
+): string {
+  const setNum = [setCode, cardNumber].filter(Boolean).join(" ");
+  return [setNum, cardVariant(variant)].filter(Boolean).join(" · ");
+}
+
+// The Pokemon card-definition columns pokemonVariantLabel composes a label
+// from. Select them wherever a definition's variant is shown, so the label
+// reads the same before and after the backend's Phase 3 rewrites misc_info.
+export const POKEMON_VARIANT_COLS = "misc_info, edition, foil_treatment, variant_attrs";
+
 export const POKEMON_CARD_DEF_COLS =
-  "card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, edition, foil_treatment, variant_attrs, image_url, rarity, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url, language";
+  `card_id, card_uid, regional_name, english_name, set_code, card_number, ${POKEMON_VARIANT_COLS}, image_url, rarity, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url, language`;
 export const MTG_CARD_DEF_COLS =
   "card_id, card_uid, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language";
 
@@ -696,7 +748,8 @@ export function useCardData(options: {
       const textCols = activeGame === "pokemon"
         ? ["regional_name", "english_name", "misc_info", "card_number", "set_code"]
         : ["regional_name", "misc_info", "foil_type", "language", "card_number", "set_code"];
-      for (const f of smartSearchFilters(s, textCols, "card_uid", "card_id", extIds)) {
+      const variantFilters = activeGame === "pokemon" ? pokemonVariantSearchFilters : undefined;
+      for (const f of smartSearchFilters(s, textCols, "card_uid", "card_id", extIds, variantFilters)) {
         query = query.or(f, { referencedTable: cardDefTable });
       }
     }

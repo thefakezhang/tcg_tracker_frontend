@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pokemonVariantLabel, type PokemonFoilTreatment } from "./pokemon-variant";
+import { pokemonVariantLabel, pokemonVariantSearchFilters, type PokemonFoilTreatment } from "./pokemon-variant";
 
 describe("pokemonVariantLabel", () => {
   it.each([
@@ -103,5 +103,62 @@ describe("pokemonVariantLabel", () => {
       misc_info: "25th",
       variant_attrs: ["25th"],
     })).toBe("25th");
+  });
+});
+
+describe("pokemonVariantSearchFilters", () => {
+  // A word finds the cards whose composed label contains it, which is what a
+  // substring search over the compound misc_info found before Phase 3.
+  it.each([
+    ["1ed", ["edition.in.(first)"]],
+    ["1ED", ["edition.in.(first)"]],
+    ["アンリミ", ["edition.in.(unlimited)"]],
+    ["リバース", ["foil_treatment.in.(reverse)"]],
+    ["マスターボール", ["foil_treatment.in.(master_ball_mirror)"]],
+    [
+      "ミラー",
+      [
+        "foil_treatment.in.(mirror,master_ball_mirror,monster_ball_mirror,energy_mark_mirror,rocket_mark_mirror,dark_ball_mirror,love_ball_mirror,friend_ball_mirror,quick_ball_mirror,rocket_team_mirror,break_mirror)",
+      ],
+    ],
+  ])("maps %s onto the typed axes", (word, expected) => {
+    expect(pokemonVariantSearchFilters(word)).toEqual(expected);
+  });
+
+  it("adds nothing for a word no label contains", () => {
+    expect(pokemonVariantSearchFilters("リザードン")).toEqual([]);
+    expect(pokemonVariantSearchFilters("SA")).toEqual([]);
+    expect(pokemonVariantSearchFilters("  ")).toEqual([]);
+  });
+
+  it("never matches the silent or catch-all treatments", () => {
+    for (const word of ["normal", "unknown", "other", "not_applicable"]) {
+      expect(pokemonVariantSearchFilters(word)).toEqual([]);
+    }
+  });
+
+  it("agrees with the rendered label for every typed value", () => {
+    const editions = ["first", "unlimited", "unknown", "not_applicable"];
+    const foils = [
+      "normal", "mirror", "reverse", "master_ball_mirror", "monster_ball_mirror",
+      "energy_mark_mirror", "rocket_mark_mirror", "dark_ball_mirror", "love_ball_mirror",
+      "friend_ball_mirror", "quick_ball_mirror", "rocket_team_mirror", "break_mirror",
+    ];
+    for (const word of ["1ED", "アンリミ", "ミラー", "ボール", "リバース", "R団"]) {
+      const filters = pokemonVariantSearchFilters(word);
+      for (const edition of editions) {
+        for (const foil of foils) {
+          const label = pokemonVariantLabel({ misc_info: "", edition, foil_treatment: foil, variant_attrs: [] }) ?? "";
+          const matched = filters.some((filter) => {
+            const [column, , list] = filter.split(".");
+            const values = list.slice(1, -1).split(",");
+            return values.includes(column === "edition" ? edition : foil);
+          });
+          expect(matched, `${word} against ${edition}/${foil} (label "${label}")`).toBe(
+            label.toLowerCase().includes(word.toLowerCase()),
+          );
+        }
+      }
+    }
   });
 });

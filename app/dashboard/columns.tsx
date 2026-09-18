@@ -20,6 +20,7 @@ import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
 import { formatJpy, formatRoi, formatUsd, formatUsdCompact } from "@/lib/money";
 import { priceKindMarkerKey, priceKindTitleKey } from "@/lib/price-kind";
 import { laneLabel } from "@/lib/lane";
+import { MtgPrintingBadges, mtgLanguageLabel } from "./MtgPrintingBadges";
 
 export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }: { entry: PriceEntry | null; align?: "left" | "right"; badgeVariant?: "secondary" | "outline" }) {
   const { displayCurrency, convertPrice } = useCurrency();
@@ -449,7 +450,10 @@ export function createMtgColumns(
         const misc = cardVariant(card);
         return (
           <div>
-            <div>{getCardDisplayName(card, language)}</div>
+            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+              <span>{getCardDisplayName(card, language)}</span>
+              <MtgPrintingBadges card={card} />
+            </div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
             <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} consigned={row.original.ownedConsigned} availableOnly={availableOnly} />
             <ObservedLine observed={row.original.observed} />
@@ -490,7 +494,8 @@ export function createMtgColumns(
       meta: { className: "hidden xl:table-cell" },
       accessorFn: (row) => row.card.language ?? null,
       header: ({ column }) => <SortableHeader column={column} label={t("column.language")} />,
-      cell: ({ getValue }) => (getValue() as string | null) ?? "—",
+      // Same EN/JP reading as the badge beside the name, not the raw "jp" code.
+      cell: ({ getValue }) => mtgLanguageLabel(getValue() as string | null, t)?.code ?? "—",
     },
     uidColumn(t),
     {

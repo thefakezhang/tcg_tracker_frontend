@@ -8,6 +8,7 @@ import { selectAll } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { isOpaqueLinkID, linkChipLabel, platformShort, sourceLabel } from "@/lib/source-labels";
 import { useSupabaseQuery, QueryError } from "./use-query";
+import { cardVariant, POKEMON_VARIANT_COLS } from "./use-card-data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -173,7 +174,7 @@ const CONFIGS: Record<Game, GameConfig> = {
     proposedCol: "proposed_card_id",
     candidateIdsCol: "candidate_card_ids",
     catalogTable: "pokemon_card_definitions",
-    catalogSelect: "card_id, card_uid, regional_name, english_name, set_code, card_number, language, misc_info",
+    catalogSelect: `card_id, card_uid, regional_name, english_name, set_code, card_number, language, ${POKEMON_VARIANT_COLS}`,
     extIdsTable: "pokemon_external_identifiers",
     idCol: "card_id",
     uidCol: "card_uid",
@@ -181,7 +182,7 @@ const CONFIGS: Record<Game, GameConfig> = {
     numberCol: "card_number",
     matchLanguage: (c) => c.source_fields?.language || "jp",
     unified: true,
-    subtitle: (r) => joinParts([r.set_code as string, r.card_number as string, r.misc_info as string, r.language as string]),
+    subtitle: (r) => joinParts([r.set_code as string, r.card_number as string, cardVariant(r), r.language as string]),
     rpcConfirm: "card_index_resolve_pokemon_candidate_confirm",
     rpcCreate: "card_index_resolve_pokemon_candidate_create",
     rpcReject: "card_index_resolve_pokemon_candidate_reject",

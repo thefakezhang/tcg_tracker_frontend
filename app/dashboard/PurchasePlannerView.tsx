@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
+import { pokemonVariantSearchFilters } from "@/lib/pokemon-variant";
+import { cardVariant, POKEMON_VARIANT_COLS } from "./use-card-data";
 import { planState, planStateLabel } from "@/lib/plan-state";
 import { useTrips } from "./TripContext";
 import { useTranslation } from "@/lib/i18n";
@@ -118,11 +120,12 @@ async function fetchPlannerData(planId: number | null): Promise<PlannerData> {
 const CATALOG_SEARCH = {
   pokemon: {
     table: "pokemon_card_definitions",
-    select: "card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info",
+    select: `card_id, card_uid, regional_name, english_name, set_code, card_number, ${POKEMON_VARIANT_COLS}`,
     extIdsTable: "pokemon_external_identifiers",
     idCol: "card_id",
     uidCol: "card_uid",
     textCols: ["regional_name", "english_name", "set_code", "card_number", "misc_info"],
+    tokenFilters: pokemonVariantSearchFilters,
   },
   mtg: {
     table: "mtg_card_definitions_v",
@@ -131,6 +134,7 @@ const CATALOG_SEARCH = {
     idCol: "card_id",
     uidCol: "card_uid",
     textCols: ["regional_name", "local_name", "set_code", "card_number", "misc_info"],
+    tokenFilters: undefined,
   },
   pokemon_sealed: {
     table: "pokemon_sealed_products",
@@ -139,6 +143,7 @@ const CATALOG_SEARCH = {
     idCol: "product_id",
     uidCol: "product_uid",
     textCols: ["name", "english_name", "set_code"],
+    tokenFilters: undefined,
   },
 } as const;
 
@@ -160,7 +165,7 @@ async function searchCatalog(game: CatalogResult["game"], raw: string): Promise<
   // multi-word term means every token must match something, while a pasted
   // identifier comes back as a single disjunct that stands alone.
   let query = supabase.from(cfg.table).select(cfg.select);
-  for (const filter of smartSearchFilters(term, [...cfg.textCols], cfg.uidCol, cfg.idCol, extIds)) {
+  for (const filter of smartSearchFilters(term, [...cfg.textCols], cfg.uidCol, cfg.idCol, extIds, cfg.tokenFilters)) {
     query = query.or(filter);
   }
   const { data, error } = await query.limit(10);
@@ -178,10 +183,13 @@ async function searchCatalog(game: CatalogResult["game"], raw: string): Promise<
       };
     }
     const name = (row.english_name as string) || (row.local_name as string) || (row.regional_name as string);
+    // Siblings share a name, set and number; the variant is what tells a first
+    // edition from an unlimited print. MTG rows pass their misc_info.
+    const variant = cardVariant(row);
     return {
       id: row.card_id as number,
       game,
-      label: `${name} | ${row.set_code as string} ${row.card_number as string}`,
+      label: `${name} | ${row.set_code as string} ${row.card_number as string}${variant ? ` | ${variant}` : ""}`,
       sealedCondition: null,
       variantEdition: null,
     };

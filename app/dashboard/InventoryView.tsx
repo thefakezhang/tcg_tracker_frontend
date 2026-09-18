@@ -7,7 +7,7 @@ import { selectAll, selectAllByIds } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useLanguage } from "./LanguageContext";
-import { getCardDisplayName, cardMeta } from "./use-card-data";
+import { getCardDisplayName, cardMeta, viewVariantLabel } from "./use-card-data";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +52,8 @@ interface Holding {
   set_code: string;
   card_number: string | null;
   misc_info: string | null;
+  // Composed from the typed Pokemon axes by the view; see viewVariantLabel.
+  variant_label: string | null;
   condition_id: number | null;
   psa_grade: number | null;
   sealed_condition: string | null;
@@ -89,7 +91,7 @@ export default function InventoryView() {
   const fetchHoldings = useCallback(async (): Promise<{ holdings: Holding[]; roiLines: RoiLine[] }> => {
     const supabase = createClient();
     const holdingsData = await selectAll<Omit<Holding, "imageUrl" | "englishName" | "uid" | "reprintEvents">>(
-      () => supabase.from("inventory_holdings_v").select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd"),
+      () => supabase.from("inventory_holdings_v").select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, variant_label, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd"),
       ["game", "item_type", "leg", "card_id", "product_id", "condition_id", "psa_grade", "sealed_condition", "variant_edition"],
     );
     const rows = holdingsData.map(
@@ -343,7 +345,7 @@ export default function InventoryView() {
               )}
               <CardContent className="space-y-1 p-2">
                 <div className="truncate text-xs font-medium">{label(h)}</div>
-                {h.item_type !== "sealed" && <div className="truncate text-[10px] text-muted-foreground">{cardMeta(h.set_code, h.card_number, h.misc_info)}</div>}
+                {h.item_type !== "sealed" && <div className="truncate text-[10px] text-muted-foreground">{cardMeta(h.set_code, h.card_number, viewVariantLabel(h))}</div>}
                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge>
                   <span className="truncate">{detail(h)}</span>
@@ -396,7 +398,7 @@ export default function InventoryView() {
           <TableBody>
             {rows.map((h) => (
               <TableRow key={keyOf(h)}>
-                <TableCell className="truncate max-w-[320px]">{label(h)} <span className="text-muted-foreground">· {cardMeta(h.set_code, h.card_number, h.misc_info)}</span></TableCell>
+                <TableCell className="truncate max-w-[320px]">{label(h)} <span className="text-muted-foreground">· {cardMeta(h.set_code, h.card_number, viewVariantLabel(h))}</span></TableCell>
                 <TableCell><Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge></TableCell>
                 <TableCell className="text-xs text-muted-foreground">{detail(h)}</TableCell>
                 <TableCell>{h.reprintEvents.length > 0 ? <Badge variant="outline" className="border-amber-500/50 text-amber-300" title={h.reprintEvents.map((event) => `${event.starts_on}: ${event.event_title}`).join("; ")}><AlertTriangle className="size-3" />{t("inventory.reprintRisk", { n: h.reprintEvents.length })}</Badge> : <span className="text-xs text-muted-foreground">{t("inventory.noEventRisk")}</span>}</TableCell>
@@ -428,7 +430,7 @@ export default function InventoryView() {
           itemMeta={[
             selected.item_type === "sealed"
               ? selected.set_code
-              : cardMeta(selected.set_code, selected.card_number, selected.misc_info),
+              : cardMeta(selected.set_code, selected.card_number, viewVariantLabel(selected)),
             detail(selected),
             t(selected.leg === "export" ? "trips.legExport" : "trips.legImport"),
           ].filter(Boolean).join(" · ")}

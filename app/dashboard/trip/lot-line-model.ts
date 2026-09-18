@@ -17,7 +17,8 @@ export interface SingleLotLineDefinition {
   englishName: string | null;
   setCode: string;
   cardNumber: string | null;
-  miscInfo: string | null;
+  // The composed variant label (cardVariant), not the stored misc_info.
+  variantLabel: string | null;
   imageUrl: string | null;
 }
 
@@ -88,7 +89,7 @@ export function mapSingleLotLine(
     englishName: definition?.englishName ?? null,
     setCode: definition?.setCode ?? "",
     cardNumber: definition?.cardNumber ?? null,
-    miscInfo: definition?.miscInfo ?? null,
+    variantLabel: definition?.variantLabel ?? null,
     imageUrl: definition?.imageUrl ?? null,
   };
 }
@@ -116,7 +117,7 @@ export function mapSealedLotLine(
     englishName: null,
     setCode: definition?.setCode ?? "",
     cardNumber: null,
-    miscInfo: null,
+    variantLabel: null,
     imageUrl: definition?.imageUrl ?? null,
   };
 }

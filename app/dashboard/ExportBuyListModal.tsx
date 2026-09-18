@@ -21,7 +21,7 @@ import { Download, GripVertical, Hash, ImageOff, Layers } from "lucide-react";
 import jsPDF from "jspdf";
 import { useTranslation } from "@/lib/i18n";
 import { useCurrency } from "./CurrencyContext";
-import { type CardRowData, getCardDisplayName } from "./use-card-data";
+import { type CardRowData, cardVariant, getCardDisplayName } from "./use-card-data";
 import { useLanguage, type Language } from "./LanguageContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -74,10 +74,8 @@ function SortableCard({
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const misc =
-    card.card.misc_info && card.card.misc_info !== "UNKNOWN"
-      ? card.card.misc_info
-      : null;
+  // Composed from the typed Pokemon axes that buy-list rows carry.
+  const misc = cardVariant(card.card);
   const cardNumber =
     card.card.card_number && card.card.card_number !== "UNKNOWN"
       ? card.card.card_number
@@ -246,10 +244,7 @@ async function generatePdf(
       card.card.card_number && card.card.card_number !== "UNKNOWN"
         ? card.card.card_number
         : null;
-    const misc =
-      card.card.misc_info && card.card.misc_info !== "UNKNOWN"
-        ? card.card.misc_info
-        : null;
+    const misc = cardVariant(card.card);
 
     const nameImg = renderTextImage(
       getCardDisplayName(card.card, language),

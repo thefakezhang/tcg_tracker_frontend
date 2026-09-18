@@ -13,7 +13,8 @@ import {
 } from "@/lib/image-curation-price-evidence";
 import { useLanguage } from "./LanguageContext";
 import { useSupabaseQuery, QueryError } from "./use-query";
-import { getCardDisplayName, cardMeta, useDebouncedValue } from "./use-card-data";
+import { getCardDisplayName, cardMeta, useDebouncedValue, POKEMON_VARIANT_COLS } from "./use-card-data";
+import type { PokemonVariantProjection } from "@/lib/pokemon-variant";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -85,7 +86,7 @@ interface QueueStats {
 }
 interface QueueData { rows: Candidate[]; stats: QueueStats; loadedAll: boolean; }
 
-interface MatchedCard {
+interface MatchedCard extends PokemonVariantProjection {
   regional_name: string; english_name: string | null; set_code: string;
   card_number: string | null; misc_info: string | null; image_url: string | null;
 }
@@ -180,7 +181,7 @@ export default function CurationView() {
     if (ids.length) {
       const { data: defs } = await supabase
         .from("pokemon_card_definitions")
-        .select("card_id, regional_name, english_name, set_code, card_number, misc_info, image_url")
+        .select(`card_id, regional_name, english_name, set_code, card_number, ${POKEMON_VARIANT_COLS}, image_url`)
         .in("card_id", ids);
       for (const d of (defs as ({ card_id: number } & MatchedCard)[]) ?? []) cardMap.set(d.card_id, d);
     }
@@ -595,7 +596,7 @@ export default function CurationView() {
   );
 }
 
-interface SearchHit { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string | null; misc_info: string | null; image_url: string | null; }
+interface SearchHit extends PokemonVariantProjection { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string | null; misc_info: string | null; image_url: string | null; }
 
 export function CurationCandidateCard({ c, idx, status, language, saving, selected, onSelect, onApprove, onReject, onSendBack, onUndo }: {
   c: Candidate; idx: number; status: Status; language: "en" | "ja"; saving: boolean;
@@ -672,7 +673,7 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
     // Multi-word terms AND together via one chained or() per token.
     const extIds = await externalIdMatches(supabase, "pokemon_external_identifiers", "card_id", s);
     let sq = supabase.from("pokemon_card_definitions")
-      .select("card_id, regional_name, english_name, set_code, card_number, misc_info, image_url");
+      .select(`card_id, regional_name, english_name, set_code, card_number, ${POKEMON_VARIANT_COLS}, image_url`);
     for (const f of smartSearchFilters(
       s,
       ["regional_name", "english_name", "card_number"],
@@ -689,8 +690,8 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
     ? getCardDisplayName(override, language)
     : c.card ? getCardDisplayName(c.card, language) : t("curation.noMatch");
   const matchMeta = override
-    ? cardMeta(override.set_code, override.card_number, override.misc_info)
-    : c.card ? cardMeta(c.card.set_code, c.card.card_number, c.card.misc_info) : "";
+    ? cardMeta(override.set_code, override.card_number, override)
+    : c.card ? cardMeta(c.card.set_code, c.card.card_number, c.card) : "";
   const sourceImg = c.source_image_url && /^https?:\/\//i.test(c.source_image_url) ? c.source_image_url : null;
   const geometryEdited = !sameGeometry(geometry, initialGeometry);
   const geometryDirty = shouldSubmitGeometryCorrection(
@@ -848,13 +849,13 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
             <div>
               <Label htmlFor={ids.search} className="text-xs flex items-center gap-1"><Search className="size-3" />{t("curation.changeCard")}</Label>
               <Input id={ids.search} value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("curation.searchPlaceholder")} className="min-h-11" />
-              {override && <div className="mt-1 flex min-w-0 items-center gap-1 text-xs"><Badge variant="secondary" className="min-w-0 truncate">{getCardDisplayName(override, language)} · {cardMeta(override.set_code, override.card_number, override.misc_info)}</Badge><Button variant="ghost" size="icon" className="min-h-11 min-w-11 sm:min-h-11 sm:min-w-11" aria-label={t("curation.clearOverride")} onClick={() => setOverride(null)}><X className="size-3" /></Button></div>}
+              {override && <div className="mt-1 flex min-w-0 items-center gap-1 text-xs"><Badge variant="secondary" className="min-w-0 truncate">{getCardDisplayName(override, language)} · {cardMeta(override.set_code, override.card_number, override)}</Badge><Button variant="ghost" size="icon" className="min-h-11 min-w-11 sm:min-h-11 sm:min-w-11" aria-label={t("curation.clearOverride")} onClick={() => setOverride(null)}><X className="size-3" /></Button></div>}
               {search && hits.length > 0 && (
                 <div className="mt-1 max-h-40 overflow-auto rounded-md border bg-background">
                   {hits.map((h) => (
                     <button key={h.card_id} onClick={() => { setOverride(h); setSearch(""); setHits([]); }}
                       className="block min-h-11 w-full truncate px-2 py-1 text-left text-xs hover:bg-accent">
-                      {getCardDisplayName(h, language)} · {cardMeta(h.set_code, h.card_number, h.misc_info)}
+                      {getCardDisplayName(h, language)} · {cardMeta(h.set_code, h.card_number, h)}
                     </button>
                   ))}
                 </div>

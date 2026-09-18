@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSupabaseQuery, QueryError } from "./use-query";
-import { useDebouncedValue } from "./use-card-data";
+import { useDebouncedValue, viewVariantLabel } from "./use-card-data";
 import { CardIndexMutationError } from "./PokemonCardIndex";
 import { POKEMON_INDEX_LINK_COVERAGE_VIEW } from "./pokemon-index-visibility";
 
@@ -43,6 +43,8 @@ export interface CoverageRow {
   set_code: string;
   card_number: string;
   misc_info: string | null;
+  // Composed from the typed Pokemon axes by the view (backend 000487).
+  variant_label: string | null;
   image_url: string | null;
   set_name: string | null;
   is_numbered: boolean;
@@ -80,7 +82,7 @@ export async function fetchCards(setCode: string, platform: Platform | "any", se
   const supabase = createClient();
   let q = supabase
     .from(POKEMON_INDEX_LINK_COVERAGE_VIEW)
-    .select("card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, image_url, set_name, is_numbered, tcgplayer_id, snkrdunk_id, has_tcgplayer, has_snkrdunk")
+    .select("card_id, card_uid, regional_name, english_name, set_code, card_number, misc_info, variant_label, image_url, set_name, is_numbered, tcgplayer_id, snkrdunk_id, has_tcgplayer, has_snkrdunk")
     .eq("is_numbered", false)
     .eq("set_code", setCode)
     .order("regional_name")
@@ -238,7 +240,7 @@ export default function CardLinksTab() {
                           <div className="min-w-0">
                             <div className="truncate font-medium">{row.regional_name}</div>
                             <div className="truncate text-xs text-muted-foreground">
-                              {[row.english_name, row.card_number, row.misc_info !== "UNKNOWN" ? row.misc_info : null]
+                              {[row.english_name, row.card_number, viewVariantLabel(row)]
                                 .filter(Boolean)
                                 .join(" · ")}
                             </div>

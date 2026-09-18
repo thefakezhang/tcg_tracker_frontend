@@ -259,6 +259,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "column.language": "言語",
   "foil.foil": "フォイル",
   "foil.nonFoil": "通常",
+  "cardLanguage.en": "英語",
+  "cardLanguage.jp": "日本語",
   "modal.set": "セットコード",
   "modal.tabNonPsa": "未鑑定",
   "modal.tabPsa": "PSA",

@@ -12,6 +12,7 @@ import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
 import type { JapanExclusivityMode } from "./japan-exclusivity";
 
 import { formatUsdWhole } from "@/lib/money";
+import { viewVariantLabel } from "./use-card-data";
 // Pre-trip shopping list (docs/customers_crm.md, Phase 5): the "what should I
 // hunt for on this trip" view. Reads customer_shopping_list_v — every card
 // that at least one customer wants via a criteria row, aggregated across
@@ -31,6 +32,8 @@ interface ShoppingRow {
   set_code: string | null;
   card_number: string | null;
   misc_info: string | null;
+  // Composed from the typed Pokemon axes by the view (backend 000487).
+  variant_label?: string | null;
   rarity: string | null;
   japan_exclusive_artwork: boolean | null;
   japan_exclusive_artwork_reason: string | null;
@@ -66,8 +69,8 @@ function itemMeta(r: ShoppingRow): string {
   const parts: string[] = [];
   if (r.set_code && r.set_code !== "UNKNOWN") parts.push(r.set_code);
   if (r.card_number) parts.push(r.card_number);
-  const misc = r.misc_info && r.misc_info !== "UNKNOWN" ? ` (${r.misc_info})` : "";
-  return parts.join(" ") + misc;
+  const variant = viewVariantLabel(r);
+  return parts.join(" ") + (variant ? ` (${variant})` : "");
 }
 
 export default function ShoppingListView() {

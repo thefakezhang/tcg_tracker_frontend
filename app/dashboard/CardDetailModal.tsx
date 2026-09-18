@@ -29,6 +29,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { AddToLotPopover } from "./AddToLotPopover";
+import { MtgPrintingBadges } from "./MtgPrintingBadges";
 import { useGame } from "./GameContext";
 import { useCurrency } from "./CurrencyContext";
 import { useBuyList } from "./BuyListContext";
@@ -56,6 +57,7 @@ import {
   type MarketListing,
   type LocationInfo,
   LISTINGS_TABLE_MAP,
+  listingCols,
   fetchRateMap,
   fetchLocationMap,
   refreshLocationMap,
@@ -341,9 +343,7 @@ export default function CardDetailModal({
         await Promise.all([
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
-            .select(
-              "card_id, price_type, price_kind, price, currency, psa_grade, condition, location_id, listing_url, last_updated, available_quantity, currencies(symbol)"
-            )
+            .select(listingCols(activeGame))
             .eq("card_id", card!.card.card_id),
           fetchRateMap(supabase),
           fetchLocationMap(supabase),
@@ -663,6 +663,7 @@ export default function CardDetailModal({
                   <Layers className="size-3" />
                   {def.set_code}
                 </Badge>
+                {activeGame === "mtg" && <MtgPrintingBadges card={def} />}
                 {def.rarity && (
                   <Badge variant="secondary" className="h-auto px-1.5 py-px">
                     <Sparkles className="size-3" />
