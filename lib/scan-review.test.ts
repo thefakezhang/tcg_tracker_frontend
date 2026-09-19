@@ -19,15 +19,24 @@ import {
   isProposalContested,
   parseCandidates,
   remainingFor,
+  registerableMedia,
+  expectedObjectKey,
+  mediaComplete,
 } from "./scan-review";
 
 function capture(over: Partial<ScanCapture> = {}): ScanCapture {
   return {
     captureId: over.captureId ?? "c1",
     ordinal: over.ordinal ?? 1,
-    frontObjectKey: over.frontObjectKey ?? "owner/aa.jpg",
-    backObjectKey: over.backObjectKey ?? "owner/bb.jpg",
-    mimeType: over.mimeType ?? "image/jpeg",
+    // `=== undefined`, not `??`: a test that explicitly passes null is asserting
+    // the absent case, and `??` would quietly hand it the default instead.
+    frontObjectKey: over.frontObjectKey === undefined ? "owner/aa.jpg" : over.frontObjectKey,
+    backObjectKey: over.backObjectKey === undefined ? "owner/bb.jpg" : over.backObjectKey,
+    frontSha256: over.frontSha256 === undefined ? "aa" : over.frontSha256,
+    backSha256: over.backSha256 === undefined ? "bb" : over.backSha256,
+    frontByteSize: over.frontByteSize === undefined ? 1024 : over.frontByteSize,
+    backByteSize: over.backByteSize === undefined ? 2048 : over.backByteSize,
+    mimeType: over.mimeType === undefined ? "image/jpeg" : over.mimeType,
     candidates: over.candidates ?? [],
     proposedCardUid: over.proposedCardUid ?? null,
     proposedScore: over.proposedScore ?? null,
@@ -205,5 +214,46 @@ describe("batchProgress", () => {
     expect(isBatchComplete([decided])).toBe(true);
     expect(isBatchComplete([decided, capture({ captureId: "open" })])).toBe(false);
     expect(isBatchComplete([])).toBe(false);
+  });
+});
+
+describe("listing media registration", () => {
+  it("offers both sides when a capture carries complete bytes", () => {
+    expect(registerableMedia(capture()).map((m) => m.side)).toEqual(["front", "back"]);
+  });
+
+  it("skips a side missing its checksum rather than calling and failing opaquely", () => {
+    // The RPC compares the supplied sha against the one staged for that side,
+    // so sending nothing is a clear local skip instead of a server exception.
+    expect(registerableMedia(capture({ backSha256: null })).map((m) => m.side)).toEqual(["front"]);
+  });
+
+  it("skips a side with no object key, and one with a nonsense byte size", () => {
+    expect(registerableMedia(capture({ frontObjectKey: null })).map((m) => m.side)).toEqual(["back"]);
+    expect(registerableMedia(capture({ backByteSize: 0 })).map((m) => m.side)).toEqual(["front"]);
+  });
+
+  it("registers nothing when the capture has no mime type", () => {
+    expect(registerableMedia(capture({ mimeType: null }))).toEqual([]);
+  });
+
+  it("carries the mime type onto every side it returns", () => {
+    expect(registerableMedia(capture({ mimeType: "image/png" })).every((m) => m.mimeType === "image/png")).toBe(true);
+  });
+
+  it("builds the content-addressed key the RPC insists on", () => {
+    expect(expectedObjectKey("owner-1", "AABB", "image/jpeg")).toBe("owner-1/aabb.jpg");
+    expect(expectedObjectKey("owner-1", "aabb", "image/png")).toBe("owner-1/aabb.png");
+    expect(expectedObjectKey("owner-1", "aabb", "image/webp")).toBe("owner-1/aabb.webp");
+  });
+
+  it("has no key for a type the bucket does not accept", () => {
+    expect(expectedObjectKey("owner-1", "aabb", "image/gif")).toBeNull();
+  });
+
+  it("is complete only with both sides, which is what the offer stager requires", () => {
+    expect(mediaComplete(["front", "back"])).toBe(true);
+    expect(mediaComplete(["front"])).toBe(false);
+    expect(mediaComplete([])).toBe(false);
   });
 });

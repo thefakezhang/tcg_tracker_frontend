@@ -19,9 +19,9 @@ import { createClient } from "@/lib/supabase/client";
 import { smartSearchFilters } from "@/lib/card-search";
 import { useTranslation } from "@/lib/i18n";
 import {
-  type ScanBand, type ScanCapture,
+  type MediaSide, type ScanBand, type ScanCapture,
   SCAN_BANDS, batchProgress, claimKey, countClaims, groupByBand,
-  isProposalContested, remainingFor,
+  isProposalContested, mediaComplete, remainingFor,
 } from "@/lib/scan-review";
 import { cardMeta, getCardDisplayName, type CardDefinition } from "./use-card-data";
 import { POKEMON_CARD_DEF_COLS } from "./use-card-data";
@@ -114,7 +114,7 @@ function BatchReview({ batchId, onBack }: { batchId: string; onBack: () => void 
   const { t } = useTranslation();
   const batch = useScanBatch(batchId);
   const { conditions, defaultConditionId } = useTcgplayerConditions();
-  const { decide, clear } = useScanDecisions();
+  const { decide, clear, registerMedia } = useScanDecisions();
 
   const [conditionId, setConditionId] = useState<number | null>(null);
   const effectiveCondition = conditionId ?? defaultConditionId;
@@ -128,10 +128,13 @@ function BatchReview({ batchId, onBack }: { batchId: string; onBack: () => void 
   // A visible record of what was just decided. Without it a mis-click is
   // unrecoverable, because nothing on screen says what changed.
   const [lastDecision, setLastDecision] = useState<string | null>(null);
+  // Registration failing is not a failed decision, so it gets its own line.
+  const [mediaWarning, setMediaWarning] = useState<string | null>(null);
 
   const captures = useMemo(() => batch.data?.captures ?? [], [batch.data]);
   const cards = batch.data?.cards ?? new Map<string, CandidateCard>();
   const images = batch.data?.images ?? new Map();
+  const mediaByCapture = batch.data?.media ?? new Map<string, MediaSide[]>();
   const grouped = useMemo(() => groupByBand(captures), [captures]);
   const claims = useMemo(() => countClaims(captures), [captures]);
   const progress = useMemo(() => batchProgress(captures), [captures]);
@@ -149,11 +152,36 @@ function BatchReview({ batchId, onBack }: { batchId: string; onBack: () => void 
           return next;
         });
         const card = cards.get(result.decidedCardUid);
-        setLastDecision(
-          t(result.decision === "corrected" ? "scanReview.lastCorrected" : "scanReview.lastConfirmed", {
+        const decidedLine = t(
+          result.decision === "corrected" ? "scanReview.lastCorrected" : "scanReview.lastConfirmed",
+          {
             ordinal: String(capture.ordinal),
             card: card ? card.name : result.decidedCardUid.slice(0, 8),
-          }),
+          },
+        );
+
+        // Attach the scan as this listing's imagery. The decision above already
+        // stands; a failure here is reported beside it rather than undoing it,
+        // because the identity is correct either way and the operator needs to
+        // know which of the two happened.
+        // The RPC reads the decision from the row it just wrote, and
+        // registerableMedia only inspects the bytes, so the capture as loaded
+        // is the right argument.
+        const media = await registerMedia(capture);
+        if (media.failures.length > 0) {
+          setMediaWarning(
+            t("scanReview.mediaFailed", {
+              ordinal: String(capture.ordinal),
+              detail: media.failures.map((f) => `${f.side}: ${f.message}`).join("; "),
+            }),
+          );
+        } else {
+          setMediaWarning(null);
+        }
+        setLastDecision(
+          media.registered.length > 0
+            ? `${decidedLine} ${t("scanReview.mediaRegistered", { count: String(media.registered.length) })}`
+            : decidedLine,
         );
         setOpenCaptureId(null);
         await batch.retry();
@@ -163,7 +191,7 @@ function BatchReview({ batchId, onBack }: { batchId: string; onBack: () => void 
         setBusy(null);
       }
     },
-    [batch, cards, decide, effectiveCondition, t],
+    [batch, cards, decide, effectiveCondition, registerMedia, t],
   );
 
   const runClear = useCallback(
@@ -227,6 +255,11 @@ function BatchReview({ batchId, onBack }: { batchId: string; onBack: () => void 
           {lastDecision}
         </p>
       )}
+      {mediaWarning && (
+        <p className="rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+          {mediaWarning}
+        </p>
+      )}
       {error && (
         <p className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
       )}
@@ -266,6 +299,7 @@ function BatchReview({ batchId, onBack }: { batchId: string; onBack: () => void 
                             ? remainingFor(capture.decidedCardUid, capture.decidedConditionId, availability, claims)
                             : null
                         }
+                        media={mediaByCapture.get(capture.captureId) ?? []}
                         busy={busy === capture.captureId}
                         canOneClick={ONE_CLICK_CONFIRM.has(band) && effectiveCondition != null}
                         onOpen={() => setOpenCaptureId(capture.captureId)}
@@ -308,6 +342,7 @@ function CaptureRow(props: {
   cards: Map<string, CandidateCard>;
   contested: boolean;
   remaining: number | null;
+  media: MediaSide[];
   busy: boolean;
   canOneClick: boolean;
   onOpen: () => void;
@@ -316,7 +351,11 @@ function CaptureRow(props: {
 }) {
   const { t } = useTranslation();
   const { language } = useLanguage();
-  const { capture, cards, contested, remaining, busy } = props;
+  const { capture, cards, contested, remaining, media, busy } = props;
+  // Registered imagery pins the decision: the listing media row names this
+  // capture as its source, so the RPC refuses to undecide it. Disabled with a
+  // reason beats a button that always errors.
+  const mediaLocked = media.length > 0;
 
   const shownUid = capture.decidedCardUid ?? capture.proposedCardUid;
   const card = shownUid ? cards.get(shownUid) : undefined;
@@ -355,7 +394,16 @@ function CaptureRow(props: {
             <Badge variant={capture.decision === "corrected" ? "outline" : "secondary"}>
               {t(capture.decision === "corrected" ? "scanReview.corrected" : "scanReview.confirmed")}
             </Badge>
-            <Button size="sm" variant="ghost" disabled={busy} onClick={props.onClear} title={t("scanReview.undo")}>
+            {mediaComplete(media) && (
+              <Badge variant="secondary" className="text-[10px]">{t("scanReview.mediaAttached")}</Badge>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy || mediaLocked}
+              onClick={props.onClear}
+              title={mediaLocked ? t("scanReview.undoLocked") : t("scanReview.undo")}
+            >
               {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RotateCcw className="size-4" aria-hidden />}
             </Button>
           </>

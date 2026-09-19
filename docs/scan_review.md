@@ -29,7 +29,7 @@ Data flowing in as intelligence and data flowing out as fulfilment are not one j
 |---|---|
 | `lib/scan-review.ts` | Pure logic: band assignment, claim counting, contested-proposal detection, batch progress. No React, no Supabase. |
 | `lib/scan-review.test.ts` | Regression guard for the two things that can be silently wrong (banding, and availability after earlier decisions consume copies). |
-| `app/dashboard/use-scan-review.ts` | Data access: staged batches and captures, card hydration, signed capture URLs, TCGplayer conditions, the two decision RPCs. |
+| `app/dashboard/use-scan-review.ts` | Data access: staged batches and captures, card hydration, signed capture URLs, TCGplayer conditions, the decision RPCs and listing-media registration. |
 | `app/dashboard/CardCandidatePicker.tsx` | The one shared presentational component: an image plus a ranked candidate list, with search. |
 | `app/dashboard/ScanReviewView.tsx` | The screen: batch list, confidence bands, capture rows, and the decision drawer. |
 
@@ -57,6 +57,27 @@ Availability itself is learned from the `available_quantity` each RPC call repor
 Only the `high` band (score at or above 95) gets a one-click confirm in the row.
 Every other band has to be opened, and the drawer's action stays disabled until a card is actually chosen.
 This is a direct guard against the failure TCG Automate names as its own worst habit: saving a result that is close enough.
+
+### Registering listing imagery
+
+Deciding a capture says which card it is.
+Registering its imagery is what makes those bytes the listing's front and back, through `register_scanner_capture_media`.
+
+The two are separate RPCs because `inventory_listing_media` is keyed on the card and condition that only exist once a person has chosen them.
+They stay separate calls here too, and registration runs **after** a successful decision rather than inside it.
+
+That ordering is deliberate.
+Registration can legitimately fail while the decision stands, most often because another capture already supplied imagery for the same card and condition, which the RPC refuses rather than overwrites.
+Rolling back a correct identity because an image failed would be strictly worse, so a failure is reported on its own line beside the decision instead.
+
+This is what the eBay leg consumes.
+`ebay_offer_stage.py plan` in the backend repo refuses "recognizer proposals, undecided captures, missing listing media, and inventory with no currently available copy", so a decision that never registers leaves nothing downstream to stage.
+
+**Registered imagery pins the decision.**
+`clear_scanner_batch_capture_decision` refuses once a listing media row names the capture as its source, so Undo is disabled with a reason rather than offered as a button that always errors.
+The screen reads `inventory_listing_media` per batch to know this, rather than inferring it from what it happened to register in this session.
+
+The RPC is idempotent: re-registering identical bytes returns the existing `media_id`, so retrying after a partial failure is safe.
 
 ### Images
 
