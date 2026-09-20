@@ -741,7 +741,12 @@ function PokemonCardModal({
         if (versionResult.error) { setBusy(false); setError(versionResult.error.message); return; }
         expectedEditVersion = Number(versionResult.data?.english_name_version ?? 0);
       }
-      const imageResult = await supabase.rpc("card_index_edit_pokemon_card", {
+      // Must be the typed function, like the save above: pokemonEditRPCArgs now
+      // carries p_edition and p_foil_treatment, and PostgREST resolves an RPC by
+      // the set of argument names it is given. Sending those to the legacy
+      // 9-argument function matches nothing and fails with PGRST202, which is
+      // what happened to every image upload between #367 and this fix.
+      const imageResult = await supabase.rpc("card_index_edit_pokemon_card_typed", {
         ...pokemonEditRPCArgs(cardIdForUpload, expectedEditVersion, form, up.url),
       });
       if (imageResult.error) { setBusy(false); setError(`Set image_url: ${imageResult.error.message}`); return; }
