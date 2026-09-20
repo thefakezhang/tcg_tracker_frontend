@@ -39,14 +39,35 @@ The standard PR flow for `tcg_tracker` / `tcg_tracker_frontend`. Run from the re
    for i in $(seq 1 12); do
      p=$(gh pr checks $n 2>&1 | grep -ciE "pending|in_progress|queued"); [ "$p" = "0" ] && break; sleep 20; done
    gh pr checks $n 2>&1 | tail -2
-   gh pr merge $n --merge --delete-branch   # deletes the remote AND local branch, checks out base
+   gh pr merge $n --merge --delete-branch
    ```
    - Frontend PRs show Vercel checks; backend often has none ("no checks reported"), which is fine - merge.
-5. **Sync:**
+   - **`--delete-branch` will usually fail here, and the merge still succeeded.** This machine keeps `main` and feature branches checked out in parallel worktrees, so `gh` cannot check out base or delete a branch another worktree holds:
+     ```
+     failed to delete local branch <branch>: cannot delete branch '<branch>' used by worktree at ...
+     failed to run git: fatal: 'main' is already used by worktree at ...
+     ```
+     It aborts at that point, **before** deleting the remote branch. So a nonzero exit here means "merged, cleanup unfinished", not "merge failed".
+   - Confirm which it was, always, rather than reading the exit code:
+     ```bash
+     gh pr view $n --json state,mergeCommit -q '"\(.state) \(.mergeCommit.oid[0:8] // "")"'
+     ```
+     Continue only on `MERGED`.
+5. **Clean up, from outside the feature worktree:**
    ```bash
-   git pull origin main -q
+   branch=$(git branch --show-current)          # capture BEFORE leaving
+   cd <repo root>                               # not the feature worktree
+   git worktree remove .claude/worktrees/<name> --force
+   git branch -D "$branch"
+   git push origin --delete "$branch"
+   git fetch origin --prune
+   git ls-remote --heads origin "$branch" | wc -l   # expect 0
    ```
-   `--delete-branch` already removed the remote and local branch and switched to base; never leave a merged branch behind.
+   In that order: the worktree holds the branch, so the branch cannot be deleted while it exists.
+
+   Never run `git pull origin main` from the former feature worktree - it fails the same way, because another worktree owns `main`. Update the main checkout from the main checkout.
+
+   Never leave a merged branch behind. Because the one command that was supposed to do this exits early here, the deletion is a step you run, not a side effect you assume.
 
 ## Notes
 - This repo has a sibling: backend `tcg_tracker` + frontend `tcg_tracker_frontend`. A feature often spans both, so two PRs (apply backend first if the frontend depends on it).
