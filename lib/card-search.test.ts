@@ -5,6 +5,7 @@ import {
   smartSearchFilters,
   tokenizeSearchTerm,
   uidOrParts,
+  uidRange,
 } from "./card-search";
 import { pokemonVariantSearchFilters } from "./pokemon-variant";
 
@@ -165,5 +166,37 @@ describe("smartSearchFilters token filters", () => {
     expect(smartSearchFilters("1ED", COLS, "card_uid", "card_id", [])).toEqual([
       "regional_name.ilike.%1ED%,misc_info.ilike.%1ED%",
     ]);
+  });
+});
+
+describe("uidRange", () => {
+  it("returns an exact point for a full uuid", () => {
+    const r = uidRange("0f8b2a1c-1111-4222-8333-444455556666");
+    expect(r).toEqual({
+      lo: "0f8b2a1c-1111-4222-8333-444455556666",
+      hi: "0f8b2a1c-1111-4222-8333-444455556666",
+    });
+  });
+
+  it("returns the inclusive range a displayed 8-hex prefix denotes", () => {
+    expect(uidRange("0f8b2a1c")).toEqual({
+      lo: "0f8b2a1c-0000-0000-0000-000000000000",
+      hi: "0f8b2a1c-ffff-ffff-ffff-ffffffffffff",
+    });
+  });
+
+  it("returns null for ordinary search text", () => {
+    expect(uidRange("lightning bolt")).toBeNull();
+    expect(uidRange("2x2")).toBeNull();
+    expect(uidRange("")).toBeNull();
+  });
+
+  // uidOrParts composes its PostgREST strings from uidRange, so a term that
+  // yields no range must yield no filter either: the two cannot disagree about
+  // what counts as an identifier paste.
+  it("agrees with uidOrParts about what is an identifier", () => {
+    for (const term of ["0f8b2a1c", "0f8b2a1c-1111-4222-8333-444455556666", "bolt", "2x2", ""]) {
+      expect(uidRange(term) === null).toBe(uidOrParts(term, "card_uid").length === 0);
+    }
   });
 });
