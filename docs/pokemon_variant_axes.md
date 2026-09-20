@@ -40,4 +40,7 @@ The edit dialog was the last writer still relying on it.
 
 - **The create dialog is unchanged.** `card_index_create_pokemon_card` has no typed parameters; it derives both axes from the string it is given (migration 000498), which works for every finish that has a token and silently cannot express the ones that do not. Offering the selectors on create would therefore drop a `master_ball_mirror` selection without saying so. A typed create is the follow-up.
 - No backfill, and no change to how existing rows display.
-- `variant_attrs` is still selected and still read; it is dropped in a later increment of the same backend phase.
+- `variant_attrs` is gone from this repo. It was a Phase 1 column the backend derived from `misc_info` so that a pre-cutover compound string and a post-cutover residual one rendered the same label.
+  Both halves of that reason have expired: the cutover rewrote every string, and the backend's 000502 refuses a `misc_info` that names an axis, so the compound shape is no longer a state the catalog can be in.
+  `pokemonVariantLabel` reads the residue directly, splitting it on commas the way the database stored it.
+  The frontend had to stop selecting the column **before** the backend drops it, because a select naming a dropped column is a PostgREST 400 rather than a quiet null.

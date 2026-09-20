@@ -62,7 +62,6 @@ describe("Pokemon Card Index query boundary", () => {
         misc_info: "SR仕様, 英語版",
         edition: "not_applicable",
         foil_treatment: "normal",
-        variant_attrs: ["SR仕様", "英語版"],
         image_url: null,
         is_cute: true,
       }],
@@ -97,11 +96,15 @@ describe("Pokemon Card Index query boundary", () => {
     expect(definitions.or.mock.calls.map(([filter]) => filter)).toEqual(expectedFilters);
     expect(definitions.select).toHaveBeenCalledWith(expect.stringContaining("english_name_version"));
     expect(definitions.select).toHaveBeenCalledWith(
-      expect.stringContaining("misc_info, edition, foil_treatment, variant_attrs"),
+      expect.stringContaining("misc_info, edition, foil_treatment"),
     );
     // The curator flags ride along on every index row: the Card Index is the
     // surface that reaches cards the price-summary-driven browser never lists.
     expect(definitions.select).toHaveBeenCalledWith(expect.stringContaining("is_cute, japan_exclusive_artwork"));
+    // variant_attrs is a Phase 1 column the backend drops in #1009. Selecting a
+    // column that no longer exists is a PostgREST 400, not a quiet null, so its
+    // absence is pinned rather than left to a reviewer to notice.
+    expect(definitions.select).not.toHaveBeenCalledWith(expect.stringContaining("variant_attrs"));
     expect(definitions.select).not.toHaveBeenCalledWith(expect.stringContaining("is_japan_exclusive"));
     expect(result.total).toBe(1);
     expect(result.cards).toEqual([
@@ -111,7 +114,6 @@ describe("Pokemon Card Index query boundary", () => {
         english_name_version: 1,
         edition: "not_applicable",
         foil_treatment: "normal",
-        variant_attrs: ["SR仕様", "英語版"],
         is_cute: true,
         links: [expect.objectContaining({ external_reference_id: "545661" })],
       }),
