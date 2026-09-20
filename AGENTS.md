@@ -40,6 +40,25 @@ If something looks off, try to get it fixed alongside your work even if it is no
 - Hold the same high standard for engineering excellence: linting, test failures, and test flakiness.
 If you see one, get it fixed even if it was not caused by what you are working on right now.
 
+## Several agents run against this repo at once
+
+This checkout routinely holds several `.claude/worktrees/*`, one per session. Two consequences.
+
+**Before starting anything substantial, look at what the others are already holding:**
+
+```bash
+git worktree list
+for b in $(git worktree list --porcelain | awk '/^branch /{sub("refs/heads/","",$2); print $2}'); do
+  printf '%-52s ' "$b"; git log --oneline -1 "$b"
+done
+```
+
+A worktree is an agent's desk, and its branch name and last commit say what that agent is doing. Reading them costs seconds and is the only way to notice that what you are about to build already exists half-finished on someone else's branch. In the backend repo that has already cost weeks: a correct diagnosis of a migration-numbering bug sat unmerged in a worktree while the same collision was hit twice more, and was found only by accident during cleanup.
+
+Found something overlapping? Read its commits before writing your own - its diagnosis may be better than yours. Finished work with no PR: say so rather than silently superseding it. **Never edit, rebase or delete another session's worktree or branch.**
+
+**Anything you did not personally edit belongs to someone else.** Never `git add -A` / `git add .` / `git commit -a`; stage by explicit path and check `git status --porcelain` before committing.
+
 ## Agent tooling (committed for both machines)
 - Skill `.claude/skills/ship-pr` - the branch -> commit -> PR -> poll -> merge -> cleanup flow.
 - Script `scripts/check.sh` - `tsc --noEmit` + `next build` (node bin auto-detected).
