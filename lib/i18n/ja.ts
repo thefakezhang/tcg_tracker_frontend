@@ -2014,5 +2014,6 @@ const ja: { [K in keyof typeof en]: string } = {
   "scanReview.mediaFailed": "キャプチャ {ordinal} は確定しましたが、出品画像を登録できませんでした - {detail}",
   "scanReview.mediaAttached": "画像登録済み",
   "scanReview.undoLocked": "取り消し不可：このキャプチャの画像は出品に登録済みです。",
+  "trips.lotSaleMixedLegs": "この売上は輸入・輸出両方の在庫から引き当てられます。{leg} として記録されますが、原価は各カードの仕入れから古い順に計上されます。",
 } as const;
 export default ja;

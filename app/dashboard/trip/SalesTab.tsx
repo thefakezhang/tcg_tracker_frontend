@@ -491,7 +491,11 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [holdings],
   );
+  // The label this sale is filed under, and the default currency. It no longer
+  // constrains what may be selected: with 000501 a lot sale may span both legs,
+  // and FIFO consumes by acquisition date across all of them.
   const selectedLeg = selectedHoldings[0]?.leg ?? null;
+  const mixedLegs = new Set(selectedHoldings.map((h) => h.leg)).size > 1;
   const label = (h: Holding) => getCardDisplayName({ regional_name: h.name, english_name: h.englishName }, language);
   // The disambiguating identity for a holding: set code + card number (singles)
   // or set + condition/edition (sealed). Two same-name printings are only told
@@ -836,7 +840,9 @@ export default function SalesTab({ tripId }: { tripId: number }) {
       {viewMode === "grid" ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
           {sorted.map((h) => {
-            const disabled = selectedLeg !== null && h.leg !== selectedLeg;
+            // Leg is a sourcing label, not a pool boundary: a sale may draw from
+            // both (backend 000501). Nothing here disables a holding by its leg.
+            const disabled = false;
             return (
               <Card key={holdingKey(h)} size="sm" className={`gap-0 overflow-hidden !py-0 ${selected.has(holdingKey(h)) ? "ring-2 ring-primary" : ""}`}>
                 <div className="relative">
@@ -888,7 +894,6 @@ export default function SalesTab({ tripId }: { tripId: number }) {
               <TableCell className="p-0">
                 <label className="flex size-11 cursor-pointer items-center justify-center sm:size-8" title={t("trips.sellLotHint")}>
                   <input type="checkbox" checked={selected.has(holdingKey(h))}
-                    disabled={selectedLeg !== null && h.leg !== selectedLeg}
                     onChange={() => toggle(h)} />
                   <span className="sr-only">{t("trips.sellLotHint")}</span>
                 </label>
@@ -1193,6 +1198,11 @@ export default function SalesTab({ tripId }: { tripId: number }) {
       <Dialog open={lotOpen} onOpenChange={(o) => !o && setLotOpen(false)}>
         <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-xl">
           <DialogHeader><DialogTitle>{t("trips.lotSaleTitle", { n: selectedHoldings.length })}</DialogTitle></DialogHeader>
+          {mixedLegs && (
+            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+              {t("trips.lotSaleMixedLegs", { leg: selectedLeg === "export" ? t("trips.legExport") : t("trips.legImport") })}
+            </p>
+          )}
           <div className="max-h-72 space-y-2 overflow-auto rounded-md border p-2 text-sm">
             {selectedHoldings.map((h) => (
               <div key={holdingKey(h)} className="space-y-2 rounded-md bg-muted/30 p-2">
