@@ -13,6 +13,7 @@ import {
   fetchIndex,
   pokemonEditActionClassName,
   pokemonEditActionLabel,
+  pokemonCreateRPCArgs,
   pokemonEditRPCArgs,
 } from "./PokemonCardIndex";
 import { POKEMON_INDEX_CARD_VIEW } from "./pokemon-index-visibility";
@@ -201,8 +202,9 @@ describe("Pokemon Card Index query boundary", () => {
     expect(args).toEqual(expect.objectContaining({
       p_misc_info: "SA",
       p_edition: "first",
-      // A finish with no string token at all. It can only reach the catalog
-      // through a typed write, which is why the selectors exist.
+      // A named mirror, stated rather than spelled. It is reachable from a
+      // string too (マスターボールミラー); the selector exists so a curator does
+      // not have to know that.
       p_foil_treatment: "master_ball_mirror",
     }));
     expect(args).not.toHaveProperty("p_variant_attrs");
@@ -246,5 +248,58 @@ describe("Card Index edit RPC call sites", () => {
     expect(calls.length).toBeGreaterThan(0);
     expect(calls).not.toContain("card_index_edit_pokemon_card");
     for (const name of calls) expect(name).toBe("card_index_edit_pokemon_card_typed");
+  });
+});
+
+// Backend 000509 gave create the same typed axes edit has had since 000499.
+//
+// The difference between them is the whole reason they are separate RPCs, and
+// it is what these tests pin: an empty axis means "leave it alone" on edit and
+// "read it off the notes field" on create. Getting that backwards on edit wipes
+// the edition of any card renamed for an unrelated reason.
+describe("pokemonCreateRPCArgs", () => {
+  const form = {
+    regional_name: "リザードン", english_name: "Charizard", set_code: "VL509",
+    card_number: "001/100", language: "jp", misc_info: "SA",
+    edition: "", foil_treatment: "", image_url: "",
+  };
+
+  it("sends null axes when the curator states neither, so the RPC reads the notes", () => {
+    const args = pokemonCreateRPCArgs(form, undefined);
+    expect(args.p_edition).toBeNull();
+    expect(args.p_foil_treatment).toBeNull();
+    expect(args.p_misc_info).toBe("SA");
+    // Safe here and only here: there is no row yet, so there is nothing to
+    // overwrite by deriving.
+    expect(args.p_platform).toBeNull();
+    expect(args.p_external_id).toBeNull();
+  });
+
+  it("sends the stated axes, including the three no string can reach", () => {
+    // edition 'not_applicable', foil 'unknown' and foil 'other' have no token
+    // in pokemon_derive_foil_treatment / pokemon_edition_claim, so a typed
+    // write is the only way to set them. That - not the named mirrors - is the
+    // capability this RPC adds.
+    const args = pokemonCreateRPCArgs(
+      { ...form, edition: "not_applicable", foil_treatment: "other" },
+      { platform: "tcgplayer", id: "604028" },
+    );
+    expect(args).toEqual(expect.objectContaining({
+      p_edition: "not_applicable",
+      p_foil_treatment: "other",
+      p_platform: "tcgplayer",
+      p_external_id: "604028",
+    }));
+  });
+
+  it("lets the sibling mint override misc without disturbing the rest", () => {
+    const args = pokemonCreateRPCArgs({ ...form, misc_info: "SA" }, undefined, "アンリミ");
+    expect(args.p_misc_info).toBe("アンリミ");
+    expect(args.p_regional_name).toBe("リザードン");
+  });
+
+  it("names no column or parameter the backend has dropped", () => {
+    const args = pokemonCreateRPCArgs(form, undefined);
+    expect(args).not.toHaveProperty("p_variant_attrs");
   });
 });
