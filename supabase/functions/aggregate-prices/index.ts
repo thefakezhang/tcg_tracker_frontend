@@ -35,6 +35,26 @@ const EXIT_KIND_RANK =
 // next increment. SQL fragment.
 const INDICATOR_LOCATIONS = "'collectr', 'cardladder', 'pricecharting'";
 
+// Third-party estimates, dropped from the CARD summaries entirely (operator,
+// 2026-09-19). Both write one guessed number to both sides, and the exit takes
+// the highest row within a kind, so what reaches the summary is the top of
+// whatever spread the feed carries: 7,514 of collectr's 23,407 cards hold more
+// than one valuation and 4,046 hold a high more than 10x their own low. VS
+// Lance's Gyarados carried seven collectr numbers between $8.70 and $669.64,
+// and $669.64 is what the summary published.
+//
+// This is the reverse of the 2026-08-27 decision above, and it is safe now for
+// one reason: 130point supplies OBSERVED eBay sales for the same exit. Of the
+// 10,904 cards whose only NA exit was one of these two, 7,501 already have
+// 130point live listings and 6,514 have sold comps; 2,629 are left with no NA
+// exit and fall back to the informational row with roi NULL.
+//
+// Two things this does NOT do. cardladder stays: it is a median of real slab
+// sales, kind 'sold', not an estimate. And SEALED keeps both, because 130point
+// is scoped to singles, so there is no observed sale to replace them with.
+// SQL fragment.
+const ESTIMATE_LOCATIONS = "'collectr', 'pricecharting'";
+
 serve(async () => {
   const pool = new Pool(Deno.env.get("SUPABASE_DB_URL")!, 1, true);
 
@@ -174,7 +194,12 @@ async function computeAndInsert(
       JOIN locations l ON l.location_id = ml.location_id
       LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
       WHERE
-        CASE
+        -- Estimates are out of the card summary entirely; see
+        -- ESTIMATE_LOCATIONS. Dropping them here rather than in the exit
+        -- ranking also keeps them off the entry side, where their
+        -- both-sides write would otherwise still be filtered by kind alone.
+        l.name NOT IN (${ESTIMATE_LOCATIONS})
+        AND CASE
           WHEN '${psaMode}' = 'non-psa' THEN ml.psa_grade = 0
           ELSE ml.psa_grade > 0
         END
