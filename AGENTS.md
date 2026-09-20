@@ -694,6 +694,17 @@ The RPC derives confirmed-vs-corrected from the stored proposal, so a direct col
 - After a decision, the screen registers the capture's front/back bytes as listing imagery via `register_scanner_capture_media`. Separate from the decide RPC and run after it: registration can fail while the decision stands (another capture already owns that card+condition's imagery, which the RPC refuses rather than overwrites), so a failure is reported beside the decision, never rolled back onto it. **Registered imagery pins the decision** - `clear_scanner_batch_capture_decision` then refuses, so Undo is disabled with a reason instead of erroring. This is the input `ebay_offer_stage.py` requires; without it the eBay leg has nothing to stage.
 - `CardCandidatePicker.tsx` is a pipeline-agnostic presentational component (image + ranked candidates + search -> chosen card). If it ever needs to know which pipeline it serves, it was shared too deeply and should be split.
 
+### Trades
+
+A trade is two sides that settle against each other, recorded in **Trips -> Trades** (sentinel `-20`, slug `trades`). Backend migration `000504`; full rationale in `docs/inventory_subledger_contract.md` in `tcg_tracker`.
+
+- The identity is `value_in = value_out + cash`, with cash **signed**: positive when the operator paid, negative when they received. `lib/trades.ts` holds it; `lib/trades.test.ts` pins both directions.
+- The screen **links** two already-recorded sides via `link_trade`; it never books a sale or a lot itself. Both sides go through the existing flows, so the outbound realises real FIFO COGS instead of a parallel way to dispose of stock.
+- The dialog shows the arithmetic reconciling live and keeps the button disabled until it balances, rather than rejecting a filled-in form. Cash direction is a dropdown, so the sign is never the operator's problem.
+- Sides already in a trade are filtered out of the pickers: the RPC would refuse them anyway.
+- **Money is compared in cents.** `0.1 + 0.2 !== 0.3` in binary floating point, and comparing dollars directly reports a trade that balances to the cent as out by 2.2e-16.
+- The link lives on `trades`, not as a `trade_id` on `sale_lots`/`acquisition_lots`: a finalized sale's source facts are immutable by trigger, and a trade is a new fact *about* two existing ones.
+
 ### Sealed Products (Pokémon)
 
 The **Sealed** tab is a parallel path to the card browser (`Game` union includes `"pokemon_sealed"`),
