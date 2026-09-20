@@ -764,7 +764,7 @@ The authoritative schema is `docs/schema.md` in the backend repository; this tab
 
 | Table | Key Columns |
 |-------|-------------|
-| `pokemon_card_definitions` | card_id, regional_name, english_name, set_code, card_number, misc_info, edition, foil_treatment, variant_attrs, image_url |
+| `pokemon_card_definitions` | card_id, regional_name, english_name, set_code, card_number, misc_info, edition, foil_treatment, image_url |
 | `mtg_card_definitions` | card_id, regional_name, set_code, card_number, misc_info, image_url |
 | `pokemon_market_listings` / `mtg_market_listings` | card_id, price_type (Buy/Sell), price, currency, psa_grade, condition, location_id |
 | `currencies` | code (PK), symbol |
@@ -836,7 +836,8 @@ Bake its data in at build time rather than adding anon grants.
 - **"UNKNOWN" as null**: Card fields (`card_number`, `misc_info`) may contain the string `"UNKNOWN"`. Treat these as null/empty throughout the UI. Never display "UNKNOWN" to users.
 - **Pokemon variant labels come from the typed axes, never from `misc_info` alone.**
   The backend variant refactor (backend `docs/variant_axes_separation.md`) moves edition and finish out of `misc_info` into `edition` and `foil_treatment`, and its Phase 3 rewrites `misc_info` into the residue, so a label read from the string would lose `1ED` and `ミラー`.
-  - A card-definition read selects `edition, foil_treatment, variant_attrs` beside `misc_info` and renders `pokemonVariantLabel` (`lib/pokemon-variant.ts`), or `cardVariant` for a definition row.
+  - A card-definition read selects `edition, foil_treatment` beside `misc_info` and renders `pokemonVariantLabel` (`lib/pokemon-variant.ts`), or `cardVariant` for a definition row.
+  - It must select **nothing else** off the variant axes. `variant_attrs` was a Phase 1 column and the backend has dropped it (`docs/pokemon_variant_axes.md`); PostgREST answers a select naming a column that no longer exists with a 400, not a null, so one stale name blanks every surface sharing that projection.
   - A read of `inventory_holdings_v` or `sales_ledger_v` selects `variant_label`, which the database composes the same way (NULL for MTG, sealed and a plain card), and renders `viewVariantLabel`, which falls back to `misc_info` for MTG and sealed rows.
   - A search that matches `misc_info` text also adds `pokemonVariantSearchFilters(word)`, so `1ED` or `ミラー` keep finding cards after the rewrite.
   - MTG has no typed axes; its `misc_info` stays the label.

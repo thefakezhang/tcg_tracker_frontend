@@ -41,7 +41,6 @@ const pokemonCards = [
     misc_info: "SA,ミラー,1ED",
     edition: "first",
     foil_treatment: "mirror",
-    variant_attrs: ["SA"],
     image_url: null,
     rarity: "Promo",
     is_cute: false,
@@ -64,7 +63,6 @@ const pokemonCards = [
     misc_info: "SA",
     edition: "first",
     foil_treatment: "mirror",
-    variant_attrs: ["SA"],
     image_url: null,
     rarity: "Promo",
     is_cute: false,
@@ -290,7 +288,12 @@ function cardTile(root, name) {
 }
 
 function assertTypedSelects(requests, journey) {
-  const typedFields = ["edition", "foil_treatment", "variant_attrs"];
+  // variant_attrs is gone from pokemon_card_definitions (#1009). It is asserted
+  // ABSENT rather than dropped from the list, because a select naming a column
+  // the backend removed is a PostgREST 400 - which is how the Browser, Buy List
+  // and Scan Review all went blank in production.
+  const typedFields = ["edition", "foil_treatment"];
+  const droppedFields = ["variant_attrs"];
   const browser = requests.filter((request) =>
     request.method === "GET"
     && request.table === "pokemon_price_summaries_browser_v"
@@ -316,6 +319,12 @@ function assertTypedSelects(requests, journey) {
     assert(matches.length > 0, `${journey} did not execute the ${surface} typed read`);
     for (const field of typedFields) {
       assert(matches.every((request) => request.select.includes(field)), `${journey} ${surface} omitted ${field}`);
+    }
+    for (const field of droppedFields) {
+      assert(
+        matches.every((request) => !request.select.includes(field)),
+        `${journey} ${surface} still selects ${field}, which the backend dropped; a PostgREST select naming it is a 400`,
+      );
     }
   }
   assert(mtg.length >= 2, `${journey} did not execute both Browser and Buy List MTG reads`);
@@ -648,7 +657,7 @@ try {
       "old compound and rewritten residual Pokemon rows render exactly SA,ミラー,1ED",
       "MTG renders Showcase,etched unchanged",
       "Browser, detail, Buy List, and Card Index production components execute the fixture journey",
-      "Browser, Buy List, and Card Index PostgREST reads select edition, foil_treatment, and variant_attrs",
+      "Browser, Buy List, and Card Index PostgREST reads select edition and foil_treatment, and never variant_attrs",
       "MTG PostgREST reads do not add Pokemon typed fields",
       "pointer and keyboard activation open production card details",
       "interacted phone controls, card tiles, and Pokemon selection handles are at least 44 by 44 pixels",

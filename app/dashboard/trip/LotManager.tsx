@@ -596,7 +596,6 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     misc_info: string | null;
     edition?: string | null;
     foil_treatment?: string | null;
-    variant_attrs?: string[] | null;
     image_url: string | null;
     sealed_condition?: string;
     variant_edition?: string;

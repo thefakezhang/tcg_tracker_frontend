@@ -264,7 +264,6 @@ describe("CardBrowser surfaces", () => {
             misc_info: miscInfo,
             edition: "first",
             foil_treatment: "mirror",
-            variant_attrs: ["SA"],
             image_url: null,
           },
           psaGrade: 10,

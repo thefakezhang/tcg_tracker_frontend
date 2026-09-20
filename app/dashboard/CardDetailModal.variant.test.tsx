@@ -115,7 +115,6 @@ function pokemonRow(miscInfo: string): CardRowData {
       misc_info: miscInfo,
       edition: "first",
       foil_treatment: "mirror",
-      variant_attrs: ["SA"],
       image_url: null,
       language: "jp",
     },
@@ -150,7 +149,6 @@ describe("CardDetailModal typed Pokemon variant", () => {
     const row = pokemonRow("Showcase,etched");
     delete row.card.edition;
     delete row.card.foil_treatment;
-    delete row.card.variant_attrs;
 
     render(<CardDetailModal card={row} open onClose={vi.fn()} />);
 

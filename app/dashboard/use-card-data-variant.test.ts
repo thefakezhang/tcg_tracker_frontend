@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   MTG_CARD_DEF_COLS,
   POKEMON_CARD_DEF_COLS,
+  POKEMON_VARIANT_COLS,
   cardDefCols,
   cardSummarySelect,
   fetchCardRowById,
@@ -36,7 +37,6 @@ describe("Pokemon card-definition variant propagation", () => {
       misc_info: "SA,ミラー,1ED",
       edition: "first",
       foil_treatment: "mirror",
-      variant_attrs: ["SA"],
       image_url: null,
     };
     const summary = queryBuilder({
@@ -61,11 +61,10 @@ describe("Pokemon card-definition variant propagation", () => {
     );
     expect(cardSummarySelect("pokemon", "pokemon_card_definitions"))
       .toBe(`*, pokemon_card_definitions!inner(${POKEMON_CARD_DEF_COLS})`);
-    expect(cardDefCols("pokemon")).toContain("misc_info, edition, foil_treatment, variant_attrs");
+    expect(cardDefCols("pokemon")).toContain("misc_info, edition, foil_treatment");
     expect(row?.card).toEqual(expect.objectContaining({
       edition: "first",
       foil_treatment: "mirror",
-      variant_attrs: ["SA"],
     }));
   });
 
@@ -119,5 +118,33 @@ describe("viewVariantLabel", () => {
     expect(viewVariantLabel({ variant_label: null, misc_info: "UNKNOWN" })).toBeNull();
     expect(viewVariantLabel({ variant_label: null, misc_info: "" })).toBeNull();
     expect(cardMeta("SV-P", "124", viewVariantLabel({ variant_label: null, misc_info: "UNKNOWN" }))).toBe("SV-P 124");
+  });
+});
+
+// No shared column constant may name a column the backend has dropped.
+//
+// variant_attrs lived in POKEMON_VARIANT_COLS, which the Card Browser, Buy List
+// and Scan Review all share. When PokemonCardIndex stopped selecting the column
+// this constant was missed, and a PostgREST select naming a dropped column is a
+// 400 rather than a quiet null - so all three surfaces showed "Couldn't load
+// data" in production.
+//
+// The check is over the constants themselves rather than a list of files,
+// because the file that broke it was the one nobody thought to open.
+describe("shared card-definition column constants", () => {
+  const dropped = ["variant_attrs"];
+
+  it("name no column the backend has dropped", () => {
+    for (const [label, cols] of [
+      ["POKEMON_VARIANT_COLS", POKEMON_VARIANT_COLS],
+      ["POKEMON_CARD_DEF_COLS", POKEMON_CARD_DEF_COLS],
+      ["cardDefCols(pokemon)", cardDefCols("pokemon")],
+      ["cardDefCols(mtg)", cardDefCols("mtg")],
+      ["cardSummarySelect(pokemon)", cardSummarySelect("pokemon", "pokemon_card_definitions")],
+    ] as const) {
+      for (const column of dropped) {
+        expect(`${label}: ${cols}`).not.toContain(column);
+      }
+    }
   });
 });

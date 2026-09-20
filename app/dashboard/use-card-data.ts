@@ -129,7 +129,6 @@ export interface CardDefinition {
   misc_info: string | null;
   edition?: PokemonEdition | null;
   foil_treatment?: PokemonFoilTreatment | null;
-  variant_attrs?: string[] | null;
   image_url: string | null;
   rarity?: string | null; // Pokémon only (from TCGPlayer); undefined for MTG
   is_cute?: boolean | null; // Pokémon only; manual curator flag (293)
@@ -188,7 +187,16 @@ export function cardMeta(
 // The Pokemon card-definition columns pokemonVariantLabel composes a label
 // from. Select them wherever a definition's variant is shown, so the label
 // reads the same before and after the backend's Phase 3 rewrites misc_info.
-export const POKEMON_VARIANT_COLS = "misc_info, edition, foil_treatment, variant_attrs";
+// variant_attrs was dropped from pokemon_card_definitions by the backend
+// (#1009). It was a Phase 1 column the database derived from misc_info, and
+// misc_info IS that residue now, so nothing is lost by not asking for it.
+//
+// This constant is shared by the Card Browser, Buy List and Scan Review. It
+// was missed when PokemonCardIndex stopped selecting the column, and a
+// PostgREST select naming a column that no longer exists is a 400, so every
+// one of those surfaces showed "Couldn't load data" until the column was
+// put back. Hence the test below pinning its absence.
+export const POKEMON_VARIANT_COLS = "misc_info, edition, foil_treatment";
 
 export const POKEMON_CARD_DEF_COLS =
   `card_id, card_uid, regional_name, english_name, set_code, card_number, ${POKEMON_VARIANT_COLS}, image_url, rarity, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url, language`;
