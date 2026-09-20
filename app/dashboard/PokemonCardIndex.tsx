@@ -106,7 +106,6 @@ export interface IndexCard {
   misc_info: string;
   edition: PokemonEdition;
   foil_treatment: PokemonFoilTreatment;
-  variant_attrs: string[];
   image_url: string | null;
   // The Cute curator flag (000293). The Card Index is the one surface
   // that lists the WHOLE catalog, so a card with no price summary (and hence
@@ -135,7 +134,7 @@ export function PokemonVariantBadge({ card }: { card: PokemonVariantProjection }
   return label ? <Badge variant="outline">{label}</Badge> : null;
 }
 
-const COLS = "card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, edition, foil_treatment, variant_attrs, image_url, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url";
+const COLS = "card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, edition, foil_treatment, image_url, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url";
 const PLATFORMS = pokemonSinglePlatforms;
 const PLATFORM_SHORT: Record<string, string> = Object.fromEntries(pokemonSinglePlatforms.map((p) => [p, platformShort(p)]));
 const PLATFORM_HINT_KEYS: Record<string, TranslationKey> = {
@@ -673,7 +672,7 @@ function PokemonCardModal({
       const extIds = await externalIdMatches(supabase, "pokemon_external_identifiers", "card_id", q);
       let mq = supabase
         .from(POKEMON_INDEX_CARD_VIEW)
-        .select("card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, edition, foil_treatment, variant_attrs, image_url")
+        .select("card_id, card_uid, english_name_version, regional_name, english_name, set_code, card_number, language, misc_info, edition, foil_treatment, image_url")
         .neq("card_uid", card.card_uid);
       for (const f of smartSearchFilters(q, ["regional_name", "english_name", "set_code", "card_number"], "card_uid", "card_id", extIds)) mq = mq.or(f);
       const { data } = await mq.limit(8);

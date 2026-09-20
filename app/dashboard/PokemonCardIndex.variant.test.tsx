@@ -14,7 +14,6 @@ describe("Pokemon Card Index typed variant badge", () => {
         misc_info: miscInfo,
         edition: "first",
         foil_treatment: "mirror",
-        variant_attrs: ["SA"],
       }} />);
 
       expect(screen.getByText("SA,ミラー,1ED")).toBeTruthy();
@@ -26,7 +25,6 @@ describe("Pokemon Card Index typed variant badge", () => {
       misc_info: "UNKNOWN",
       edition: "not_applicable",
       foil_treatment: "normal",
-      variant_attrs: [],
     }} />);
 
     expect(container.childElementCount).toBe(0);

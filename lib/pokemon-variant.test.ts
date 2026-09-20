@@ -2,66 +2,41 @@ import { describe, expect, it } from "vitest";
 import { pokemonVariantLabel, pokemonVariantSearchFilters, type PokemonFoilTreatment } from "./pokemon-variant";
 
 describe("pokemonVariantLabel", () => {
+  // This block used to render each case twice - once from a pre-cutover
+  // compound misc_info with variant_attrs beside it, once from the residue -
+  // and assert the two were identical. That parity was the point while both
+  // shapes existed in the catalog.
+  //
+  // Neither half survives. The cutover rewrote every string, the backend's
+  // 000502 refuses a misc_info that names an axis, and variant_attrs is being
+  // dropped. So the compound input is no longer a state the catalog can be in,
+  // and the cases assert the one rendering that remains.
+  //
+  // Worth recording why the compound half could not simply be kept: the label
+  // now splits the residue on commas, and "復刻:1ED" joins its residual to its
+  // edition with a colon. It would render "復刻:1ED,1ED". The old code avoided
+  // that by reading variant_attrs, which the database had already split.
   it.each([
-    {
-      name: "first mirror",
-      edition: "first",
-      foil_treatment: "mirror",
-      compound: "ミラー,1ED",
-      residual: "",
-      variant_attrs: [],
-      expected: "ミラー,1ED",
-    },
-    {
-      name: "residual first mirror",
-      edition: "first",
-      foil_treatment: "mirror",
-      compound: "SA,ミラー,1ED",
-      residual: "SA",
-      variant_attrs: ["SA"],
-      expected: "SA,ミラー,1ED",
-    },
-    {
-      name: "joined residual and edition",
-      edition: "first",
-      foil_treatment: "normal",
-      compound: "復刻:1ED",
-      residual: "復刻",
-      variant_attrs: ["復刻"],
-      expected: "復刻,1ED",
-    },
-    {
-      name: "unlimited with residue",
-      edition: "unlimited",
-      foil_treatment: "normal",
-      compound: "カードe, アンリミ",
-      residual: "カードe",
-      variant_attrs: ["カードe"],
-      expected: "カードe,アンリミ",
-    },
-  ])("renders $name identically before and after the misc rewrite", (testCase) => {
-    const before = pokemonVariantLabel({
-      misc_info: testCase.compound,
-      edition: testCase.edition,
-      foil_treatment: testCase.foil_treatment,
-      variant_attrs: testCase.variant_attrs,
-    });
-    const after = pokemonVariantLabel({
+    { name: "first mirror", residual: "", edition: "first", foil_treatment: "mirror", expected: "ミラー,1ED" },
+    { name: "residual first mirror", residual: "SA", edition: "first", foil_treatment: "mirror", expected: "SA,ミラー,1ED" },
+    { name: "joined residual and edition", residual: "復刻", edition: "first", foil_treatment: "normal", expected: "復刻,1ED" },
+    { name: "unlimited with residue", residual: "カードe", edition: "unlimited", foil_treatment: "normal", expected: "カードe,アンリミ" },
+  ])("renders $name from the residue and the typed axes", (testCase) => {
+    expect(pokemonVariantLabel({
       misc_info: testCase.residual,
       edition: testCase.edition,
       foil_treatment: testCase.foil_treatment,
-      variant_attrs: testCase.variant_attrs,
-    });
-
-    expect(before).toBe(testCase.expected);
-    expect(after).toBe(before);
+    })).toBe(testCase.expected);
   });
 
-  it("keeps an older misc-only API payload unchanged", () => {
-    expect(pokemonVariantLabel({ misc_info: "SA,ミラー,1ED" })).toBe("SA,ミラー,1ED");
+  // A payload that selects neither axis renders its residue and nothing more.
+  // It used to render a compound misc_info verbatim, which is no longer a value
+  // the catalog can hold.
+  it("renders a payload that selects no typed axis as its residue alone", () => {
+    expect(pokemonVariantLabel({ misc_info: "SA" })).toBe("SA");
   });
 
-  it("uses typed axes with a residual-only payload when variant_attrs is unavailable", () => {
+  it("uses the typed axes beside the residue", () => {
     expect(pokemonVariantLabel({
       misc_info: "SA",
       edition: "first",
@@ -88,7 +63,6 @@ describe("pokemonVariantLabel", () => {
       misc_info: "UNKNOWN",
       edition: "not_applicable",
       foil_treatment: foil,
-      variant_attrs: [],
     })).toBe(expected);
   });
 
@@ -97,11 +71,9 @@ describe("pokemonVariantLabel", () => {
       misc_info: "UNKNOWN",
       edition: "unknown",
       foil_treatment: "normal",
-      variant_attrs: [],
     })).toBeNull();
     expect(pokemonVariantLabel({
       misc_info: "25th",
-      variant_attrs: ["25th"],
     })).toBe("25th");
   });
 });
@@ -148,7 +120,7 @@ describe("pokemonVariantSearchFilters", () => {
       const filters = pokemonVariantSearchFilters(word);
       for (const edition of editions) {
         for (const foil of foils) {
-          const label = pokemonVariantLabel({ misc_info: "", edition, foil_treatment: foil, variant_attrs: [] }) ?? "";
+          const label = pokemonVariantLabel({ misc_info: "", edition, foil_treatment: foil }) ?? "";
           const matched = filters.some((filter) => {
             const [column, , list] = filter.split(".");
             const values = list.slice(1, -1).split(",");
