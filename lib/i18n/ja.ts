@@ -1039,6 +1039,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardIndex.fLanguage": "言語",
   "cardIndex.fType": "商品タイプ",
   "cardIndex.fEdition": "エディション",
+  "cardIndex.axisFromText": "注記から判定",
   "cardIndex.fCondition": "シュリンク状態",
   "cardIndex.fMisc": "その他情報",
   "cardIndex.fMiscPlaceholder": "SA, 25th, …",

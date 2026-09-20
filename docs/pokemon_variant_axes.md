@@ -38,7 +38,8 @@ The edit dialog was the last writer still relying on it.
 
 ## Non-goals
 
-- **The create dialog is unchanged.** `card_index_create_pokemon_card` has no typed parameters; it derives both axes from the string it is given (migration 000498), which works for every finish that has a token and silently cannot express the ones that do not. Offering the selectors on create would therefore drop a `master_ball_mirror` selection without saying so. A typed create is the follow-up.
+- The create dialog **was** listed here as unchanged, on the grounds that several finishes "have no token" and offering selectors would silently drop a `master_ball_mirror` selection.
+  That reasoning was wrong and the entry is gone; see the section below.
 - No backfill, and no change to how existing rows display.
 - `variant_attrs` is gone from this repo. It was a Phase 1 column the backend derived from `misc_info` so that a pre-cutover compound string and a post-cutover residual one rendered the same label.
   Both halves of that reason have expired: the cutover rewrote every string, and the backend's 000502 refuses a `misc_info` that names an axis, so the compound shape is no longer a state the catalog can be in.
@@ -63,3 +64,28 @@ Three things follow.
 
 `app/dashboard/CurationView.tsx` and `SealedCurationView.tsx` still select a `variant_attrs` column and are correct to.
 It is a different column on a different table - a JSON blob of image-curation evidence on `pokemon_image_buylist_candidates` - which nothing in this refactor touches.
+
+## Create states its axes too, and a correction
+
+Since backend `000509` the create dialog carries the same **Edition** and **Finish** selectors as edit, writing through `card_index_create_pokemon_card_typed`.
+
+The correction matters more than the feature.
+For most of the refactor this document, the backend design doc and two migration headers all said that `master_ball_mirror` and its ten siblings "have no string token at all", so a curator could not create one.
+That is false.
+`pokemon_derive_foil_treatment` carries a regex for each of them - `マスターボールミラー`, `オシャボミラー`, `R団ミラー`, `BREAKミラー` and the rest - and the untyped create has derived them correctly since `000498`.
+A card with `foil_treatment = 'master_ball_mirror'` could always be created by typing the token.
+
+What the typed create actually adds:
+
+- **Three values no string can reach**, because no token produces them and the create defaults cover the rest: `edition = 'not_applicable'`, `foil_treatment = 'unknown'`, `foil_treatment = 'other'`.
+- **Create and edit no longer disagree.** A curator should not have to know that `オシャボミラー` is the monster-ball mirror to record one, and create was the last place the catalog still asked for that.
+
+### Empty means different things on create and on edit
+
+This is the one part worth reading twice, because getting it backwards damages data.
+
+- On **edit**, an empty axis means *leave it alone*. The row already has a value and the notes field holds only the residue, so deriving from that string would compute `unknown` and wipe the real edition of any card edited for an unrelated reason.
+- On **create**, an empty axis means *read it off the notes field*. There is no row yet, so there is nothing to leave alone and deriving is safe - it is exactly what the untyped create did.
+
+The create selectors therefore carry a leading **From the notes field** option bound to the empty value.
+Without it the control would display "Unknown" while actually meaning "derive", which is a different thing, and a curator choosing the default would not be able to tell which they were getting.

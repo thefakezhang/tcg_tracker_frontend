@@ -1037,6 +1037,7 @@ const en = {
   "cardIndex.fLanguage": "Language",
   "cardIndex.fType": "Product type",
   "cardIndex.fEdition": "Edition",
+  "cardIndex.axisFromText": "From the notes field",
   "cardIndex.fCondition": "Shrink state",
   "cardIndex.fMisc": "Misc info",
   "cardIndex.fMiscPlaceholder": "SA, 25th, …",

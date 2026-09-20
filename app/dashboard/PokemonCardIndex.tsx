@@ -535,10 +535,19 @@ function CardsTab() {
 // live in these columns and misc_info holds only the residue, so the curator
 // picks them rather than spelling them into the text field.
 //
-// Note master_ball_mirror and its siblings: several finishes have no string
-// token at all, so they can only ever be set through a typed write. That is why
-// these selectors talk to card_index_edit_pokemon_card_typed (000499) and not
-// to the older RPC that reads its axes back out of misc_info.
+// A correction worth keeping, because the opposite was written here and in the
+// backend docs for most of the refactor: master_ball_mirror and its siblings DO
+// have string tokens (マスターボールミラー, オシャボミラー, R団ミラー, ...) and
+// the untyped RPCs have derived them correctly since backend 000498. The claim
+// that they "can only be set through a typed write" was wrong.
+//
+// Three values genuinely cannot be reached by typing, because no token produces
+// them: edition 'not_applicable', and foil 'unknown' and 'other'. The larger
+// reason for the selectors is plainer - a curator should not have to know that
+// オシャボミラー is the monster-ball mirror to record one.
+//
+// These talk to the typed RPCs: card_index_edit_pokemon_card_typed (000499) and
+// card_index_create_pokemon_card_typed (000509).
 const EDITIONS = ["unknown", "not_applicable", "first", "unlimited"] as const;
 const FOIL_TREATMENTS = [
   "unknown", "normal", "mirror", "reverse", "master_ball_mirror",
@@ -571,6 +580,37 @@ export function pokemonEditRPCArgs(
     p_edition: form.edition || null,
     p_foil_treatment: form.foil_treatment || null,
     p_image_url: imageURL,
+  };
+}
+
+// Empty axis on CREATE means "work it out from the notes field", which is what
+// card_index_create_pokemon_card_typed does when handed null: it falls back to
+// a token still spelled in the string, then to the default. That is the same
+// behaviour the untyped create had, so a curator who ignores the selectors gets
+// exactly what they got before.
+//
+// The meaning of empty differs between the two RPCs and the difference matters.
+// On EDIT empty means "leave this axis alone", because the row already has a
+// value and the notes field holds only the residue - deriving from it would
+// compute 'unknown' and wipe the real edition. On CREATE there is no row yet,
+// so there is nothing to leave alone and deriving is safe.
+export function pokemonCreateRPCArgs(
+  form: typeof BLANK,
+  firstLink: { platform: string; id: string } | undefined,
+  miscOverride?: string,
+) {
+  return {
+    p_regional_name: form.regional_name,
+    p_english_name: form.english_name,
+    p_set_code: form.set_code,
+    p_card_number: form.card_number,
+    p_language: form.language,
+    p_misc_info: miscOverride ?? form.misc_info,
+    p_edition: form.edition || null,
+    p_foil_treatment: form.foil_treatment || null,
+    p_platform: firstLink?.platform ?? null,
+    p_external_id: firstLink?.id ?? null,
+    p_image_url: form.image_url.trim() || null,
   };
 }
 
@@ -693,12 +733,10 @@ function PokemonCardModal({
     if (isCreate) {
       // Every staged link, plus a not-yet-added one still in the input row.
       const staged = [...newLinks, ...(linkId.trim() ? [{ platform: linkPlatform, id: linkId.trim() }] : [])];
-      const res = await supabase.rpc("card_index_create_pokemon_card", {
-        p_regional_name: form.regional_name, p_english_name: form.english_name, p_set_code: form.set_code,
-        p_card_number: form.card_number, p_language: form.language, p_misc_info: form.misc_info,
-        p_platform: staged[0]?.platform ?? null, p_external_id: staged[0]?.id ?? null,
-        p_image_url: form.image_url.trim() || null,
-      });
+      const res = await supabase.rpc(
+        "card_index_create_pokemon_card_typed",
+        pokemonCreateRPCArgs(form, staged[0]),
+      );
       rpcError = res.error;
       if (typeof res.data === "number") cardIdForUpload = res.data;
       // The create RPC seeds the first anchor; attach any remaining links now
@@ -835,13 +873,14 @@ function PokemonCardModal({
     setBusy(true);
     setError(null);
     const supabase = createClient();
-    const { data, error: e } = await supabase.rpc("card_index_create_pokemon_card", {
-      p_regional_name: form.regional_name, p_english_name: form.english_name,
-      p_set_code: form.set_code, p_card_number: form.card_number, p_language: form.language,
-      p_misc_info: variantMisc.trim(),
-      p_platform: null, p_external_id: null,
-      p_image_url: form.image_url.trim() || null,
-    });
+    // The sibling mint states no axes on purpose: the whole input is the misc
+    // string naming the missing edition, and the RPC derives from it exactly as
+    // the untyped create did. Routed through the typed RPC anyway so there is
+    // one create path left when the untyped one is dropped.
+    const { data, error: e } = await supabase.rpc(
+      "card_index_create_pokemon_card_typed",
+      { ...pokemonCreateRPCArgs(form, undefined, variantMisc.trim()), p_edition: null, p_foil_treatment: null },
+    );
     setBusy(false);
     if (e) { setError(e.message); return; }
     if (data == null) { setError(t("cardIndex.variantExists")); return; }
@@ -889,41 +928,39 @@ function PokemonCardModal({
             <Input value={form.misc_info} onChange={(e) => set("misc_info", e.target.value)} placeholder={t("cardIndex.fMiscPlaceholder")} />
             <p className="text-xs text-muted-foreground">{t("cardIndex.fMiscHint")}</p>
           </div>
-          {/* The typed axes. Only on edit: card_index_create_pokemon_card has
-              no typed parameters yet, and the finishes without a string token
-              (master_ball_mirror and its siblings) cannot be expressed by
-              spelling them into misc_info, so offering them here on create
-              would silently drop them. A typed create is the follow-up. */}
-          {!isCreate && (
-            <>
-              <div className="space-y-1">
-                <Label htmlFor="pokemon-edition">{t("cardIndex.fEdition")}</Label>
-                <select
-                  id="pokemon-edition"
-                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                  value={form.edition}
-                  onChange={(e) => set("edition", e.target.value)}
-                >
-                  {EDITIONS.map((v) => (
-                    <option key={v} value={v}>{t(`cardIndex.edition.${v}`)}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="pokemon-foil">{t("cardIndex.fFoilTreatment")}</Label>
-                <select
-                  id="pokemon-foil"
-                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                  value={form.foil_treatment}
-                  onChange={(e) => set("foil_treatment", e.target.value)}
-                >
-                  {FOIL_TREATMENTS.map((v) => (
-                    <option key={v} value={v}>{t(`cardIndex.foil.${v}`)}</option>
-                  ))}
-                </select>
-              </div>
-            </>
-          )}
+          {/* The typed axes, on create as well as edit since backend 000509.
+              On create the leading blank option is the honest default: the
+              value is empty, and an empty axis asks the RPC to read the notes
+              field. Without it the select would SHOW "Unknown" while actually
+              meaning "derive", which is a different thing. */}
+          <div className="space-y-1">
+            <Label htmlFor="pokemon-edition">{t("cardIndex.fEdition")}</Label>
+            <select
+              id="pokemon-edition"
+              className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+              value={form.edition}
+              onChange={(e) => set("edition", e.target.value)}
+            >
+              {isCreate && <option value="">{t("cardIndex.axisFromText")}</option>}
+              {EDITIONS.map((v) => (
+                <option key={v} value={v}>{t(`cardIndex.edition.${v}`)}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="pokemon-foil">{t("cardIndex.fFoilTreatment")}</Label>
+            <select
+              id="pokemon-foil"
+              className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+              value={form.foil_treatment}
+              onChange={(e) => set("foil_treatment", e.target.value)}
+            >
+              {isCreate && <option value="">{t("cardIndex.axisFromText")}</option>}
+              {FOIL_TREATMENTS.map((v) => (
+                <option key={v} value={v}>{t(`cardIndex.foil.${v}`)}</option>
+              ))}
+            </select>
+          </div>
           {/* image_url row: paste a URL OR upload a file. Uploaded file is
               held in memory until Save; on save the RPC returns a card_id
               and we upload to {game}/{card_uid}/user_{ts}.{ext} in Supabase
