@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -222,5 +223,26 @@ describe("Pokemon Card Index query boundary", () => {
     }, "");
 
     expect(args).toEqual(expect.objectContaining({ p_edition: null, p_foil_treatment: null }));
+  });
+});
+
+// pokemonEditRPCArgs carries p_edition and p_foil_treatment, and PostgREST
+// resolves an RPC by the set of argument names it is given - so those args only
+// match card_index_edit_pokemon_card_typed. Sending them to the legacy
+// 9-argument function matches nothing and fails at runtime with PGRST202.
+//
+// TypeScript cannot see that: both are string literals passed to supabase.rpc.
+// #367 converted the save call and missed the image-upload call, and every
+// image upload failed until it was fixed. So the call sites are pinned here.
+describe("Card Index edit RPC call sites", () => {
+  const source = readFileSync(new URL("./PokemonCardIndex.tsx", import.meta.url), "utf8");
+
+  it("sends the typed-axis args only to the typed RPC", () => {
+    const calls = [...source.matchAll(/supabase\.rpc\(\s*"(card_index_edit_pokemon_card[a-z_]*)"/g)]
+      .map((m) => m[1]);
+
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls).not.toContain("card_index_edit_pokemon_card");
+    for (const name of calls) expect(name).toBe("card_index_edit_pokemon_card_typed");
   });
 });
