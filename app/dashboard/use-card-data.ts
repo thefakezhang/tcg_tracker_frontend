@@ -6,7 +6,7 @@ import { type Game, type PsaMode } from "./GameContext";
 import { exitValue, latestSignals, signalForRow, type GradeSignal } from "./grade-signals";
 import type { ExitPercentile } from "./ExitBasisContext";
 import { selectAllByIds } from "@/lib/supabase/select-all";
-import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
+import { externalIdMatches, smartSearchFilters, tokenizeSearchTerm, uidRange } from "@/lib/card-search";
 import {
   bestOpportunity,
   parseExitCostProfile,
@@ -365,6 +365,20 @@ export async function fetchLocationMap(
 }
 
 // Map sort column IDs from the table to summary table columns
+// Sort columns that live on the embedded card definition rather than on the
+// summary row. Module scope because the MTG search RPC needs them before the
+// query is built.
+const cardDefSortColumns = ["regional_name", "card_number", "set_code", "foil_type", "language"];
+
+// What search_mtg_price_summaries returns: the summary columns, the card as a
+// jsonb object, and the exact total as a window count so the page needs no
+// second round trip for it.
+type RpcSummaryRow = Omit<SummaryRow, string> & {
+  card: CardDefinition;
+  total_count: number | string;
+  [key: string]: unknown;
+};
+
 const SORT_COLUMN_MAP: Record<string, string> = {
   roi: "roi",
   lowestSell: "best_sell_normalized",
@@ -784,7 +798,7 @@ export function useCardData(options: {
     if (roiCeiling != null) query = query.lte("roi", roiCeiling);
 
     // Sorting
-    const cardDefSortCols = ["regional_name", "card_number", "set_code", "foil_type", "language"];
+    const cardDefSortCols = cardDefSortColumns;
     if (sortColumn === "conservativeExit") {
       // The signal lives in a separate versioned table, so PostgREST cannot
       // order this summary query by it. Keep pagination stable, then sort the
@@ -809,6 +823,87 @@ export function useCardData(options: {
     let rows: unknown[] | null = null;
     let queryError: { message: string } | null = null;
     let count: number | null = null;
+
+    // An MTG search goes through search_mtg_price_summaries instead of the
+    // PostgREST embed.
+    //
+    // PostgREST renders `mtg_price_summaries?select=*,mtg_card_definitions_v!inner(...)`
+    // as an INNER JOIN LATERAL, so a predicate inside the embed re-evaluates
+    // the card view once per row of mtg_price_summaries - 641k rows - and the
+    // trigram indexes that would answer the search cannot be used from there.
+    // Measured mean 7,780ms against the authenticated role's 8s
+    // statement_timeout, so most searches returned 57014 "canceling statement
+    // due to statement timeout" (#1462). The RPC resolves the matching cards
+    // once and joins the summaries to them: ~1.45s on the same terms.
+    //
+    // Browsing keeps the embed: with no predicate inside the lateral it runs in
+    // 1.7-2.9s and the RPC would buy nothing. The shapes the RPC does not model
+    // - a per-source summaries table, conservativeExit ordering - fall back to
+    // the embed rather than being approximated.
+    const mtgSearch =
+      activeGame === "mtg" &&
+      (s !== "" || cn !== "" || sc !== "") &&
+      !requiredSource &&
+      sortColumn !== "conservativeExit";
+
+    if (mtgSearch) {
+      let extIds: number[] = [];
+      if (s) {
+        try {
+          extIds = await externalIdMatches(supabase, "mtg_external_identifiers", "card_id", s);
+        } catch (lookupError) {
+          if (abort.signal.aborted) return;
+          setError(lookupError instanceof Error ? lookupError : new Error(String(lookupError)));
+          setLoading(false);
+          return;
+        }
+        if (abort.signal.aborted) return;
+      }
+      // Identifier paste wins and applies alone, exactly as smartSearchFilters does.
+      const uid = s ? uidRange(s) : null;
+      const identifierPaste = uid !== null || extIds.length > 0;
+      const tokens = s && !identifierPaste ? tokenizeSearchTerm(s) : [];
+      const sortCol = cardDefSortColumns.includes(sortColumn)
+        ? sortColumn
+        : SORT_COLUMN_MAP[sortColumn] || sortColumn;
+      try {
+        const res = await supabase
+          .rpc("search_mtg_price_summaries", {
+            p_tokens: tokens,
+            p_card_ids: extIds,
+            p_uid_lo: uid?.lo ?? null,
+            p_uid_hi: uid?.hi ?? null,
+            p_card_number: cn,
+            p_set_code: sc,
+            p_tier: selectedTier,
+            p_psa: psaMode !== "non-psa",
+            p_sell_region: sellRegion,
+            p_min_buy: minBuyPrice,
+            p_min_sell: minSellPrice,
+            p_roi_floor: roiFloor,
+            p_roi_ceiling: roiCeiling,
+            p_sold_only: soldEvidenceOnly,
+            p_sort: sortCol,
+            p_ascending: sortAsc,
+            p_limit: pageSize,
+            p_offset: page * pageSize,
+          })
+          .abortSignal(abort.signal);
+        const hits = (res.data ?? []) as RpcSummaryRow[];
+        // The RPC returns the card object under `card`; the row mapper reads it
+        // under the embed's table key, so translate rather than teach the
+        // mapper a second shape.
+        rows = hits.map(({ card, total_count: _total, ...summary }) => ({
+          ...summary,
+          [cardDefTable]: card,
+        }));
+        queryError = res.error;
+        count = hits.length ? Number(hits[0].total_count) : 0;
+      } catch (e) {
+        if (abort.signal.aborted) return;
+        queryError = { message: String(e) };
+      }
+    } else {
     try {
       const res = await query;
       rows = res.data;
@@ -818,6 +913,7 @@ export function useCardData(options: {
       // Superseded by a newer query (abort) — drop silently.
       if (abort.signal.aborted) return;
       queryError = { message: String(e) };
+    }
     }
 
     if (abort.signal.aborted) return;

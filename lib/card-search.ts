@@ -16,12 +16,22 @@ const UID_PREFIX = /^[0-9a-f]{8}$/;
 // inclusive range (uuid columns don't support ilike, but a fixed-length prefix
 // is exactly a range scan). Terms that are neither return no parts.
 export function uidOrParts(term: string, uidCol: string): string[] {
-  const t = term.toLowerCase();
-  if (FULL_UUID.test(t)) return [`${uidCol}.eq.${t}`];
+  const range = uidRange(term);
+  if (!range) return [];
+  if (range.lo === range.hi) return [`${uidCol}.eq.${range.lo}`];
+  return [`and(${uidCol}.gte.${range.lo},${uidCol}.lte.${range.hi})`];
+}
+
+// uidRange is the same semantics as VALUES rather than as PostgREST syntax, for
+// callers that pass the bounds to an RPC instead of composing a filter string.
+// Both go through it so the two forms cannot drift.
+export function uidRange(term: string): { lo: string; hi: string } | null {
+  const t = term.trim().toLowerCase();
+  if (FULL_UUID.test(t)) return { lo: t, hi: t };
   if (UID_PREFIX.test(t)) {
-    return [`and(${uidCol}.gte.${t}-0000-0000-0000-000000000000,${uidCol}.lte.${t}-ffff-ffff-ffff-ffffffffffff)`];
+    return { lo: `${t}-0000-0000-0000-000000000000`, hi: `${t}-ffff-ffff-ffff-ffffffffffff` };
   }
-  return [];
+  return null;
 }
 
 // Structural shape of the one query external-id resolution needs. Typed here
