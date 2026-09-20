@@ -154,6 +154,8 @@ describe("Pokemon Card Index query boundary", () => {
       card_number: "124",
       language: "en",
       misc_info: "SR仕様, 英語版",
+      edition: "",
+      foil_treatment: "",
       image_url: "",
     };
 
@@ -176,20 +178,49 @@ describe("Pokemon Card Index query boundary", () => {
     expect(pokemonEditActionClassName).toContain("sm:size-7");
   });
 
-  it("keeps the legacy Card Index writer RPC contract until Phase 4", () => {
+  // This was the inverse assertion until Phase 4: the writer contract was
+  // deliberately incomplete and the axes had to be ABSENT. 000499 added
+  // card_index_edit_pokemon_card_typed, so the curator states them instead of
+  // spelling them into misc_info.
+  it("carries the typed axes to the Card Index writer RPC", () => {
     const args = pokemonEditRPCArgs(42, 1, {
       regional_name: "カード",
       english_name: "Card",
       set_code: "SV-P",
       card_number: "124",
       language: "jp",
-      misc_info: "SA,ミラー,1ED",
+      misc_info: "SA",
+      edition: "first",
+      foil_treatment: "master_ball_mirror",
       image_url: "",
     }, "");
 
-    expect(args).toEqual(expect.objectContaining({ p_misc_info: "SA,ミラー,1ED" }));
-    expect(args).not.toHaveProperty("p_edition");
-    expect(args).not.toHaveProperty("p_foil_treatment");
+    expect(args).toEqual(expect.objectContaining({
+      p_misc_info: "SA",
+      p_edition: "first",
+      // A finish with no string token at all. It can only reach the catalog
+      // through a typed write, which is why the selectors exist.
+      p_foil_treatment: "master_ball_mirror",
+    }));
     expect(args).not.toHaveProperty("p_variant_attrs");
+  });
+
+  // An edit made for some other reason must not be read as a request to clear
+  // the axes. misc_info now holds the residue, so deriving from it alone would
+  // reset the edition of every card renamed or renumbered.
+  it("sends null axes when the curator states neither, so the row keeps its own", () => {
+    const args = pokemonEditRPCArgs(42, 1, {
+      regional_name: "カード",
+      english_name: "Card",
+      set_code: "SV-P",
+      card_number: "125",
+      language: "jp",
+      misc_info: "SA",
+      edition: "",
+      foil_treatment: "",
+      image_url: "",
+    }, "");
+
+    expect(args).toEqual(expect.objectContaining({ p_edition: null, p_foil_treatment: null }));
   });
 });

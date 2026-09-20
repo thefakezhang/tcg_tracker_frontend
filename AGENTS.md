@@ -154,7 +154,7 @@ app/
     MtgCardIndex.tsx      # MTG catalog tab of the Card Index
     MtgPrintingBadges.tsx # EN/JP language and foil badges beside an MTG card's name (table, tile, detail)
     OwnedCountLine.tsx    # One-line owned/incoming signal on browse tiles and rows
-    PokemonCardIndex.tsx  # Pokemon catalog tab of the Card Index (create/edit/merge/link attach/curator flags)
+    PokemonCardIndex.tsx  # Pokemon catalog tab of the Card Index (create/edit/merge/link attach/curator flags; edit states edition + finish as typed axes)
     PokemonCuratorFlags.tsx # Shared JP-exclusive / Cute flag switches, row chips, and RPC writer (Card Detail Modal + Card Index)
     PokemonMatchesTab.tsx # Pokemon match-memory manager (pokemon_card_matches)
     PriceEvidenceBadge.tsx # Independent semantic price evidence for image-curation candidates

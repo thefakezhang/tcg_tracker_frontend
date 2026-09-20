@@ -531,7 +531,24 @@ function CardsTab() {
   );
 }
 
-const BLANK = { regional_name: "", english_name: "", set_code: "", card_number: "", language: "jp", misc_info: "", image_url: "" };
+// The two typed variant axes, mirroring pokemon_card_definitions' CHECK
+// constraints. Since the Phase 3 cutover (#1008) a card's edition and finish
+// live in these columns and misc_info holds only the residue, so the curator
+// picks them rather than spelling them into the text field.
+//
+// Note master_ball_mirror and its siblings: several finishes have no string
+// token at all, so they can only ever be set through a typed write. That is why
+// these selectors talk to card_index_edit_pokemon_card_typed (000499) and not
+// to the older RPC that reads its axes back out of misc_info.
+const EDITIONS = ["unknown", "not_applicable", "first", "unlimited"] as const;
+const FOIL_TREATMENTS = [
+  "unknown", "normal", "mirror", "reverse", "master_ball_mirror",
+  "monster_ball_mirror", "energy_mark_mirror", "rocket_mark_mirror",
+  "dark_ball_mirror", "love_ball_mirror", "friend_ball_mirror",
+  "quick_ball_mirror", "rocket_team_mirror", "break_mirror", "other",
+] as const;
+
+const BLANK = { regional_name: "", english_name: "", set_code: "", card_number: "", language: "jp", misc_info: "", edition: "", foil_treatment: "", image_url: "" };
 
 export function pokemonEditRPCArgs(
   cardID: number,
@@ -548,6 +565,12 @@ export function pokemonEditRPCArgs(
     p_card_number: form.card_number,
     p_language: form.language,
     p_misc_info: form.misc_info,
+    // Empty means "leave it alone": card_index_edit_pokemon_card_typed falls
+    // back to what the row already holds. That matters because the misc field
+    // now carries the residue, so an edit made for any other reason - a rename,
+    // a number fix - must not be read as a request to clear the axes.
+    p_edition: form.edition || null,
+    p_foil_treatment: form.foil_treatment || null,
     p_image_url: imageURL,
   };
 }
@@ -625,6 +648,8 @@ function PokemonCardModal({
       card_number: card.card_number ?? "",
       language: card.language ?? "jp",
       misc_info: card.misc_info === "UNKNOWN" ? "" : card.misc_info ?? "",
+      edition: card.edition ?? "",
+      foil_treatment: card.foil_treatment ?? "",
       image_url: card.image_url ?? "",
     });
     setMergeSearch("");
@@ -688,7 +713,7 @@ function PokemonCardModal({
         }
       }
     } else if (card) {
-      const editResult = await supabase.rpc("card_index_edit_pokemon_card", {
+      const editResult = await supabase.rpc("card_index_edit_pokemon_card_typed", {
         ...pokemonEditRPCArgs(card.card_id, expectedEditVersion, form, form.image_url.trim()),
       });
       rpcError = editResult.error;
@@ -857,8 +882,44 @@ function PokemonCardModal({
           </div>
           <div className="space-y-1">
             <Label>{t("cardIndex.fMisc")}</Label>
-            <Input value={form.misc_info} onChange={(e) => set("misc_info", e.target.value)} placeholder="ミラー, 1ED, …" />
+            <Input value={form.misc_info} onChange={(e) => set("misc_info", e.target.value)} placeholder={t("cardIndex.fMiscPlaceholder")} />
+            <p className="text-xs text-muted-foreground">{t("cardIndex.fMiscHint")}</p>
           </div>
+          {/* The typed axes. Only on edit: card_index_create_pokemon_card has
+              no typed parameters yet, and the finishes without a string token
+              (master_ball_mirror and its siblings) cannot be expressed by
+              spelling them into misc_info, so offering them here on create
+              would silently drop them. A typed create is the follow-up. */}
+          {!isCreate && (
+            <>
+              <div className="space-y-1">
+                <Label htmlFor="pokemon-edition">{t("cardIndex.fEdition")}</Label>
+                <select
+                  id="pokemon-edition"
+                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  value={form.edition}
+                  onChange={(e) => set("edition", e.target.value)}
+                >
+                  {EDITIONS.map((v) => (
+                    <option key={v} value={v}>{t(`cardIndex.edition.${v}`)}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="pokemon-foil">{t("cardIndex.fFoilTreatment")}</Label>
+                <select
+                  id="pokemon-foil"
+                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  value={form.foil_treatment}
+                  onChange={(e) => set("foil_treatment", e.target.value)}
+                >
+                  {FOIL_TREATMENTS.map((v) => (
+                    <option key={v} value={v}>{t(`cardIndex.foil.${v}`)}</option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
           {/* image_url row: paste a URL OR upload a file. Uploaded file is
               held in memory until Save; on save the RPC returns a card_id
               and we upload to {game}/{card_uid}/user_{ts}.{ext} in Supabase
