@@ -2046,5 +2046,6 @@ const ja: { [K in keyof typeof en]: string } = {
   "trades.balanceFixHint": "仕入ロットの原価が {amount} である必要があります。",
   "trades.counterparty": "取引相手",
   "trades.notes": "メモ",
+  "trips.lotSaleMixedLegs": "この売上は輸入・輸出両方の在庫から引き当てられます。{leg} として記録されますが、原価は各カードの仕入れから古い順に計上されます。",
 } as const;
 export default ja;

@@ -2050,5 +2050,6 @@ const en = {
   "trades.balanceFixHint": "The inbound lot would need to cost {amount}.",
   "trades.counterparty": "Counterparty",
   "trades.notes": "Notes",
+  "trips.lotSaleMixedLegs": "This sale draws from both import and export inventory. It is filed under {leg}; cost of goods still comes from each card's own acquisition, oldest first.",
 } as const;
 export default en;
