@@ -668,6 +668,17 @@ Stale line-reader responses carry a request token and cannot replace the newly s
 - Empty assignment and empty-plan states explain what the operator needs to do in both supported languages.
 - Architecture, goals, non-goals, and browser evidence are documented in `docs/buyer_result_grid.md`.
 
+### Selling across legs
+
+`leg` is a sourcing label, not a pool boundary. Backend migration `000501` removed it from FIFO selection and from the landed-cost lookup, so a lot sale may draw from import and export inventory in one record.
+
+- The lot-sale builder no longer disables holdings whose leg differs from the first selection. That guard is what previously forced a liquidation spanning both legs to be recorded as two sales, one of them at $0.00.
+- `selectedLeg` survives as the sale's label and the default currency (`export` defaults to JPY). It no longer constrains selection.
+- When a selection spans both legs the dialog says so: the sale is filed under one label, while COGS still comes from each card's own acquisition, oldest first.
+- `inventory_holdings_v` still returns per-leg rows and the UI still filters on them. The collapsed `inventory_holdings_sku_v` is the economic view and is read by the backend, not here.
+
+**This depends on backend 000501 being applied.** Without it the UI offers a selection the database will refuse.
+
 ### Scan review (scanner batch intake)
 
 Operator surface where a scanned card capture becomes a decided card.

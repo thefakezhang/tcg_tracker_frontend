@@ -2018,5 +2018,6 @@ const en = {
   "scanReview.mediaFailed": "Capture {ordinal} was decided, but its listing imagery was not attached - {detail}",
   "scanReview.mediaAttached": "Imagery attached",
   "scanReview.undoLocked": "Cannot undo: this capture's imagery is registered to a listing.",
+  "trips.lotSaleMixedLegs": "This sale draws from both import and export inventory. It is filed under {leg}; cost of goods still comes from each card's own acquisition, oldest first.",
 } as const;
 export default en;
