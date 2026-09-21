@@ -48,14 +48,36 @@ function watchRow(over: Record<string, unknown> = {}) {
 // 29 active watches carried no trip at all - made while nothing was underway -
 // so defaulting to a trip would have hidden nearly the whole list.
 describe("DecisionWatchlist trip scope", () => {
-  it("shows every trip's watches by default", async () => {
+  it("defaults to the running trip", async () => {
     vi.mocked(selectAll).mockResolvedValue([
       watchRow({ rule_id: 1, english_name: "On Trip Five", trip_id: 5, trip_name: "Trip 5", trip_status: "active" }),
       watchRow({ rule_id: 2, card_id: 43, english_name: "No Trip At All" }),
     ]);
     render(<DecisionWatchlist />);
     await waitFor(() => expect(screen.getByText("On Trip Five")).toBeTruthy());
+    // Scoped, so the untagged one is out of view until it is asked for.
+    expect(screen.queryByText("No Trip At All")).toBeNull();
+  });
+
+  it("falls back to all trips when none is running", async () => {
+    vi.mocked(selectAll).mockResolvedValue([
+      watchRow({ rule_id: 1, english_name: "On Closed Four", trip_id: 4, trip_name: "Trip 4", trip_status: "closed" }),
+      watchRow({ rule_id: 2, card_id: 43, english_name: "No Trip At All" }),
+    ]);
+    render(<DecisionWatchlist />);
+    await waitFor(() => expect(screen.getByText("On Closed Four")).toBeTruthy());
     expect(screen.getByText("No Trip At All")).toBeTruthy();
+  });
+
+  it("keeps an explicit choice of all trips over the running default", async () => {
+    vi.mocked(selectAll).mockResolvedValue([
+      watchRow({ rule_id: 1, english_name: "On Trip Five", trip_id: 5, trip_name: "Trip 5", trip_status: "active" }),
+      watchRow({ rule_id: 2, card_id: 43, english_name: "No Trip At All" }),
+    ]);
+    render(<DecisionWatchlist />);
+    await waitFor(() => expect(screen.getByText("On Trip Five")).toBeTruthy());
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "all" } });
+    await waitFor(() => expect(screen.getByText("No Trip At All")).toBeTruthy());
   });
 
   it("narrows to one trip, and can isolate the untagged ones", async () => {
@@ -67,6 +89,8 @@ describe("DecisionWatchlist trip scope", () => {
     await waitFor(() => expect(screen.getByText("On Trip Five")).toBeTruthy());
 
     const select = screen.getByRole("combobox");
+    fireEvent.change(select, { target: { value: "all" } });
+    await waitFor(() => expect(screen.getByText("No Trip At All")).toBeTruthy());
     fireEvent.change(select, { target: { value: "5" } });
     await waitFor(() => expect(screen.queryByText("No Trip At All")).toBeNull());
     expect(screen.getByText("On Trip Five")).toBeTruthy();
