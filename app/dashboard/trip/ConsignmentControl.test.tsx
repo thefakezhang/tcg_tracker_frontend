@@ -56,7 +56,26 @@ describe("ConsignmentControl", () => {
     // first made the whole assertion a race against a five-second timeout
     // scanning the whole document, which is why this still failed
     // occasionally under a loaded full-suite run after the portal-order fix.
-    const dialog = await screen.findByRole("alertdialog", {}, { timeout: 10_000 });
+    //
+    // The timeout is deliberately HALF the suite's testTimeout (10_000 in
+    // vitest.config.ts) and that is the point of the number. It used to be the
+    // full 10_000, so when the dialog never appeared this find burned the
+    // entire test budget and the run died on the OUTER timeout - reporting
+    //
+    //     Error: Test timed out in 10000ms.
+    //
+    // which says nothing about what was missing. At 5_000 the find loses
+    // first, and testing-library reports the role it could not locate plus the
+    // rendered DOM, which is what someone debugging #378 actually needs.
+    //
+    // This does NOT fix the flake. It was observed twice in twenty-one local
+    // full-suite runs and did not reproduce at all in the last ten, so the
+    // cause is still unknown; see tcg_tracker_frontend#378. The file's own
+    // history is two previous rounds of fixing this same test (portal
+    // ordering, then scoping the confirm to the dialog), so the next round
+    // should start from evidence rather than a third guess - and until this
+    // change there was no evidence to start from.
+    const dialog = await screen.findByRole("alertdialog", {}, { timeout: 5_000 });
     expect(within(dialog).getByText(/full accounting reversal/)).toBeTruthy();
 
     // The trigger and the dialog's confirm carry the SAME accessible name, so
