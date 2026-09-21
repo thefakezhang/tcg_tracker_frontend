@@ -1,6 +1,7 @@
 "use client";
 
 import BuyerOrderView from "./BuyerOrderView";
+import BuyerFloatStrip from "./BuyerFloatStrip";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { LanguageProvider, useLanguage, LANGUAGE_LABELS, type Language } from "./LanguageContext";
@@ -59,6 +60,7 @@ function BuyerShellInner({ email, viewingAs }: { email: string; viewingAs: boole
           </button>
         </div>
       </header>
+      <BuyerFloatStrip />
       <BuyerOrderView />
     </div>
   );
