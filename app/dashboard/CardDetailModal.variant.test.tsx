@@ -61,7 +61,13 @@ vi.mock("./RefreshPricesAction", () => ({ RefreshPricesAction: () => null }));
 vi.mock("./UidChip", () => ({ UidChip: () => null }));
 vi.mock("./FreshnessChip", () => ({ FreshnessChip: () => null }));
 vi.mock("./GradeEvidencePanel", () => ({ default: () => null }));
-vi.mock("./DecisionActions", () => ({ decisionSnapshot: () => ({}) }));
+vi.mock("./DecisionActions", () => ({
+  decisionSnapshot: () => ({}),
+  // The modal renders the Watch control beside Add to Buy List; this
+  // suite is about variant labels, so the control is stubbed rather than
+  // exercised (DecisionActions.test.tsx covers it).
+  DecisionActions: () => null,
+}));
 vi.mock("./opportunity-exposures", () => ({
   detailOpportunityPayloads: () => [],
   recordOpportunityExposures: vi.fn().mockResolvedValue(undefined),

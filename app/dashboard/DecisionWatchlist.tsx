@@ -33,6 +33,12 @@ interface WatchedDeal {
   card_number: string | null;
   image_url: string | null;
   store_sightings: StoreSighting[] | null;
+  // Backend 000520 appended these. record_deal_decision tags a watch with the
+  // trip underway on the day it was made, so an older watch - or one made
+  // while no trip was running - has no trip at all.
+  trip_id: number | null;
+  trip_name: string | null;
+  trip_status: string | null;
 }
 
 interface StoreSighting {
@@ -57,6 +63,11 @@ export default function DecisionWatchlist() {
   const [rows, setRows] = useState<WatchedDeal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  // "all" by default, NOT the current trip. Measured when this was added: 29
+  // active watches, 27 of them with no trip at all, because they were made
+  // while no trip was underway and the date-window inference had nothing to
+  // tag them with. Defaulting to the current trip would have hidden 27 of 29.
+  const [tripFilter, setTripFilter] = useState<string>("all");
   const [actionError, setActionError] = useState<string | null>(null);
   const [unwatchingRuleId, setUnwatchingRuleId] = useState<number | null>(null);
   // Market data (ROI + the row for the detail modal) + owned inventory per card,
@@ -104,9 +115,28 @@ export default function DecisionWatchlist() {
   const [maxOwned, setMaxOwned] = useState("");
   const ownedQtyFor = (cardId: number) =>
     ownedCounts.get(ownedInventoryKey({ game: "pokemon", cardId }))?.owned ?? 0;
+  // Trips present in the data, newest watch first. Derived from the rows rather
+  // than queried, so the list never offers a trip with nothing in it.
+  const tripOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const r of rows) {
+      if (r.trip_id == null) continue;
+      if (!seen.has(String(r.trip_id))) {
+        seen.set(String(r.trip_id), r.trip_name ?? `#${r.trip_id}`);
+      }
+    }
+    return [...seen.entries()];
+  }, [rows]);
+  const untaggedCount = useMemo(() => rows.filter((r) => r.trip_id == null).length, [rows]);
+
   const displayRows = useMemo(() => {
     const cap = maxOwned.trim() === "" ? null : Number(maxOwned);
-    let out = cap == null || Number.isNaN(cap) ? rows : rows.filter((r) => ownedQtyFor(r.card_id) <= cap);
+    const scoped = tripFilter === "all"
+      ? rows
+      : tripFilter === "none"
+        ? rows.filter((r) => r.trip_id == null)
+        : rows.filter((r) => String(r.trip_id) === tripFilter);
+    let out = cap == null || Number.isNaN(cap) ? scoped : scoped.filter((r) => ownedQtyFor(r.card_id) <= cap);
     if (lowStockFirst) {
       out = [...out].sort((a, b) => {
         const qa = ownedQtyFor(a.card_id), qb = ownedQtyFor(b.card_id);
@@ -118,7 +148,7 @@ export default function DecisionWatchlist() {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, maxOwned, lowStockFirst, ownedCounts, cardData]);
+  }, [rows, tripFilter, maxOwned, lowStockFirst, ownedCounts, cardData]);
 
   async function unwatch(ruleId: number) {
     setActionError(null);
@@ -151,6 +181,24 @@ export default function DecisionWatchlist() {
         <Button variant={lowStockFirst ? "default" : "outline"} size="sm" className="h-11 sm:h-8" onClick={() => setLowStockFirst((v) => !v)}>
           {t("trips.lowStockFirst")}
         </Button>
+        {(tripOptions.length > 0 || untaggedCount > 0) && (
+          <label className="flex items-center gap-1 text-muted-foreground">
+            {t("decision.watchTrip")}
+            <select
+              value={tripFilter}
+              onChange={(e) => setTripFilter(e.target.value)}
+              className="h-11 rounded-md border bg-background px-2 text-sm sm:h-8"
+            >
+              <option value="all">{t("decision.watchTripAll")}</option>
+              {tripOptions.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+              {untaggedCount > 0 && (
+                <option value="none">{t("decision.watchTripNone", { count: untaggedCount })}</option>
+              )}
+            </select>
+          </label>
+        )}
         <label className="flex items-center gap-1 text-muted-foreground">
           {t("trips.maxOwned")}
           <Input type="number" min={0} value={maxOwned} onChange={(e) => setMaxOwned(e.target.value)} placeholder="—" className="h-11 w-16 sm:h-8" />
