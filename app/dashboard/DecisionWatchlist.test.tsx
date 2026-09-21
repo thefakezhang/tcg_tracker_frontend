@@ -31,6 +31,58 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+function watchRow(over: Record<string, unknown> = {}) {
+  return {
+    rule_id: 1, card_id: 42, psa_grade: 10, decided_at: "2026-07-20T10:00:00Z",
+    flagged_price: 1000, flagged_currency: "JPY", current_price: 1100,
+    current_currency: "JPY", current_observed_on: "2026-07-20", reason: null,
+    regional_name: "テスト", english_name: "Test Card", set_code: "M6",
+    card_number: "001", image_url: null, store_sightings: [],
+    trip_id: null, trip_name: null, trip_status: null, ...over,
+  };
+}
+
+// A watch is tagged with the trip that was underway the day it was made
+// (record_deal_decision), and backend 000520 exposes that on the view. The
+// filter defaults to ALL trips, not the current one: when this shipped, 27 of
+// 29 active watches carried no trip at all - made while nothing was underway -
+// so defaulting to a trip would have hidden nearly the whole list.
+describe("DecisionWatchlist trip scope", () => {
+  it("shows every trip's watches by default", async () => {
+    vi.mocked(selectAll).mockResolvedValue([
+      watchRow({ rule_id: 1, english_name: "On Trip Five", trip_id: 5, trip_name: "Trip 5", trip_status: "active" }),
+      watchRow({ rule_id: 2, card_id: 43, english_name: "No Trip At All" }),
+    ]);
+    render(<DecisionWatchlist />);
+    await waitFor(() => expect(screen.getByText("On Trip Five")).toBeTruthy());
+    expect(screen.getByText("No Trip At All")).toBeTruthy();
+  });
+
+  it("narrows to one trip, and can isolate the untagged ones", async () => {
+    vi.mocked(selectAll).mockResolvedValue([
+      watchRow({ rule_id: 1, english_name: "On Trip Five", trip_id: 5, trip_name: "Trip 5", trip_status: "active" }),
+      watchRow({ rule_id: 2, card_id: 43, english_name: "No Trip At All" }),
+    ]);
+    render(<DecisionWatchlist />);
+    await waitFor(() => expect(screen.getByText("On Trip Five")).toBeTruthy());
+
+    const select = screen.getByRole("combobox");
+    fireEvent.change(select, { target: { value: "5" } });
+    await waitFor(() => expect(screen.queryByText("No Trip At All")).toBeNull());
+    expect(screen.getByText("On Trip Five")).toBeTruthy();
+
+    fireEvent.change(select, { target: { value: "none" } });
+    await waitFor(() => expect(screen.queryByText("On Trip Five")).toBeNull());
+    expect(screen.getByText("No Trip At All")).toBeTruthy();
+  });
+
+  it("offers no trip control when nothing is tagged and nothing is untagged", async () => {
+    vi.mocked(selectAll).mockResolvedValue([]);
+    render(<DecisionWatchlist />);
+    await waitFor(() => expect(screen.queryByRole("combobox")).toBeNull());
+  });
+});
+
 describe("DecisionWatchlist", () => {
   it("shows all store sightings with the normalized cheapest option first", async () => {
     vi.mocked(selectAll).mockResolvedValue([{

@@ -494,7 +494,10 @@ Non-goals: S3 does not calculate costs, annualized returns, raw-to-grade EV, or 
 - `CardBrowser` records the actual purchasable opportunity on each visible Pokémon row, and `CardDetailModal` records each actual Sell listing when opened.
 `opportunity-exposures.ts` builds stable candidate keys and sends batches to `record_deal_opportunity_exposures`.
 Card Ladder, Collectr, and PriceCharting are excluded because they are indicator sources rather than inventory the operator can buy (they can still be a summary row's exit, labelled `est.`; they are never its entry).
-- `DecisionActions` is the one Watch and optional Dismiss control used by Card Browser rows and every grade card in `GradeEvidencePanel`.
+- `DecisionActions` is the one Watch and optional Dismiss control, used by Card Browser rows (both the list column and the grid tile footer), the Card Detail Modal, and every grade card in `GradeEvidencePanel`.
+It is Pokemon-only, because `record_deal_decision` resolves pokemon cards.
+- The watchlist filters by **trip**. `record_deal_decision` tags a watch with the trip underway the day it was made, backend `000520` exposes that on `active_deal_watchlist_v`, and a trigger retires a trip's watches when the trip closes.
+The filter defaults to **all trips**, not the current one: most existing watches carry no trip at all, because they were made while nothing was underway and the date-window inference had nothing to tag them with.
 There is no routine Pass action.
 - The `price_below_exit` watch is evaluated client-side on the watchlist: a watch has fired when the current price sits at or below the flagged price (fired count banner + per-card badge in `DecisionWatchlist`).
 There is still no push notification path; the watchlist is the alert surface.

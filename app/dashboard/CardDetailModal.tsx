@@ -78,7 +78,7 @@ import {
 import { useOwnedInventoryVersion, bumpOwnedInventory } from "./owned-inventory";
 import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
 import GradeEvidencePanel from "./GradeEvidencePanel";
-import { decisionSnapshot } from "./DecisionActions";
+import { DecisionActions, decisionSnapshot } from "./DecisionActions";
 import { detailOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
 import { isPriceKind, priceKindMarkerKey, priceKindTitleKey, type PriceKind } from "@/lib/price-kind";
 import { formatRoiPct, roiToneClass } from "./theoretical-roi";
@@ -1034,6 +1034,18 @@ export default function CardDetailModal({
             onAskingPriceChange={setAskingPrice}
             onAskingCurrencyChange={setAskingCurrency}
           />
+        )}
+
+        {/* Watch, beside Add to Buy List rather than only in the browser's
+            rightmost column. The control already existed on Card Browser rows
+            and on each grade card, but not here - so opening a card, which is
+            where you decide about it, offered a buy list and no watchlist.
+            Pokemon-gated to match CardBrowser: record_deal_decision resolves
+            pokemon cards. */}
+        {card && activeGame === "pokemon" && (
+          <div className="flex flex-wrap items-center justify-end border-t pt-4">
+            <DecisionActions row={card} />
+          </div>
         )}
 
         {card && (buylists.length > 0 || onRemoveFromBuylist) && (
