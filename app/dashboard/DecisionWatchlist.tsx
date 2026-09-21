@@ -63,11 +63,18 @@ export default function DecisionWatchlist() {
   const [rows, setRows] = useState<WatchedDeal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  // "all" by default, NOT the current trip. Measured when this was added: 29
-  // active watches, 27 of them with no trip at all, because they were made
-  // while no trip was underway and the date-window inference had nothing to
-  // tag them with. Defaulting to the current trip would have hidden 27 of 29.
-  const [tripFilter, setTripFilter] = useState<string>("all");
+  // Defaults to the trip that is running, falling back to all trips when none
+  // is.
+  //
+  // It shipped defaulting to "all", because 27 of 29 watches then carried no
+  // trip and scoping would have hidden nearly the whole list. That turned out
+  // to be a one-time gap rather than the design failing: all 27 were made on
+  // 2026-07-27, inside trip 4's window, hours before 000219 added trip tagging
+  // at all. They are backfilled to trip 4, and 000521 attaches anything made
+  // between trips to the next trip created - so a watch without a trip is now
+  // the exception rather than the rule, and scoping shows what you are
+  // actually working on.
+  const [tripFilter, setTripFilter] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [unwatchingRuleId, setUnwatchingRuleId] = useState<number | null>(null);
   // Market data (ROI + the row for the detail modal) + owned inventory per card,
@@ -129,13 +136,21 @@ export default function DecisionWatchlist() {
   }, [rows]);
   const untaggedCount = useMemo(() => rows.filter((r) => r.trip_id == null).length, [rows]);
 
+  // null means "not chosen yet". The first load picks the active trip if the
+  // data has one; after that the operator's choice stands, including "all".
+  const activeTripId = useMemo(() => {
+    const running = rows.find((r) => r.trip_status === "active" && r.trip_id != null);
+    return running?.trip_id == null ? null : String(running.trip_id);
+  }, [rows]);
+  const effectiveTripFilter = tripFilter ?? activeTripId ?? "all";
+
   const displayRows = useMemo(() => {
     const cap = maxOwned.trim() === "" ? null : Number(maxOwned);
-    const scoped = tripFilter === "all"
+    const scoped = effectiveTripFilter === "all"
       ? rows
-      : tripFilter === "none"
+      : effectiveTripFilter === "none"
         ? rows.filter((r) => r.trip_id == null)
-        : rows.filter((r) => String(r.trip_id) === tripFilter);
+        : rows.filter((r) => String(r.trip_id) === effectiveTripFilter);
     let out = cap == null || Number.isNaN(cap) ? scoped : scoped.filter((r) => ownedQtyFor(r.card_id) <= cap);
     if (lowStockFirst) {
       out = [...out].sort((a, b) => {
@@ -148,7 +163,7 @@ export default function DecisionWatchlist() {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, tripFilter, maxOwned, lowStockFirst, ownedCounts, cardData]);
+  }, [rows, effectiveTripFilter, maxOwned, lowStockFirst, ownedCounts, cardData]);
 
   async function unwatch(ruleId: number) {
     setActionError(null);
@@ -185,7 +200,7 @@ export default function DecisionWatchlist() {
           <label className="flex items-center gap-1 text-muted-foreground">
             {t("decision.watchTrip")}
             <select
-              value={tripFilter}
+              value={effectiveTripFilter}
               onChange={(e) => setTripFilter(e.target.value)}
               className="h-11 rounded-md border bg-background px-2 text-sm sm:h-8"
             >
