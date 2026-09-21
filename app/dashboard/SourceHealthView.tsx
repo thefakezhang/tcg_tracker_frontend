@@ -56,6 +56,72 @@ type CalibrationRun = {
 
 type Level = "ok" | "warn" | "bad";
 
+const RFC3339_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+export type RetiredSellCoverage = {
+  status: "retired";
+  reason: "storefront_access_gate_http_401_since_2026_08_11";
+  lastGoodAt: string | null;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+export function parseRetiredSellCoverage(source: unknown, notes: unknown): RetiredSellCoverage | null {
+  if (typeof source !== "string" || source.trim().toLowerCase() !== "torecabank") {
+    return null;
+  }
+  const noteRecord = asRecord(notes);
+  const coverage = asRecord(noteRecord?.collection_coverage);
+  const sell = asRecord(coverage?.sell);
+  if (
+    sell?.status !== "retired"
+    || sell.reason !== "storefront_access_gate_http_401_since_2026_08_11"
+  ) {
+    return null;
+  }
+  const lastGoodAt = sell.last_good_at;
+  if (
+    lastGoodAt != null
+    && (
+      typeof lastGoodAt !== "string"
+      || !RFC3339_TIMESTAMP.test(lastGoodAt)
+      || Number.isNaN(new Date(lastGoodAt).getTime())
+    )
+  ) {
+    return null;
+  }
+  return {
+    status: "retired",
+    reason: "storefront_access_gate_http_401_since_2026_08_11",
+    lastGoodAt: lastGoodAt ?? null,
+  };
+}
+
+export function RetiredSellCoverageNotice({ source, notes }: { source: unknown; notes: unknown }) {
+  const { t, language } = useTranslation();
+  const coverage = parseRetiredSellCoverage(source, notes);
+  if (coverage == null) return null;
+
+  return (
+    <div
+      className="mt-1 w-64 space-y-0.5 whitespace-normal break-words text-xs font-normal text-amber-700 dark:text-amber-300"
+      role="status"
+    >
+      <p className="font-medium">{t("health.sellRetired")}</p>
+      <p>{t("health.sellRetiredReason")}</p>
+      <p className="text-muted-foreground">
+        {coverage.lastGoodAt == null
+          ? t("health.sellLastGoodUnavailable")
+          : t("health.sellLastGood", { time: formatDateTime(coverage.lastGoodAt, language) })}
+      </p>
+    </div>
+  );
+}
+
 // These are internal pipeline bookkeeping labels, not price sources an operator
 // can inspect or act on. Keep their snapshots in the database while omitting
 // them from the operator-facing source comparison.
@@ -309,7 +375,10 @@ export default function SourceHealthView() {
             <TableBody>
               {rows.map((r) => (
                 <TableRow key={r.source}>
-                  <TableCell className="font-medium">{r.source}</TableCell>
+                  <TableCell className="font-medium">
+                    <span>{r.source}</span>
+                    <RetiredSellCoverageNotice source={r.source} notes={r.notes} />
+                  </TableCell>
                   <TableCell>
                     {r.rows_written ?? "-"}
                     {deltaOf(r.source, (x) => x.rows_written) && (
