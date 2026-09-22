@@ -22,6 +22,10 @@ import {
   japanExclusivitySelectionQueryFilter,
   type JapanExclusivityDimension,
 } from "./japan-exclusivity";
+import {
+  mtgTagSelectionQueryFilter,
+  type MtgTagDimension,
+} from "./mtg-tags";
 import type { PriceKind } from "@/lib/price-kind";
 import {
   pokemonVariantLabel,
@@ -64,6 +68,25 @@ export function applyJapanExclusivityQuery<T>(
 ): T {
   let filtered = query as T & JapanExclusivityQueryBuilder;
   const filter = japanExclusivitySelectionQueryFilter(selected);
+  for (const column of filter.equalsTrue) {
+    filtered = filtered.eq(`${cardDefinitionTable}.${column}`, true) as T & JapanExclusivityQueryBuilder;
+  }
+  if (filter.anyOfTrue.length > 0) {
+    filtered = filtered.or(
+      filter.anyOfTrue.map((column) => `${column}.eq.true`).join(","),
+      { referencedTable: cardDefinitionTable },
+    ) as T & JapanExclusivityQueryBuilder;
+  }
+  return filtered as T;
+}
+
+function applyMtgTagQuery<T>(
+  query: T,
+  cardDefinitionTable: string,
+  selected: ReadonlySet<MtgTagDimension>,
+): T {
+  let filtered = query as T & JapanExclusivityQueryBuilder;
+  const filter = mtgTagSelectionQueryFilter(selected);
   for (const column of filter.equalsTrue) {
     filtered = filtered.eq(`${cardDefinitionTable}.${column}`, true) as T & JapanExclusivityQueryBuilder;
   }
@@ -630,6 +653,7 @@ export function useCardData(options: {
   promosOnly: boolean;
   soldEvidenceOnly: boolean;
   japanExclusivity: ReadonlySet<JapanExclusivityDimension>;
+  mtgTags: ReadonlySet<MtgTagDimension>;
   cuteOnly: boolean;
   minBuyPrice: number | null;
   minSellPrice: number | null;
@@ -663,6 +687,7 @@ export function useCardData(options: {
     promosOnly,
     soldEvidenceOnly,
     japanExclusivity,
+    mtgTags,
     cuteOnly,
     minBuyPrice,
     minSellPrice,
@@ -693,7 +718,7 @@ export function useCardData(options: {
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, japanExclusivity, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, japanExclusivity, mtgTags, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -786,6 +811,9 @@ export function useCardData(options: {
     }
     if (activeGame === "pokemon") {
       query = applyJapanExclusivityQuery(query, cardDefTable, japanExclusivity);
+    }
+    if (activeGame === "mtg") {
+      query = applyMtgTagQuery(query, cardDefTable, mtgTags);
     }
     query = applySoldEvidenceQuery(query, soldEvidenceOnly);
     if (cuteOnly && activeGame === "pokemon") {
@@ -891,6 +919,7 @@ export function useCardData(options: {
             p_roi_floor: roiFloor,
             p_roi_ceiling: roiCeiling,
             p_sold_only: soldEvidenceOnly,
+            p_reserved_only: mtgTags.has("reserved"),
             p_sort: sortCol,
             p_ascending: sortAsc,
             p_limit: pageSize,

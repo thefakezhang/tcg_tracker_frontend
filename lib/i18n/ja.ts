@@ -453,6 +453,9 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardBrowser.rarityAll": "全レアリティ",
   "cardBrowser.filters": "絞り込み",
   "cardBrowser.promosOnly": "プロモ",
+  "cardBrowser.reservedOnly": "予約リスト",
+  "cardBrowser.reservedOnlyHint":
+    "ウィザーズ社が再録しないと公約した予約リスト（Reserved List）のカードのみ。判定はMTGJSON由来で、方針上リスト掲載カードでも一部の後年の印刷は対象外となるため、印刷単位で保持しています。",
   "cardBrowser.cuteOnly": "かわいい",
   "cardBrowser.soldEvidenceOnly": "実売のみ",
   "cardBrowser.soldEvidenceOnlyHint":
