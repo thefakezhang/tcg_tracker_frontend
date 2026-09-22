@@ -7,20 +7,45 @@
 // when clicking a second chip.
 //
 // Adding a tag is one entry in TAG_COLUMNS plus the matching boolean column on
-// mtg_card_definitions_v. Reserved List is first because MTGJSON already ships
-// the flag with AllPrintings, which the estate syncs nightly. The cEDH and
-// commander tags need a play-rate source that does not exist yet.
+// mtg_card_definitions_v.
+//
+// Reserved List comes from MTGJSON, which the estate already syncs nightly and
+// which needs no refresh cadence of its own - Wizards committed in 2010 never
+// to add another card. The other three come from edhrec.com play rates,
+// refreshed weekly by refresh-edhrec-tags.
 
-export type MtgTagDimension = "reserved";
+export type MtgTagDimension =
+  | "reserved"
+  | "cedhStaple"
+  | "cedhExclusive"
+  | "topCommander";
 
-export type MtgTagColumn = "is_reserved";
+export type MtgTagColumn =
+  | "is_reserved"
+  | "is_cedh_staple"
+  | "is_cedh_exclusive"
+  | "is_top_commander";
 
 const TAG_COLUMNS: Record<MtgTagDimension, MtgTagColumn> = {
   reserved: "is_reserved",
+  cedhStaple: "is_cedh_staple",
+  cedhExclusive: "is_cedh_exclusive",
+  topCommander: "is_top_commander",
 };
+
+// Declaration order drives the order of the chips in the browser.
+export const MTG_TAG_DIMENSIONS: readonly MtgTagDimension[] = [
+  "reserved",
+  "cedhStaple",
+  "cedhExclusive",
+  "topCommander",
+];
 
 export interface MtgTagFlags {
   is_reserved?: boolean | null;
+  is_cedh_staple?: boolean | null;
+  is_cedh_exclusive?: boolean | null;
+  is_top_commander?: boolean | null;
 }
 
 export interface MtgTagQueryFilter {

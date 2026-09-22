@@ -451,9 +451,18 @@ const en = {
   "cardBrowser.rarityAll": "All Rarities",
   "cardBrowser.filters": "Filters",
   "cardBrowser.promosOnly": "Promos",
-  "cardBrowser.reservedOnly": "Reserved List",
-  "cardBrowser.reservedOnlyHint":
+  "cardBrowser.reserved": "Reserved List",
+  "cardBrowser.reservedHint":
     "Only cards on Wizards' Reserved List, which Wizards has committed never to reprint in a tournament-legal form. The flag comes from MTGJSON and is per printing, because the policy excludes some later printings of a listed card.",
+  "cardBrowser.cedhStaple": "cEDH staples",
+  "cardBrowser.cedhStapleHint":
+    "The 500 most-played cards in competitive EDH, ranked by how many cEDH decks run them. From edhrec.com, refreshed weekly.",
+  "cardBrowser.cedhExclusive": "cEDH exclusive",
+  "cardBrowser.cedhExclusiveHint":
+    "Cards played disproportionately in competitive EDH rather than merely played there, by EDHREC's synergy score. Catches the format's defining cards (Chrome Mox, Lotus Petal, Force of Will) and excludes staples every Commander deck runs.",
+  "cardBrowser.topCommander": "Top 50 commanders",
+  "cardBrowser.topCommanderHint":
+    "The 50 most-registered commanders, by deck count. From edhrec.com, refreshed weekly.",
   "cardBrowser.cuteOnly": "Cute",
   "cardBrowser.soldEvidenceOnly": "Sold evidence",
   "cardBrowser.soldEvidenceOnlyHint":

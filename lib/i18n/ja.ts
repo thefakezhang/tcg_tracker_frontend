@@ -453,9 +453,18 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardBrowser.rarityAll": "全レアリティ",
   "cardBrowser.filters": "絞り込み",
   "cardBrowser.promosOnly": "プロモ",
-  "cardBrowser.reservedOnly": "予約リスト",
-  "cardBrowser.reservedOnlyHint":
+  "cardBrowser.reserved": "予約リスト",
+  "cardBrowser.reservedHint":
     "ウィザーズ社が再録しないと公約した予約リスト（Reserved List）のカードのみ。判定はMTGJSON由来で、方針上リスト掲載カードでも一部の後年の印刷は対象外となるため、印刷単位で保持しています。",
+  "cardBrowser.cedhStaple": "cEDH定番",
+  "cardBrowser.cedhStapleHint":
+    "競技EDH（cEDH）で最も使用されるカード上位500枚。採用デッキ数順。edhrec.com由来、週次更新。",
+  "cardBrowser.cedhExclusive": "cEDH特化",
+  "cardBrowser.cedhExclusiveHint":
+    "単に使われるだけでなく、cEDHで不釣り合いに多く使われるカード。EDHRECのシナジー指標による判定で、環境を定義するカード（Chrome Mox、Lotus Petal、Force of Will）を拾い、どのEDHデッキにも入る汎用カードは除外します。",
+  "cardBrowser.topCommander": "統率者トップ50",
+  "cardBrowser.topCommanderHint":
+    "登録デッキ数が最も多い統率者50体。edhrec.com由来、週次更新。",
   "cardBrowser.cuteOnly": "かわいい",
   "cardBrowser.soldEvidenceOnly": "実売のみ",
   "cardBrowser.soldEvidenceOnlyHint":

@@ -7,6 +7,7 @@ import {
 
 const none = new Set<MtgTagDimension>();
 const reserved = new Set<MtgTagDimension>(["reserved"]);
+const twoTags = new Set<MtgTagDimension>(["cedhStaple", "cedhExclusive"]);
 
 describe("mtgTagSelectionQueryFilter", () => {
   it("adds no predicate when nothing is selected", () => {
@@ -21,6 +22,24 @@ describe("mtgTagSelectionQueryFilter", () => {
       equalsTrue: ["is_reserved"],
       anyOfTrue: [],
     });
+  });
+});
+
+describe("multiple tags", () => {
+  // Selecting a second chip means "show me these as well". Intersecting would
+  // make the list shrink as you click, which is the opposite of what the
+  // Pokemon exclusivity chips do.
+  it("takes the union rather than the intersection", () => {
+    expect(mtgTagSelectionQueryFilter(twoTags)).toEqual({
+      equalsTrue: [],
+      anyOfTrue: ["is_cedh_staple", "is_cedh_exclusive"],
+    });
+  });
+
+  it("keeps a card carrying either tag", () => {
+    expect(matchesMtgTagSelection({ is_cedh_staple: true }, twoTags)).toBe(true);
+    expect(matchesMtgTagSelection({ is_cedh_exclusive: true }, twoTags)).toBe(true);
+    expect(matchesMtgTagSelection({ is_reserved: true }, twoTags)).toBe(false);
   });
 });
 
