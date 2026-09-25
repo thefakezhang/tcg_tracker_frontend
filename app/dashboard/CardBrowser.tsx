@@ -58,6 +58,7 @@ import type { SourceSide } from "./source-availability";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
 import type { JapanExclusivityDimension } from "./japan-exclusivity";
 import { JapanExclusivityFilter } from "./JapanExclusivityFilter";
+import { type MtgTagDimension } from "./mtg-tags";
 import {
   ownedInventoryKey,
   useOwnedInventoryCounts,
@@ -131,6 +132,9 @@ export default function CardBrowser() {
   const [rarity, setRarity] = useState<string>("");          // "" = all (Pokémon only)
   const [promosOnly, setPromosOnly] = useState(false);       // Pokémon promotional cards
   const [japanExclusivity, setJapanExclusivity] = useState<Set<JapanExclusivityDimension>>(() => new Set());
+  // MTG tags: opt-in sets a card belongs to. Reserved List today; the cEDH and
+  // commander tags land here once a play-rate source exists.
+  const [mtgTags, setMtgTags] = useState<Set<MtgTagDimension>>(() => new Set());
   const [cuteOnly, setCuteOnly] = useState(false); // manual "cute" flag (293)
   // Exit must be a completed transaction rather than a third party's estimate.
   const [soldEvidenceOnly, setSoldEvidenceOnly] = useState(false);
@@ -181,6 +185,7 @@ export default function CardBrowser() {
       promosOnly,
       soldEvidenceOnly,
       japanExclusivity,
+      mtgTags,
       cuteOnly,
       minBuyPrice: minBuyPrice !== "" ? Number(minBuyPrice) : null,
       minSellPrice: minSellPrice !== "" ? Number(minSellPrice) : null,
@@ -338,7 +343,7 @@ export default function CardBrowser() {
   useEffect(() => {
     setPage(0);
     setRowSelection({});
-  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, japanExclusivity, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, japanExclusivity, mtgTags, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -554,6 +559,21 @@ export default function CardBrowser() {
               return next;
             })}
           />
+        )}
+        {activeGame === "mtg" && (
+          <Button
+            variant={mtgTags.has("reserved") ? "default" : "outline"}
+            className="h-11 shrink-0 sm:h-8"
+            onClick={() => setMtgTags((current) => {
+              const next = new Set(current);
+              if (next.has("reserved")) next.delete("reserved");
+              else next.add("reserved");
+              return next;
+            })}
+            title={t("cardBrowser.reservedOnlyHint")}
+          >
+            {t("cardBrowser.reservedOnly")}
+          </Button>
         )}
         <Button
           variant={soldEvidenceOnly ? "default" : "outline"}

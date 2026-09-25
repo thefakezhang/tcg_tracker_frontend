@@ -451,6 +451,9 @@ const en = {
   "cardBrowser.rarityAll": "All Rarities",
   "cardBrowser.filters": "Filters",
   "cardBrowser.promosOnly": "Promos",
+  "cardBrowser.reservedOnly": "Reserved List",
+  "cardBrowser.reservedOnlyHint":
+    "Only cards on Wizards' Reserved List, which Wizards has committed never to reprint in a tournament-legal form. The flag comes from MTGJSON and is per printing, because the policy excludes some later printings of a listed card.",
   "cardBrowser.cuteOnly": "Cute",
   "cardBrowser.soldEvidenceOnly": "Sold evidence",
   "cardBrowser.soldEvidenceOnlyHint":
