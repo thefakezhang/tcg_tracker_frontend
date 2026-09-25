@@ -58,7 +58,7 @@ import type { SourceSide } from "./source-availability";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
 import type { JapanExclusivityDimension } from "./japan-exclusivity";
 import { JapanExclusivityFilter } from "./JapanExclusivityFilter";
-import { type MtgTagDimension } from "./mtg-tags";
+import { MTG_TAG_DIMENSIONS, type MtgTagDimension } from "./mtg-tags";
 import {
   ownedInventoryKey,
   useOwnedInventoryCounts,
@@ -560,21 +560,22 @@ export default function CardBrowser() {
             })}
           />
         )}
-        {activeGame === "mtg" && (
+        {activeGame === "mtg" && MTG_TAG_DIMENSIONS.map((dimension) => (
           <Button
-            variant={mtgTags.has("reserved") ? "default" : "outline"}
+            key={dimension}
+            variant={mtgTags.has(dimension) ? "default" : "outline"}
             className="h-11 shrink-0 sm:h-8"
             onClick={() => setMtgTags((current) => {
               const next = new Set(current);
-              if (next.has("reserved")) next.delete("reserved");
-              else next.add("reserved");
+              if (next.has(dimension)) next.delete(dimension);
+              else next.add(dimension);
               return next;
             })}
-            title={t("cardBrowser.reservedOnlyHint")}
+            title={t(`cardBrowser.${dimension}Hint`)}
           >
-            {t("cardBrowser.reservedOnly")}
+            {t(`cardBrowser.${dimension}`)}
           </Button>
-        )}
+        ))}
         <Button
           variant={soldEvidenceOnly ? "default" : "outline"}
           className="h-11 shrink-0 sm:h-8"

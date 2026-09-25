@@ -23,6 +23,7 @@ import {
   type JapanExclusivityDimension,
 } from "./japan-exclusivity";
 import {
+  mtgTagColumn,
   mtgTagSelectionQueryFilter,
   type MtgTagDimension,
 } from "./mtg-tags";
@@ -919,7 +920,10 @@ export function useCardData(options: {
             p_roi_floor: roiFloor,
             p_roi_ceiling: roiCeiling,
             p_sold_only: soldEvidenceOnly,
-            p_reserved_only: mtgTags.has("reserved"),
+            // The search path bypasses the embed, so the tags travel as a
+            // whitelisted array the function turns into the same OR predicate
+            // the browse path builds.
+            p_tags: [...mtgTags].map(mtgTagColumn),
             p_sort: sortCol,
             p_ascending: sortAsc,
             p_limit: pageSize,
