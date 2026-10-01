@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ImageOff, Upload, Trash2, Loader2, Paperclip, FileText } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { compressReceiptImage } from "@/lib/compress-receipt-image";
 import { useTranslation } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import {
@@ -78,9 +79,14 @@ export default function ReceiptsDialog({
     const prefix = ownerType.replace(/[^a-z0-9]+/gi, "_");
     const failed: string[] = [];
     for (const file of Array.from(files)) {
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+      // Shrink phone photos first: a raw 3-7MB capture over a weak connection
+      // is what WebKit aborts mid-flight ("Fetch is aborted"). PDFs, small files
+      // and undecodable ones pass through untouched. The key comes from the
+      // PAYLOAD, since a compressed PNG/WebP comes back as .jpg.
+      const payload = await compressReceiptImage(file);
+      const ext = (payload.name.split(".").pop() || "jpg").toLowerCase();
       const path = `${prefix}/${ownerId}/${crypto.randomUUID()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, file, { contentType: file.type || "image/jpeg" });
+      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, payload, { contentType: payload.type || "image/jpeg" });
       if (upErr) { failed.push(`${file.name}: ${upErr.message}`); continue; }
       const { error: insErr } = await supabase
         .from("receipts")
