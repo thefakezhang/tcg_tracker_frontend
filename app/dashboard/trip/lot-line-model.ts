@@ -29,6 +29,7 @@ export interface SealedLotLineRow {
   variant_edition: string;
   quantity: number;
   price_override_usd: number | null;
+  market_value_usd?: number | null;
   allocated_cost_usd: number;
   direct_purchase_cost_usd?: number;
   acquisition_cost_alloc_usd?: number;
@@ -109,6 +110,7 @@ export function mapSealedLotLine(
     variant_edition: row.variant_edition,
     sealedLabel: `${row.sealed_condition}/${row.variant_edition}`,
     price_override_usd: row.price_override_usd,
+    market_value_usd: row.market_value_usd ?? null,
     allocated_cost_usd: row.allocated_cost_usd,
     direct_purchase_cost_usd: row.direct_purchase_cost_usd ?? 0,
     acquisition_cost_alloc_usd: row.acquisition_cost_alloc_usd ?? 0,

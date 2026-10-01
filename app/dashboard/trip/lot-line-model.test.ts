@@ -74,3 +74,37 @@ describe("saved sealed lot-line round trip", () => {
     });
   });
 });
+
+describe("bulk market value default", () => {
+  // Unsorted bulk has no market price and never will, so finalization refuses
+  // it outright beside any other line (tcg_tracker migrations 000527/000528)
+  // rather than silently allocating it $0 or, by quantity weight, the whole
+  // lot. A new bulk line is therefore seeded with a nominal per-card value.
+  it("seeds a weight rather than pinning a cost", () => {
+    const insert = sealedLotLineInsert({
+      lotId: 1,
+      productId: 2719,
+      sealedCondition: "standard",
+      variantEdition: "standard",
+      quantity: 60,
+      marketValueUsd: 0.1,
+    });
+    expect(insert.market_value_usd).toBe(0.1);
+    // Must NOT pin. A pin has to reconcile to the lot total, so a bulk-only
+    // lot would be refused whenever qty x rate missed it - 2000 x $0.10 =
+    // $200.00 against a $204.00 lot. A weight never has to reconcile.
+    expect(insert.price_override_usd).toBeNull();
+  });
+
+  it("leaves a non-bulk sealed line unvalued", () => {
+    const insert = sealedLotLineInsert({
+      lotId: 1,
+      productId: 1577,
+      sealedCondition: "standard",
+      variantEdition: "standard",
+      quantity: 1,
+    });
+    expect(insert.market_value_usd).toBeNull();
+    expect(insert.price_override_usd).toBeNull();
+  });
+});

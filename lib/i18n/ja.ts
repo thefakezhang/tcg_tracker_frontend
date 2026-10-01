@@ -572,6 +572,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "trips.condition": "状態",
   "trips.override": "原価上書き (USD)",
   "trips.overrideCcy": "単価 ({ccy})",
+  "trips.marketValueUsd": "時価 (USD/個)",
   "trips.finalize": "ロットを確定",
   "trips.undoFinalize": "確定を取り消す",
   "trips.finalized": "確定済み",

@@ -109,6 +109,7 @@ interface LotLine {
   variant_edition?: string;
   sealedLabel?: string;
   price_override_usd: number | null;
+  market_value_usd?: number | null;
   direct_purchase_cost_usd: number;
   acquisition_cost_alloc_usd: number;
   allocated_cost_usd: number;
@@ -133,6 +134,12 @@ const LINE_TABLE: Record<CardGame, string> = {
   mtg: "mtg_lot_lines",
 };
 const SEALED_TABLE = "pokemon_sealed_lot_lines";
+
+// Nominal per-card value seeded onto a new bulk line. An estimate the operator
+// is expected to adjust per purchase - measured bulk cost on one real lot was
+// $0.16/card - not a market observation. Its only job is to keep a bulk line
+// out of the unvalued state that finalization refuses.
+const BULK_DEFAULT_MARKET_USD = 0.1;
 
 // Buying-side defaults differ by leg: import lots are bought in Japan (JPY),
 // export lots are bought in the US (USD) to carry over and sell in Japan.
@@ -359,7 +366,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       }
     }
     const srows = await selectAll<SealedLotLineRow>(
-      () => supabase.from(SEALED_TABLE).select("line_id, product_id, sealed_condition, variant_edition, quantity, price_override_usd, direct_purchase_cost_usd, acquisition_cost_alloc_usd, allocated_cost_usd, qty_remaining").eq("lot_id", lotId),
+      () => supabase.from(SEALED_TABLE).select("line_id, product_id, sealed_condition, variant_edition, quantity, price_override_usd, market_value_usd, direct_purchase_cost_usd, acquisition_cost_alloc_usd, allocated_cost_usd, qty_remaining").eq("lot_id", lotId),
       ["line_id"],
     );
     if (srows.length > 0) {
@@ -751,6 +758,18 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
         sealedCondition: hit.sealed_condition ?? "standard",
         variantEdition: hit.variant_edition ?? "standard",
         quantity: 1,
+        // Unsorted bulk has no market price and never will, so finalization
+        // refuses it outright beside any other line (migrations 000527/000528)
+        // rather than silently allocating it $0 or, by quantity weight, the
+        // whole lot. Seed a nominal per-card value so a bulk line is never the
+        // unvalued one; it is editable in the Market column.
+        //
+        // market_value_usd rather than price_override_usd deliberately: a
+        // weight never has to reconcile to the lot total, so this works for a
+        // bulk-only lot (bulk absorbs the exact total) as well as a mixed one.
+        // A pin would fail a bulk-only lot whenever qty x rate missed the
+        // total, e.g. 2000 x $0.10 = $200.00 against a $204.00 lot.
+        marketValueUsd: hit.product_type === "bulk" ? BULK_DEFAULT_MARKET_USD : null,
       }))
       : !defaultCondition || searchGame === "pokemon_sealed"
         ? { error: new Error("A card condition is required") }
@@ -769,7 +788,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     bumpOwnedInventory();
   }
 
-  async function updateLine(line: LotLine, patch: Partial<Pick<LotLine, "quantity" | "condition_id" | "psa_grade" | "sealed_condition" | "variant_edition" | "price_override_usd">>) {
+  async function updateLine(line: LotLine, patch: Partial<Pick<LotLine, "quantity" | "condition_id" | "psa_grade" | "sealed_condition" | "variant_edition" | "price_override_usd" | "market_value_usd">>) {
     setLotError(null);
     const supabase = createClient();
     const { error } = await supabase.from(line.table).update(patch).eq("line_id", line.line_id);
@@ -1385,6 +1404,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                 <TableHead className="w-32">{t("trips.condition")}</TableHead>
                 <TableHead className="w-24">{t("trips.psaGrade")}</TableHead>
                 <TableHead className="w-32">{t("trips.overrideCcy", { ccy: lotCcy })}</TableHead>
+                <TableHead className="w-28">{t("trips.marketValueUsd")}</TableHead>
                 {lot.lines_imported && (
                   <>
                     <TableHead className="w-28">{t("trips.directPurchase")}</TableHead>
@@ -1486,6 +1506,24 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                       <Input type="number" defaultValue={ln.price_override_usd != null ? toNative(ln.price_override_usd) : ""} placeholder="-"
                         className={`min-h-11 w-20 sm:min-h-8 ${needsTotalForBlanks && ln.price_override_usd == null ? "ring-1 ring-amber-500" : ""}`}
                         onBlur={(e) => updateLine(ln, { price_override_usd: e.target.value === "" ? null : fromNative(stripTax(Number(e.target.value))) })} />
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {/* The allocation WEIGHT, in USD per unit, distinct from the
+                        override beside it: a weight splits the residual
+                        pro-rata, an override pins exact cost. Editable on
+                        sealed lines because bulk has no market price to draw
+                        on; singles take theirs from price summaries. */}
+                    {ln.kind !== "sealed" ? (
+                      <span className="text-muted-foreground">-</span>
+                    ) : lot.lines_imported ? (
+                      ln.market_value_usd != null ? ln.market_value_usd : "-"
+                    ) : (
+                      <Input type="number" step="0.01" min={0} placeholder="-"
+                        defaultValue={ln.market_value_usd != null ? ln.market_value_usd : ""}
+                        className="min-h-11 w-20 sm:min-h-8"
+                        aria-label={t("trips.marketValueUsd")}
+                        onBlur={(e) => updateLine(ln, { market_value_usd: e.target.value === "" ? null : Number(e.target.value) })} />
                     )}
                   </TableCell>
                   {lot.lines_imported && (

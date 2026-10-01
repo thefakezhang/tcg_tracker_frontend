@@ -570,6 +570,7 @@ const en = {
   "trips.condition": "Condition",
   "trips.override": "Cost override (USD)",
   "trips.overrideCcy": "Cost/unit ({ccy})",
+  "trips.marketValueUsd": "Market (USD/unit)",
   "trips.finalize": "Finalize lot",
   "trips.undoFinalize": "Undo finalize",
   "trips.finalized": "Finalized",
