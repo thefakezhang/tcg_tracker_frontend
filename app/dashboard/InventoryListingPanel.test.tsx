@@ -17,6 +17,7 @@ import InventoryListingPanel, {
   buildSealedListingInsert,
   fetchSealedListingData,
   type ListingPlatform,
+  type SealedListingExposure,
   type SealedListingHolding,
 } from "./InventoryListingPanel";
 
@@ -29,8 +30,8 @@ const holding: SealedListingHolding = {
   product_id: 42,
   name: "Pokémon 151 Booster Box",
   set_code: "SV2A",
-  sealed_condition: "sealed",
-  variant_edition: "standard",
+  sealed_condition: "no_shrink",
+  variant_edition: "1ed",
   qty_on_hand: 3,
 };
 
@@ -39,6 +40,30 @@ const platform: ListingPlatform = {
   market_region: "NA",
   fulfillment_leg: "import",
   is_active: true,
+};
+
+const exposure: SealedListingExposure = {
+  listing_id: 7,
+  platform: "tcgplayer",
+  external_listing_id: "sealed-42",
+  status: "active",
+  leg: "import",
+  game: "pokemon_sealed",
+  product_id: 42,
+  item_name: "Pokémon 151 Booster Box",
+  set_code: "SV2A",
+  sealed_condition: "no_shrink",
+  variant_edition: "1ed",
+  quantity_listed: 3,
+  qty_on_hand: 1,
+  over_promised: 2,
+  last_pushed_quantity: 3,
+  desired_quantity: 1,
+  needs_push: true,
+  can_push: true,
+  ask_price_usd: 199.5,
+  listed_at: "2026-10-01",
+  market_region: "NA",
 };
 
 function pagedClient(
@@ -91,8 +116,8 @@ describe("sealed inventory listing contract", () => {
       product_id: 42,
       condition_id: null,
       psa_grade: 0,
-      sealed_condition: "sealed",
-      variant_edition: "standard",
+      sealed_condition: "no_shrink",
+      variant_edition: "1ed",
       leg: "import",
       quantity_listed: 2,
       ask_price_usd: 149.99,
@@ -155,6 +180,31 @@ describe("sealed inventory listing contract", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain("listing exposure unavailable");
     expect(screen.queryByText("No sealed listings are active.")).toBeNull();
+  });
+
+  it("identifies each listing and explains automatic or manual quantity reconciliation", async () => {
+    mocks.client = pagedClient({
+      inventory_holdings_v: [],
+      inventory_listing_platforms: [platform],
+      inventory_listing_exposure_v: [
+        exposure,
+        {
+          ...exposure,
+          listing_id: 8,
+          platform: "manual-market",
+          external_listing_id: null,
+          can_push: false,
+        },
+      ],
+    }).client;
+
+    render(<LanguageProvider><InventoryListingPanel /></LanguageProvider>);
+
+    expect(await screen.findAllByText("Pokémon 151 Booster Box")).toHaveLength(2);
+    expect(screen.getAllByText(/SV2A · Product #42 · No Shrink · 1st Edition/)).toHaveLength(2);
+    expect(screen.getAllByText("Oversold by 2")).toHaveLength(2);
+    expect(screen.getByText("Automatic sync: change quantity from 3 to 1.")).toBeTruthy();
+    expect(screen.getByText("Manual update required: change quantity from 3 to 1.")).toBeTruthy();
   });
 
   it("records a sealed listing through the operator dialog", async () => {

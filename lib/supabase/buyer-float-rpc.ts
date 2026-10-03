@@ -24,8 +24,10 @@ export function isMissingBuyerFloatRpcSignature(error: RpcError | null): boolean
 export async function callBuyerFloatRpc(
   modern: () => PromiseLike<BuyerFloatRpcResult>,
   legacy: () => PromiseLike<BuyerFloatRpcResult>,
+  beforeLegacy?: () => void | Promise<void>,
 ): Promise<BuyerFloatRpcResult> {
   const result = await modern();
   if (!isMissingBuyerFloatRpcSignature(result.error)) return result;
+  await beforeLegacy?.();
   return legacy();
 }

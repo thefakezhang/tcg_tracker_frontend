@@ -7,6 +7,21 @@ import { formatDate, localDateInputValue } from "@/lib/dates";
 import { formatJpy, formatJpyPerUsd, formatPercent, formatUsd } from "@/lib/money";
 import { selectAll } from "@/lib/supabase/select-all";
 import { callBuyerFloatRpc } from "@/lib/supabase/buyer-float-rpc";
+import {
+  clearPendingBuyerFloatRequest,
+  createPendingBuyerFloatRequest,
+  isBuyerFloatOutcomeUnknown,
+  readPendingBuyerFloatRequest,
+  requireBuyerFloatVerification,
+  writePendingBuyerFloatRequest,
+  type BuyerFloatOperation,
+  type PendingRefund,
+  type PendingRemittance,
+  type PendingSettlement,
+  type RefundPayload,
+  type RemittancePayload,
+  type SettlementPayload,
+} from "@/lib/buyer-float-pending";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { useLanguage } from "./LanguageContext";
 import { Button } from "@/components/ui/button";
@@ -94,27 +109,87 @@ export default function BuyerFloatView() {
   const [accounts, setAccounts] = useState<CashAccount[]>([]);
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [sent, setSent] = useState<string | null>(null);
+  const [busy, setBusy] = useState<BuyerFloatOperation | null>(null);
+  const [remitError, setRemitError] = useState<string | null>(null);
+  const [refundError, setRefundError] = useState<string | null>(null);
+  const [settleError, setSettleError] = useState<string | null>(null);
+  const [remitSent, setRemitSent] = useState<string | null>(null);
+  const [refundSent, setRefundSent] = useState<string | null>(null);
+  const [settleSent, setSettleSent] = useState<string | null>(null);
   const [readErrors, setReadErrors] = useState<ReadFailure[]>([]);
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [pendingReady, setPendingReady] = useState(false);
+  const [pendingStateError, setPendingStateError] = useState<string | null>(null);
+  const [pendingRemit, setPendingRemit] = useState<PendingRemittance | null>(null);
+  const [pendingRefund, setPendingRefund] = useState<PendingRefund | null>(null);
+  const [pendingSettlement, setPendingSettlement] = useState<PendingSettlement | null>(null);
 
   const [buyer, setBuyer] = useState("");
   const [cashCode, setCashCode] = useState("");
   const [amountUsd, setAmountUsd] = useState("");
   const [feeUsd, setFeeUsd] = useState("");
   const [amountJpy, setAmountJpy] = useState("");
-  const [occurredAt, setOccurredAt] = useState(() => localDateInputValue());
+  const [remitOccurredAt, setRemitOccurredAt] = useState(() => localDateInputValue());
   const [tripId, setTripId] = useState<number | null>(null);
-  const [note, setNote] = useState("");
+  const [remitNote, setRemitNote] = useState("");
 
   const [refundLine, setRefundLine] = useState<number | null>(null);
   const [refundJpy, setRefundJpy] = useState("");
+  const [refundOccurredAt, setRefundOccurredAt] = useState(() => localDateInputValue());
+  const [refundNote, setRefundNote] = useState("");
   const [settleBuyer, setSettleBuyer] = useState("");
   const [settleJpy, setSettleJpy] = useState("");
-  const [remitRequestId, setRemitRequestId] = useState(() => crypto.randomUUID());
-  const [refundRequestId, setRefundRequestId] = useState(() => crypto.randomUUID());
-  const [settleRequestId, setSettleRequestId] = useState(() => crypto.randomUUID());
+  const [settleOccurredAt, setSettleOccurredAt] = useState(() => localDateInputValue());
+  const [settleNote, setSettleNote] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const restore = async () => {
+      try {
+        const { data: { user }, error: identityError } = await createClient().auth.getUser();
+        if (identityError) throw identityError;
+        if (!user) throw new Error("No authenticated operator");
+
+        const remittance = readPendingBuyerFloatRequest(user.id, "remittance");
+        const refundRequest = readPendingBuyerFloatRequest(user.id, "refund");
+        const settlement = readPendingBuyerFloatRequest(user.id, "settlement");
+        if (cancelled) return;
+
+        setOwnerId(user.id);
+        setPendingRemit(remittance);
+        setPendingRefund(refundRequest);
+        setPendingSettlement(settlement);
+        if (remittance) {
+          setBuyer(remittance.payload.p_buyer_email);
+          setCashCode(remittance.payload.p_cash_account);
+          setAmountUsd(String(remittance.payload.p_amount_usd));
+          setFeeUsd(String(remittance.payload.p_fee_usd));
+          setAmountJpy(String(remittance.payload.p_amount_jpy));
+          setRemitOccurredAt(remittance.payload.p_occurred_at);
+          setTripId(remittance.payload.p_trip_id);
+          setRemitNote(remittance.payload.p_note ?? "");
+        }
+        if (refundRequest) {
+          setRefundLine(refundRequest.payload.p_plan_line_id);
+          setRefundJpy(String(refundRequest.payload.p_amount_jpy));
+          setRefundOccurredAt(refundRequest.payload.p_occurred_at);
+          setRefundNote(refundRequest.payload.p_note ?? "");
+        }
+        if (settlement) {
+          setSettleBuyer(settlement.payload.p_buyer_email);
+          setSettleJpy(String(settlement.payload.p_amount_jpy));
+          setSettleOccurredAt(settlement.payload.p_occurred_at);
+          setSettleNote(settlement.payload.p_note ?? "");
+        }
+      } catch (restoreError) {
+        if (!cancelled) setPendingStateError(formatMutationError(restoreError));
+      } finally {
+        if (!cancelled) setPendingReady(true);
+      }
+    };
+    void restore();
+    return () => { cancelled = true; };
+  }, []);
 
   const load = useCallback(async () => {
     const supabase = createClient();
@@ -191,34 +266,92 @@ export default function BuyerFloatView() {
   }, [amountUsd, feeUsd]);
 
   const remit = async () => {
-    setError(null); setSent(null); setBusy(true);
-    try {
-      const client = createClient();
-      const shared = {
+    if (!ownerId) return;
+    setRemitError(null);
+    setRemitSent(null);
+    setBusy("remittance");
+
+    let request: PendingRemittance;
+    if (pendingRemit) {
+      request = pendingRemit;
+    } else {
+      const payload: RemittancePayload = {
         p_buyer_email: buyer,
         p_cash_account: cashCode,
-        p_amount_usd: num(amountUsd),
+        p_amount_usd: num(amountUsd) as number,
         p_fee_usd: num(feeUsd) ?? 0,
-        p_amount_jpy: num(amountJpy),
-        p_occurred_at: occurredAt,
+        p_amount_jpy: num(amountJpy) as number,
+        p_occurred_at: remitOccurredAt,
         p_trip_id: tripId,
-        p_note: note.trim() || null,
+        p_note: remitNote.trim() || null,
       };
-      const { error: mutationError } = await callBuyerFloatRpc(
-        () => client.rpc("remit_to_buyer", { p_request_id: remitRequestId, ...shared }),
-        () => client.rpc("remit_to_buyer", shared),
+      request = createPendingBuyerFloatRequest(ownerId, "remittance", payload);
+      try {
+        writePendingBuyerFloatRequest(request);
+        setPendingRemit(request);
+      } catch (storageError) {
+        setRemitError(t("buyerFloat.pendingWriteError", { error: formatMutationError(storageError) }));
+        setBusy(null);
+        return;
+      }
+    }
+
+    let legacyAttempted = request.retryPolicy === "verify";
+    try {
+      const client = createClient();
+      const result = await callBuyerFloatRpc(
+        () => client.rpc("remit_to_buyer", { p_request_id: request.requestId, ...request.payload }),
+        () => client.rpc("remit_to_buyer", request.payload),
+        () => {
+          legacyAttempted = true;
+          request = requireBuyerFloatVerification(request);
+          writePendingBuyerFloatRequest(request);
+          setPendingRemit(request);
+        },
       );
-      if (mutationError) throw mutationError;
-      setSent(t("buyerFloat.sentConfirmation", {
-        amount: formatJpy(num(amountJpy) ?? 0), buyer,
+      if (result.error) {
+        if (isBuyerFloatOutcomeUnknown(result.error)) {
+          setRemitError(t(
+            legacyAttempted ? "buyerFloat.legacyOutcomeUnknown" : "buyerFloat.outcomeUnknown",
+            { error: formatMutationError(result.error) },
+          ));
+        } else {
+          clearPendingBuyerFloatRequest(ownerId, "remittance");
+          setPendingRemit(null);
+          setRemitError(t("buyerFloat.mutationError", { error: formatMutationError(result.error) }));
+        }
+        return;
+      }
+
+      clearPendingBuyerFloatRequest(ownerId, "remittance");
+      setPendingRemit(null);
+      setRemitSent(t("buyerFloat.sentConfirmation", {
+        amount: formatJpy(request.payload.p_amount_jpy),
+        buyer: request.payload.p_buyer_email,
       }));
-      setAmountUsd(""); setFeeUsd(""); setAmountJpy(""); setNote("");
-      setRemitRequestId(crypto.randomUUID());
+      setAmountUsd("");
+      setFeeUsd("");
+      setAmountJpy("");
+      setRemitNote("");
+      setRemitOccurredAt(localDateInputValue());
       await load();
     } catch (mutationError) {
-      setError(t("buyerFloat.mutationError", { error: formatMutationError(mutationError) }));
+      if (isBuyerFloatOutcomeUnknown(mutationError)) {
+        setRemitError(t(
+          legacyAttempted ? "buyerFloat.legacyOutcomeUnknown" : "buyerFloat.outcomeUnknown",
+          { error: formatMutationError(mutationError) },
+        ));
+      } else {
+        try {
+          clearPendingBuyerFloatRequest(ownerId, "remittance");
+          setPendingRemit(null);
+        } catch {
+          // The persisted request remains visible and locked if storage cannot be updated.
+        }
+        setRemitError(t("buyerFloat.mutationError", { error: formatMutationError(mutationError) }));
+      }
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -228,65 +361,212 @@ export default function BuyerFloatView() {
   const refundTarget = refundable.find((r) => r.plan_line_id === refundLine) ?? null;
 
   const refund = async () => {
-    if (refundLine == null) return;
-    setError(null); setSent(null); setBusy(true);
+    if (!ownerId || (refundLine == null && !pendingRefund)) return;
+    setRefundError(null);
+    setRefundSent(null);
+    setBusy("refund");
+
+    let request: PendingRefund;
+    if (pendingRefund) {
+      request = pendingRefund;
+    } else {
+      const payload: RefundPayload = {
+        p_plan_line_id: refundLine as number,
+        p_amount_jpy: num(refundJpy) as number,
+        p_occurred_at: refundOccurredAt,
+        p_note: refundNote.trim() || null,
+      };
+      request = createPendingBuyerFloatRequest(ownerId, "refund", payload);
+      try {
+        writePendingBuyerFloatRequest(request);
+        setPendingRefund(request);
+      } catch (storageError) {
+        setRefundError(t("buyerFloat.pendingWriteError", { error: formatMutationError(storageError) }));
+        setBusy(null);
+        return;
+      }
+    }
+
+    let legacyAttempted = request.retryPolicy === "verify";
     try {
       const client = createClient();
-      const shared = {
-        p_plan_line_id: refundLine,
-        p_amount_jpy: num(refundJpy),
-        p_occurred_at: occurredAt,
-        p_note: note.trim() || null,
-      };
-      const { error: mutationError } = await callBuyerFloatRpc(
-        () => client.rpc("refund_buyer_float", { p_request_id: refundRequestId, ...shared }),
-        () => client.rpc("refund_buyer_float", shared),
+      const result = await callBuyerFloatRpc(
+        () => client.rpc("refund_buyer_float", { p_request_id: request.requestId, ...request.payload }),
+        () => client.rpc("refund_buyer_float", request.payload),
+        () => {
+          legacyAttempted = true;
+          request = requireBuyerFloatVerification(request);
+          writePendingBuyerFloatRequest(request);
+          setPendingRefund(request);
+        },
       );
-      if (mutationError) throw mutationError;
-      setSent(t("buyerFloat.creditConfirmation", { amount: formatJpy(num(refundJpy) ?? 0) }));
-      setRefundLine(null); setRefundJpy("");
-      setRefundRequestId(crypto.randomUUID());
+      if (result.error) {
+        if (isBuyerFloatOutcomeUnknown(result.error)) {
+          setRefundError(t(
+            legacyAttempted ? "buyerFloat.legacyOutcomeUnknown" : "buyerFloat.outcomeUnknown",
+            { error: formatMutationError(result.error) },
+          ));
+        } else {
+          clearPendingBuyerFloatRequest(ownerId, "refund");
+          setPendingRefund(null);
+          setRefundError(t("buyerFloat.mutationError", { error: formatMutationError(result.error) }));
+        }
+        return;
+      }
+
+      clearPendingBuyerFloatRequest(ownerId, "refund");
+      setPendingRefund(null);
+      setRefundSent(t("buyerFloat.creditConfirmation", {
+        amount: formatJpy(request.payload.p_amount_jpy),
+      }));
+      setRefundLine(null);
+      setRefundJpy("");
+      setRefundNote("");
+      setRefundOccurredAt(localDateInputValue());
       await load();
     } catch (mutationError) {
-      setError(t("buyerFloat.mutationError", { error: formatMutationError(mutationError) }));
+      if (isBuyerFloatOutcomeUnknown(mutationError)) {
+        setRefundError(t(
+          legacyAttempted ? "buyerFloat.legacyOutcomeUnknown" : "buyerFloat.outcomeUnknown",
+          { error: formatMutationError(mutationError) },
+        ));
+      } else {
+        try {
+          clearPendingBuyerFloatRequest(ownerId, "refund");
+          setPendingRefund(null);
+        } catch {
+          // The persisted request remains visible and locked if storage cannot be updated.
+        }
+        setRefundError(t("buyerFloat.mutationError", { error: formatMutationError(mutationError) }));
+      }
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
   const settle = async () => {
-    setError(null); setSent(null); setBusy(true);
+    if (!ownerId) return;
+    setSettleError(null);
+    setSettleSent(null);
+    setBusy("settlement");
+
+    let request: PendingSettlement;
+    if (pendingSettlement) {
+      request = pendingSettlement;
+    } else {
+      const payload: SettlementPayload = {
+        p_buyer_email: settleBuyer,
+        p_amount_jpy: num(settleJpy) as number,
+        p_occurred_at: settleOccurredAt,
+        p_trip_id: null,
+        p_note: settleNote.trim() || null,
+      };
+      request = createPendingBuyerFloatRequest(ownerId, "settlement", payload);
+      try {
+        writePendingBuyerFloatRequest(request);
+        setPendingSettlement(request);
+      } catch (storageError) {
+        setSettleError(t("buyerFloat.pendingWriteError", { error: formatMutationError(storageError) }));
+        setBusy(null);
+        return;
+      }
+    }
+
+    let legacyAttempted = request.retryPolicy === "verify";
     try {
       const client = createClient();
-      const shared = {
-        p_buyer_email: settleBuyer,
-        p_amount_jpy: num(settleJpy),
-        p_occurred_at: occurredAt,
-        p_trip_id: null,
-        p_note: null,
-      };
-      const { error: mutationError } = await callBuyerFloatRpc(
-        () => client.rpc("settle_buyer_float", { p_request_id: settleRequestId, ...shared }),
-        () => client.rpc("settle_buyer_float", shared),
+      const result = await callBuyerFloatRpc(
+        () => client.rpc("settle_buyer_float", { p_request_id: request.requestId, ...request.payload }),
+        () => client.rpc("settle_buyer_float", request.payload),
+        () => {
+          legacyAttempted = true;
+          request = requireBuyerFloatVerification(request);
+          writePendingBuyerFloatRequest(request);
+          setPendingSettlement(request);
+        },
       );
-      if (mutationError) throw mutationError;
-      setSent(t("buyerFloat.returnedConfirmation", {
-        amount: formatJpy(num(settleJpy) ?? 0), buyer: settleBuyer,
+      if (result.error) {
+        if (isBuyerFloatOutcomeUnknown(result.error)) {
+          setSettleError(t(
+            legacyAttempted ? "buyerFloat.legacyOutcomeUnknown" : "buyerFloat.outcomeUnknown",
+            { error: formatMutationError(result.error) },
+          ));
+        } else {
+          clearPendingBuyerFloatRequest(ownerId, "settlement");
+          setPendingSettlement(null);
+          setSettleError(t("buyerFloat.mutationError", { error: formatMutationError(result.error) }));
+        }
+        return;
+      }
+
+      clearPendingBuyerFloatRequest(ownerId, "settlement");
+      setPendingSettlement(null);
+      setSettleSent(t("buyerFloat.returnedConfirmation", {
+        amount: formatJpy(request.payload.p_amount_jpy),
+        buyer: request.payload.p_buyer_email,
       }));
       setSettleJpy("");
-      setSettleRequestId(crypto.randomUUID());
+      setSettleNote("");
+      setSettleOccurredAt(localDateInputValue());
       await load();
     } catch (mutationError) {
-      setError(t("buyerFloat.mutationError", { error: formatMutationError(mutationError) }));
+      if (isBuyerFloatOutcomeUnknown(mutationError)) {
+        setSettleError(t(
+          legacyAttempted ? "buyerFloat.legacyOutcomeUnknown" : "buyerFloat.outcomeUnknown",
+          { error: formatMutationError(mutationError) },
+        ));
+      } else {
+        try {
+          clearPendingBuyerFloatRequest(ownerId, "settlement");
+          setPendingSettlement(null);
+        } catch {
+          // The persisted request remains visible and locked if storage cannot be updated.
+        }
+        setSettleError(t("buyerFloat.mutationError", { error: formatMutationError(mutationError) }));
+      }
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
-  const canSend =
-    !busy && buyer !== "" && cashCode !== "" &&
-    (num(amountUsd) ?? 0) > 0 && (num(amountJpy) ?? 0) > 0 && (net ?? 0) > 0;
+  const mutationReady = pendingReady && ownerId != null && pendingStateError == null;
+  const canSend = mutationReady && busy == null && pendingRemit?.retryPolicy !== "verify" &&
+    (pendingRemit != null || (
+      buyer !== "" && cashCode !== "" &&
+      (num(amountUsd) ?? 0) > 0 && (num(amountJpy) ?? 0) > 0 && (net ?? 0) > 0
+    ));
   const settleBalance = balances?.find((row) => row.buyer_email === settleBuyer)?.balance_jpy ?? 0;
+  const canRefund = mutationReady && busy == null && pendingRefund?.retryPolicy !== "verify" && (
+    pendingRefund != null || (
+      refundTarget != null && (num(refundJpy) ?? 0) > 0 &&
+      (num(refundJpy) ?? 0) <= refundTarget.refundable_jpy
+    )
+  );
+  const canSettle = mutationReady && busy == null && pendingSettlement?.retryPolicy !== "verify" && (
+    pendingSettlement != null || (
+      settleBuyer !== "" && (num(settleJpy) ?? 0) > 0 &&
+      (num(settleJpy) ?? 0) <= settleBalance
+    )
+  );
+
+  const resolvePending = (operation: BuyerFloatOperation) => {
+    if (!ownerId) return;
+    try {
+      clearPendingBuyerFloatRequest(ownerId, operation);
+      if (operation === "remittance") {
+        setPendingRemit(null);
+        setRemitError(null);
+      } else if (operation === "refund") {
+        setPendingRefund(null);
+        setRefundError(null);
+      } else {
+        setPendingSettlement(null);
+        setSettleError(null);
+      }
+    } catch (storageError) {
+      setPendingStateError(formatMutationError(storageError));
+    }
+  };
 
   const readErrorNotice = readErrors.length > 0 ? (
     <div role="alert" className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
@@ -318,14 +598,18 @@ export default function BuyerFloatView() {
   return (
     <div className="space-y-4">
       {readErrorNotice}
-      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+      {pendingStateError ? (
+        <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          {t("buyerFloat.pendingStateError", { error: pendingStateError })}
+        </p>
+      ) : null}
       <Card>
         <CardHeader><CardTitle>{t("buyerFloat.sendTitle")}</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="space-y-1">
               <Label htmlFor="float-buyer">{t("buyerFloat.sendTo")}</Label>
-              <select id="float-buyer" className={selectClass} value={buyer} onChange={(e) => setBuyer(e.target.value)}>
+              <select id="float-buyer" className={selectClass} value={buyer} onChange={(e) => setBuyer(e.target.value)} disabled={!mutationReady || pendingRemit != null || busy != null}>
                 <option value="">{t("buyerFloat.selectAgent")}</option>
                 {buyers.map((b) => <option key={b.email} value={b.email}>{b.email}</option>)}
               </select>
@@ -333,7 +617,7 @@ export default function BuyerFloatView() {
             <div className="space-y-1">
               <Label htmlFor="float-account">{t("buyerFloat.from")}</Label>
               <select id="float-account" className={selectClass} value={cashCode} onChange={(e) => setCashCode(e.target.value)}
-                      disabled={accounts.length === 0}>
+                      disabled={!mutationReady || pendingRemit != null || busy != null || accounts.length === 0}>
                 {accounts.length === 0
                   ? <option value="">{t("buyerFloat.noCashAccount")}</option>
                   : accounts.map((a) => <option key={a.account_id} value={a.code}>{a.name}</option>)}
@@ -341,30 +625,30 @@ export default function BuyerFloatView() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="float-usd">{t("buyerFloat.leftAccountUsd")}</Label>
-              <Input id="float-usd" className="min-h-11 sm:min-h-9" inputMode="decimal" value={amountUsd} onChange={(e) => setAmountUsd(e.target.value)} placeholder="1000.00" />
+              <Input id="float-usd" className="min-h-11 sm:min-h-9" inputMode="decimal" value={amountUsd} onChange={(e) => setAmountUsd(e.target.value)} placeholder="1000.00" disabled={!mutationReady || pendingRemit != null || busy != null} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="float-fee">{t("buyerFloat.transferFeeUsd")}</Label>
-              <Input id="float-fee" className="min-h-11 sm:min-h-9" inputMode="decimal" value={feeUsd} onChange={(e) => setFeeUsd(e.target.value)} placeholder="6.50" />
+              <Input id="float-fee" className="min-h-11 sm:min-h-9" inputMode="decimal" value={feeUsd} onChange={(e) => setFeeUsd(e.target.value)} placeholder="6.50" disabled={!mutationReady || pendingRemit != null || busy != null} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="float-jpy">{t("buyerFloat.receivedJpy")}</Label>
-              <Input id="float-jpy" className="min-h-11 sm:min-h-9" inputMode="numeric" value={amountJpy} onChange={(e) => setAmountJpy(e.target.value)} placeholder="150000" />
+              <Input id="float-jpy" className="min-h-11 sm:min-h-9" inputMode="numeric" value={amountJpy} onChange={(e) => setAmountJpy(e.target.value)} placeholder="150000" disabled={!mutationReady || pendingRemit != null || busy != null} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="float-date">{t("buyerFloat.date")}</Label>
-              <Input id="float-date" className="min-h-11 sm:min-h-9" type="date" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} />
+              <Input id="float-date" className="min-h-11 sm:min-h-9" type="date" value={remitOccurredAt} onChange={(e) => setRemitOccurredAt(e.target.value)} disabled={!mutationReady || pendingRemit != null || busy != null} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="float-trip">{t("buyerFloat.trip")}</Label>
-              <select id="float-trip" className={selectClass} value={tripId ?? ""} onChange={(e) => setTripId(e.target.value ? Number(e.target.value) : null)}>
+              <select id="float-trip" className={selectClass} value={tripId ?? ""} onChange={(e) => setTripId(e.target.value ? Number(e.target.value) : null)} disabled={!mutationReady || pendingRemit != null || busy != null}>
                 <option value="">{t("buyerFloat.noTrip")}</option>
                 {trips.map((tr) => <option key={tr.trip_id} value={tr.trip_id}>{tr.name}</option>)}
               </select>
             </div>
             <div className="space-y-1">
               <Label htmlFor="float-note">{t("buyerFloat.note")}</Label>
-              <Input id="float-note" className="min-h-11 sm:min-h-9" value={note} onChange={(e) => setNote(e.target.value)} placeholder={t("buyerFloat.optional")} />
+              <Input id="float-note" className="min-h-11 sm:min-h-9" value={remitNote} onChange={(e) => setRemitNote(e.target.value)} placeholder={t("buyerFloat.optional")} disabled={!mutationReady || pendingRemit != null || busy != null} />
             </div>
           </div>
 
@@ -381,11 +665,25 @@ export default function BuyerFloatView() {
               </span>
             ) : null}
             <Button className="ml-auto min-h-11" disabled={!canSend} onClick={() => void remit()}>
-              {busy ? t("buyerFloat.sending") : t("buyerFloat.recordRemittance")}
+              {busy === "remittance"
+                ? t("buyerFloat.sending")
+                : pendingRemit
+                  ? t("buyerFloat.retryExactRequest")
+                  : t("buyerFloat.recordRemittance")}
             </Button>
           </div>
 
-          {sent ? <p className="text-sm text-emerald-600 dark:text-emerald-400">{sent}</p> : null}
+          {pendingRemit && busy !== "remittance" ? (
+            <div role="alert" className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              <p>{remitError ?? t(pendingRemit.retryPolicy === "safe" ? "buyerFloat.pendingSafeRetry" : "buyerFloat.pendingVerify")}</p>
+              {pendingRemit.retryPolicy === "verify" ? (
+                <Button type="button" variant="outline" className="min-h-11" onClick={() => resolvePending("remittance")}>
+                  {t("buyerFloat.markReconciled")}
+                </Button>
+              ) : null}
+            </div>
+          ) : remitError ? <p role="alert" className="text-sm text-destructive">{remitError}</p> : null}
+          {remitSent ? <p className="text-sm text-emerald-600 dark:text-emerald-400">{remitSent}</p> : null}
         </CardContent>
       </Card>
 
@@ -401,6 +699,7 @@ export default function BuyerFloatView() {
               <select
                 id="refund-line" className={selectClass}
                 value={refundLine ?? ""}
+                disabled={!mutationReady || pendingRefund != null || busy != null}
                 onChange={(e) => {
                   const id = e.target.value ? Number(e.target.value) : null;
                   setRefundLine(id);
@@ -424,16 +723,25 @@ export default function BuyerFloatView() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="refund-jpy">{t("buyerFloat.creditBackJpy")}</Label>
-              <Input id="refund-jpy" className="min-h-11 sm:min-h-9" inputMode="numeric" value={refundJpy} onChange={(e) => setRefundJpy(e.target.value)} />
+              <Input id="refund-jpy" className="min-h-11 sm:min-h-9" inputMode="numeric" value={refundJpy} onChange={(e) => setRefundJpy(e.target.value)} disabled={!mutationReady || pendingRefund != null || busy != null} />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="refund-date">{t("buyerFloat.date")}</Label>
+                <Input id="refund-date" className="min-h-11 sm:min-h-9" type="date" value={refundOccurredAt} onChange={(e) => setRefundOccurredAt(e.target.value)} disabled={!mutationReady || pendingRefund != null || busy != null} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="refund-note">{t("buyerFloat.note")}</Label>
+                <Input id="refund-note" className="min-h-11 sm:min-h-9" value={refundNote} onChange={(e) => setRefundNote(e.target.value)} placeholder={t("buyerFloat.optional")} disabled={!mutationReady || pendingRefund != null || busy != null} />
+              </div>
             </div>
             <div className="flex items-center gap-3">
               <Button className="min-h-11"
                 variant="secondary"
-                disabled={busy || refundTarget == null || (num(refundJpy) ?? 0) <= 0 ||
-                          (num(refundJpy) ?? 0) > (refundTarget?.refundable_jpy ?? 0)}
+                disabled={!canRefund}
                 onClick={() => void refund()}
               >
-                {t("buyerFloat.recordCancellation")}
+                {pendingRefund ? t("buyerFloat.retryExactRequest") : t("buyerFloat.recordCancellation")}
               </Button>
               {refundTarget ? (
                 <span className="text-sm text-muted-foreground">
@@ -444,6 +752,17 @@ export default function BuyerFloatView() {
                 </span>
               ) : null}
             </div>
+            {pendingRefund && busy !== "refund" ? (
+              <div role="alert" className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+                <p>{refundError ?? t(pendingRefund.retryPolicy === "safe" ? "buyerFloat.pendingSafeRetry" : "buyerFloat.pendingVerify")}</p>
+                {pendingRefund.retryPolicy === "verify" ? (
+                  <Button type="button" variant="outline" className="min-h-11" onClick={() => resolvePending("refund")}>
+                    {t("buyerFloat.markReconciled")}
+                  </Button>
+                ) : null}
+              </div>
+            ) : refundError ? <p role="alert" className="text-sm text-destructive">{refundError}</p> : null}
+            {refundSent ? <p className="text-sm text-emerald-600 dark:text-emerald-400">{refundSent}</p> : null}
           </CardContent>
         </Card>
 
@@ -455,7 +774,7 @@ export default function BuyerFloatView() {
             </p>
             <div className="space-y-1">
               <Label htmlFor="settle-buyer">{t("buyerFloat.returnedBy")}</Label>
-              <select id="settle-buyer" className={selectClass} value={settleBuyer} onChange={(e) => setSettleBuyer(e.target.value)}>
+              <select id="settle-buyer" className={selectClass} value={settleBuyer} onChange={(e) => setSettleBuyer(e.target.value)} disabled={!mutationReady || pendingSettlement != null || busy != null}>
                 <option value="">{t("buyerFloat.selectAgent")}</option>
                 {balances.map((b) => (
                   <option key={b.buyer_email} value={b.buyer_email}>
@@ -466,16 +785,36 @@ export default function BuyerFloatView() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="settle-jpy">{t("buyerFloat.returnedJpy")}</Label>
-              <Input id="settle-jpy" className="min-h-11 sm:min-h-9" inputMode="numeric" value={settleJpy} onChange={(e) => setSettleJpy(e.target.value)} />
+              <Input id="settle-jpy" className="min-h-11 sm:min-h-9" inputMode="numeric" value={settleJpy} onChange={(e) => setSettleJpy(e.target.value)} disabled={!mutationReady || pendingSettlement != null || busy != null} />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="settle-date">{t("buyerFloat.date")}</Label>
+                <Input id="settle-date" className="min-h-11 sm:min-h-9" type="date" value={settleOccurredAt} onChange={(e) => setSettleOccurredAt(e.target.value)} disabled={!mutationReady || pendingSettlement != null || busy != null} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="settle-note">{t("buyerFloat.note")}</Label>
+                <Input id="settle-note" className="min-h-11 sm:min-h-9" value={settleNote} onChange={(e) => setSettleNote(e.target.value)} placeholder={t("buyerFloat.optional")} disabled={!mutationReady || pendingSettlement != null || busy != null} />
+              </div>
             </div>
             <Button className="min-h-11"
               variant="secondary"
-              disabled={busy || settleBuyer === "" || (num(settleJpy) ?? 0) <= 0 ||
-                        (num(settleJpy) ?? 0) > settleBalance}
+              disabled={!canSettle}
               onClick={() => void settle()}
             >
-              {t("buyerFloat.recordReturn")}
+              {pendingSettlement ? t("buyerFloat.retryExactRequest") : t("buyerFloat.recordReturn")}
             </Button>
+            {pendingSettlement && busy !== "settlement" ? (
+              <div role="alert" className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+                <p>{settleError ?? t(pendingSettlement.retryPolicy === "safe" ? "buyerFloat.pendingSafeRetry" : "buyerFloat.pendingVerify")}</p>
+                {pendingSettlement.retryPolicy === "verify" ? (
+                  <Button type="button" variant="outline" className="min-h-11" onClick={() => resolvePending("settlement")}>
+                    {t("buyerFloat.markReconciled")}
+                  </Button>
+                ) : null}
+              </div>
+            ) : settleError ? <p role="alert" className="text-sm text-destructive">{settleError}</p> : null}
+            {settleSent ? <p className="text-sm text-emerald-600 dark:text-emerald-400">{settleSent}</p> : null}
           </CardContent>
         </Card>
       </div>

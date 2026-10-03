@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageProvider } from "./LanguageContext";
 
@@ -128,14 +128,20 @@ describe("TradesView data contracts", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
-  it("surfaces an unlink failure without removing the trade", async () => {
+  it("confirms unlink visibly, keeps booked sides, and offers an inline retry on failure", async () => {
     mocks.mainData = [row(42)];
     mocks.rpc.mockResolvedValueOnce({ error: { message: "unlink rejected" } });
     render(<LanguageProvider><TradesView /></LanguageProvider>);
 
-    fireEvent.click(screen.getByRole("button", { name: /Unlink this trade/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Unlink" }));
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain("The sale and the lot stay exactly as booked.");
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Unlink" }));
 
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("unlink rejected"));
     expect(screen.getByText("Counterparty 42")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 });

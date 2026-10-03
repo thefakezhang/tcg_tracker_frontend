@@ -6,8 +6,9 @@ import { LanguageProvider, type Language } from "./LanguageContext";
 
 const rpc = vi.fn();
 const from = vi.fn();
+const getUser = vi.fn();
 vi.mock("@/lib/supabase/client", () => ({
-  createClient: () => ({ rpc, from }),
+  createClient: () => ({ rpc, from, auth: { getUser } }),
 }));
 
 import BuyerFloatView from "./BuyerFloatView";
@@ -65,6 +66,10 @@ beforeEach(() => {
   localStorage.clear();
   rpc.mockReset();
   from.mockReset();
+  getUser.mockReset().mockResolvedValue({
+    data: { user: { id: "operator-1" } },
+    error: null,
+  });
   rpc.mockImplementation((name: string) => name === "assignable_buyers"
     ? table([{ email: "agent@example.com", has_account: true }])
     : Promise.resolve({ data: null, error: null }));
@@ -78,8 +83,11 @@ function renderView(language: Language = "en") {
 // The email is on screen twice - as an option in the picker and as a row in
 // the balance table - so wait on the picker specifically.
 async function ready() {
-  await waitFor(() =>
-    expect((screen.getByLabelText("Send to") as HTMLSelectElement).options.length).toBe(2));
+  await waitFor(() => {
+    const select = screen.getByLabelText("Send to") as HTMLSelectElement;
+    expect(select.options.length).toBe(2);
+    expect(select.disabled).toBe(false);
+  });
 }
 
 async function fill() {
@@ -112,6 +120,8 @@ describe("BuyerFloatView", () => {
 
   it("sends the whole movement in one call", async () => {
     await fill();
+    fireEvent.change(document.getElementById("float-date")!, { target: { value: "2026-09-27" } });
+    fireEvent.change(screen.getByLabelText("Note", { selector: "#float-note" }), { target: { value: "bank transfer" } });
     fireEvent.click(screen.getByRole("button", { name: "Record remittance" }));
     await waitFor(() =>
       expect(rpc).toHaveBeenCalledWith("remit_to_buyer", expect.objectContaining({
@@ -121,6 +131,8 @@ describe("BuyerFloatView", () => {
         p_amount_usd: 1000,
         p_fee_usd: 6.5,
         p_amount_jpy: 146000,
+        p_occurred_at: "2026-09-27",
+        p_note: "bank transfer",
       })));
   });
 
@@ -221,7 +233,7 @@ describe("BuyerFloatView", () => {
     });
   });
 
-  it("surfaces a remittance failure and reuses its UUID on explicit retry", async () => {
+  it("survives reload after a lost remittance response and retries the immutable UUID", async () => {
     rpc.mockImplementation((name: string) => name === "assignable_buyers"
       ? table([{ email: "agent@example.com", has_account: true }])
       : Promise.resolve({
@@ -229,17 +241,58 @@ describe("BuyerFloatView", () => {
         error: { code: "57014", message: "response lost after commit" },
       }));
     await fill();
+    fireEvent.change(document.getElementById("float-date")!, { target: { value: "2026-09-28" } });
+    fireEvent.change(screen.getByLabelText("Note", { selector: "#float-note" }), { target: { value: "do not change" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Record remittance" }));
     expect((await screen.findByRole("alert")).textContent).toContain("response lost after commit");
-    fireEvent.click(screen.getByRole("button", { name: "Record remittance" }));
+    const firstCall = rpc.mock.calls.find(([name]) => name === "remit_to_buyer");
+    const persisted = [...Array(localStorage.length)].map((_, index) => localStorage.key(index))
+      .find((key) => key?.includes(":operator-1:remittance"));
+    expect(persisted).toBeTruthy();
+    expect((screen.getByLabelText("Left the account (USD)") as HTMLInputElement).disabled).toBe(true);
+
+    cleanup();
+    renderView();
+    const retry = await screen.findByRole("button", { name: "Retry exact request" });
+    expect((screen.getByLabelText("Left the account (USD)") as HTMLInputElement).value).toBe("1000");
+    expect((document.getElementById("float-date") as HTMLInputElement).value).toBe("2026-09-28");
+    expect((screen.getByLabelText("Note", { selector: "#float-note" }) as HTMLInputElement).value).toBe("do not change");
+    expect((screen.getByLabelText("Left the account (USD)") as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(retry);
 
     await waitFor(() => {
       const calls = rpc.mock.calls.filter(([name]) => name === "remit_to_buyer");
       expect(calls).toHaveLength(2);
+      expect(calls[0][1].p_request_id).toBe(firstCall?.[1].p_request_id);
       expect(calls[0][1].p_request_id).toBe(calls[1][1].p_request_id);
       expect(calls.every(([, args]) => "p_request_id" in args)).toBe(true);
     });
+  });
+
+  it("keeps cancellation and return dates and notes independent", async () => {
+    renderView();
+    await ready();
+    fireEvent.change(screen.getByLabelText("Purchase"), { target: { value: "11" } });
+    fireEvent.change(document.getElementById("refund-date")!, { target: { value: "2026-09-20" } });
+    fireEvent.change(screen.getByLabelText("Note", { selector: "#refund-note" }), { target: { value: "shop cancellation" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record cancellation" }));
+
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("refund_buyer_float", expect.objectContaining({
+      p_occurred_at: "2026-09-20",
+      p_note: "shop cancellation",
+    })));
+
+    fireEvent.change(screen.getByLabelText("Returned by"), { target: { value: "agent@example.com" } });
+    fireEvent.change(screen.getByLabelText("Returned (JPY)"), { target: { value: "500" } });
+    fireEvent.change(document.getElementById("settle-date")!, { target: { value: "2026-09-21" } });
+    fireEvent.change(screen.getByLabelText("Note", { selector: "#settle-note" }), { target: { value: "cash handoff" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record return" }));
+
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("settle_buyer_float", expect.objectContaining({
+      p_occurred_at: "2026-09-21",
+      p_note: "cash handoff",
+    })));
   });
 
   it("surfaces a refund mutation failure", async () => {
@@ -252,7 +305,9 @@ describe("BuyerFloatView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Record cancellation" }));
 
+    const card = screen.getByText("A shop cancelled").closest("div.rounded-xl") ?? screen.getByText("A shop cancelled").parentElement?.parentElement;
     expect((await screen.findByRole("alert")).textContent).toContain("refund rejected");
+    expect(card?.textContent).toContain("refund rejected");
   });
 
   it("surfaces a settlement mutation failure", async () => {
@@ -266,7 +321,9 @@ describe("BuyerFloatView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Record return" }));
 
+    const card = screen.getByText("Agent returned cash").closest("div.rounded-xl") ?? screen.getByText("Agent returned cash").parentElement?.parentElement;
     expect((await screen.findByRole("alert")).textContent).toContain("settlement rejected");
+    expect(card?.textContent).toContain("settlement rejected");
   });
 
   it("says so when there is no cash account to send from", async () => {

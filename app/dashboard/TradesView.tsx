@@ -32,6 +32,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface TradeRow {
   trade_id: number;
@@ -69,21 +73,25 @@ export default function TradesView() {
   const { language } = useLanguage();
   const [open, setOpen] = useState(false);
   const [unlinking, setUnlinking] = useState<number | null>(null);
-  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [confirmUnlink, setConfirmUnlink] = useState<number | null>(null);
+  const [unlinkError, setUnlinkError] = useState<{ tradeId: number; message: string } | null>(null);
 
   const trades = useSupabaseQuery<TradeRow[]>("trades:list", async () => {
     return fetchTrades(createClient());
   });
 
   const unlink = useCallback(async (tradeId: number) => {
-    setMutationError(null);
+    setUnlinkError(null);
     setUnlinking(tradeId);
     try {
       const { error } = await createClient().rpc("unlink_trade", { p_trade_id: tradeId });
       if (error) throw error;
       await trades.retry();
     } catch (error) {
-      setMutationError(t("trades.unlinkError", { error: formatMutationError(error) }));
+      setUnlinkError({
+        tradeId,
+        message: t("trades.unlinkError", { error: formatMutationError(error) }),
+      });
     } finally {
       setUnlinking(null);
     }
@@ -102,8 +110,6 @@ export default function TradesView() {
         </Button>
       </div>
 
-      {mutationError && <p role="alert" className="text-sm text-destructive">{mutationError}</p>}
-
       {trades.isLoading && !trades.data ? (
         <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
       ) : rows.length === 0 ? (
@@ -115,46 +121,80 @@ export default function TradesView() {
       ) : (
         <ul className="space-y-2">
           {rows.map((r) => (
-            <li key={r.trade_id} className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">
-                  {r.counterparty || t("trades.noCounterparty")}
-                  <span className="ml-2 font-normal text-muted-foreground">{formatDate(r.traded_at, language)}</span>
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {t("trades.sidesSummary", {
-                    out: formatUsd(r.value_out_usd),
-                    sale: String(r.sale_group),
-                    in: formatUsd(r.value_in_usd),
-                    lot: String(r.lot_id),
-                  })}
-                </p>
+            <li key={r.trade_id} className="space-y-2 rounded-lg border p-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium">
+                    {r.counterparty || t("trades.noCounterparty")}
+                    <span className="ml-2 font-normal text-muted-foreground">{formatDate(r.traded_at, language)}</span>
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {t("trades.sidesSummary", {
+                      out: formatUsd(r.value_out_usd),
+                      sale: String(r.sale_group),
+                      in: formatUsd(r.value_in_usd),
+                      lot: String(r.lot_id),
+                    })}
+                  </p>
+                </div>
+                {r.cash_usd !== 0 && (
+                  <Badge variant="outline" className="tabular-nums">
+                    {r.cash_usd > 0
+                      ? t("trades.cashPaidBadge", { amount: formatUsd(r.cash_usd) })
+                      : t("trades.cashReceivedBadge", { amount: formatUsd(Math.abs(r.cash_usd)) })}
+                  </Badge>
+                )}
+                {/* Both sides are mandatory and the RPC refuses an imbalance, so a
+                    false here means something drifted after the fact. Shown rather
+                    than assumed away. */}
+                {!r.balanced && (
+                  <Badge variant="outline" className="border-destructive/50 text-destructive">
+                    <TriangleAlert className="mr-1 size-3" aria-hidden />
+                    {t("trades.outOfBalance", { amount: formatUsd(r.imbalance_usd) })}
+                  </Badge>
+                )}
+                <Button variant="outline" size="sm" className="min-h-11 sm:min-h-9"
+                  disabled={unlinking != null} onClick={() => setConfirmUnlink(r.trade_id)}>
+                  <Link2Off className="mr-1 size-4" aria-hidden />
+                  {t("trades.unlink")}
+                </Button>
               </div>
-              {r.cash_usd !== 0 && (
-                <Badge variant="outline" className="tabular-nums">
-                  {r.cash_usd > 0
-                    ? t("trades.cashPaidBadge", { amount: formatUsd(r.cash_usd) })
-                    : t("trades.cashReceivedBadge", { amount: formatUsd(Math.abs(r.cash_usd)) })}
-                </Badge>
-              )}
-              {/* Both sides are mandatory and the RPC refuses an imbalance, so a
-                  false here means something drifted after the fact. Shown rather
-                  than assumed away. */}
-              {!r.balanced && (
-                <Badge variant="outline" className="border-destructive/50 text-destructive">
-                  <TriangleAlert className="mr-1 size-3" aria-hidden />
-                  {t("trades.outOfBalance", { amount: formatUsd(r.imbalance_usd) })}
-                </Badge>
-              )}
-              <Button variant="ghost" size="sm" className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9"
-                disabled={unlinking != null} onClick={() => unlink(r.trade_id)}
-                aria-label={t("trades.unlinkHint")} title={t("trades.unlinkHint")}>
-                <Link2Off className="size-4" aria-hidden />
-              </Button>
+              {unlinkError?.tradeId === r.trade_id ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p role="alert" className="text-sm text-destructive">{unlinkError.message}</p>
+                  <Button type="button" variant="outline" size="sm" className="min-h-11 sm:min-h-9" onClick={() => setConfirmUnlink(r.trade_id)}>
+                    {t("common.retry")}
+                  </Button>
+                </div>
+              ) : null}
             </li>
           ))}
         </ul>
       )}
+
+      <AlertDialog open={confirmUnlink != null} onOpenChange={(nextOpen) => {
+        if (!nextOpen) setConfirmUnlink(null);
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("trades.unlinkTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("trades.unlinkHint")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={unlinking != null}
+              onClick={() => {
+                const tradeId = confirmUnlink;
+                setConfirmUnlink(null);
+                if (tradeId != null) void unlink(tradeId);
+              }}
+            >
+              {t("trades.unlink")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <RecordTradeDialog open={open} onOpenChange={setOpen} onRecorded={() => { setOpen(false); trades.retry(); }} />
     </div>

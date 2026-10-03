@@ -130,15 +130,19 @@ async function createSealedListing(page) {
   assert(response.ok(), `listing insert returned HTTP ${response.status()}`);
   await dialog.waitFor({ state: "hidden" });
   await page.getByText(listingExternalId, { exact: true }).waitFor();
+  await page.getByText("FI25 · Product #9000001 · Standard · Standard", { exact: true }).waitFor();
+  await page.getByText("Manual update required: change quantity from 1 to 3.", { exact: true }).waitFor();
 
   const rows = await rest(
-    `inventory_listing_exposure_v?select=platform,external_listing_id,status,game,item_type,product_id,sealed_condition,variant_edition,leg,quantity_listed,qty_on_hand,market_region&external_listing_id=eq.${listingExternalId}`,
+    `inventory_listing_exposure_v?select=platform,external_listing_id,status,game,item_type,product_id,item_name,set_code,sealed_condition,variant_edition,leg,quantity_listed,qty_on_hand,market_region&external_listing_id=eq.${listingExternalId}`,
   );
   assert(rows.length === 1, `persisted sealed listing count=${rows.length}, want 1`);
   const row = rows[0];
   assert(row.game === "pokemon_sealed", `listing game=${row.game}`);
   assert(row.item_type === "sealed", `listing item_type=${row.item_type}`);
   assert(Number(row.product_id) === 9_000_001, `listing product_id=${row.product_id}`);
+  assert(row.item_name === "Financial Integrity Booster Box", `listing item_name=${row.item_name}`);
+  assert(row.set_code === "FI25", `listing set_code=${row.set_code}`);
   assert(row.market_region === "NA", `listing market_region=${row.market_region}`);
   assert(row.leg.trim() === "import", `listing leg=${row.leg}`);
   assert(row.status === "active", `listing status=${row.status}`);
@@ -146,7 +150,7 @@ async function createSealedListing(page) {
   await page.screenshot({ path: `${artifactRoot}/desktop-sealed-listing.png`, fullPage: true });
 }
 
-async function linkAndUnlinkTrade(page) {
+async function linkTrade(page) {
   await gotoView(page, "trades", "Trades");
   await page.getByRole("button", { name: "Record trade" }).click();
   const dialog = page.getByRole("dialog");
@@ -171,14 +175,6 @@ async function linkAndUnlinkTrade(page) {
   assert(trades.length === 1 && trades[0].balanced === true, "trade did not persist balanced");
   assert(Number(trades[0].imbalance_usd) === 0, "persisted trade has an imbalance");
   await page.screenshot({ path: `${artifactRoot}/desktop-linked-trade.png`, fullPage: true });
-
-  const unlinkResponse = page.waitForResponse((response) =>
-    response.url().includes("/rest/v1/rpc/unlink_trade"));
-  await page.getByRole("button", { name: /Unlink this trade/ }).click();
-  assert((await unlinkResponse).ok(), "unlink_trade did not return success");
-  await row.waitFor({ state: "hidden" });
-  trades = await rest("trades?select=trade_id&sale_group=eq.9000001");
-  assert(trades.length === 0, "unlink left a trade row behind");
 }
 
 async function exerciseBuyerFloat(page) {
@@ -189,9 +185,11 @@ async function exerciseBuyerFloat(page) {
   await page.getByLabel("Left the account (USD)").fill("100");
   await page.getByLabel("Transfer fee (USD)").fill("1");
   await page.getByLabel("Agent received (JPY)").fill("14000");
-  await page.getByLabel("Note").fill("lost response replay proof");
+  await page.locator("#float-date").fill("2026-10-01");
+  await page.locator("#float-note").fill("lost response replay proof");
 
   let lostRequestId;
+  let replayRequestId;
   let committedResponseWasLost = false;
   await page.route("**/rest/v1/rpc/remit_to_buyer", async (route) => {
     const payload = route.request().postDataJSON();
@@ -203,6 +201,7 @@ async function exerciseBuyerFloat(page) {
       await route.abort("connectionfailed");
       return;
     }
+    if (payload?.p_request_id) replayRequestId = payload.p_request_id;
     await route.continue();
   });
 
@@ -210,11 +209,29 @@ async function exerciseBuyerFloat(page) {
   await record.click();
   await page.getByRole("alert").waitFor();
   assert(lostRequestId, "lost-response route did not capture a request UUID");
-  await record.click();
+  assert(await page.getByLabel("Left the account (USD)").isDisabled(), "pending remittance stayed editable");
+  const pendingBeforeReload = await page.evaluate(() => Object.keys(localStorage)
+    .find((key) => key.includes(":remittance")) ?? null);
+  assert(pendingBeforeReload, "lost remittance response did not persist retry state");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("tab", { name: "Buying agents" }).click();
+  await page.getByRole("heading", { name: "Send money to a buying agent" }).waitFor();
+  assert(await page.getByLabel("Left the account (USD)").inputValue() === "100", "remittance USD changed across reload");
+  assert(await page.locator("#float-date").inputValue() === "2026-10-01", "remittance date changed across reload");
+  assert(await page.locator("#float-note").inputValue() === "lost response replay proof", "remittance note changed across reload");
+  assert(await page.getByLabel("Left the account (USD)").isDisabled(), "restored remittance stayed editable");
+  await page.getByRole("button", { name: "Retry exact request" }).click();
   await page.getByText(/Sent .*14,000.*financial-buyer@example\.test/).waitFor();
+  assert(replayRequestId === lostRequestId, "reload retry changed the remittance UUID");
+  const pendingAfterSuccess = await page.evaluate(() => Object.keys(localStorage)
+    .find((key) => key.includes(":remittance")) ?? null);
+  assert(pendingAfterSuccess == null, "successful replay left pending remittance state behind");
 
   await page.getByLabel("Purchase").selectOption("9000001");
   await page.getByLabel("Credit back (JPY)").fill("500");
+  await page.locator("#refund-date").fill("2026-10-02");
+  await page.locator("#refund-note").fill("shop cancellation");
   const refundResponse = page.waitForResponse((response) =>
     response.url().includes("/rest/v1/rpc/refund_buyer_float"));
   await page.getByRole("button", { name: "Record cancellation" }).click();
@@ -222,6 +239,8 @@ async function exerciseBuyerFloat(page) {
 
   await page.getByLabel("Returned by").selectOption(buyerEmail);
   await page.getByLabel("Returned (JPY)").fill("1000");
+  await page.locator("#settle-date").fill("2026-10-03");
+  await page.locator("#settle-note").fill("cash handoff");
   const settleResponse = page.waitForResponse((response) =>
     response.url().includes("/rest/v1/rpc/settle_buyer_float"));
   await page.getByRole("button", { name: "Record return" }).click();
@@ -280,6 +299,7 @@ async function verifyPhoneJourney(page) {
   await dialog.waitFor({ state: "hidden" });
   assert(await opener.evaluate((node) => node === document.activeElement), "dialog did not return focus");
   await assertNoPageOverflow(page, "phone inventory listing view");
+  await page.getByText("FI25 · 商品 #9000001 · 標準 · 標準", { exact: true }).waitFor();
 
   await gotoView(page, "trades", "トレード");
   const recordTrade = page.getByRole("button", { name: "トレードを記録" });
@@ -299,6 +319,22 @@ async function verifyPhoneJourney(page) {
     await recordTrade.evaluate((node) => node === document.activeElement),
     "trade dialog did not return focus",
   );
+  const unlinkTrade = page.getByRole("button", { name: "紐付けを解除" });
+  await assertTapTarget(unlinkTrade, "phone unlink-trade button");
+  await unlinkTrade.click();
+  const unlinkDialog = page.getByRole("alertdialog");
+  await unlinkDialog.waitFor();
+  assert(
+    (await unlinkDialog.textContent()).includes("売上とロットは記録されたまま変わりません"),
+    "unlink confirmation did not explain that both booked sides remain",
+  );
+  const unlinkResponse = page.waitForResponse((response) =>
+    response.url().includes("/rest/v1/rpc/unlink_trade"));
+  await unlinkDialog.getByRole("button", { name: "紐付けを解除" }).click();
+  assert((await unlinkResponse).ok(), "unlink_trade did not return success");
+  await page.getByText(tradeCounterparty, { exact: true }).waitFor({ state: "hidden" });
+  const trades = await rest("trades?select=trade_id&sale_group=eq.9000001");
+  assert(trades.length === 0, "unlink left a trade row behind");
   await assertNoPageOverflow(page, "phone trades view");
 
   let failNextBalanceRead = true;
@@ -348,7 +384,7 @@ page.on("pageerror", (error) => browserErrors.push(error.message));
 try {
   await authenticate(context);
   await createSealedListing(page);
-  await linkAndUnlinkTrade(page);
+  await linkTrade(page);
   await exerciseBuyerFloat(page);
   await verifyPostgrestMutationFirewall();
   await verifyPhoneJourney(page);

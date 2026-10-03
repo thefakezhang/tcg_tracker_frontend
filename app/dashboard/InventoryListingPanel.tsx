@@ -17,6 +17,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { useLanguage } from "./LanguageContext";
+import { conditionLabel, editionLabel } from "./use-sealed-data";
 
 type FulfillmentLeg = "import" | "export";
 type MarketRegion = "NA" | "JP";
@@ -48,11 +49,17 @@ export interface SealedListingExposure {
   leg: FulfillmentLeg;
   game: "pokemon_sealed";
   product_id: number;
+  item_name: string | null;
+  set_code: string | null;
   sealed_condition: string;
   variant_edition: string;
   quantity_listed: number;
   qty_on_hand: number;
   over_promised: number;
+  last_pushed_quantity: number | null;
+  desired_quantity: number;
+  needs_push: boolean;
+  can_push: boolean;
   ask_price_usd: number | null;
   listed_at: string;
   market_region: MarketRegion;
@@ -88,7 +95,7 @@ export async function fetchSealedListingData(
     selectAll<SealedListingExposure>(
       () => client
         .from("inventory_listing_exposure_v")
-        .select("listing_id, platform, external_listing_id, status, leg, game, product_id, sealed_condition, variant_edition, quantity_listed, qty_on_hand, over_promised, ask_price_usd, listed_at, market_region")
+        .select("listing_id, platform, external_listing_id, status, leg, game, product_id, item_name, set_code, sealed_condition, variant_edition, quantity_listed, qty_on_hand, over_promised, last_pushed_quantity, desired_quantity, needs_push, can_push, ask_price_usd, listed_at, market_region")
         .eq("game", "pokemon_sealed"),
       ["listing_id"],
     ),
@@ -162,6 +169,15 @@ function holdingKey(holding: SealedListingHolding): string {
   ].join(":");
 }
 
+function exposureHoldingKey(listing: SealedListingExposure): string {
+  return [
+    listing.product_id,
+    listing.leg,
+    listing.sealed_condition,
+    listing.variant_edition,
+  ].join(":");
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error !== null && "message" in error) {
@@ -211,6 +227,10 @@ export default function InventoryListingPanel() {
       (platform) => platform.fulfillment_leg.trim() === selectedHolding?.leg.trim(),
     ) ?? [],
     [data, selectedHolding],
+  );
+  const holdingsByAxis = useMemo(
+    () => new Map((data?.holdings ?? []).map((holding) => [holdingKey(holding), holding])),
+    [data],
   );
 
   const chooseHolding = useCallback((nextHoldingId: string) => {
@@ -324,7 +344,7 @@ export default function InventoryListingPanel() {
                     <TableRow key={holdingKey(holding)}>
                       <TableCell>{holding.name}</TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                        {holding.sealed_condition} · {holding.variant_edition}
+                        {conditionLabel(t, holding.sealed_condition)} · {editionLabel(t, holding.variant_edition)}
                       </TableCell>
                       <TableCell><Badge variant="secondary">{legLabel(holding.leg)}</Badge></TableCell>
                       <TableCell className="tabular-nums">{holding.qty_on_hand}</TableCell>
@@ -344,32 +364,59 @@ export default function InventoryListingPanel() {
               <Table>
                 <TableHeader><TableRow>
                   <TableHead>{t("inventoryListings.platform")}</TableHead>
+                  <TableHead>{t("trips.item")}</TableHead>
                   <TableHead>{t("inventoryListings.status")}</TableHead>
                   <TableHead>{t("inventoryListings.marketRegion")}</TableHead>
                   <TableHead>{t("inventoryListings.fulfillmentLeg")}</TableHead>
                   <TableHead>{t("inventoryListings.quantity")}</TableHead>
+                  <TableHead>{t("inventoryListings.reconciliation")}</TableHead>
                   <TableHead>{t("inventoryListings.askPrice")}</TableHead>
                   <TableHead>{t("inventoryListings.listedAt")}</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
-                  {data.listings.map((listing) => (
-                    <TableRow key={listing.listing_id}>
+                  {data.listings.map((listing) => {
+                    const holding = holdingsByAxis.get(exposureHoldingKey(listing));
+                    const itemName = listing.item_name ?? holding?.name;
+                    const setCode = listing.set_code ?? holding?.set_code;
+                    const pushedQuantity = listing.last_pushed_quantity ?? listing.quantity_listed;
+                    return (
+                      <TableRow key={listing.listing_id}>
                       <TableCell>
                         <div>{listing.platform}</div>
                         {listing.external_listing_id && <div className="text-xs text-muted-foreground">{listing.external_listing_id}</div>}
-                      </TableCell>
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-medium">
+                            {itemName ?? t("inventoryListings.productId", { id: listing.product_id })}
+                          </div>
+                          <div className="whitespace-nowrap text-xs text-muted-foreground">
+                            {setCode ? `${setCode} · ` : ""}
+                            {t("inventoryListings.productId", { id: listing.product_id })} · {conditionLabel(t, listing.sealed_condition)} · {editionLabel(t, listing.variant_edition)}
+                          </div>
+                        </TableCell>
                       <TableCell>{t(listing.status === "draft" ? "inventoryListings.statusDraft" : "inventoryListings.statusActive")}</TableCell>
                       <TableCell>{regionLabel(listing.market_region)}</TableCell>
                       <TableCell><Badge variant="secondary">{legLabel(listing.leg)}</Badge></TableCell>
                       <TableCell className={listing.over_promised > 0 ? "font-medium text-destructive" : ""}>
-                        {listing.quantity_listed} / {listing.qty_on_hand}
+                        <div>{listing.quantity_listed} / {listing.qty_on_hand}</div>
+                        {listing.over_promised > 0 ? (
+                          <div className="text-xs">{t("inventoryListings.overPromised", { count: listing.over_promised })}</div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="min-w-52 text-sm">
+                        {listing.needs_push
+                          ? listing.can_push
+                            ? t("inventoryListings.automaticPush", { from: pushedQuantity, to: listing.desired_quantity })
+                            : t("inventoryListings.manualPush", { from: pushedQuantity, to: listing.desired_quantity })
+                          : t("inventoryListings.inSync", { quantity: listing.desired_quantity })}
                       </TableCell>
                       <TableCell>{listing.ask_price_usd == null ? t("inventoryListings.notSet") : formatUsd(Number(listing.ask_price_usd))}</TableCell>
                       <TableCell className="whitespace-nowrap">{formatDate(listing.listed_at, language)}</TableCell>
-                    </TableRow>
-                  ))}
+                      </TableRow>
+                    );
+                  })}
                   {data.listings.length === 0 && (
-                    <TableRow><TableCell colSpan={7} className="text-muted-foreground">{t("inventoryListings.noLive")}</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={9} className="text-muted-foreground">{t("inventoryListings.noLive")}</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
@@ -399,7 +446,7 @@ export default function InventoryListingPanel() {
               >
                 {data?.holdings.map((holding) => (
                   <option key={holdingKey(holding)} value={holdingKey(holding)}>
-                    {holding.name} · {holding.sealed_condition} · {holding.variant_edition} · {legLabel(holding.leg)} · {holding.qty_on_hand}
+                    {holding.name} · {conditionLabel(t, holding.sealed_condition)} · {editionLabel(t, holding.variant_edition)} · {legLabel(holding.leg)} · {holding.qty_on_hand}
                   </option>
                 ))}
               </select>
