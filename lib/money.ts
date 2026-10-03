@@ -28,6 +28,21 @@ export function formatJpy(n: number): string {
   return `¥${Math.round(n ?? 0).toLocaleString()}`;
 }
 
+export function formatJpyPerUsd(n: number): string {
+  const rate = Number(n ?? 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `¥${rate} / $1`;
+}
+
+export function formatPercent(n: number): string {
+  return `${Number(n ?? 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}%`;
+}
+
 // Market ROI as shown in the browse tables: up to two decimals, no padding,
 // no sign ("12.5%", "1234.57%"), em dash when unknown. Theoretical / realized
 // returns use formatRoiPct (theoretical-roi.ts), which is signed and 1dp - a

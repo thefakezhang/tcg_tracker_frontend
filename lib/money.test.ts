@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { formatJpy, formatRoi, formatUsd, formatUsdCompact, formatUsdWhole } from "./money";
+import {
+  formatJpy,
+  formatJpyPerUsd,
+  formatPercent,
+  formatRoi,
+  formatUsd,
+  formatUsdCompact,
+  formatUsdWhole,
+} from "./money";
 
 // The app once had four USD formats, three JPY copies and six inline ROI
 // formulas. These pin the shared ones so a "fix" in one place cannot drift.
@@ -27,6 +35,10 @@ describe("money formatters", () => {
   });
   it("formatJpy never shows fractions", () => {
     expect(formatJpy(3299.6)).toBe("¥3,300");
+  });
+  it("formats FX rates and percentages without inline rounding", () => {
+    expect(formatJpyPerUsd(146.9552)).toBe("¥146.96 / $1");
+    expect(formatPercent(0.65)).toBe("0.65%");
   });
   it("formatRoi trims to two decimals and dashes unknowns", () => {
     expect(formatRoi(12.5)).toBe("12.5%");

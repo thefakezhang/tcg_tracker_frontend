@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LanguageProvider, type Language } from "./LanguageContext";
 
 const rpc = vi.fn();
 const from = vi.fn();
@@ -31,16 +32,34 @@ function table(rows: unknown[]) {
   const chain: Record<string, unknown> = {};
   const self = () => chain;
   Object.assign(chain, {
-    select: self, eq: self, order: self, limit: () => Promise.resolve({ data: rows, error: null }),
+    select: self, eq: self, order: self,
+    range: (fromIndex: number, toIndex: number) => Promise.resolve({
+      data: rows.slice(fromIndex, toIndex + 1), error: null,
+    }),
     then: (res: (v: { data: unknown[]; error: null }) => unknown) => res({ data: rows, error: null }),
   });
   return chain;
 }
 
+function failedTable(message: string) {
+  const chain: Record<string, unknown> = {};
+  const self = () => chain;
+  Object.assign(chain, {
+    select: self,
+    eq: self,
+    order: self,
+    range: () => Promise.resolve({ data: null, error: { message } }),
+  });
+  return chain;
+}
+
 beforeEach(() => {
+  localStorage.clear();
   rpc.mockReset();
   from.mockReset();
-  rpc.mockResolvedValue({ data: [{ email: "agent@example.com", has_account: true }], error: null });
+  rpc.mockImplementation((name: string) => name === "assignable_buyers"
+    ? table([{ email: "agent@example.com", has_account: true }])
+    : Promise.resolve({ data: null, error: null }));
   from.mockImplementation((name: string) => {
     if (name === "buyer_float_balance_v") return table(balances);
     if (name === "gl_accounts") return table([{ account_id: 3, code: "1020", name: "Cash: Wise" }]);
@@ -50,6 +69,10 @@ beforeEach(() => {
   });
 });
 
+function renderView(language: Language = "en") {
+  return render(<LanguageProvider defaultLanguage={language}><BuyerFloatView /></LanguageProvider>);
+}
+
 // The email is on screen twice - as an option in the picker and as a row in
 // the balance table - so wait on the picker specifically.
 async function ready() {
@@ -58,17 +81,17 @@ async function ready() {
 }
 
 async function fill() {
-  render(<BuyerFloatView />);
+  renderView();
   await ready();
   fireEvent.change(screen.getByLabelText("Send to"), { target: { value: "agent@example.com" } });
   fireEvent.change(screen.getByLabelText("Left the account (USD)"), { target: { value: "1000" } });
   fireEvent.change(screen.getByLabelText("Transfer fee (USD)"), { target: { value: "6.5" } });
-  fireEvent.change(screen.getByLabelText("He received (JPY)"), { target: { value: "146000" } });
+  fireEvent.change(screen.getByLabelText("Agent received (JPY)"), { target: { value: "146000" } });
 }
 
 describe("BuyerFloatView", () => {
   it("shows the running balance per agent in yen", async () => {
-    render(<BuyerFloatView />);
+    renderView();
     expect(await screen.findByText("¥57,100")).toBeTruthy();
   });
 
@@ -80,7 +103,7 @@ describe("BuyerFloatView", () => {
   });
 
   it("defaults the funding account to Wise", async () => {
-    render(<BuyerFloatView />);
+    renderView();
     await waitFor(() =>
       expect((screen.getByLabelText("From") as HTMLSelectElement).value).toBe("1020"));
   });
@@ -90,6 +113,7 @@ describe("BuyerFloatView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Record remittance" }));
     await waitFor(() =>
       expect(rpc).toHaveBeenCalledWith("remit_to_buyer", expect.objectContaining({
+        p_request_id: expect.any(String),
         p_buyer_email: "agent@example.com",
         p_cash_account: "1020",
         p_amount_usd: 1000,
@@ -99,7 +123,7 @@ describe("BuyerFloatView", () => {
   });
 
   it("offers the whole outstanding amount when a cancelled purchase is picked", async () => {
-    render(<BuyerFloatView />);
+    renderView();
     await ready();
     fireEvent.change(screen.getByLabelText("Purchase"), { target: { value: "11" } });
     // 50,000 paid, 10,000 already credited. Prefilling the remainder is the
@@ -108,7 +132,7 @@ describe("BuyerFloatView", () => {
   });
 
   it("refuses to credit back more than the purchase has left", async () => {
-    render(<BuyerFloatView />);
+    renderView();
     await ready();
     fireEvent.change(screen.getByLabelText("Purchase"), { target: { value: "11" } });
     fireEvent.change(screen.getByLabelText("Credit back (JPY)"), { target: { value: "40001" } });
@@ -116,35 +140,31 @@ describe("BuyerFloatView", () => {
   });
 
   it("ties the cancellation to the purchase it reverses, not just the agent", async () => {
-    render(<BuyerFloatView />);
+    renderView();
     await ready();
     fireEvent.change(screen.getByLabelText("Purchase"), { target: { value: "11" } });
     fireEvent.click(screen.getByRole("button", { name: "Record cancellation" }));
     await waitFor(() =>
       expect(rpc).toHaveBeenCalledWith("refund_buyer_float", expect.objectContaining({
-        p_plan_line_id: 11, p_amount_jpy: 40000,
+        p_request_id: expect.any(String), p_plan_line_id: 11, p_amount_jpy: 40000,
       })));
   });
 
-  it("does not sit on Loading when the balance query fails", async () => {
-    from.mockImplementation((name: string) => {
-      if (name === "buyer_float_balance_v") {
-        const chain: Record<string, unknown> = {};
-        Object.assign(chain, {
-          select: () => chain,
-          then: (res: (v: { data: null; error: { message: string } }) => unknown) =>
-            res({ data: null, error: { message: "permission denied" } }),
-        });
-        return chain;
-      }
-      if (name === "gl_accounts") return table([{ account_id: 3, code: "1020", name: "Cash: Wise" }]);
-      return table([]);
-    });
-    render(<BuyerFloatView />);
-    // The reason belongs on screen, but so does an answer for the table: an
-    // endless "Loading..." reads as a slow query rather than a failed one.
+  it("surfaces failures from all six reads and leaves no permanent loading state", async () => {
+    from.mockImplementation((name: string) => failedTable(`${name} denied`));
+    rpc.mockImplementation((name: string) => name === "assignable_buyers"
+      ? failedTable("assignable_buyers denied")
+      : Promise.resolve({ data: null, error: null }));
+    renderView();
     await screen.findByText(/Nothing sent yet/);
     expect(screen.queryByText("Loading…")).toBeNull();
+    const alert = screen.getByRole("alert");
+    for (const source of [
+      "Agent balances", "Recent movements", "Cash accounts", "Assignable agents",
+      "Trips", "Refundable purchases",
+    ]) {
+      expect(alert.textContent).toContain(source);
+    }
   });
 
   it("says so when there is no cash account to send from", async () => {
@@ -152,14 +172,14 @@ describe("BuyerFloatView", () => {
       if (name === "buyer_float_balance_v") return table(balances);
       return table([]);
     });
-    render(<BuyerFloatView />);
+    renderView();
     await waitFor(() =>
       expect((screen.getByLabelText("From") as HTMLSelectElement).disabled).toBe(true));
     expect(screen.getByText("No cash account")).toBeTruthy();
   });
 
   it("will not send until it knows who, from where, and how much", async () => {
-    render(<BuyerFloatView />);
+    renderView();
     await ready();
     expect((screen.getByRole("button", { name: "Record remittance" }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -168,5 +188,14 @@ describe("BuyerFloatView", () => {
     await fill();
     fireEvent.change(screen.getByLabelText("Transfer fee (USD)"), { target: { value: "1200" } });
     expect((screen.getByRole("button", { name: "Record remittance" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("renders the complete operator workflow in Japanese", async () => {
+    renderView("ja");
+    expect(await screen.findByText("購入担当者へ送金")).toBeTruthy();
+    expect(screen.getByText("店舗でキャンセル")).toBeTruthy();
+    expect(screen.getByText("担当者から現金返却")).toBeTruthy();
+    expect(screen.getByText("担当者の保有金")).toBeTruthy();
+    expect(screen.getByText("最近の入出金")).toBeTruthy();
   });
 });

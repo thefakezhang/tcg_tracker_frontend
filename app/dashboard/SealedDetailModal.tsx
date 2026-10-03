@@ -525,6 +525,7 @@ export default function SealedDetailModal({
             <AddToLotPopover
               mode="sealed"
               productId={card.card.card_id}
+              productType={card.productType}
               sealedCondition={condition === "all" ? card.sealedCondition : condition}
               variantEdition={edition === "all" ? card.variantEdition : edition}
             />

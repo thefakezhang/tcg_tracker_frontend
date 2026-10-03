@@ -33,6 +33,7 @@ import {
   clearInventoryLineConsignment,
 } from "./inventory-consignment";
 import InventoryConsignmentSheet, { type RecordSaleInput } from "./InventoryConsignmentSheet";
+import InventoryListingPanel from "./InventoryListingPanel";
 import { formatUsd } from "@/lib/money";
 import {
   buildPokemonInventoryShortageArgs,
@@ -310,6 +311,8 @@ export default function InventoryView() {
             onChange={(e) => setSearch(e.target.value)} className="min-h-11 min-w-0 flex-1 sm:h-9 sm:min-h-9 sm:w-56 sm:flex-none" />
         </div>
       </div>
+
+      <InventoryListingPanel />
 
       {error && <QueryError error={error} onRetry={retry} />}
 

@@ -38,6 +38,7 @@ export interface AddCardLineArgs {
 export interface AddSealedLineArgs {
   lotId: number;
   productId: string | number;
+  productType?: string | null;
   sealedCondition: string;
   variantEdition: string;
   quantity: number;

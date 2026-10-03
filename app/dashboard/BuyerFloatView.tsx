@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatMutationError } from "@/lib/mutation-error";
-import { formatJpy, formatUsd } from "@/lib/money";
+import { formatDate, localDateInputValue } from "@/lib/dates";
+import { formatJpy, formatJpyPerUsd, formatPercent, formatUsd } from "@/lib/money";
+import { selectAll } from "@/lib/supabase/select-all";
+import { useTranslation, type TranslationKey } from "@/lib/i18n";
+import { useLanguage } from "./LanguageContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -25,7 +29,7 @@ import {
 // buyer_float_balance_v is operator-only, and he reads buyer_float_self_v.
 
 const selectClass =
-  "h-9 w-full rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
+  "min-h-11 w-full rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring sm:min-h-9";
 
 type Balance = {
   buyer_email: string;
@@ -69,15 +73,20 @@ type Movement = {
   fx_rate_jpy_per_usd: number | null;
 };
 
-const KIND_LABEL: Record<string, string> = {
-  remittance: "Sent",
-  refund: "Refunded",
-  settlement: "Returned",
+const KIND_LABEL: Record<string, TranslationKey> = {
+  remittance: "buyerFloat.kindSent",
+  refund: "buyerFloat.kindRefunded",
+  settlement: "buyerFloat.kindReturned",
 };
+
+type ReadSource = "balances" | "movements" | "accounts" | "buyers" | "trips" | "refundable";
+type ReadFailure = { source: ReadSource; message: string };
 
 const num = (v: string) => (v.trim() === "" ? null : Number(v));
 
 export default function BuyerFloatView() {
+  const { t } = useTranslation();
+  const { language } = useLanguage();
   const [balances, setBalances] = useState<Balance[] | null>(null);
   const [refundable, setRefundable] = useState<Refundable[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
@@ -87,13 +96,14 @@ export default function BuyerFloatView() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<string | null>(null);
+  const [readErrors, setReadErrors] = useState<ReadFailure[]>([]);
 
   const [buyer, setBuyer] = useState("");
   const [cashCode, setCashCode] = useState("");
   const [amountUsd, setAmountUsd] = useState("");
   const [feeUsd, setFeeUsd] = useState("");
   const [amountJpy, setAmountJpy] = useState("");
-  const [occurredAt, setOccurredAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [occurredAt, setOccurredAt] = useState(() => localDateInputValue());
   const [tripId, setTripId] = useState<number | null>(null);
   const [note, setNote] = useState("");
 
@@ -101,31 +111,61 @@ export default function BuyerFloatView() {
   const [refundJpy, setRefundJpy] = useState("");
   const [settleBuyer, setSettleBuyer] = useState("");
   const [settleJpy, setSettleJpy] = useState("");
+  const [remitRequestId, setRemitRequestId] = useState(() => crypto.randomUUID());
+  const [refundRequestId, setRefundRequestId] = useState(() => crypto.randomUUID());
+  const [settleRequestId, setSettleRequestId] = useState(() => crypto.randomUUID());
 
   const load = useCallback(async () => {
     const supabase = createClient();
-    const [bal, mv, acc, by, tr, rf] = await Promise.all([
-      supabase.from("buyer_float_balance_v").select("*"),
-      supabase.from("buyer_float_entries")
-        .select("entry_id, buyer_email, kind, amount_jpy, occurred_at, note, amount_usd, fee_usd, fx_rate_jpy_per_usd")
-        .order("occurred_at", { ascending: false }).order("entry_id", { ascending: false }).limit(50),
-      supabase.from("gl_accounts").select("account_id, code, name").eq("is_cash", true).eq("is_active", true).order("sort"),
-      supabase.rpc("assignable_buyers"),
-      supabase.from("trips").select("trip_id, name").order("trip_id", { ascending: false }),
-      supabase.from("buyer_float_refundable_lines_v").select("*").order("plan_line_id", { ascending: false }),
+    const failures: ReadFailure[] = [];
+    const safe = async <T,>(source: ReadSource, read: () => Promise<T[]>): Promise<T[]> => {
+      try {
+        return await read();
+      } catch (readError) {
+        failures.push({ source, message: formatMutationError(readError) });
+        return [];
+      }
+    };
+    const [balanceRows, movementRows, cash, buyerRows, tripRows, refundableRows] = await Promise.all([
+      safe<Balance>("balances", () => selectAll<Balance>(
+        () => supabase.from("buyer_float_balance_v").select("*"),
+        ["buyer_email"],
+      )),
+      safe<Movement>("movements", () => selectAll<Movement>(
+        () => supabase.from("buyer_float_entries")
+          .select("entry_id, buyer_email, kind, amount_jpy, occurred_at, note, amount_usd, fee_usd, fx_rate_jpy_per_usd"),
+        ["entry_id"],
+      )),
+      safe<CashAccount>("accounts", () => selectAll<CashAccount>(
+        () => supabase.from("gl_accounts").select("account_id, code, name")
+          .eq("is_cash", true).eq("is_active", true),
+        ["account_id"],
+      )),
+      safe<Buyer>("buyers", () => selectAll<Buyer>(
+        () => supabase.rpc("assignable_buyers"),
+        ["email"],
+      )),
+      safe<Trip>("trips", () => selectAll<Trip>(
+        () => supabase.from("trips").select("trip_id, name"),
+        ["trip_id"],
+      )),
+      safe<Refundable>("refundable", () => selectAll<Refundable>(
+        () => supabase.from("buyer_float_refundable_lines_v").select("*"),
+        ["plan_line_id"],
+      )),
     ]);
-    // Set the list either way. Returning early here left "Held with agents"
-    // on "Loading..." for good, which reads as a slow query rather than a
-    // failed one - and the reason was in a line above that scrolls away.
-    if (bal.error) setError(formatMutationError(bal.error));
-    setBalances(((bal.data ?? []) as Balance[]).sort((a, b) => b.balance_jpy - a.balance_jpy));
-    setMovements((mv.data ?? []) as Movement[]);
-    const cash = (acc.data ?? []) as CashAccount[];
+    setReadErrors(failures);
+    setBalances(balanceRows.sort((a, b) => b.balance_jpy - a.balance_jpy));
+    setMovements(movementRows.sort((a, b) => b.entry_id - a.entry_id));
     setAccounts(cash);
-    setBuyers((by.data ?? []) as Buyer[]);
-    setTrips((tr.data ?? []) as Trip[]);
-    setRefundable((rf.data ?? []) as Refundable[]);
-    setCashCode((prev) => prev || cash.find((a) => /wise/i.test(a.name))?.code || cash[0]?.code || "");
+    setBuyers(buyerRows);
+    setTrips(tripRows.sort((a, b) => b.trip_id - a.trip_id));
+    setRefundable(refundableRows.sort((a, b) => b.plan_line_id - a.plan_line_id));
+    setCashCode((prev) =>
+      cash.some((account) => account.code === prev)
+        ? prev
+        : cash.find((account) => /wise/i.test(account.name))?.code || cash[0]?.code || "",
+    );
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -150,21 +190,30 @@ export default function BuyerFloatView() {
 
   const remit = async () => {
     setError(null); setSent(null); setBusy(true);
-    const { error } = await createClient().rpc("remit_to_buyer", {
-      p_buyer_email: buyer,
-      p_cash_account: cashCode,
-      p_amount_usd: num(amountUsd),
-      p_fee_usd: num(feeUsd) ?? 0,
-      p_amount_jpy: num(amountJpy),
-      p_occurred_at: occurredAt,
-      p_trip_id: tripId,
-      p_note: note.trim() || null,
-    });
-    setBusy(false);
-    if (error) { setError(formatMutationError(error)); return; }
-    setSent(`Sent ${formatJpy(num(amountJpy) ?? 0)} to ${buyer}`);
-    setAmountUsd(""); setFeeUsd(""); setAmountJpy(""); setNote("");
-    await load();
+    try {
+      const { error: mutationError } = await createClient().rpc("remit_to_buyer", {
+        p_request_id: remitRequestId,
+        p_buyer_email: buyer,
+        p_cash_account: cashCode,
+        p_amount_usd: num(amountUsd),
+        p_fee_usd: num(feeUsd) ?? 0,
+        p_amount_jpy: num(amountJpy),
+        p_occurred_at: occurredAt,
+        p_trip_id: tripId,
+        p_note: note.trim() || null,
+      });
+      if (mutationError) throw mutationError;
+      setSent(t("buyerFloat.sentConfirmation", {
+        amount: formatJpy(num(amountJpy) ?? 0), buyer,
+      }));
+      setAmountUsd(""); setFeeUsd(""); setAmountJpy(""); setNote("");
+      setRemitRequestId(crypto.randomUUID());
+      await load();
+    } catch (mutationError) {
+      setError(formatMutationError(mutationError));
+    } finally {
+      setBusy(false);
+    }
   };
 
   // The cancellation and the return of cash. Both are movements the system
@@ -175,104 +224,136 @@ export default function BuyerFloatView() {
   const refund = async () => {
     if (refundLine == null) return;
     setError(null); setSent(null); setBusy(true);
-    const { error } = await createClient().rpc("refund_buyer_float", {
-      p_plan_line_id: refundLine,
-      p_amount_jpy: num(refundJpy),
-      p_occurred_at: occurredAt,
-      p_note: note.trim() || null,
-    });
-    setBusy(false);
-    if (error) { setError(formatMutationError(error)); return; }
-    setSent(`Credited ${formatJpy(num(refundJpy) ?? 0)} back`);
-    setRefundLine(null); setRefundJpy("");
-    await load();
+    try {
+      const { error: mutationError } = await createClient().rpc("refund_buyer_float", {
+        p_request_id: refundRequestId,
+        p_plan_line_id: refundLine,
+        p_amount_jpy: num(refundJpy),
+        p_occurred_at: occurredAt,
+        p_note: note.trim() || null,
+      });
+      if (mutationError) throw mutationError;
+      setSent(t("buyerFloat.creditConfirmation", { amount: formatJpy(num(refundJpy) ?? 0) }));
+      setRefundLine(null); setRefundJpy("");
+      setRefundRequestId(crypto.randomUUID());
+      await load();
+    } catch (mutationError) {
+      setError(formatMutationError(mutationError));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const settle = async () => {
     setError(null); setSent(null); setBusy(true);
-    const { error } = await createClient().rpc("settle_buyer_float", {
-      p_buyer_email: settleBuyer,
-      p_amount_jpy: num(settleJpy),
-      p_occurred_at: occurredAt,
-      p_trip_id: null,
-      p_note: null,
-    });
-    setBusy(false);
-    if (error) { setError(formatMutationError(error)); return; }
-    setSent(`${formatJpy(num(settleJpy) ?? 0)} returned by ${settleBuyer}`);
-    setSettleJpy("");
-    await load();
+    try {
+      const { error: mutationError } = await createClient().rpc("settle_buyer_float", {
+        p_request_id: settleRequestId,
+        p_buyer_email: settleBuyer,
+        p_amount_jpy: num(settleJpy),
+        p_occurred_at: occurredAt,
+        p_trip_id: null,
+        p_note: null,
+      });
+      if (mutationError) throw mutationError;
+      setSent(t("buyerFloat.returnedConfirmation", {
+        amount: formatJpy(num(settleJpy) ?? 0), buyer: settleBuyer,
+      }));
+      setSettleJpy("");
+      setSettleRequestId(crypto.randomUUID());
+      await load();
+    } catch (mutationError) {
+      setError(formatMutationError(mutationError));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const canSend =
     !busy && buyer !== "" && cashCode !== "" &&
     (num(amountUsd) ?? 0) > 0 && (num(amountJpy) ?? 0) > 0 && (net ?? 0) > 0;
+  const settleBalance = balances?.find((row) => row.buyer_email === settleBuyer)?.balance_jpy ?? 0;
 
   return (
     <div className="space-y-4">
+      {readErrors.length > 0 ? (
+        <div role="alert" className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          {readErrors.map((readError) => (
+            <p key={readError.source}>
+              {t("buyerFloat.readError", {
+                source: t(`buyerFloat.source.${readError.source}` as TranslationKey),
+                error: readError.message,
+              })}
+            </p>
+          ))}
+          <Button variant="outline" className="min-h-11" onClick={() => void load()}>
+            {t("common.retry")}
+          </Button>
+        </div>
+      ) : null}
       <Card>
-        <CardHeader><CardTitle>Send money to a buying agent</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t("buyerFloat.sendTitle")}</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="space-y-1">
-              <Label htmlFor="float-buyer">Send to</Label>
+              <Label htmlFor="float-buyer">{t("buyerFloat.sendTo")}</Label>
               <select id="float-buyer" className={selectClass} value={buyer} onChange={(e) => setBuyer(e.target.value)}>
-                <option value="">Select an agent</option>
+                <option value="">{t("buyerFloat.selectAgent")}</option>
                 {buyers.map((b) => <option key={b.email} value={b.email}>{b.email}</option>)}
               </select>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="float-account">From</Label>
+              <Label htmlFor="float-account">{t("buyerFloat.from")}</Label>
               <select id="float-account" className={selectClass} value={cashCode} onChange={(e) => setCashCode(e.target.value)}
                       disabled={accounts.length === 0}>
                 {accounts.length === 0
-                  ? <option value="">No cash account</option>
+                  ? <option value="">{t("buyerFloat.noCashAccount")}</option>
                   : accounts.map((a) => <option key={a.account_id} value={a.code}>{a.name}</option>)}
               </select>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="float-usd">Left the account (USD)</Label>
-              <Input id="float-usd" inputMode="decimal" value={amountUsd} onChange={(e) => setAmountUsd(e.target.value)} placeholder="1000.00" />
+              <Label htmlFor="float-usd">{t("buyerFloat.leftAccountUsd")}</Label>
+              <Input id="float-usd" className="min-h-11 sm:min-h-9" inputMode="decimal" value={amountUsd} onChange={(e) => setAmountUsd(e.target.value)} placeholder="1000.00" />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="float-fee">Transfer fee (USD)</Label>
-              <Input id="float-fee" inputMode="decimal" value={feeUsd} onChange={(e) => setFeeUsd(e.target.value)} placeholder="6.50" />
+              <Label htmlFor="float-fee">{t("buyerFloat.transferFeeUsd")}</Label>
+              <Input id="float-fee" className="min-h-11 sm:min-h-9" inputMode="decimal" value={feeUsd} onChange={(e) => setFeeUsd(e.target.value)} placeholder="6.50" />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="float-jpy">He received (JPY)</Label>
-              <Input id="float-jpy" inputMode="numeric" value={amountJpy} onChange={(e) => setAmountJpy(e.target.value)} placeholder="150000" />
+              <Label htmlFor="float-jpy">{t("buyerFloat.receivedJpy")}</Label>
+              <Input id="float-jpy" className="min-h-11 sm:min-h-9" inputMode="numeric" value={amountJpy} onChange={(e) => setAmountJpy(e.target.value)} placeholder="150000" />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="float-date">Date</Label>
-              <Input id="float-date" type="date" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} />
+              <Label htmlFor="float-date">{t("buyerFloat.date")}</Label>
+              <Input id="float-date" className="min-h-11 sm:min-h-9" type="date" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="float-trip">Trip</Label>
+              <Label htmlFor="float-trip">{t("buyerFloat.trip")}</Label>
               <select id="float-trip" className={selectClass} value={tripId ?? ""} onChange={(e) => setTripId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">No trip</option>
+                <option value="">{t("buyerFloat.noTrip")}</option>
                 {trips.map((tr) => <option key={tr.trip_id} value={tr.trip_id}>{tr.name}</option>)}
               </select>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="float-note">Note</Label>
-              <Input id="float-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional" />
+              <Label htmlFor="float-note">{t("buyerFloat.note")}</Label>
+              <Input id="float-note" className="min-h-11 sm:min-h-9" value={note} onChange={(e) => setNote(e.target.value)} placeholder={t("buyerFloat.optional")} />
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
             {rate ? (
               <span>
-                Rate <span className="font-medium tabular-nums text-foreground">¥{rate.toFixed(2)} / $1</span>
+                {t("buyerFloat.rate")} <span className="font-medium tabular-nums text-foreground">{formatJpyPerUsd(rate)}</span>
               </span>
             ) : null}
             {feePct != null ? (
               <span>
-                Fee is <span className="font-medium tabular-nums text-foreground">{feePct.toFixed(2)}%</span>{" "}
-                of the transfer
+                {t("buyerFloat.feeIs")} <span className="font-medium tabular-nums text-foreground">{formatPercent(feePct)}</span>{" "}
+                {t("buyerFloat.ofTransfer")}
               </span>
             ) : null}
-            <Button className="ml-auto" disabled={!canSend} onClick={() => void remit()}>
-              {busy ? "Sending…" : "Record remittance"}
+            <Button className="ml-auto min-h-11" disabled={!canSend} onClick={() => void remit()}>
+              {busy ? t("buyerFloat.sending") : t("buyerFloat.recordRemittance")}
             </Button>
           </div>
 
@@ -283,14 +364,13 @@ export default function BuyerFloatView() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader><CardTitle>A shop cancelled</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t("buyerFloat.cancelTitle")}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Credits the money back to the agent. It points at the purchase it reverses, so if he later
-              re-answers that line the credit follows it instead of being counted twice.
+              {t("buyerFloat.cancelIntro")}
             </p>
             <div className="space-y-1">
-              <Label htmlFor="refund-line">Purchase</Label>
+              <Label htmlFor="refund-line">{t("buyerFloat.purchase")}</Label>
               <select
                 id="refund-line" className={selectClass}
                 value={refundLine ?? ""}
@@ -301,31 +381,39 @@ export default function BuyerFloatView() {
                   setRefundJpy(target ? String(target.refundable_jpy) : "");
                 }}
               >
-                <option value="">Select a purchase</option>
+                <option value="">{t("buyerFloat.selectPurchase")}</option>
                 {refundable.map((r) => (
                   <option key={r.plan_line_id} value={r.plan_line_id}>
-                    {`${r.regional_name ?? r.english_name ?? `Line ${r.plan_line_id}`} - ${r.source} - ${r.purchased_quantity}x - ${formatJpy(r.refundable_jpy)} left (${r.buyer_email})`}
+                    {t("buyerFloat.purchaseOption", {
+                      item: r.regional_name ?? r.english_name ?? t("buyerFloat.line", { id: r.plan_line_id }),
+                      source: r.source,
+                      quantity: r.purchased_quantity,
+                      remaining: formatJpy(r.refundable_jpy),
+                      buyer: r.buyer_email,
+                    })}
                   </option>
                 ))}
               </select>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="refund-jpy">Credit back (JPY)</Label>
-              <Input id="refund-jpy" inputMode="numeric" value={refundJpy} onChange={(e) => setRefundJpy(e.target.value)} />
+              <Label htmlFor="refund-jpy">{t("buyerFloat.creditBackJpy")}</Label>
+              <Input id="refund-jpy" className="min-h-11 sm:min-h-9" inputMode="numeric" value={refundJpy} onChange={(e) => setRefundJpy(e.target.value)} />
             </div>
             <div className="flex items-center gap-3">
-              <Button
+              <Button className="min-h-11"
                 variant="secondary"
                 disabled={busy || refundTarget == null || (num(refundJpy) ?? 0) <= 0 ||
                           (num(refundJpy) ?? 0) > (refundTarget?.refundable_jpy ?? 0)}
                 onClick={() => void refund()}
               >
-                Record cancellation
+                {t("buyerFloat.recordCancellation")}
               </Button>
               {refundTarget ? (
                 <span className="text-sm text-muted-foreground">
-                  {formatJpy(refundTarget.paid_jpy)} paid
-                  {refundTarget.refunded_jpy > 0 ? `, ${formatJpy(refundTarget.refunded_jpy)} already credited` : ""}
+                  {t("buyerFloat.paid", { amount: formatJpy(refundTarget.paid_jpy) })}
+                  {refundTarget.refunded_jpy > 0
+                    ? t("buyerFloat.alreadyCredited", { amount: formatJpy(refundTarget.refunded_jpy) })
+                    : ""}
                 </span>
               ) : null}
             </div>
@@ -333,58 +421,58 @@ export default function BuyerFloatView() {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>He returned cash</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t("buyerFloat.returnTitle")}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Only when he hands money back. Leftover funds do not need to come back - they roll over and
-              fund his next order.
+              {t("buyerFloat.returnIntro")}
             </p>
             <div className="space-y-1">
-              <Label htmlFor="settle-buyer">Returned by</Label>
+              <Label htmlFor="settle-buyer">{t("buyerFloat.returnedBy")}</Label>
               <select id="settle-buyer" className={selectClass} value={settleBuyer} onChange={(e) => setSettleBuyer(e.target.value)}>
-                <option value="">Select an agent</option>
+                <option value="">{t("buyerFloat.selectAgent")}</option>
                 {(balances ?? []).map((b) => (
                   <option key={b.buyer_email} value={b.buyer_email}>
-                    {`${b.buyer_email} - holding ${formatJpy(b.balance_jpy)}`}
+                    {t("buyerFloat.agentHolding", { buyer: b.buyer_email, amount: formatJpy(b.balance_jpy) })}
                   </option>
                 ))}
               </select>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="settle-jpy">Returned (JPY)</Label>
-              <Input id="settle-jpy" inputMode="numeric" value={settleJpy} onChange={(e) => setSettleJpy(e.target.value)} />
+              <Label htmlFor="settle-jpy">{t("buyerFloat.returnedJpy")}</Label>
+              <Input id="settle-jpy" className="min-h-11 sm:min-h-9" inputMode="numeric" value={settleJpy} onChange={(e) => setSettleJpy(e.target.value)} />
             </div>
-            <Button
+            <Button className="min-h-11"
               variant="secondary"
-              disabled={busy || settleBuyer === "" || (num(settleJpy) ?? 0) <= 0}
+              disabled={busy || settleBuyer === "" || (num(settleJpy) ?? 0) <= 0 ||
+                        (num(settleJpy) ?? 0) > settleBalance}
               onClick={() => void settle()}
             >
-              Record return
+              {t("buyerFloat.recordReturn")}
             </Button>
           </CardContent>
         </Card>
       </div>
 
       <Card>
-        <CardHeader><CardTitle>Held with agents</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t("buyerFloat.heldTitle")}</CardTitle></CardHeader>
         <CardContent>
           {balances === null ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
+            <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
           ) : balances.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Nothing sent yet. A remittance above starts an agent&rsquo;s running balance.
+              {t("buyerFloat.emptyBalance")}
             </p>
           ) : (
-            <Table>
+            <div className="overflow-x-auto"><Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Agent</TableHead>
-                  <TableHead className="text-right">Sent</TableHead>
-                  <TableHead className="text-right">Refunded</TableHead>
-                  <TableHead className="text-right">Spent</TableHead>
-                  <TableHead className="text-right">Fees</TableHead>
-                  <TableHead className="text-right">Returned</TableHead>
-                  <TableHead className="text-right">Holding</TableHead>
+                  <TableHead>{t("buyerFloat.agent")}</TableHead>
+                  <TableHead className="text-right">{t("buyerFloat.sent")}</TableHead>
+                  <TableHead className="text-right">{t("buyerFloat.refunded")}</TableHead>
+                  <TableHead className="text-right">{t("buyerFloat.spent")}</TableHead>
+                  <TableHead className="text-right">{t("buyerFloat.fees")}</TableHead>
+                  <TableHead className="text-right">{t("buyerFloat.returned")}</TableHead>
+                  <TableHead className="text-right">{t("buyerFloat.holding")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -400,45 +488,45 @@ export default function BuyerFloatView() {
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </Table></div>
           )}
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Recent movements</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t("buyerFloat.movementsTitle")}</CardTitle></CardHeader>
         <CardContent>
           {movements.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No movements recorded.</p>
+            <p className="text-sm text-muted-foreground">{t("buyerFloat.emptyMovements")}</p>
           ) : (
-            <Table>
+            <div className="overflow-x-auto"><Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Agent</TableHead>
-                  <TableHead>Kind</TableHead>
-                  <TableHead className="text-right">JPY</TableHead>
-                  <TableHead className="text-right">USD</TableHead>
-                  <TableHead className="text-right">Fee</TableHead>
-                  <TableHead className="text-right">Rate</TableHead>
-                  <TableHead>Note</TableHead>
+                  <TableHead>{t("buyerFloat.date")}</TableHead>
+                  <TableHead>{t("buyerFloat.agent")}</TableHead>
+                  <TableHead>{t("buyerFloat.kind")}</TableHead>
+                  <TableHead className="text-right">{t("buyerFloat.jpy")}</TableHead>
+                  <TableHead className="text-right">{t("buyerFloat.usd")}</TableHead>
+                  <TableHead className="text-right">{t("buyerFloat.fee")}</TableHead>
+                  <TableHead className="text-right">{t("buyerFloat.rate")}</TableHead>
+                  <TableHead>{t("buyerFloat.note")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {movements.map((m) => (
                   <TableRow key={m.entry_id}>
-                    <TableCell className="tabular-nums">{m.occurred_at}</TableCell>
+                    <TableCell className="tabular-nums">{formatDate(m.occurred_at, language)}</TableCell>
                     <TableCell>{m.buyer_email}</TableCell>
-                    <TableCell>{KIND_LABEL[m.kind] ?? m.kind}</TableCell>
+                    <TableCell>{KIND_LABEL[m.kind] ? t(KIND_LABEL[m.kind]) : m.kind}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatJpy(m.amount_jpy)}</TableCell>
                     <TableCell className="text-right tabular-nums">{m.amount_usd == null ? "—" : formatUsd(m.amount_usd)}</TableCell>
                     <TableCell className="text-right tabular-nums">{m.fee_usd == null ? "—" : formatUsd(m.fee_usd)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{m.fx_rate_jpy_per_usd == null ? "—" : `¥${Number(m.fx_rate_jpy_per_usd).toFixed(2)}`}</TableCell>
+                    <TableCell className="text-right tabular-nums">{m.fx_rate_jpy_per_usd == null ? "—" : formatJpyPerUsd(Number(m.fx_rate_jpy_per_usd))}</TableCell>
                     <TableCell className="text-muted-foreground">{m.note ?? ""}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </Table></div>
           )}
         </CardContent>
       </Card>

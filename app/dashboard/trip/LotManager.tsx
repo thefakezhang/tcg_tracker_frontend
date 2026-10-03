@@ -135,12 +135,6 @@ const LINE_TABLE: Record<CardGame, string> = {
 };
 const SEALED_TABLE = "pokemon_sealed_lot_lines";
 
-// Nominal per-card value seeded onto a new bulk line. An estimate the operator
-// is expected to adjust per purchase - measured bulk cost on one real lot was
-// $0.16/card - not a market observation. Its only job is to keep a bulk line
-// out of the unvalued state that finalization refuses.
-const BULK_DEFAULT_MARKET_USD = 0.1;
-
 // Buying-side defaults differ by leg: import lots are bought in Japan (JPY),
 // export lots are bought in the US (USD) to carry over and sell in Japan.
 const LEG_DEFAULTS: Record<Leg, { currency: string; fx: string }> = {
@@ -755,6 +749,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       ? await supabase.from(SEALED_TABLE).insert(sealedLotLineInsert({
         lotId: selectedLot,
         productId: hit.item_id,
+        productType: hit.product_type,
         sealedCondition: hit.sealed_condition ?? "standard",
         variantEdition: hit.variant_edition ?? "standard",
         quantity: 1,
@@ -769,7 +764,6 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
         // bulk-only lot (bulk absorbs the exact total) as well as a mixed one.
         // A pin would fail a bulk-only lot whenever qty x rate missed the
         // total, e.g. 2000 x $0.10 = $200.00 against a $204.00 lot.
-        marketValueUsd: hit.product_type === "bulk" ? BULK_DEFAULT_MARKET_USD : null,
       }))
       : !defaultCondition || searchGame === "pokemon_sealed"
         ? { error: new Error("A card condition is required") }

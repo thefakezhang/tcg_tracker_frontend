@@ -84,10 +84,10 @@ describe("bulk market value default", () => {
     const insert = sealedLotLineInsert({
       lotId: 1,
       productId: 2719,
+      productType: "bulk",
       sealedCondition: "standard",
       variantEdition: "standard",
       quantity: 60,
-      marketValueUsd: 0.1,
     });
     expect(insert.market_value_usd).toBe(0.1);
     // Must NOT pin. A pin has to reconcile to the lot total, so a bulk-only

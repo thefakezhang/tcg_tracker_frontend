@@ -18,9 +18,13 @@ import { useCallback, useMemo, useState } from "react";
 import { ArrowLeftRight, Check, Loader2, Link2Off, TriangleAlert } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
-import { useSaving } from "@/lib/use-saving";
+import { formatMutationError } from "@/lib/mutation-error";
 import { balanceOf, signedCash, deriveValueIn, type CashDirection, type TradeDraft } from "@/lib/trades";
+import { selectAll } from "@/lib/supabase/select-all";
+import { formatDate } from "@/lib/dates";
+import { formatUsd } from "@/lib/money";
 import { useSupabaseQuery, QueryError } from "./use-query";
+import { useLanguage } from "./LanguageContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,30 +50,44 @@ interface TradeRow {
 interface SaleOption { sale_group: number; sold_at: string; gross_proceeds_usd: number; leg: string }
 interface LotOption { lot_id: number; acquired_at: string; total_cost_usd: number; shop_label: string | null }
 
-const money = (n: number) =>
-  `${n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+type SupabaseClient = ReturnType<typeof createClient>;
+
+export async function fetchTrades(supabase: SupabaseClient): Promise<TradeRow[]> {
+  const rows = await selectAll<TradeRow>(
+    () => supabase
+      .from("trades_v")
+      .select("trade_id, traded_at, counterparty, cash_usd, sale_group, value_out_usd, lot_id, value_in_usd, balanced, imbalance_usd, notes"),
+    ["traded_at", "trade_id"],
+  );
+  return rows.sort((a, b) =>
+    b.traded_at.localeCompare(a.traded_at) || b.trade_id - a.trade_id,
+  );
+}
 
 export default function TradesView() {
   const { t } = useTranslation();
+  const { language } = useLanguage();
   const [open, setOpen] = useState(false);
+  const [unlinking, setUnlinking] = useState<number | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const trades = useSupabaseQuery<TradeRow[]>("trades:list", async () => {
-    const supabase = createClient();
-    const { data, error } = await supabase
-      .from("trades_v")
-      .select("trade_id, traded_at, counterparty, cash_usd, sale_group, value_out_usd, lot_id, value_in_usd, balanced, imbalance_usd, notes")
-      .order("traded_at", { ascending: false })
-      .limit(200);
-    if (error) throw error;
-    return (data ?? []) as TradeRow[];
+    return fetchTrades(createClient());
   });
 
-  const { save, saving } = useSaving();
   const unlink = useCallback(async (tradeId: number) => {
-    const supabase = createClient();
-    await save(async () => supabase.rpc("unlink_trade", { p_trade_id: tradeId }));
-    await trades.retry();
-  }, [save, trades]);
+    setMutationError(null);
+    setUnlinking(tradeId);
+    try {
+      const { error } = await createClient().rpc("unlink_trade", { p_trade_id: tradeId });
+      if (error) throw error;
+      await trades.retry();
+    } catch (error) {
+      setMutationError(formatMutationError(error));
+    } finally {
+      setUnlinking(null);
+    }
+  }, [trades]);
 
   if (trades.error) return <div className="p-4"><QueryError error={trades.error} onRetry={trades.retry} /></div>;
 
@@ -83,6 +101,8 @@ export default function TradesView() {
           <ArrowLeftRight className="size-4" aria-hidden /><span className="ml-1">{t("trades.record")}</span>
         </Button>
       </div>
+
+      {mutationError && <p role="alert" className="text-sm text-destructive">{mutationError}</p>}
 
       {trades.isLoading && !trades.data ? (
         <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
@@ -99,13 +119,13 @@ export default function TradesView() {
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium">
                   {r.counterparty || t("trades.noCounterparty")}
-                  <span className="ml-2 font-normal text-muted-foreground">{r.traded_at}</span>
+                  <span className="ml-2 font-normal text-muted-foreground">{formatDate(r.traded_at, language)}</span>
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
                   {t("trades.sidesSummary", {
-                    out: money(r.value_out_usd),
+                    out: formatUsd(r.value_out_usd),
                     sale: String(r.sale_group),
-                    in: money(r.value_in_usd),
+                    in: formatUsd(r.value_in_usd),
                     lot: String(r.lot_id),
                   })}
                 </p>
@@ -113,8 +133,8 @@ export default function TradesView() {
               {r.cash_usd !== 0 && (
                 <Badge variant="outline" className="tabular-nums">
                   {r.cash_usd > 0
-                    ? t("trades.cashPaidBadge", { amount: money(r.cash_usd) })
-                    : t("trades.cashReceivedBadge", { amount: money(Math.abs(r.cash_usd)) })}
+                    ? t("trades.cashPaidBadge", { amount: formatUsd(r.cash_usd) })
+                    : t("trades.cashReceivedBadge", { amount: formatUsd(Math.abs(r.cash_usd)) })}
                 </Badge>
               )}
               {/* Both sides are mandatory and the RPC refuses an imbalance, so a
@@ -123,11 +143,12 @@ export default function TradesView() {
               {!r.balanced && (
                 <Badge variant="outline" className="border-destructive/50 text-destructive">
                   <TriangleAlert className="mr-1 size-3" aria-hidden />
-                  {t("trades.outOfBalance", { amount: money(r.imbalance_usd) })}
+                  {t("trades.outOfBalance", { amount: formatUsd(r.imbalance_usd) })}
                 </Badge>
               )}
-              <Button variant="ghost" size="sm" disabled={saving} onClick={() => unlink(r.trade_id)}
-                title={t("trades.unlinkHint")}>
+              <Button variant="ghost" size="sm" className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9"
+                disabled={unlinking != null} onClick={() => unlink(r.trade_id)}
+                aria-label={t("trades.unlinkHint")} title={t("trades.unlinkHint")}>
                 <Link2Off className="size-4" aria-hidden />
               </Button>
             </li>
@@ -146,7 +167,9 @@ function RecordTradeDialog(props: {
   onRecorded: () => void;
 }) {
   const { t } = useTranslation();
-  const { save, saving } = useSaving();
+  const { language } = useLanguage();
+  const [saving, setSaving] = useState(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const [saleGroup, setSaleGroup] = useState<number | null>(null);
   const [lotId, setLotId] = useState<number | null>(null);
   const [cashAmount, setCashAmount] = useState("");
@@ -161,18 +184,33 @@ function RecordTradeDialog(props: {
     props.open ? "trades:options" : null,
     async () => {
       const supabase = createClient();
-      const [{ data: taken }, { data: sales }, { data: lots }] = await Promise.all([
-        supabase.from("trades").select("sale_group, lot_id"),
-        supabase.from("sale_lots").select("sale_group, sold_at, gross_proceeds_usd, leg")
-          .eq("status", "finalized").order("sold_at", { ascending: false }).limit(100),
-        supabase.from("acquisition_lots").select("lot_id, acquired_at, total_cost_usd, shop_label")
-          .eq("lines_imported", true).order("acquired_at", { ascending: false }).limit(100),
+      const [taken, sales, lots] = await Promise.all([
+        selectAll<{ trade_id: number; sale_group: number; lot_id: number }>(
+          () => supabase.from("trades").select("trade_id, sale_group, lot_id"),
+          ["trade_id"],
+        ),
+        selectAll<SaleOption>(
+          () => supabase.from("sale_lots")
+            .select("sale_group, sold_at, gross_proceeds_usd, leg")
+            .eq("status", "finalized"),
+          ["sold_at", "sale_group"],
+        ),
+        selectAll<LotOption>(
+          () => supabase.from("acquisition_lots")
+            .select("lot_id, acquired_at, total_cost_usd, shop_label")
+            .eq("lines_imported", true),
+          ["acquired_at", "lot_id"],
+        ),
       ]);
-      const usedSales = new Set((taken ?? []).map((r) => (r as { sale_group: number }).sale_group));
-      const usedLots = new Set((taken ?? []).map((r) => (r as { lot_id: number }).lot_id));
+      const usedSales = new Set(taken.map((r) => r.sale_group));
+      const usedLots = new Set(taken.map((r) => r.lot_id));
       return {
-        sales: ((sales ?? []) as SaleOption[]).filter((s) => !usedSales.has(s.sale_group)),
-        lots: ((lots ?? []) as LotOption[]).filter((l) => !usedLots.has(l.lot_id)),
+        sales: sales.filter((s) => !usedSales.has(s.sale_group)).sort((a, b) =>
+          b.sold_at.localeCompare(a.sold_at) || b.sale_group - a.sale_group,
+        ),
+        lots: lots.filter((l) => !usedLots.has(l.lot_id)).sort((a, b) =>
+          b.acquired_at.localeCompare(a.acquired_at) || b.lot_id - a.lot_id,
+        ),
       };
     },
   );
@@ -191,36 +229,45 @@ function RecordTradeDialog(props: {
 
   const submit = useCallback(async () => {
     if (saleGroup == null || lotId == null) return;
-    const supabase = createClient();
-    // save() surfaces the RPC's own complaint, which is the useful one here:
-    // link_trade names both figures when a trade does not balance.
-    const ok = await save(async () => supabase.rpc("link_trade", {
-      p_sale_group: saleGroup,
-      p_lot_id: lotId,
-      p_cash_usd: signedCash(draft),
-      p_counterparty: counterparty.trim() || null,
-      p_traded_at: null,
-      p_notes: notes.trim() || null,
-    }));
-    if (ok) props.onRecorded();
-  }, [saleGroup, lotId, draft, counterparty, notes, save, props]);
+    setSaving(true);
+    setMutationError(null);
+    try {
+      const { error } = await createClient().rpc("link_trade", {
+        p_sale_group: saleGroup,
+        p_lot_id: lotId,
+        p_cash_usd: signedCash(draft),
+        p_counterparty: counterparty.trim() || null,
+        p_traded_at: null,
+        p_notes: notes.trim() || null,
+      });
+      if (error) throw error;
+      props.onRecorded();
+    } catch (error) {
+      setMutationError(formatMutationError(error));
+    } finally {
+      setSaving(false);
+    }
+  }, [saleGroup, lotId, draft, counterparty, notes, props]);
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader><DialogTitle>{t("trades.record")}</DialogTitle></DialogHeader>
 
         <div className="space-y-4">
           <p className="text-xs text-muted-foreground">{t("trades.dialogHint")}</p>
 
+          {options.error && <QueryError error={options.error} onRetry={options.retry} />}
+          {mutationError && <p role="alert" className="text-sm text-destructive">{mutationError}</p>}
+
           <label className="block space-y-1">
             <span className="text-xs font-medium">{t("trades.gaveLabel")}</span>
-            <select className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+            <select className="min-h-11 w-full rounded-md border bg-background px-2 text-sm sm:min-h-9"
               value={saleGroup ?? ""} onChange={(e) => setSaleGroup(e.target.value ? Number(e.target.value) : null)}>
               <option value="">{t("trades.pickSale")}</option>
               {(options.data?.sales ?? []).map((s) => (
                 <option key={s.sale_group} value={s.sale_group}>
-                  #{s.sale_group} · {s.sold_at} · {money(Number(s.gross_proceeds_usd))}
+                  #{s.sale_group} · {formatDate(s.sold_at, language)} · {formatUsd(Number(s.gross_proceeds_usd))}
                 </option>
               ))}
             </select>
@@ -228,12 +275,12 @@ function RecordTradeDialog(props: {
 
           <label className="block space-y-1">
             <span className="text-xs font-medium">{t("trades.gotLabel")}</span>
-            <select className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+            <select className="min-h-11 w-full rounded-md border bg-background px-2 text-sm sm:min-h-9"
               value={lotId ?? ""} onChange={(e) => setLotId(e.target.value ? Number(e.target.value) : null)}>
               <option value="">{t("trades.pickLot")}</option>
               {(options.data?.lots ?? []).map((l) => (
                 <option key={l.lot_id} value={l.lot_id}>
-                  #{l.lot_id} · {l.acquired_at} · {money(Number(l.total_cost_usd))}{l.shop_label ? ` · ${l.shop_label}` : ""}
+                  #{l.lot_id} · {formatDate(l.acquired_at, language)} · {formatUsd(Number(l.total_cost_usd))}{l.shop_label ? ` · ${l.shop_label}` : ""}
                 </option>
               ))}
             </select>
@@ -242,7 +289,7 @@ function RecordTradeDialog(props: {
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="space-y-1">
               <span className="text-xs font-medium">{t("trades.cashDirection")}</span>
-              <select className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+              <select className="min-h-11 w-full rounded-md border bg-background px-2 text-sm sm:min-h-9"
                 value={direction} onChange={(e) => setDirection(e.target.value as CashDirection)}>
                 <option value="none">{t("trades.cashNone")}</option>
                 <option value="paid">{t("trades.cashPaid")}</option>
@@ -266,21 +313,21 @@ function RecordTradeDialog(props: {
               <p className="text-muted-foreground">{t("trades.pickBothSides")}</p>
             ) : (
               <div className="space-y-1 font-mono text-xs">
-                <p>{t("trades.balanceOut", { amount: money(draft.valueOutUsd ?? 0) })}</p>
-                <p>{t("trades.balanceCash", { amount: money(signedCash(draft)) })}</p>
+                <p>{t("trades.balanceOut", { amount: formatUsd(draft.valueOutUsd ?? 0) })}</p>
+                <p>{t("trades.balanceCash", { amount: formatUsd(signedCash(draft)) })}</p>
                 <p className="border-t pt-1">
-                  {t("trades.balanceExpected", { amount: money(balance.expectedIn ?? 0) })}
+                  {t("trades.balanceExpected", { amount: formatUsd(balance.expectedIn ?? 0) })}
                 </p>
-                <p>{t("trades.balanceActual", { amount: money(draft.valueInUsd ?? 0) })}</p>
+                <p>{t("trades.balanceActual", { amount: formatUsd(draft.valueInUsd ?? 0) })}</p>
                 <p className={balance.balanced ? "font-semibold text-green-700 dark:text-green-400" : "font-semibold text-amber-700 dark:text-amber-400"}>
                   {balance.balanced
                     ? t("trades.balances")
-                    : t("trades.doesNotBalance", { amount: money(balance.imbalance ?? 0) })}
+                    : t("trades.doesNotBalance", { amount: formatUsd(balance.imbalance ?? 0) })}
                 </p>
                 {!balance.balanced && draft.valueOutUsd != null && (
                   <p className="text-muted-foreground">
                     {t("trades.balanceFixHint", {
-                      amount: money(deriveValueIn(draft.valueOutUsd, signedCash(draft))),
+                      amount: formatUsd(deriveValueIn(draft.valueOutUsd, signedCash(draft))),
                     })}
                   </p>
                 )}
