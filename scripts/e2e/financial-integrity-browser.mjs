@@ -217,11 +217,13 @@ async function exerciseBuyerFloat(page) {
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("tab", { name: "Buying agents" }).click();
   await page.getByRole("heading", { name: "Send money to a buying agent" }).waitFor();
+  const restoredRetry = page.getByRole("button", { name: "Retry exact request" });
+  await restoredRetry.waitFor();
   assert(await page.getByLabel("Left the account (USD)").inputValue() === "100", "remittance USD changed across reload");
   assert(await page.locator("#float-date").inputValue() === "2026-10-01", "remittance date changed across reload");
   assert(await page.locator("#float-note").inputValue() === "lost response replay proof", "remittance note changed across reload");
   assert(await page.getByLabel("Left the account (USD)").isDisabled(), "restored remittance stayed editable");
-  await page.getByRole("button", { name: "Retry exact request" }).click();
+  await restoredRetry.click();
   await page.getByText(/Sent .*14,000.*financial-buyer@example\.test/).waitFor();
   assert(replayRequestId === lostRequestId, "reload retry changed the remittance UUID");
   const pendingAfterSuccess = await page.evaluate(() => Object.keys(localStorage)
