@@ -376,8 +376,8 @@ export default function InventoryListingPanel() {
                 <TableBody>
                   {data.listings.map((listing) => {
                     const holding = holdingsByAxis.get(exposureHoldingKey(listing));
-                    const itemName = listing.item_name ?? holding?.name;
-                    const setCode = listing.set_code ?? holding?.set_code;
+                    const itemName = listing.item_name || holding?.name;
+                    const setCode = listing.set_code || holding?.set_code;
                     const pushedQuantity = listing.last_pushed_quantity ?? listing.quantity_listed;
                     return (
                       <TableRow key={listing.listing_id}>
