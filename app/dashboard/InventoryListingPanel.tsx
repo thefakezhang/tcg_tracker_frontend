@@ -265,7 +265,7 @@ export default function InventoryListingPanel() {
       setOpen(false);
       await load();
     } catch (error) {
-      setMutationError(errorMessage(error));
+      setMutationError(t("inventoryListings.writeError", { error: errorMessage(error) }));
     } finally {
       setIsSaving(false);
     }

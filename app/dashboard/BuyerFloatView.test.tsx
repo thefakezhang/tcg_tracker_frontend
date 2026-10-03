@@ -53,6 +53,14 @@ function failedTable(message: string) {
   return chain;
 }
 
+function successfulTable(name: string) {
+  if (name === "buyer_float_balance_v") return table(balances);
+  if (name === "gl_accounts") return table([{ account_id: 3, code: "1020", name: "Cash: Wise" }]);
+  if (name === "trips") return table([{ trip_id: 4, name: "September" }]);
+  if (name === "buyer_float_refundable_lines_v") return table(refundable);
+  return table([]);
+}
+
 beforeEach(() => {
   localStorage.clear();
   rpc.mockReset();
@@ -60,13 +68,7 @@ beforeEach(() => {
   rpc.mockImplementation((name: string) => name === "assignable_buyers"
     ? table([{ email: "agent@example.com", has_account: true }])
     : Promise.resolve({ data: null, error: null }));
-  from.mockImplementation((name: string) => {
-    if (name === "buyer_float_balance_v") return table(balances);
-    if (name === "gl_accounts") return table([{ account_id: 3, code: "1020", name: "Cash: Wise" }]);
-    if (name === "trips") return table([{ trip_id: 4, name: "September" }]);
-    if (name === "buyer_float_refundable_lines_v") return table(refundable);
-    return table([]);
-  });
+  from.mockImplementation(successfulTable);
 });
 
 function renderView(language: Language = "en") {
@@ -150,21 +152,121 @@ describe("BuyerFloatView", () => {
       })));
   });
 
-  it("surfaces failures from all six reads and leaves no permanent loading state", async () => {
-    from.mockImplementation((name: string) => failedTable(`${name} denied`));
-    rpc.mockImplementation((name: string) => name === "assignable_buyers"
-      ? failedTable("assignable_buyers denied")
-      : Promise.resolve({ data: null, error: null }));
-    renderView();
-    await screen.findByText(/Nothing sent yet/);
-    expect(screen.queryByText("Loading…")).toBeNull();
-    const alert = screen.getByRole("alert");
-    for (const source of [
-      "Agent balances", "Recent movements", "Cash accounts", "Assignable agents",
-      "Trips", "Refundable purchases",
-    ]) {
-      expect(alert.textContent).toContain(source);
+  it.each([
+    ["buyer_float_balance_v", "Agent balances"],
+    ["buyer_float_entries", "Recent movements"],
+    ["gl_accounts", "Cash accounts"],
+    ["assignable_buyers", "Assignable agents"],
+    ["trips", "Trips"],
+    ["buyer_float_refundable_lines_v", "Refundable purchases"],
+  ])("fails closed when the %s read fails", async (failedSource, expectedLabel) => {
+    if (failedSource === "assignable_buyers") {
+      rpc.mockImplementation((name: string) => name === "assignable_buyers"
+        ? failedTable("assignable_buyers denied")
+        : Promise.resolve({ data: null, error: null }));
+    } else {
+      from.mockImplementation((name: string) => name === failedSource
+        ? failedTable(`${name} denied`)
+        : successfulTable(name));
     }
+
+    renderView();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(expectedLabel);
+    expect(screen.queryByText("Loading…")).toBeNull();
+    expect(screen.queryByText(/Nothing sent yet/)).toBeNull();
+    expect(screen.queryByText("No movements recorded.")).toBeNull();
+    expect(screen.queryByText("No cash account")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Record remittance" })).toBeNull();
+  });
+
+  it("retains the last complete snapshot when a refresh read fails", async () => {
+    await fill();
+    expect(screen.getByText("¥57,100")).toBeTruthy();
+    from.mockImplementation((name: string) => name === "buyer_float_entries"
+      ? failedTable("movements refresh denied")
+      : successfulTable(name));
+
+    fireEvent.click(screen.getByRole("button", { name: "Record remittance" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("movements refresh denied");
+    expect(screen.getByText("¥57,100")).toBeTruthy();
+    expect(screen.queryByText(/Nothing sent yet/)).toBeNull();
+    expect(screen.queryByText("No movements recorded.")).toBeNull();
+  });
+
+  it("uses the legacy remittance overload only when the UUID signature is absent", async () => {
+    rpc.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "assignable_buyers") {
+        return table([{ email: "agent@example.com", has_account: true }]);
+      }
+      if (name === "remit_to_buyer" && args && "p_request_id" in args) {
+        return Promise.resolve({
+          data: null,
+          error: { code: "PGRST202", message: "UUID overload not in schema cache" },
+        });
+      }
+      return Promise.resolve({ data: 17, error: null });
+    });
+    await fill();
+
+    fireEvent.click(screen.getByRole("button", { name: "Record remittance" }));
+
+    await waitFor(() => {
+      const calls = rpc.mock.calls.filter(([name]) => name === "remit_to_buyer");
+      expect(calls).toHaveLength(2);
+      expect(calls[0][1]).toEqual(expect.objectContaining({ p_request_id: expect.any(String) }));
+      expect(calls[1][1]).not.toHaveProperty("p_request_id");
+    });
+  });
+
+  it("surfaces a remittance failure and reuses its UUID on explicit retry", async () => {
+    rpc.mockImplementation((name: string) => name === "assignable_buyers"
+      ? table([{ email: "agent@example.com", has_account: true }])
+      : Promise.resolve({
+        data: null,
+        error: { code: "57014", message: "response lost after commit" },
+      }));
+    await fill();
+
+    fireEvent.click(screen.getByRole("button", { name: "Record remittance" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("response lost after commit");
+    fireEvent.click(screen.getByRole("button", { name: "Record remittance" }));
+
+    await waitFor(() => {
+      const calls = rpc.mock.calls.filter(([name]) => name === "remit_to_buyer");
+      expect(calls).toHaveLength(2);
+      expect(calls[0][1].p_request_id).toBe(calls[1][1].p_request_id);
+      expect(calls.every(([, args]) => "p_request_id" in args)).toBe(true);
+    });
+  });
+
+  it("surfaces a refund mutation failure", async () => {
+    rpc.mockImplementation((name: string) => name === "assignable_buyers"
+      ? table([{ email: "agent@example.com", has_account: true }])
+      : Promise.resolve({ data: null, error: { code: "P0001", message: "refund rejected" } }));
+    renderView();
+    await ready();
+    fireEvent.change(screen.getByLabelText("Purchase"), { target: { value: "11" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Record cancellation" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("refund rejected");
+  });
+
+  it("surfaces a settlement mutation failure", async () => {
+    rpc.mockImplementation((name: string) => name === "assignable_buyers"
+      ? table([{ email: "agent@example.com", has_account: true }])
+      : Promise.resolve({ data: null, error: { code: "P0001", message: "settlement rejected" } }));
+    renderView();
+    await ready();
+    fireEvent.change(screen.getByLabelText("Returned by"), { target: { value: "agent@example.com" } });
+    fireEvent.change(screen.getByLabelText("Returned (JPY)"), { target: { value: "500" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Record return" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("settlement rejected");
   });
 
   it("says so when there is no cash account to send from", async () => {

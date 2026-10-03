@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageProvider } from "./LanguageContext";
 
 const mocks = vi.hoisted(() => ({
   mainError: null as Error | null,
   optionsError: null as Error | null,
+  mainData: [] as unknown[],
+  optionsData: { sales: [] as unknown[], lots: [] as unknown[] },
   rpc: vi.fn(),
 }));
 
@@ -23,7 +25,7 @@ vi.mock("./use-query", () => ({
     const isOptions = key === "trades:options";
     const error = isOptions ? mocks.optionsError : mocks.mainError;
     return {
-      data: isOptions ? { sales: [], lots: [] } : [],
+      data: isOptions ? mocks.optionsData : mocks.mainData,
       error: error ?? undefined,
       isLoading: false,
       retry: vi.fn(),
@@ -38,6 +40,8 @@ afterEach(cleanup);
 beforeEach(() => {
   mocks.mainError = null;
   mocks.optionsError = null;
+  mocks.mainData = [];
+  mocks.optionsData = { sales: [], lots: [] };
   mocks.rpc.mockReset().mockResolvedValue({ error: null });
 });
 
@@ -104,5 +108,34 @@ describe("TradesView data contracts", () => {
     fireEvent.click(screen.getByRole("button", { name: "Record trade" }));
 
     expect(screen.getByRole("alert").textContent).toContain("trade options unavailable");
+  });
+
+  it("surfaces a link failure and keeps the record dialog open", async () => {
+    mocks.optionsData = {
+      sales: [{ sale_group: 7, sold_at: "2026-10-01", gross_proceeds_usd: 10, leg: "import" }],
+      lots: [{ lot_id: 9, acquired_at: "2026-10-01", total_cost_usd: 10, shop_label: "Trade" }],
+    };
+    mocks.rpc.mockResolvedValueOnce({ error: { message: "link rejected" } });
+    render(<LanguageProvider><TradesView /></LanguageProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Record trade" }));
+    const selects = screen.getAllByRole("combobox");
+    fireEvent.change(selects[0], { target: { value: "7" } });
+    fireEvent.change(selects[1], { target: { value: "9" } });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Record trade" }).at(-1)!);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("link rejected");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("surfaces an unlink failure without removing the trade", async () => {
+    mocks.mainData = [row(42)];
+    mocks.rpc.mockResolvedValueOnce({ error: { message: "unlink rejected" } });
+    render(<LanguageProvider><TradesView /></LanguageProvider>);
+
+    fireEvent.click(screen.getByRole("button", { name: /Unlink this trade/ }));
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("unlink rejected"));
+    expect(screen.getByText("Counterparty 42")).toBeTruthy();
   });
 });

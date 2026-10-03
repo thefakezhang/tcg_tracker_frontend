@@ -180,4 +180,17 @@ describe("sealed inventory listing contract", () => {
       external_listing_id: "sealed-42",
     })));
   });
+
+  it("surfaces an insert failure and keeps the listing dialog open", async () => {
+    mocks.insert.mockResolvedValueOnce({ error: { message: "listing insert denied" } });
+    render(<LanguageProvider><InventoryListingPanel /></LanguageProvider>);
+    await screen.findByText("Pokémon 151 Booster Box");
+    fireEvent.click(screen.getByRole("button", { name: "List sealed item" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Record listing" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("listing insert denied");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(mocks.insert).toHaveBeenCalledOnce();
+  });
 });

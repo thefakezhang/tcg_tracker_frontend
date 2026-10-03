@@ -83,11 +83,11 @@ export default function TradesView() {
       if (error) throw error;
       await trades.retry();
     } catch (error) {
-      setMutationError(formatMutationError(error));
+      setMutationError(t("trades.unlinkError", { error: formatMutationError(error) }));
     } finally {
       setUnlinking(null);
     }
-  }, [trades]);
+  }, [t, trades]);
 
   if (trades.error) return <div className="p-4"><QueryError error={trades.error} onRetry={trades.retry} /></div>;
 
@@ -97,7 +97,7 @@ export default function TradesView() {
     <div className="space-y-4 p-4">
       <div className="flex items-center justify-between">
         <p className="max-w-prose text-sm text-muted-foreground">{t("trades.intro")}</p>
-        <Button onClick={() => setOpen(true)}>
+        <Button className="min-h-11 sm:min-h-9" onClick={() => setOpen(true)}>
           <ArrowLeftRight className="size-4" aria-hidden /><span className="ml-1">{t("trades.record")}</span>
         </Button>
       </div>
@@ -243,15 +243,15 @@ function RecordTradeDialog(props: {
       if (error) throw error;
       props.onRecorded();
     } catch (error) {
-      setMutationError(formatMutationError(error));
+      setMutationError(t("trades.linkError", { error: formatMutationError(error) }));
     } finally {
       setSaving(false);
     }
-  }, [saleGroup, lotId, draft, counterparty, notes, props]);
+  }, [saleGroup, lotId, draft, counterparty, notes, props, t]);
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader><DialogTitle>{t("trades.record")}</DialogTitle></DialogHeader>
 
         <div className="space-y-4">
@@ -298,7 +298,7 @@ function RecordTradeDialog(props: {
             </label>
             <label className="space-y-1">
               <span className="text-xs font-medium">{t("trades.cashAmount")}</span>
-              <Input type="number" step="0.01" min="0" value={cashAmount} disabled={direction === "none"}
+              <Input className="min-h-11 sm:min-h-9" type="number" step="0.01" min="0" value={cashAmount} disabled={direction === "none"}
                 onChange={(e) => setCashAmount(e.target.value)} placeholder="0.00" />
             </label>
           </div>
@@ -338,18 +338,18 @@ function RecordTradeDialog(props: {
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="space-y-1">
               <span className="text-xs font-medium">{t("trades.counterparty")}</span>
-              <Input value={counterparty} onChange={(e) => setCounterparty(e.target.value)} />
+              <Input className="min-h-11 sm:min-h-9" value={counterparty} onChange={(e) => setCounterparty(e.target.value)} />
             </label>
             <label className="space-y-1">
               <span className="text-xs font-medium">{t("trades.notes")}</span>
-              <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
+              <Input className="min-h-11 sm:min-h-9" value={notes} onChange={(e) => setNotes(e.target.value)} />
             </label>
           </div>
 
         </div>
 
         <DialogFooter>
-          <Button disabled={saving || !balance.balanced || saleGroup == null || lotId == null} onClick={submit}>
+          <Button className="min-h-11 sm:min-h-9" disabled={saving || !balance.balanced || saleGroup == null || lotId == null} onClick={submit}>
             {saving ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Check className="size-4" aria-hidden />}
             <span className="ml-1">{t("trades.record")}</span>
           </Button>

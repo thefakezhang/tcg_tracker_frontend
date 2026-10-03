@@ -6,6 +6,7 @@ import { formatMutationError } from "@/lib/mutation-error";
 import { formatDate, localDateInputValue } from "@/lib/dates";
 import { formatJpy, formatJpyPerUsd, formatPercent, formatUsd } from "@/lib/money";
 import { selectAll } from "@/lib/supabase/select-all";
+import { callBuyerFloatRpc } from "@/lib/supabase/buyer-float-rpc";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { useLanguage } from "./LanguageContext";
 import { Button } from "@/components/ui/button";
@@ -155,6 +156,7 @@ export default function BuyerFloatView() {
       )),
     ]);
     setReadErrors(failures);
+    if (failures.length > 0) return;
     setBalances(balanceRows.sort((a, b) => b.balance_jpy - a.balance_jpy));
     setMovements(movementRows.sort((a, b) => b.entry_id - a.entry_id));
     setAccounts(cash);
@@ -191,8 +193,8 @@ export default function BuyerFloatView() {
   const remit = async () => {
     setError(null); setSent(null); setBusy(true);
     try {
-      const { error: mutationError } = await createClient().rpc("remit_to_buyer", {
-        p_request_id: remitRequestId,
+      const client = createClient();
+      const shared = {
         p_buyer_email: buyer,
         p_cash_account: cashCode,
         p_amount_usd: num(amountUsd),
@@ -201,7 +203,11 @@ export default function BuyerFloatView() {
         p_occurred_at: occurredAt,
         p_trip_id: tripId,
         p_note: note.trim() || null,
-      });
+      };
+      const { error: mutationError } = await callBuyerFloatRpc(
+        () => client.rpc("remit_to_buyer", { p_request_id: remitRequestId, ...shared }),
+        () => client.rpc("remit_to_buyer", shared),
+      );
       if (mutationError) throw mutationError;
       setSent(t("buyerFloat.sentConfirmation", {
         amount: formatJpy(num(amountJpy) ?? 0), buyer,
@@ -210,7 +216,7 @@ export default function BuyerFloatView() {
       setRemitRequestId(crypto.randomUUID());
       await load();
     } catch (mutationError) {
-      setError(formatMutationError(mutationError));
+      setError(t("buyerFloat.mutationError", { error: formatMutationError(mutationError) }));
     } finally {
       setBusy(false);
     }
@@ -225,20 +231,24 @@ export default function BuyerFloatView() {
     if (refundLine == null) return;
     setError(null); setSent(null); setBusy(true);
     try {
-      const { error: mutationError } = await createClient().rpc("refund_buyer_float", {
-        p_request_id: refundRequestId,
+      const client = createClient();
+      const shared = {
         p_plan_line_id: refundLine,
         p_amount_jpy: num(refundJpy),
         p_occurred_at: occurredAt,
         p_note: note.trim() || null,
-      });
+      };
+      const { error: mutationError } = await callBuyerFloatRpc(
+        () => client.rpc("refund_buyer_float", { p_request_id: refundRequestId, ...shared }),
+        () => client.rpc("refund_buyer_float", shared),
+      );
       if (mutationError) throw mutationError;
       setSent(t("buyerFloat.creditConfirmation", { amount: formatJpy(num(refundJpy) ?? 0) }));
       setRefundLine(null); setRefundJpy("");
       setRefundRequestId(crypto.randomUUID());
       await load();
     } catch (mutationError) {
-      setError(formatMutationError(mutationError));
+      setError(t("buyerFloat.mutationError", { error: formatMutationError(mutationError) }));
     } finally {
       setBusy(false);
     }
@@ -247,14 +257,18 @@ export default function BuyerFloatView() {
   const settle = async () => {
     setError(null); setSent(null); setBusy(true);
     try {
-      const { error: mutationError } = await createClient().rpc("settle_buyer_float", {
-        p_request_id: settleRequestId,
+      const client = createClient();
+      const shared = {
         p_buyer_email: settleBuyer,
         p_amount_jpy: num(settleJpy),
         p_occurred_at: occurredAt,
         p_trip_id: null,
         p_note: null,
-      });
+      };
+      const { error: mutationError } = await callBuyerFloatRpc(
+        () => client.rpc("settle_buyer_float", { p_request_id: settleRequestId, ...shared }),
+        () => client.rpc("settle_buyer_float", shared),
+      );
       if (mutationError) throw mutationError;
       setSent(t("buyerFloat.returnedConfirmation", {
         amount: formatJpy(num(settleJpy) ?? 0), buyer: settleBuyer,
@@ -263,7 +277,7 @@ export default function BuyerFloatView() {
       setSettleRequestId(crypto.randomUUID());
       await load();
     } catch (mutationError) {
-      setError(formatMutationError(mutationError));
+      setError(t("buyerFloat.mutationError", { error: formatMutationError(mutationError) }));
     } finally {
       setBusy(false);
     }
@@ -274,23 +288,37 @@ export default function BuyerFloatView() {
     (num(amountUsd) ?? 0) > 0 && (num(amountJpy) ?? 0) > 0 && (net ?? 0) > 0;
   const settleBalance = balances?.find((row) => row.buyer_email === settleBuyer)?.balance_jpy ?? 0;
 
+  const readErrorNotice = readErrors.length > 0 ? (
+    <div role="alert" className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+      {readErrors.map((readError) => (
+        <p key={readError.source}>
+          {t("buyerFloat.readError", {
+            source: t(`buyerFloat.source.${readError.source}` as TranslationKey),
+            error: readError.message,
+          })}
+        </p>
+      ))}
+      <Button variant="outline" className="min-h-11" onClick={() => void load()}>
+        {t("common.retry")}
+      </Button>
+    </div>
+  ) : null;
+
+  if (balances === null) {
+    return (
+      <div className="space-y-4">
+        {readErrorNotice}
+        {readErrors.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {readErrors.length > 0 ? (
-        <div role="alert" className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-          {readErrors.map((readError) => (
-            <p key={readError.source}>
-              {t("buyerFloat.readError", {
-                source: t(`buyerFloat.source.${readError.source}` as TranslationKey),
-                error: readError.message,
-              })}
-            </p>
-          ))}
-          <Button variant="outline" className="min-h-11" onClick={() => void load()}>
-            {t("common.retry")}
-          </Button>
-        </div>
-      ) : null}
+      {readErrorNotice}
+      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
       <Card>
         <CardHeader><CardTitle>{t("buyerFloat.sendTitle")}</CardTitle></CardHeader>
         <CardContent className="space-y-3">
@@ -358,7 +386,6 @@ export default function BuyerFloatView() {
           </div>
 
           {sent ? <p className="text-sm text-emerald-600 dark:text-emerald-400">{sent}</p> : null}
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
         </CardContent>
       </Card>
 
@@ -430,7 +457,7 @@ export default function BuyerFloatView() {
               <Label htmlFor="settle-buyer">{t("buyerFloat.returnedBy")}</Label>
               <select id="settle-buyer" className={selectClass} value={settleBuyer} onChange={(e) => setSettleBuyer(e.target.value)}>
                 <option value="">{t("buyerFloat.selectAgent")}</option>
-                {(balances ?? []).map((b) => (
+                {balances.map((b) => (
                   <option key={b.buyer_email} value={b.buyer_email}>
                     {t("buyerFloat.agentHolding", { buyer: b.buyer_email, amount: formatJpy(b.balance_jpy) })}
                   </option>
@@ -456,13 +483,11 @@ export default function BuyerFloatView() {
       <Card>
         <CardHeader><CardTitle>{t("buyerFloat.heldTitle")}</CardTitle></CardHeader>
         <CardContent>
-          {balances === null ? (
-            <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
-          ) : balances.length === 0 ? (
+          {balances.length === 0 && readErrors.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               {t("buyerFloat.emptyBalance")}
             </p>
-          ) : (
+          ) : balances.length > 0 ? (
             <div className="overflow-x-auto"><Table>
               <TableHeader>
                 <TableRow>
@@ -489,16 +514,16 @@ export default function BuyerFloatView() {
                 ))}
               </TableBody>
             </Table></div>
-          )}
+          ) : null}
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader><CardTitle>{t("buyerFloat.movementsTitle")}</CardTitle></CardHeader>
         <CardContent>
-          {movements.length === 0 ? (
+          {movements.length === 0 && readErrors.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("buyerFloat.emptyMovements")}</p>
-          ) : (
+          ) : movements.length > 0 ? (
             <div className="overflow-x-auto"><Table>
               <TableHeader>
                 <TableRow>
@@ -527,7 +552,7 @@ export default function BuyerFloatView() {
                 ))}
               </TableBody>
             </Table></div>
-          )}
+          ) : null}
         </CardContent>
       </Card>
     </div>
