@@ -45,7 +45,7 @@ import {
 // buyer_float_balance_v is operator-only, and he reads buyer_float_self_v.
 
 const selectClass =
-  "min-h-11 w-full rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring sm:min-h-9";
+  "min-h-12 w-full rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring sm:min-h-9";
 
 type Balance = {
   buyer_email: string;
@@ -578,7 +578,7 @@ export default function BuyerFloatView() {
           })}
         </p>
       ))}
-      <Button variant="outline" className="min-h-11" onClick={() => void load()}>
+      <Button variant="outline" className="min-h-12" onClick={() => void load()}>
         {t("common.retry")}
       </Button>
     </div>
@@ -625,19 +625,19 @@ export default function BuyerFloatView() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="float-usd">{t("buyerFloat.leftAccountUsd")}</Label>
-              <Input id="float-usd" className="min-h-11 sm:min-h-9" inputMode="decimal" value={amountUsd} onChange={(e) => setAmountUsd(e.target.value)} placeholder="1000.00" disabled={!mutationReady || pendingRemit != null || busy != null} />
+              <Input id="float-usd" className="min-h-12 sm:min-h-9" inputMode="decimal" value={amountUsd} onChange={(e) => setAmountUsd(e.target.value)} placeholder="1000.00" disabled={!mutationReady || pendingRemit != null || busy != null} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="float-fee">{t("buyerFloat.transferFeeUsd")}</Label>
-              <Input id="float-fee" className="min-h-11 sm:min-h-9" inputMode="decimal" value={feeUsd} onChange={(e) => setFeeUsd(e.target.value)} placeholder="6.50" disabled={!mutationReady || pendingRemit != null || busy != null} />
+              <Input id="float-fee" className="min-h-12 sm:min-h-9" inputMode="decimal" value={feeUsd} onChange={(e) => setFeeUsd(e.target.value)} placeholder="6.50" disabled={!mutationReady || pendingRemit != null || busy != null} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="float-jpy">{t("buyerFloat.receivedJpy")}</Label>
-              <Input id="float-jpy" className="min-h-11 sm:min-h-9" inputMode="numeric" value={amountJpy} onChange={(e) => setAmountJpy(e.target.value)} placeholder="150000" disabled={!mutationReady || pendingRemit != null || busy != null} />
+              <Input id="float-jpy" className="min-h-12 sm:min-h-9" inputMode="numeric" value={amountJpy} onChange={(e) => setAmountJpy(e.target.value)} placeholder="150000" disabled={!mutationReady || pendingRemit != null || busy != null} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="float-date">{t("buyerFloat.date")}</Label>
-              <Input id="float-date" className="min-h-11 sm:min-h-9" type="date" value={remitOccurredAt} onChange={(e) => setRemitOccurredAt(e.target.value)} disabled={!mutationReady || pendingRemit != null || busy != null} />
+              <Input id="float-date" className="min-h-12 sm:min-h-9" type="date" value={remitOccurredAt} onChange={(e) => setRemitOccurredAt(e.target.value)} disabled={!mutationReady || pendingRemit != null || busy != null} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="float-trip">{t("buyerFloat.trip")}</Label>
@@ -648,7 +648,7 @@ export default function BuyerFloatView() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="float-note">{t("buyerFloat.note")}</Label>
-              <Input id="float-note" className="min-h-11 sm:min-h-9" value={remitNote} onChange={(e) => setRemitNote(e.target.value)} placeholder={t("buyerFloat.optional")} disabled={!mutationReady || pendingRemit != null || busy != null} />
+              <Input id="float-note" className="min-h-12 sm:min-h-9" value={remitNote} onChange={(e) => setRemitNote(e.target.value)} placeholder={t("buyerFloat.optional")} disabled={!mutationReady || pendingRemit != null || busy != null} />
             </div>
           </div>
 
@@ -664,7 +664,7 @@ export default function BuyerFloatView() {
                 {t("buyerFloat.ofTransfer")}
               </span>
             ) : null}
-            <Button className="ml-auto min-h-11" disabled={!canSend} onClick={() => void remit()}>
+            <Button className="ml-auto min-h-12" disabled={!canSend} onClick={() => void remit()}>
               {busy === "remittance"
                 ? t("buyerFloat.sending")
                 : pendingRemit
@@ -677,7 +677,7 @@ export default function BuyerFloatView() {
             <div role="alert" className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
               <p>{remitError ?? t(pendingRemit.retryPolicy === "safe" ? "buyerFloat.pendingSafeRetry" : "buyerFloat.pendingVerify")}</p>
               {pendingRemit.retryPolicy === "verify" ? (
-                <Button type="button" variant="outline" className="min-h-11" onClick={() => resolvePending("remittance")}>
+                <Button type="button" variant="outline" className="min-h-12" onClick={() => resolvePending("remittance")}>
                   {t("buyerFloat.markReconciled")}
                 </Button>
               ) : null}
@@ -723,20 +723,20 @@ export default function BuyerFloatView() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="refund-jpy">{t("buyerFloat.creditBackJpy")}</Label>
-              <Input id="refund-jpy" className="min-h-11 sm:min-h-9" inputMode="numeric" value={refundJpy} onChange={(e) => setRefundJpy(e.target.value)} disabled={!mutationReady || pendingRefund != null || busy != null} />
+              <Input id="refund-jpy" className="min-h-12 sm:min-h-9" inputMode="numeric" value={refundJpy} onChange={(e) => setRefundJpy(e.target.value)} disabled={!mutationReady || pendingRefund != null || busy != null} />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="refund-date">{t("buyerFloat.date")}</Label>
-                <Input id="refund-date" className="min-h-11 sm:min-h-9" type="date" value={refundOccurredAt} onChange={(e) => setRefundOccurredAt(e.target.value)} disabled={!mutationReady || pendingRefund != null || busy != null} />
+                <Input id="refund-date" className="min-h-12 sm:min-h-9" type="date" value={refundOccurredAt} onChange={(e) => setRefundOccurredAt(e.target.value)} disabled={!mutationReady || pendingRefund != null || busy != null} />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="refund-note">{t("buyerFloat.note")}</Label>
-                <Input id="refund-note" className="min-h-11 sm:min-h-9" value={refundNote} onChange={(e) => setRefundNote(e.target.value)} placeholder={t("buyerFloat.optional")} disabled={!mutationReady || pendingRefund != null || busy != null} />
+                <Input id="refund-note" className="min-h-12 sm:min-h-9" value={refundNote} onChange={(e) => setRefundNote(e.target.value)} placeholder={t("buyerFloat.optional")} disabled={!mutationReady || pendingRefund != null || busy != null} />
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <Button className="min-h-11"
+              <Button className="min-h-12"
                 variant="secondary"
                 disabled={!canRefund}
                 onClick={() => void refund()}
@@ -756,7 +756,7 @@ export default function BuyerFloatView() {
               <div role="alert" className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
                 <p>{refundError ?? t(pendingRefund.retryPolicy === "safe" ? "buyerFloat.pendingSafeRetry" : "buyerFloat.pendingVerify")}</p>
                 {pendingRefund.retryPolicy === "verify" ? (
-                  <Button type="button" variant="outline" className="min-h-11" onClick={() => resolvePending("refund")}>
+                  <Button type="button" variant="outline" className="min-h-12" onClick={() => resolvePending("refund")}>
                     {t("buyerFloat.markReconciled")}
                   </Button>
                 ) : null}
@@ -785,19 +785,19 @@ export default function BuyerFloatView() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="settle-jpy">{t("buyerFloat.returnedJpy")}</Label>
-              <Input id="settle-jpy" className="min-h-11 sm:min-h-9" inputMode="numeric" value={settleJpy} onChange={(e) => setSettleJpy(e.target.value)} disabled={!mutationReady || pendingSettlement != null || busy != null} />
+              <Input id="settle-jpy" className="min-h-12 sm:min-h-9" inputMode="numeric" value={settleJpy} onChange={(e) => setSettleJpy(e.target.value)} disabled={!mutationReady || pendingSettlement != null || busy != null} />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="settle-date">{t("buyerFloat.date")}</Label>
-                <Input id="settle-date" className="min-h-11 sm:min-h-9" type="date" value={settleOccurredAt} onChange={(e) => setSettleOccurredAt(e.target.value)} disabled={!mutationReady || pendingSettlement != null || busy != null} />
+                <Input id="settle-date" className="min-h-12 sm:min-h-9" type="date" value={settleOccurredAt} onChange={(e) => setSettleOccurredAt(e.target.value)} disabled={!mutationReady || pendingSettlement != null || busy != null} />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="settle-note">{t("buyerFloat.note")}</Label>
-                <Input id="settle-note" className="min-h-11 sm:min-h-9" value={settleNote} onChange={(e) => setSettleNote(e.target.value)} placeholder={t("buyerFloat.optional")} disabled={!mutationReady || pendingSettlement != null || busy != null} />
+                <Input id="settle-note" className="min-h-12 sm:min-h-9" value={settleNote} onChange={(e) => setSettleNote(e.target.value)} placeholder={t("buyerFloat.optional")} disabled={!mutationReady || pendingSettlement != null || busy != null} />
               </div>
             </div>
-            <Button className="min-h-11"
+            <Button className="min-h-12"
               variant="secondary"
               disabled={!canSettle}
               onClick={() => void settle()}
@@ -808,7 +808,7 @@ export default function BuyerFloatView() {
               <div role="alert" className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
                 <p>{settleError ?? t(pendingSettlement.retryPolicy === "safe" ? "buyerFloat.pendingSafeRetry" : "buyerFloat.pendingVerify")}</p>
                 {pendingSettlement.retryPolicy === "verify" ? (
-                  <Button type="button" variant="outline" className="min-h-11" onClick={() => resolvePending("settlement")}>
+                  <Button type="button" variant="outline" className="min-h-12" onClick={() => resolvePending("settlement")}>
                     {t("buyerFloat.markReconciled")}
                   </Button>
                 ) : null}

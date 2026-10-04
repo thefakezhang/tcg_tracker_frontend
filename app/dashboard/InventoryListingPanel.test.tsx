@@ -215,7 +215,9 @@ describe("sealed inventory listing contract", () => {
     expect((screen.getByLabelText("Platform") as HTMLSelectElement).value).toBe("tcgplayer");
     fireEvent.change(screen.getByLabelText("Ask price (USD)"), { target: { value: "199.50" } });
     fireEvent.change(screen.getByLabelText("Platform listing ID (optional)"), { target: { value: "sealed-42" } });
-    fireEvent.click(screen.getByRole("button", { name: "Record listing" }));
+    const submit = screen.getByRole("button", { name: "Record listing" });
+    expect(submit.className).toContain("min-h-12");
+    fireEvent.click(submit);
 
     await waitFor(() => expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({
       game: "pokemon_sealed",

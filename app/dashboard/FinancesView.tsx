@@ -99,11 +99,11 @@ export default function FinancesView() {
     <div className="min-w-0 space-y-6">
       <Tabs value={section} onValueChange={(value) => setSection(value as "overview" | "health" | "economics" | "agents" | "exit-costs")}>
         <TabsList className="max-w-full justify-start overflow-x-auto">
-          <TabsTrigger className="min-h-11 shrink-0 sm:min-h-9" value="overview">{t("finances.overview")}</TabsTrigger>
-          <TabsTrigger className="min-h-11 shrink-0 sm:min-h-9" value="health">{t("finances.healthTitle")}</TabsTrigger>
-          <TabsTrigger className="min-h-11 shrink-0 sm:min-h-9" value="economics">{t("inventoryEconomics.title")}</TabsTrigger>
-          <TabsTrigger className="min-h-11 shrink-0 sm:min-h-9" value="agents">{t("finances.buyingAgents")}</TabsTrigger>
-          <TabsTrigger className="min-h-11 shrink-0 sm:min-h-9" value="exit-costs">{t("economics.costProfiles")}</TabsTrigger>
+          <TabsTrigger className="min-h-12 shrink-0 sm:min-h-9" value="overview">{t("finances.overview")}</TabsTrigger>
+          <TabsTrigger className="min-h-12 shrink-0 sm:min-h-9" value="health">{t("finances.healthTitle")}</TabsTrigger>
+          <TabsTrigger className="min-h-12 shrink-0 sm:min-h-9" value="economics">{t("inventoryEconomics.title")}</TabsTrigger>
+          <TabsTrigger className="min-h-12 shrink-0 sm:min-h-9" value="agents">{t("finances.buyingAgents")}</TabsTrigger>
+          <TabsTrigger className="min-h-12 shrink-0 sm:min-h-9" value="exit-costs">{t("economics.costProfiles")}</TabsTrigger>
         </TabsList>
       </Tabs>
       {section === "exit-costs" ? <ExitCostSettings /> : section === "agents" ? <BuyerFloatView /> : section === "economics" ? <InventoryEconomics /> : section === "health" ? <BusinessHealthSection /> : <>

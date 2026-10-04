@@ -307,7 +307,7 @@ export default function InventoryListingPanel() {
         </div>
         <Button
           type="button"
-          className="min-h-11 sm:ml-auto sm:min-h-9"
+          className="min-h-12 sm:ml-auto sm:min-h-9"
           disabled={isLoading || !data?.holdings.length}
           onClick={beginListing}
         >
@@ -319,7 +319,7 @@ export default function InventoryListingPanel() {
         <div role="alert" className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           <div>
             {t("inventoryListings.readError", { error: readError })}
-            <Button type="button" variant="link" className="min-h-11 px-2 sm:min-h-9" onClick={() => void load()}>
+            <Button type="button" variant="link" className="min-h-12 px-2 sm:min-h-9" onClick={() => void load()}>
               {t("common.retry")}
             </Button>
           </div>
@@ -442,7 +442,7 @@ export default function InventoryListingPanel() {
                 id="listing-holding"
                 value={holdingId}
                 onChange={(event) => chooseHolding(event.target.value)}
-                className="min-h-11 w-full rounded-md border bg-background px-3 text-sm sm:min-h-9"
+                className="min-h-12 w-full rounded-md border bg-background px-3 text-sm sm:min-h-9"
               >
                 {data?.holdings.map((holding) => (
                   <option key={holdingKey(holding)} value={holdingKey(holding)}>
@@ -458,7 +458,7 @@ export default function InventoryListingPanel() {
                 id="listing-platform"
                 value={platformId}
                 onChange={(event) => setPlatformId(event.target.value)}
-                className="min-h-11 w-full rounded-md border bg-background px-3 text-sm sm:min-h-9"
+                className="min-h-12 w-full rounded-md border bg-background px-3 text-sm sm:min-h-9"
               >
                 {eligiblePlatforms.map((platform) => (
                   <option key={platform.platform} value={platform.platform}>
@@ -481,7 +481,7 @@ export default function InventoryListingPanel() {
                   required
                   value={quantity}
                   onChange={(event) => setQuantity(event.target.value)}
-                  className="min-h-11 sm:min-h-9"
+                  className="min-h-12 sm:min-h-9"
                 />
               </div>
               <div className="space-y-2">
@@ -493,7 +493,7 @@ export default function InventoryListingPanel() {
                   step="0.01"
                   value={askPrice}
                   onChange={(event) => setAskPrice(event.target.value)}
-                  className="min-h-11 sm:min-h-9"
+                  className="min-h-12 sm:min-h-9"
                 />
               </div>
             </div>
@@ -504,15 +504,15 @@ export default function InventoryListingPanel() {
                 id="listing-external-id"
                 value={externalId}
                 onChange={(event) => setExternalId(event.target.value)}
-                className="min-h-11 sm:min-h-9"
+                className="min-h-12 sm:min-h-9"
               />
             </div>
 
             <DialogFooter>
-              <Button type="button" variant="outline" className="min-h-11 sm:min-h-9" onClick={() => setOpen(false)}>
+              <Button type="button" variant="outline" className="min-h-12 sm:min-h-9" onClick={() => setOpen(false)}>
                 {t("common.cancel")}
               </Button>
-              <Button type="submit" className="min-h-11 sm:min-h-9" disabled={isSaving || eligiblePlatforms.length === 0}>
+              <Button type="submit" className="min-h-12 sm:min-h-9" disabled={isSaving || eligiblePlatforms.length === 0}>
                 {isSaving ? t("common.saving") : t("inventoryListings.save")}
               </Button>
             </DialogFooter>

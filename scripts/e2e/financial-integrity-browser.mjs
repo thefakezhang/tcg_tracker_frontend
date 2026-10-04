@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { chromium } from "playwright";
 import {
   assert,
@@ -32,6 +32,13 @@ mkdirSync(artifactRoot, { recursive: true });
 const buyerEmail = "financial-buyer@example.test";
 const listingExternalId = "financial-integrity-listing";
 const tradeCounterparty = "Financial Integrity E2E";
+const operatorDisplayName = "Financial Integrity E2E Operator";
+
+function renderedTradeRow(page) {
+  return page.getByRole("main").getByRole("listitem").filter({
+    hasText: tradeCounterparty,
+  });
+}
 
 async function rest(path, options = {}) {
   const response = await fetch(`${apiUrl.replace(/\/$/, "")}/rest/v1/${path}`, {
@@ -106,7 +113,11 @@ async function gotoView(page, view, heading) {
     waitUntil: "domcontentloaded",
     timeout: 90_000,
   });
-  await page.getByRole("heading", { name: heading, exact: true }).waitFor();
+  await page.locator("header").getByRole("heading", {
+    name: heading,
+    exact: true,
+    level: 1,
+  }).waitFor();
 }
 
 async function createSealedListing(page) {
@@ -166,8 +177,7 @@ async function linkTrade(page) {
   await dialog.getByRole("button", { name: "Record trade" }).click();
   assert((await linkResponse).ok(), "link_trade did not return success");
   await dialog.waitFor({ state: "hidden" });
-  const row = page.getByText(tradeCounterparty, { exact: true });
-  await row.waitFor();
+  await renderedTradeRow(page).waitFor();
 
   let trades = await rest(
     "trades_v?select=trade_id,sale_group,lot_id,balanced,imbalance_usd&sale_group=eq.9000001",
@@ -180,7 +190,7 @@ async function linkTrade(page) {
 async function exerciseBuyerFloat(page) {
   await gotoView(page, "finances", "Finances");
   await page.getByRole("tab", { name: "Buying agents" }).click();
-  await page.getByRole("heading", { name: "Send money to a buying agent" }).waitFor();
+  await page.getByText("Send money to a buying agent", { exact: true }).waitFor();
   await page.getByLabel("Send to").selectOption(buyerEmail);
   await page.getByLabel("Left the account (USD)").fill("100");
   await page.getByLabel("Transfer fee (USD)").fill("1");
@@ -207,7 +217,7 @@ async function exerciseBuyerFloat(page) {
 
   const record = page.getByRole("button", { name: "Record remittance" });
   await record.click();
-  await page.getByRole("alert").waitFor();
+  await page.getByRole("button", { name: "Retry exact request" }).waitFor();
   assert(lostRequestId, "lost-response route did not capture a request UUID");
   assert(await page.getByLabel("Left the account (USD)").isDisabled(), "pending remittance stayed editable");
   const pendingBeforeReload = await page.evaluate(() => Object.keys(localStorage)
@@ -216,7 +226,7 @@ async function exerciseBuyerFloat(page) {
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("tab", { name: "Buying agents" }).click();
-  await page.getByRole("heading", { name: "Send money to a buying agent" }).waitFor();
+  await page.getByText("Send money to a buying agent", { exact: true }).waitFor();
   const restoredRetry = page.getByRole("button", { name: "Retry exact request" });
   await restoredRetry.waitFor();
   assert(await page.getByLabel("Left the account (USD)").inputValue() === "100", "remittance USD changed across reload");
@@ -274,7 +284,7 @@ async function switchToJapaneseOnPhone(page) {
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoView(page, "inventory", "Inventory");
   await page.getByRole("button", { name: "Toggle Sidebar" }).click();
-  await page.getByRole("button").filter({ hasText: operatorEmail }).last().click();
+  await page.getByRole("button", { name: operatorDisplayName }).click();
   await page.getByRole("menuitemradio", { name: "日本語" }).click();
   await page.waitForFunction(() => document.documentElement.lang === "ja");
 }
@@ -284,6 +294,7 @@ async function verifyPhoneJourney(page) {
   await gotoView(page, "inventory", "在庫");
   const opener = page.getByRole("button", { name: "未開封商品を出品" });
   await assertTapTarget(opener, "phone sealed-listing opener");
+  await opener.click({ trial: true });
   await opener.focus();
   await opener.press("Enter");
   const dialog = page.getByRole("dialog");
@@ -334,18 +345,19 @@ async function verifyPhoneJourney(page) {
     response.url().includes("/rest/v1/rpc/unlink_trade"));
   await unlinkDialog.getByRole("button", { name: "紐付けを解除" }).click();
   assert((await unlinkResponse).ok(), "unlink_trade did not return success");
-  await page.getByText(tradeCounterparty, { exact: true }).waitFor({ state: "hidden" });
+  await renderedTradeRow(page).waitFor({ state: "hidden" });
   const trades = await rest("trades?select=trade_id&sale_group=eq.9000001");
   assert(trades.length === 0, "unlink left a trade row behind");
   await assertNoPageOverflow(page, "phone trades view");
 
-  let failNextBalanceRead = true;
+  let balanceReadOutage = true;
+  let failedBalanceReads = 0;
   await page.route("**/rest/v1/buyer_float_balance_v**", async (route) => {
-    if (route.request().method() !== "GET" || !failNextBalanceRead) {
+    if (route.request().method() !== "GET" || !balanceReadOutage) {
       await route.continue();
       return;
     }
-    failNextBalanceRead = false;
+    failedBalanceReads += 1;
     await route.fulfill({
       status: 503,
       contentType: "application/json",
@@ -357,8 +369,9 @@ async function verifyPhoneJourney(page) {
   const agentsTab = page.getByRole("tab", { name: "購入担当者資金" });
   await assertTapTarget(agentsTab, "phone buyer-float tab");
   await agentsTab.click();
-  const alert = page.getByRole("alert");
+  const alert = page.getByRole("alert").filter({ hasText: "担当者残高" });
   await alert.waitFor();
+  assert(failedBalanceReads > 0, "balance outage did not intercept a read");
   assert((await alert.textContent()).includes("担当者残高"), "failed source was not localized");
   assert(
     await page.getByText(/送金はまだありません/).count() === 0,
@@ -366,8 +379,9 @@ async function verifyPhoneJourney(page) {
   );
   const retry = page.getByRole("button", { name: "再試行" });
   await assertTapTarget(retry, "phone buyer-float retry");
+  balanceReadOutage = false;
   await retry.click();
-  await page.getByRole("heading", { name: "購入担当者へ送金" }).waitFor();
+  await page.getByText("購入担当者へ送金", { exact: true }).waitFor();
   await page.getByText("¥11,340", { exact: true }).waitFor();
   await assertNoPageOverflow(page, "phone Japanese buyer-float view");
   await page.screenshot({ path: `${artifactRoot}/phone-japanese-buyer-float.png`, fullPage: true });
@@ -382,7 +396,22 @@ const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 const page = await context.newPage();
 const browserErrors = [];
+const failedRequests = [];
+const failedResponses = [];
 page.on("pageerror", (error) => browserErrors.push(error.message));
+page.on("requestfailed", (request) => failedRequests.push({
+  method: request.method(),
+  url: request.url(),
+  failure: request.failure()?.errorText ?? "unknown request failure",
+}));
+page.on("response", (response) => {
+  if (response.ok()) return;
+  failedResponses.push({
+    method: response.request().method(),
+    url: response.url(),
+    status: response.status(),
+  });
+});
 try {
   await authenticate(context);
   await createSealedListing(page);
@@ -392,6 +421,26 @@ try {
   await verifyPhoneJourney(page);
   assert(browserErrors.length === 0, `browser errors: ${browserErrors.join(" | ")}`);
   console.log(`Financial-integrity browser CUJ passed. Artifacts: ${artifactRoot}`);
+} catch (cause) {
+  const failure = {
+    error: cause instanceof Error ? cause.stack ?? cause.message : String(cause),
+    pageUrl: page.url(),
+    pageText: await page.locator("body").innerText().catch(() => "<unavailable>"),
+    browserErrors,
+    failedRequests,
+    failedResponses,
+  };
+  writeFileSync(
+    `${artifactRoot}/failure.json`,
+    `${JSON.stringify(failure, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  await page.screenshot({
+    path: `${artifactRoot}/failure.png`,
+    fullPage: true,
+  }).catch(() => undefined);
+  console.error(JSON.stringify(failure, null, 2));
+  throw cause;
 } finally {
   await context.close();
   await browser.close();
