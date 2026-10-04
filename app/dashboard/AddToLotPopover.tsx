@@ -18,7 +18,7 @@ interface Cond {
 
 type AddToLotProps =
   | { mode: "single"; game: "pokemon" | "mtg"; cardId: string | number; psaGrade: number; decisionSnapshot?: Record<string, unknown>; entryPriceUsd?: number | null }
-  | { mode: "sealed"; productId: string | number; sealedCondition: string; variantEdition: string };
+  | { mode: "sealed"; productId: string | number; productType?: string | null; sealedCondition: string; variantEdition: string };
 
 // Mirrors the "Add to Buy List" popover, but a lot line also needs a quantity
 // (and a condition for singles) plus an optional per-unit cost override.
@@ -74,7 +74,8 @@ export function AddToLotPopover(props: AddToLotProps) {
       });
     } else {
       await addSealedLine({
-        lotId: lot.lot_id, productId: props.productId, sealedCondition: props.sealedCondition,
+        lotId: lot.lot_id, productId: props.productId, productType: props.productType,
+        sealedCondition: props.sealedCondition,
         variantEdition: props.variantEdition, quantity: n, overrideUsd: ov,
       });
     }

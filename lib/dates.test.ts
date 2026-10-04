@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDate, formatDateTime } from "./dates";
+import { formatDate, formatDateTime, localDateInputValue } from "./dates";
 
 describe("formatDate", () => {
   it("renders a DATE column string as a local date, never the previous UTC day", () => {
@@ -23,5 +23,11 @@ describe("formatDateTime", () => {
   it("adds a short local time", () => {
     const d = new Date(2026, 7, 16, 13, 5);
     expect(formatDateTime(d, "en")).toMatch(/^Aug 16, 2026, 01:05 PM$/);
+  });
+});
+
+describe("localDateInputValue", () => {
+  it("uses local calendar components without a UTC conversion", () => {
+    expect(localDateInputValue(new Date(2026, 0, 2, 23, 59))).toBe("2026-01-02");
   });
 });

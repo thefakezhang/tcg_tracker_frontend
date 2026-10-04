@@ -45,12 +45,18 @@ export interface SealedLotLineDefinition {
 export interface SealedLotLineInput {
   lotId: number;
   productId: string | number;
+  productType?: string | null;
   sealedCondition: string;
   variantEdition: string;
   quantity: number;
   overrideUsd?: number | null;
   marketValueUsd?: number | null;
 }
+
+// Unsorted bulk has no observed market price, but finalization refuses an
+// unvalued bulk line beside any other line. This nominal per-card value is an
+// editable allocation weight, not a pinned cost or market observation.
+export const BULK_DEFAULT_MARKET_USD = 0.1;
 
 export function lotLineGradeLabel(psaGrade: number): string {
   return psaGrade > 0 ? `PSA ${psaGrade}` : "Raw";
@@ -64,7 +70,9 @@ export function sealedLotLineInsert(input: SealedLotLineInput) {
     variant_edition: input.variantEdition,
     quantity: input.quantity,
     price_override_usd: input.overrideUsd ?? null,
-    market_value_usd: input.marketValueUsd ?? null,
+    market_value_usd:
+      input.marketValueUsd ??
+      (input.productType === "bulk" ? BULK_DEFAULT_MARKET_USD : null),
   };
 }
 

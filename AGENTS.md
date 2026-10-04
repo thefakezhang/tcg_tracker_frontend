@@ -728,6 +728,17 @@ A trade is two sides that settle against each other, recorded in **Trips -> Trad
 - Sides already in a trade are filtered out of the pickers: the RPC would refuse them anyway.
 - **Money is compared in cents.** `0.1 + 0.2 !== 0.3` in binary floating point, and comparing dollars directly reports a trade that balances to the cent as out by 2.2e-16.
 - The link lives on `trades`, not as a `trade_id` on `sale_lots`/`acquisition_lots`: a finalized sale's source facts are immutable by trigger, and a trade is a new fact *about* two existing ones.
+- Unlink is a visible 44-pixel phone action with a confirmation that says the sale and acquisition lot remain booked.
+An unlink failure stays beside that trade row with an explicit retry instead of moving to a page-level error.
+
+### Buyer Float mutation safety
+
+Buyer Float mutations use the UUID overloads added by backend migration `000535`.
+Before an RPC begins, `lib/buyer-float-pending.ts` stores the authenticated operator ID, operation, UUID, and immutable payload in owner-scoped local storage.
+An ambiguous response keeps that request locked across reload and the UI retries the exact UUID and payload rather than constructing a second movement.
+The missing-signature compatibility path is marked verify-only before the non-idempotent legacy RPC begins, so an ambiguous legacy result cannot be presented as safe to replay.
+Each remittance, cancellation, and settlement has its own local-calendar date, note, inline error, and success state.
+Do not put those controls back into shared component state because that silently applies one movement's source facts to another movement.
 
 ### Sealed Products (Pokémon)
 
@@ -756,6 +767,9 @@ The catalog stores `jp`, not the UI locale `ja`; `mtgLanguageLabel` is the one p
 `AddToPlanAction` sends bounded per-variant quantities and ceilings to `add_sealed_to_purchase_plan`, keeps partial failures visible, and retries only unresolved exact variants.
 - The Purchase Planner reads exact sealed candidates from `pokemon_sealed_purchase_candidate_listings_v` and writes condition and edition for both selected and manually entered lines.
 The planner ledger, buyer instruction, and appended sheet columns retain those axes through result entry.
+- Inventory's sealed-listing ledger renders product identity, set code, localized condition and edition, listed versus on-hand quantity, and a text reconciliation instruction from `desired_quantity`, `needs_push`, and `can_push`.
+Over-promise is named in text and never communicated by red color alone.
+When the exact holding row is absent, the product ID remains the stable fallback identity.
 - The `aggregate-prices` edge function's `computeAndInsertSealed()` populates
   `pokemon_sealed_price_summaries` (the same one-lane JP-entry / NA-exit rule and kind precedence as cards).
 - **RLS note:** the views run as their owner and bypass base-table RLS, so browse works regardless. But
