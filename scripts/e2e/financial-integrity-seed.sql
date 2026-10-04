@@ -74,21 +74,52 @@ VALUES
    'jp', 'UNKNOWN')
 ON CONFLICT (card_id) DO NOTHING;
 
-INSERT INTO public.purchase_plans
-  (plan_id, name, status, assigned_buyer_email, notes)
+INSERT INTO public.trips
+  (trip_id, name, started_at, status, notes)
 VALUES
-  (9000001, 'Financial integrity refundable purchase', 'draft',
-   'financial-buyer@example.test', 'financial-integrity browser fixture');
+  (9000001, 'Financial integrity acquisition', DATE '2026-10-01',
+   'active', 'financial-integrity browser fixture');
+
+INSERT INTO public.purchase_plans
+  (plan_id, name, trip_id, status, assigned_buyer_email, ordered_at, notes)
+VALUES
+  (9000001, 'Financial integrity funded purchase', 9000001, 'draft',
+   'financial-buyer@example.test', NULL, 'financial-integrity browser fixture'),
+  (9000002, 'Financial integrity stale-read cancellation', NULL, 'draft',
+   NULL, NULL, 'attached to the buyer only after settlement');
 
 INSERT INTO public.purchase_plan_lines
   (plan_line_id, plan_id, game, card_id, psa_grade, planned_quantity,
    source, source_listing_url, unit_price_orig, currency, notes)
 VALUES
-  (9000001, 9000001, 'pokemon', 9000001, 0, 2, 'cardrush',
-   'https://example.test/financial-integrity', 1000, 'JPY',
-   'financial-integrity browser fixture');
+  (9000001, 9000001, 'pokemon', 9000001, 0, 1, 'cardrush',
+   'https://example.test/financial-integrity-cancelled', 500, 'JPY',
+   'fully refunded cancellation before reconciliation'),
+  (9000002, 9000001, 'pokemon', 9000001, 0, 1, 'cardrush',
+   'https://example.test/financial-integrity-standing', 1400, 'JPY',
+   'standing price-changed purchase'),
+  (9000003, 9000002, 'pokemon', 9000001, 0, 1, 'cardrush',
+   'https://example.test/financial-integrity-stale-refund', 100, 'JPY',
+   'attached after settlement for stale-read proof');
 
 INSERT INTO public.purchase_plan_line_results
-  (plan_line_id, outcome, purchased_quantity, unit_price_jpy, note)
+  (plan_line_id, outcome, purchased_quantity, unit_price_jpy,
+   delivery_status, delivery_status_at, note)
 VALUES
-  (9000001, 'purchased', 2, 1000, 'financial-integrity browser fixture');
+  (9000001, 'purchased', 1, 500, 'cancelled', now(),
+   'fully refunded cancellation before reconciliation'),
+  (9000002, 'price_changed_bought', 1, 1500, 'arrived', now(),
+   'standing price-changed purchase'),
+  (9000003, 'purchased', 1, 100, 'cancelled', now(),
+   'attached after settlement for stale-read proof');
+
+INSERT INTO public.purchase_plan_source_costs
+  (plan_id, source, kind, amount_jpy, note)
+VALUES
+  (9000001, 'cardrush', 'shipping', 15,
+   'explicit source shipping for browser reconciliation');
+
+UPDATE public.purchase_plans
+SET status = 'ordered',
+    ordered_at = now()
+WHERE plan_id = 9000001;

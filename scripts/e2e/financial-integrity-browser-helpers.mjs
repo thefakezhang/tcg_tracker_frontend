@@ -5,10 +5,10 @@ export function assert(condition, message) {
 export function expectedFloatProjection() {
   return {
     remitted_jpy: 14_000,
-    spent_jpy: 2_000,
+    spent_jpy: 1_600,
     fees_jpy: 160,
-    refunded_jpy: 500,
-    settled_jpy: 1_000,
+    refunded_jpy: 0,
+    settled_jpy: 900,
     balance_jpy: 11_340,
   };
 }

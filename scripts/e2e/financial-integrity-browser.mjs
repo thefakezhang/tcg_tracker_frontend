@@ -56,6 +56,17 @@ async function rest(path, options = {}) {
   return body === "" ? null : JSON.parse(body);
 }
 
+async function serviceRest(path, options = {}) {
+  return rest(path, {
+    ...options,
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      ...(options.headers ?? {}),
+    },
+  });
+}
+
 async function expectDirectDmlDenied(path, token, body, label) {
   const response = await fetch(`${apiUrl.replace(/\/$/, "")}/rest/v1/${path}`, {
     method: "POST",
@@ -187,6 +198,130 @@ async function linkTrade(page) {
   await page.screenshot({ path: `${artifactRoot}/desktop-linked-trade.png`, fullPage: true });
 }
 
+async function reconcileBuyerFloatPurchase(page) {
+  await gotoView(page, "planner", "Purchase planner");
+  const planPicker = page.getByLabel("Purchase plan");
+  await planPicker.selectOption("9000001");
+  await page.getByText("Reconcile purchases and funding", { exact: true }).waitFor();
+  await page.getByLabel("Acquisition trip").selectOption("9000001");
+  await page.getByLabel("JPY per USD").fill("150");
+  const shippingOverride = page.getByLabel("Effective source shipping (JPY)");
+  assert(await shippingOverride.inputValue() === "15", "recorded shipping was not visibly prefilled");
+
+  const cardFunding = page.getByLabel(/^Card purchases/);
+  const handlingFunding = page.getByLabel(/^Buyer handling and line fees/);
+  const shippingFunding = page.getByLabel(/^Shipping \(max/);
+  for (const input of [cardFunding, handlingFunding, shippingFunding]) {
+    assert(await input.inputValue() === "0", "buyer-float allocation did not start at zero");
+  }
+  await page.getByText("Business cash remainder ¥1,660", { exact: true }).waitFor();
+  await cardFunding.fill("1500");
+  await handlingFunding.fill("145");
+  await shippingFunding.fill("15");
+  await page.getByText("Business cash remainder ¥0", { exact: true }).waitFor();
+
+  let lostRequest;
+  let replayRequest;
+  let committedResponseWasLost = false;
+  await page.route("**/rest/v1/rpc/reconcile_purchase_plan", async (route) => {
+    const payload = route.request().postDataJSON();
+    if (!committedResponseWasLost && payload?.p_request_id) {
+      const response = await route.fetch();
+      assert(response.ok(), `committed reconciliation returned HTTP ${response.status()}`);
+      lostRequest = payload;
+      committedResponseWasLost = true;
+      await route.abort("connectionfailed");
+      return;
+    }
+    if (payload?.p_request_id) replayRequest = payload;
+    await route.continue();
+  });
+
+  await page.getByRole("button", { name: "Reconcile plan" }).click();
+  const retry = page.getByRole("button", { name: "Retry exact reconciliation" });
+  await retry.waitFor();
+  assert(lostRequest?.p_request_id, "lost-response route did not capture reconciliation UUID");
+  assert(await page.getByLabel("JPY per USD").isDisabled(), "pending reconciliation stayed editable");
+  const pendingBeforeReload = await page.evaluate(() => Object.keys(localStorage)
+    .find((key) => key.includes("purchase-reconciliation-pending")) ?? null);
+  assert(pendingBeforeReload, "lost reconciliation response did not persist exact retry state");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByText("Reconcile purchases and funding", { exact: true }).waitFor();
+  const restoredRetry = page.getByRole("button", { name: "Retry exact reconciliation" });
+  await restoredRetry.waitFor();
+  assert(await page.getByLabel("JPY per USD").inputValue() === "150", "reconciliation rate changed across reload");
+  assert(await page.getByLabel(/^Card purchases/).inputValue() === "1500", "card allocation changed across reload");
+  assert(await page.getByLabel("JPY per USD").isDisabled(), "restored reconciliation stayed editable");
+  const responsePromise = page.waitForResponse((response) =>
+    response.url().includes("/rest/v1/rpc/reconcile_purchase_plan"));
+  await restoredRetry.click();
+  const response = await responsePromise;
+  const request = response.request().postDataJSON();
+  assert(response.ok(), `reconcile_purchase_plan returned HTTP ${response.status()}`);
+  assert(
+    JSON.stringify(replayRequest) === JSON.stringify(lostRequest),
+    "reload retry changed the reconciliation UUID or immutable inputs",
+  );
+  assert(JSON.stringify(request) === JSON.stringify(lostRequest), "delivered replay request changed");
+  await page.waitForFunction(() => !Object.keys(localStorage)
+    .some((key) => key.includes("purchase-reconciliation-pending")));
+  const pendingAfterSuccess = await page.evaluate(() => Object.keys(localStorage)
+    .find((key) => key.includes("purchase-reconciliation-pending")) ?? null);
+  assert(pendingAfterSuccess == null, "successful reconciliation replay left pending state behind");
+  assert(typeof request.p_request_id === "string", "reconciliation omitted its durable UUID");
+  assert(request.p_plan_id === 9_000_001, `reconciliation plan=${request.p_plan_id}`);
+  assert(request.p_trip_id === 9_000_001, `reconciliation trip=${request.p_trip_id}`);
+  assert(request.p_fx_rate === 150, `reconciliation rate=${request.p_fx_rate}`);
+  assert(request.p_shipping_jpy?.cardrush === 15, "reconciliation omitted source shipping");
+  assert(
+    JSON.stringify(request.p_float_funding_jpy?.cardrush) === JSON.stringify({
+      card_jpy: 1500,
+      buyer_handling_jpy: 145,
+      shipping_jpy: 15,
+      payment_fee_jpy: 0,
+      customs_jpy: 0,
+      other_jpy: 0,
+    }),
+    `reconciliation funding payload was not component-explicit: ${JSON.stringify(request)}`,
+  );
+
+  const reconciledPlans = await rest(
+    "purchase_plans?select=plan_id,status&plan_id=eq.9000001",
+  );
+  assert(
+    reconciledPlans.length === 1 && reconciledPlans[0].status === "reconciled",
+    "exact reconciliation replay did not close the purchase plan",
+  );
+  const allocations = await serviceRest(
+    "buyer_float_purchase_allocations?select=lot_id,amount_jpy,card_amount_jpy,buyer_handling_amount_jpy,shipping_amount_jpy,payment_fee_amount_jpy,customs_amount_jpy,other_amount_jpy,retired_basis_usd,purchase_cost_usd,realized_fx_usd&plan_id=eq.9000001",
+  );
+  assert(allocations.length === 1, `buyer-float allocations=${allocations.length}, want 1`);
+  assert(Number(allocations[0].amount_jpy) === 1660, "allocation did not freeze full source funding");
+  const lotId = Number(allocations[0].lot_id);
+  await rest("rpc/finalize_acquisition_lot", {
+    method: "POST",
+    body: JSON.stringify({ p_lot_id: lotId, p_source: "sell" }),
+  });
+  const lots = await rest(
+    `acquisition_lots?select=lot_id,lines_imported,purchase_plan_id&lot_id=eq.${lotId}`,
+  );
+  assert(lots.length === 1 && lots[0].lines_imported === true, "allocated lot was not finalized");
+  await page.screenshot({ path: `${artifactRoot}/desktop-purchase-reconciliation.png`, fullPage: true });
+}
+
+async function attachStaleRefundPlan() {
+  const rows = await rest("purchase_plans?plan_id=eq.9000002", {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ assigned_buyer_email: buyerEmail }),
+  });
+  assert(
+    rows.length === 1 && rows[0].assigned_buyer_email === buyerEmail,
+    "stale-read refund plan was not attached to the buyer",
+  );
+}
+
 async function exerciseBuyerFloat(page) {
   await gotoView(page, "finances", "Finances");
   await page.getByRole("tab", { name: "Buying agents" }).click();
@@ -249,15 +384,40 @@ async function exerciseBuyerFloat(page) {
   await page.getByRole("button", { name: "Record cancellation" }).click();
   assert((await refundResponse).ok(), "refund_buyer_float did not return success");
 
+  await reconcileBuyerFloatPurchase(page);
+  await gotoView(page, "finances", "Finances");
+  await page.getByRole("tab", { name: "Buying agents" }).click();
+  await page.getByText("Agent returned cash", { exact: true }).waitFor();
+
   await page.getByLabel("Returned by").selectOption(buyerEmail);
-  await page.getByLabel("Returned (JPY)").fill("1000");
+  await page.getByLabel("Deposited to").selectOption("1010");
+  await page.getByLabel("Returned (JPY)").fill("900");
+  await page.getByLabel("Actually received (USD)").fill("6.25");
   await page.locator("#settle-date").fill("2026-10-03");
   await page.locator("#settle-note").fill("cash handoff");
   const settleResponse = page.waitForResponse((response) =>
     response.url().includes("/rest/v1/rpc/settle_buyer_float"));
   await page.getByRole("button", { name: "Record return" }).click();
   assert((await settleResponse).ok(), "settle_buyer_float did not return success");
+  await page.getByText("¥11,440", { exact: true }).waitFor();
+
+  const settlements = await rest(
+    `buyer_float_entries?select=amount_jpy,amount_usd,fx_rate_jpy_per_usd,cash_account_id,gl_entry_id,request_payload&buyer_email=eq.${encodeURIComponent(buyerEmail)}&kind=eq.settlement`,
+  );
+  assert(settlements.length === 1, `settlement rows=${settlements.length}, want 1`);
+  assert(Number(settlements[0].amount_jpy) === 900, "settlement JPY was not persisted");
+  assert(Number(settlements[0].amount_usd) === 6.25, "actual returned USD was not persisted");
+  assert(Number(settlements[0].fx_rate_jpy_per_usd) === 144, "settlement rate was not derived");
+  assert(settlements[0].cash_account_id != null, "settlement cash account was not persisted");
+  assert(settlements[0].gl_entry_id != null, "settlement journal link was not persisted");
+  assert(settlements[0].request_payload?.cash_account === "1010", "settlement payload omitted cash account");
+  assert(Number(settlements[0].request_payload?.amount_usd) === 6.25, "settlement payload omitted returned USD");
+
+  await attachStaleRefundPlan();
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("tab", { name: "Buying agents" }).click();
   await page.getByText("¥11,340", { exact: true }).waitFor();
+  await page.getByText("cash handoff", { exact: true }).waitFor();
 
   const replayRows = await rest(
     `buyer_float_entries?select=request_id,gl_entry_id,request_payload&request_id=eq.${lostRequestId}`,
@@ -350,6 +510,15 @@ async function verifyPhoneJourney(page) {
   assert(trades.length === 0, "unlink left a trade row behind");
   await assertNoPageOverflow(page, "phone trades view");
 
+  await gotoView(page, "finances", "財務");
+  const agentsTab = page.getByRole("tab", { name: "購入担当者資金" });
+  await assertTapTarget(agentsTab, "phone buyer-float tab");
+  await agentsTab.click();
+  const staleBalance = page.getByText("¥11,340", { exact: true });
+  const staleMovement = page.getByText("cash handoff", { exact: true });
+  await staleBalance.waitFor();
+  await staleMovement.waitFor();
+
   let balanceReadOutage = true;
   let failedBalanceReads = 0;
   await page.route("**/rest/v1/buyer_float_balance_v**", async (route) => {
@@ -365,24 +534,46 @@ async function verifyPhoneJourney(page) {
       body: JSON.stringify({ code: "E2E_READ", message: "injected read failure" }),
     });
   });
-  await gotoView(page, "finances", "財務");
-  const agentsTab = page.getByRole("tab", { name: "購入担当者資金" });
-  await assertTapTarget(agentsTab, "phone buyer-float tab");
-  await agentsTab.click();
+  await page.locator("#refund-line").selectOption("9000003");
+  await page.locator("#refund-jpy").fill("100");
+  await page.locator("#refund-date").fill("2026-10-04");
+  await page.locator("#refund-note").fill("stale refresh proof");
+  const refundResponse = page.waitForResponse((response) =>
+    response.url().includes("/rest/v1/rpc/refund_buyer_float"));
+  await page.getByRole("button", { name: "キャンセルを記録" }).click();
+  assert((await refundResponse).ok(), "refresh-proof refund did not return success");
   const alert = page.getByRole("alert").filter({ hasText: "担当者残高" });
   await alert.waitFor();
   assert(failedBalanceReads > 0, "balance outage did not intercept a read");
   assert((await alert.textContent()).includes("担当者残高"), "failed source was not localized");
+  assert(await staleBalance.isVisible(), "failed refresh hid the prior balance snapshot");
+  assert(await staleMovement.isVisible(), "failed refresh hid the prior movement snapshot");
+  assert(
+    await page.getByText("stale refresh proof", { exact: true }).count() === 0,
+    "failed refresh partially replaced the prior movement snapshot",
+  );
   assert(
     await page.getByText(/送金はまだありません/).count() === 0,
     "read failure rendered a false empty balance",
   );
   const retry = page.getByRole("button", { name: "再試行" });
   await assertTapTarget(retry, "phone buyer-float retry");
+  await page.screenshot({
+    path: `${artifactRoot}/phone-japanese-buyer-float-stale-warning.png`,
+    fullPage: true,
+  });
   balanceReadOutage = false;
   await retry.click();
   await page.getByText("購入担当者へ送金", { exact: true }).waitFor();
-  await page.getByText("¥11,340", { exact: true }).waitFor();
+  await page.getByText("¥11,440", { exact: true }).waitFor();
+  await page.getByText("stale refresh proof", { exact: true }).waitFor();
+  const refreshedBalances = await rest(
+    `buyer_float_balance_v?select=balance_jpy&buyer_email=eq.${encodeURIComponent(buyerEmail)}`,
+  );
+  assert(
+    refreshedBalances.length === 1 && Number(refreshedBalances[0].balance_jpy) === 11_440,
+    "released outage did not reveal the committed refund balance",
+  );
   await assertNoPageOverflow(page, "phone Japanese buyer-float view");
   await page.screenshot({ path: `${artifactRoot}/phone-japanese-buyer-float.png`, fullPage: true });
 
