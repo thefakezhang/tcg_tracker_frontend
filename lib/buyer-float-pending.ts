@@ -20,6 +20,8 @@ export type RefundPayload = {
 
 export type SettlementPayload = {
   p_buyer_email: string;
+  p_cash_account: string;
+  p_amount_usd: number;
   p_amount_jpy: number;
   p_occurred_at: string;
   p_trip_id: null;
@@ -97,6 +99,8 @@ function validPayload(operation: BuyerFloatOperation, value: unknown): boolean {
       && isNullableString(value.p_note);
   }
   return typeof value.p_buyer_email === "string"
+    && typeof value.p_cash_account === "string"
+    && isFiniteNumber(value.p_amount_usd)
     && isFiniteNumber(value.p_amount_jpy)
     && typeof value.p_occurred_at === "string"
     && value.p_trip_id === null

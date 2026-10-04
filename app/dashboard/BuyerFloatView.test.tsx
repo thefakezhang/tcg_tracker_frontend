@@ -99,6 +99,12 @@ async function fill() {
   fireEvent.change(screen.getByLabelText("Agent received (JPY)"), { target: { value: "146000" } });
 }
 
+function fillSettlement(jpy = "500", usd = "3.25") {
+  fireEvent.change(screen.getByLabelText("Returned by"), { target: { value: "agent@example.com" } });
+  fireEvent.change(screen.getByLabelText("Returned (JPY)"), { target: { value: jpy } });
+  fireEvent.change(screen.getByLabelText("Actually received (USD)"), { target: { value: usd } });
+}
+
 describe("BuyerFloatView", () => {
   it("shows the running balance per agent in yen", async () => {
     renderView();
@@ -283,16 +289,95 @@ describe("BuyerFloatView", () => {
       p_note: "shop cancellation",
     })));
 
-    fireEvent.change(screen.getByLabelText("Returned by"), { target: { value: "agent@example.com" } });
-    fireEvent.change(screen.getByLabelText("Returned (JPY)"), { target: { value: "500" } });
+    fillSettlement();
     fireEvent.change(document.getElementById("settle-date")!, { target: { value: "2026-09-21" } });
     fireEvent.change(screen.getByLabelText("Note", { selector: "#settle-note" }), { target: { value: "cash handoff" } });
     fireEvent.click(screen.getByRole("button", { name: "Record return" }));
 
     await waitFor(() => expect(rpc).toHaveBeenCalledWith("settle_buyer_float", expect.objectContaining({
+      p_request_id: expect.any(String),
+      p_buyer_email: "agent@example.com",
+      p_cash_account: "1020",
+      p_amount_usd: 3.25,
+      p_amount_jpy: 500,
       p_occurred_at: "2026-09-21",
+      p_trip_id: null,
       p_note: "cash handoff",
     })));
+  });
+
+  it("derives the settlement rate from actual cash returned", async () => {
+    renderView();
+    await ready();
+    fillSettlement("500", "3.25");
+
+    expect(screen.getByText("¥153.85 / $1")).toBeTruthy();
+  });
+
+  it("never falls back to a settlement signature without cash evidence", async () => {
+    rpc.mockImplementation((name: string) => name === "assignable_buyers"
+      ? table([{ email: "agent@example.com", has_account: true }])
+      : Promise.resolve({
+        data: null,
+        error: { code: "PGRST202", message: "upgraded settlement signature unavailable" },
+      }));
+    renderView();
+    await ready();
+    fillSettlement();
+
+    fireEvent.click(screen.getByRole("button", { name: "Record return" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("upgraded settlement signature unavailable");
+    const calls = rpc.mock.calls.filter(([name]) => name === "settle_buyer_float");
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toEqual(expect.objectContaining({
+      p_request_id: expect.any(String),
+      p_cash_account: "1020",
+      p_amount_usd: 3.25,
+    }));
+  });
+
+  it("restores and retries the exact settlement after an unknown outcome", async () => {
+    rpc.mockImplementation((name: string) => name === "assignable_buyers"
+      ? table([{ email: "agent@example.com", has_account: true }])
+      : Promise.resolve({
+        data: null,
+        error: { code: "57014", message: "settlement response lost" },
+      }));
+    renderView();
+    await ready();
+    fillSettlement("700", "4.50");
+    fireEvent.change(document.getElementById("settle-date")!, { target: { value: "2026-09-22" } });
+    fireEvent.change(screen.getByLabelText("Note", { selector: "#settle-note" }), { target: { value: "exact cash return" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Record return" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("settlement response lost");
+    const first = rpc.mock.calls.find(([name]) => name === "settle_buyer_float")?.[1];
+    expect(first).toEqual(expect.objectContaining({
+      p_request_id: expect.any(String),
+      p_cash_account: "1020",
+      p_amount_usd: 4.5,
+      p_amount_jpy: 700,
+      p_occurred_at: "2026-09-22",
+      p_note: "exact cash return",
+    }));
+
+    cleanup();
+    renderView();
+    const retry = await screen.findByRole("button", { name: "Retry exact request" });
+    expect((screen.getByLabelText("Deposited to") as HTMLSelectElement).value).toBe("1020");
+    expect((screen.getByLabelText("Actually received (USD)") as HTMLInputElement).value).toBe("4.5");
+    expect((screen.getByLabelText("Returned (JPY)") as HTMLInputElement).value).toBe("700");
+    expect((document.getElementById("settle-date") as HTMLInputElement).value).toBe("2026-09-22");
+    expect((screen.getByLabelText("Actually received (USD)") as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(retry);
+
+    await waitFor(() => {
+      const calls = rpc.mock.calls.filter(([name]) => name === "settle_buyer_float");
+      expect(calls).toHaveLength(2);
+      expect(calls[1][1]).toEqual(calls[0][1]);
+    });
   });
 
   it("surfaces a refund mutation failure", async () => {
@@ -316,8 +401,7 @@ describe("BuyerFloatView", () => {
       : Promise.resolve({ data: null, error: { code: "P0001", message: "settlement rejected" } }));
     renderView();
     await ready();
-    fireEvent.change(screen.getByLabelText("Returned by"), { target: { value: "agent@example.com" } });
-    fireEvent.change(screen.getByLabelText("Returned (JPY)"), { target: { value: "500" } });
+    fillSettlement();
 
     fireEvent.click(screen.getByRole("button", { name: "Record return" }));
 
@@ -332,9 +416,11 @@ describe("BuyerFloatView", () => {
       return table([]);
     });
     renderView();
-    await waitFor(() =>
-      expect((screen.getByLabelText("From") as HTMLSelectElement).disabled).toBe(true));
-    expect(screen.getByText("No cash account")).toBeTruthy();
+    await waitFor(() => {
+      expect((screen.getByLabelText("From") as HTMLSelectElement).disabled).toBe(true);
+      expect((screen.getByLabelText("Deposited to") as HTMLSelectElement).disabled).toBe(true);
+    });
+    expect(screen.getAllByText("No cash account")).toHaveLength(2);
   });
 
   it("will not send until it knows who, from where, and how much", async () => {

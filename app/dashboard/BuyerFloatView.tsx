@@ -138,6 +138,8 @@ export default function BuyerFloatView() {
   const [refundOccurredAt, setRefundOccurredAt] = useState(() => localDateInputValue());
   const [refundNote, setRefundNote] = useState("");
   const [settleBuyer, setSettleBuyer] = useState("");
+  const [settleCashCode, setSettleCashCode] = useState("");
+  const [settleUsd, setSettleUsd] = useState("");
   const [settleJpy, setSettleJpy] = useState("");
   const [settleOccurredAt, setSettleOccurredAt] = useState(() => localDateInputValue());
   const [settleNote, setSettleNote] = useState("");
@@ -177,6 +179,8 @@ export default function BuyerFloatView() {
         }
         if (settlement) {
           setSettleBuyer(settlement.payload.p_buyer_email);
+          setSettleCashCode(settlement.payload.p_cash_account);
+          setSettleUsd(String(settlement.payload.p_amount_usd));
           setSettleJpy(String(settlement.payload.p_amount_jpy));
           setSettleOccurredAt(settlement.payload.p_occurred_at);
           setSettleNote(settlement.payload.p_note ?? "");
@@ -243,6 +247,11 @@ export default function BuyerFloatView() {
         ? prev
         : cash.find((account) => /wise/i.test(account.name))?.code || cash[0]?.code || "",
     );
+    setSettleCashCode((prev) =>
+      cash.some((account) => account.code === prev)
+        ? prev
+        : cash.find((account) => /wise/i.test(account.name))?.code || cash[0]?.code || "",
+    );
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -264,6 +273,11 @@ export default function BuyerFloatView() {
     const a = num(amountUsd), f = num(feeUsd);
     return a && a > 0 && f && f > 0 ? (f / a) * 100 : null;
   }, [amountUsd, feeUsd]);
+
+  const settleRate = useMemo(() => {
+    const jpy = num(settleJpy), usd = num(settleUsd);
+    return jpy != null && jpy > 0 && usd != null && usd > 0 ? jpy / usd : null;
+  }, [settleJpy, settleUsd]);
 
   const remit = async () => {
     if (!ownerId) return;
@@ -456,6 +470,8 @@ export default function BuyerFloatView() {
     } else {
       const payload: SettlementPayload = {
         p_buyer_email: settleBuyer,
+        p_cash_account: settleCashCode,
+        p_amount_usd: num(settleUsd) as number,
         p_amount_jpy: num(settleJpy) as number,
         p_occurred_at: settleOccurredAt,
         p_trip_id: null,
@@ -472,25 +488,17 @@ export default function BuyerFloatView() {
       }
     }
 
-    let legacyAttempted = request.retryPolicy === "verify";
     try {
       const client = createClient();
-      const result = await callBuyerFloatRpc(
-        () => client.rpc("settle_buyer_float", { p_request_id: request.requestId, ...request.payload }),
-        () => client.rpc("settle_buyer_float", request.payload),
-        () => {
-          legacyAttempted = true;
-          request = requireBuyerFloatVerification(request);
-          writePendingBuyerFloatRequest(request);
-          setPendingSettlement(request);
-        },
-      );
+      const result = await client.rpc("settle_buyer_float", {
+        p_request_id: request.requestId,
+        ...request.payload,
+      });
       if (result.error) {
         if (isBuyerFloatOutcomeUnknown(result.error)) {
-          setSettleError(t(
-            legacyAttempted ? "buyerFloat.legacyOutcomeUnknown" : "buyerFloat.outcomeUnknown",
-            { error: formatMutationError(result.error) },
-          ));
+          setSettleError(t("buyerFloat.outcomeUnknown", {
+            error: formatMutationError(result.error),
+          }));
         } else {
           clearPendingBuyerFloatRequest(ownerId, "settlement");
           setPendingSettlement(null);
@@ -503,18 +511,19 @@ export default function BuyerFloatView() {
       setPendingSettlement(null);
       setSettleSent(t("buyerFloat.returnedConfirmation", {
         amount: formatJpy(request.payload.p_amount_jpy),
+        usd: formatUsd(request.payload.p_amount_usd),
         buyer: request.payload.p_buyer_email,
       }));
+      setSettleUsd("");
       setSettleJpy("");
       setSettleNote("");
       setSettleOccurredAt(localDateInputValue());
       await load();
     } catch (mutationError) {
       if (isBuyerFloatOutcomeUnknown(mutationError)) {
-        setSettleError(t(
-          legacyAttempted ? "buyerFloat.legacyOutcomeUnknown" : "buyerFloat.outcomeUnknown",
-          { error: formatMutationError(mutationError) },
-        ));
+        setSettleError(t("buyerFloat.outcomeUnknown", {
+          error: formatMutationError(mutationError),
+        }));
       } else {
         try {
           clearPendingBuyerFloatRequest(ownerId, "settlement");
@@ -544,7 +553,8 @@ export default function BuyerFloatView() {
   );
   const canSettle = mutationReady && busy == null && pendingSettlement?.retryPolicy !== "verify" && (
     pendingSettlement != null || (
-      settleBuyer !== "" && (num(settleJpy) ?? 0) > 0 &&
+      settleBuyer !== "" && settleCashCode !== "" &&
+      (num(settleUsd) ?? 0) > 0 && (num(settleJpy) ?? 0) > 0 &&
       (num(settleJpy) ?? 0) <= settleBalance
     )
   );
@@ -783,9 +793,29 @@ export default function BuyerFloatView() {
                 ))}
               </select>
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="settle-jpy">{t("buyerFloat.returnedJpy")}</Label>
-              <Input id="settle-jpy" className="min-h-12 sm:min-h-9" inputMode="numeric" value={settleJpy} onChange={(e) => setSettleJpy(e.target.value)} disabled={!mutationReady || pendingSettlement != null || busy != null} />
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1">
+                <Label htmlFor="settle-account">{t("buyerFloat.returnedTo")}</Label>
+                <select
+                  id="settle-account"
+                  className={selectClass}
+                  value={settleCashCode}
+                  onChange={(e) => setSettleCashCode(e.target.value)}
+                  disabled={!mutationReady || pendingSettlement != null || busy != null || accounts.length === 0}
+                >
+                  {accounts.length === 0
+                    ? <option value="">{t("buyerFloat.noCashAccount")}</option>
+                    : accounts.map((a) => <option key={a.account_id} value={a.code}>{a.name}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="settle-jpy">{t("buyerFloat.returnedJpy")}</Label>
+                <Input id="settle-jpy" className="min-h-12 sm:min-h-9" inputMode="numeric" value={settleJpy} onChange={(e) => setSettleJpy(e.target.value)} disabled={!mutationReady || pendingSettlement != null || busy != null} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="settle-usd">{t("buyerFloat.returnedUsd")}</Label>
+                <Input id="settle-usd" className="min-h-12 sm:min-h-9" inputMode="decimal" value={settleUsd} onChange={(e) => setSettleUsd(e.target.value)} disabled={!mutationReady || pendingSettlement != null || busy != null} />
+              </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
@@ -797,13 +827,20 @@ export default function BuyerFloatView() {
                 <Input id="settle-note" className="min-h-12 sm:min-h-9" value={settleNote} onChange={(e) => setSettleNote(e.target.value)} placeholder={t("buyerFloat.optional")} disabled={!mutationReady || pendingSettlement != null || busy != null} />
               </div>
             </div>
-            <Button className="min-h-12"
-              variant="secondary"
-              disabled={!canSettle}
-              onClick={() => void settle()}
-            >
-              {pendingSettlement ? t("buyerFloat.retryExactRequest") : t("buyerFloat.recordReturn")}
-            </Button>
+            <div className="flex flex-wrap items-center gap-3">
+              {settleRate != null ? (
+                <span className="text-sm text-muted-foreground">
+                  {t("buyerFloat.rate")} <span className="font-medium tabular-nums text-foreground">{formatJpyPerUsd(settleRate)}</span>
+                </span>
+              ) : null}
+              <Button className="min-h-12 sm:ml-auto"
+                variant="secondary"
+                disabled={!canSettle}
+                onClick={() => void settle()}
+              >
+                {pendingSettlement ? t("buyerFloat.retryExactRequest") : t("buyerFloat.recordReturn")}
+              </Button>
+            </div>
             {pendingSettlement && busy !== "settlement" ? (
               <div role="alert" className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
                 <p>{settleError ?? t(pendingSettlement.retryPolicy === "safe" ? "buyerFloat.pendingSafeRetry" : "buyerFloat.pendingVerify")}</p>

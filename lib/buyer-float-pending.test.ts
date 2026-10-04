@@ -31,6 +31,8 @@ describe("buyer-float pending requests", () => {
   it("persists the verify-only fence before a non-idempotent compatibility call", () => {
     const request = createPendingBuyerFloatRequest("operator-1", "settlement", {
       p_buyer_email: "agent@example.com",
+      p_cash_account: "1000",
+      p_amount_usd: 6.25,
       p_amount_jpy: 900,
       p_occurred_at: "2026-10-03",
       p_trip_id: null,
@@ -52,6 +54,30 @@ describe("buyer-float pending requests", () => {
 
     expect(() => readPendingBuyerFloatRequest("operator-1", "remittance"))
       .toThrow("Invalid persisted remittance request");
+  });
+
+  it("rejects a legacy settlement payload without destination cash evidence", () => {
+    window.localStorage.setItem(
+      "tcg:buyer-float-pending:v1:operator-1:settlement",
+      JSON.stringify({
+        version: 1,
+        ownerId: "operator-1",
+        operation: "settlement",
+        requestId: "legacy-settlement",
+        createdAt: "2026-10-03T00:00:00.000Z",
+        retryPolicy: "safe",
+        payload: {
+          p_buyer_email: "agent@example.com",
+          p_amount_jpy: 900,
+          p_occurred_at: "2026-10-03",
+          p_trip_id: null,
+          p_note: null,
+        },
+      }),
+    );
+
+    expect(() => readPendingBuyerFloatRequest("operator-1", "settlement"))
+      .toThrow("Invalid persisted settlement request");
   });
 
   it("separates ambiguous transport outcomes from definite database rejection", () => {
