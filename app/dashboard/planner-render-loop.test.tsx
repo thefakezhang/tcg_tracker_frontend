@@ -2,6 +2,10 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createPendingPurchaseReconciliation,
+  writePendingPurchaseReconciliation,
+} from "@/lib/purchase-reconciliation-pending";
 
 // The operator makes a purchase plan and the planner dies with React error
 // #185, "Maximum update depth exceeded".
@@ -24,6 +28,12 @@ vi.mock("./use-query", () => ({
 }));
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({
+    auth: {
+      getUser: () => Promise.resolve({
+        data: { user: { id: "operator-1" } },
+        error: null,
+      }),
+    },
     rpc: () => Promise.resolve({ data: [], error: null }),
     from: () => ({
       select: () => ({ order: () => Promise.resolve({ data: [], error: null }) }),
@@ -46,6 +56,7 @@ import PurchasePlannerView from "./PurchasePlannerView";
 
 afterEach(cleanup);
 beforeEach(() => {
+  localStorage.clear();
   mocks.plans = [
     // The first plan of ALL plans belongs to a different trip than the filter.
     { plan_id: 1, name: "August", status: "draft", trip_id: 8, line_count: 0, want_count: 0 },
@@ -77,6 +88,35 @@ describe("purchase planner plan selection", () => {
     // control rather than assumed from the active trip.
     fireEvent.change(screen.getByLabelText("purchasePlanner.tripFilter"), { target: { value: "9" } });
     expect(screen.queryByText(/August/)).toBeNull();
+  });
+
+  it("blocks every new reconciliation while the pending plan is unavailable", async () => {
+    writePendingPurchaseReconciliation(createPendingPurchaseReconciliation(
+      "operator-1",
+      {
+        p_plan_id: 99,
+        p_trip_id: 9,
+        p_fx_rate: 150,
+        p_shipping_jpy: { cardrush: 0 },
+        p_float_funding_jpy: {
+          cardrush: {
+            card_jpy: 0,
+            buyer_handling_jpy: 0,
+            shipping_jpy: 0,
+            payment_fee_jpy: 0,
+            customs_jpy: 0,
+            other_jpy: 0,
+          },
+        },
+      },
+      "a0d88f47-7d9d-4f6d-81b4-3dc7ad6f4570",
+    ));
+
+    render(<PurchasePlannerView />);
+
+    expect((await screen.findByRole("alert")).textContent)
+      .toContain("purchasePlanner.reconcile.pendingPlanUnavailable");
+    expect(screen.queryByRole("button", { name: "purchasePlanner.reconcile.submit" })).toBeNull();
   });
 });
 

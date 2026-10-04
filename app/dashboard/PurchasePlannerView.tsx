@@ -72,8 +72,13 @@ import {
 export { landedPerCardJpy } from "./purchase-fee-policy";
 
 import { formatUsd } from "@/lib/money";
+import PurchaseReconciliationPanel from "./PurchaseReconciliationPanel";
+import {
+  readPendingPurchaseReconciliation,
+  type PendingPurchaseReconciliation,
+} from "@/lib/purchase-reconciliation-pending";
 const selectClass =
-  "h-9 w-full rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
+  "min-h-12 w-full rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring sm:min-h-9";
 
 interface PlannerData {
   plans: PurchasePlan[];
@@ -274,6 +279,11 @@ export default function PurchasePlannerView() {
   const { trips } = useTrips();
   const [tripFilter, setTripFilter] = useState<number | "all" | "none">("all");
   const effectiveTrip = tripFilter;
+  const [reconciliationOwnerId, setReconciliationOwnerId] = useState<string | null>(null);
+  const [pendingReconciliation, setPendingReconciliation] =
+    useState<PendingPurchaseReconciliation | null>(null);
+  const [reconciliationPendingReady, setReconciliationPendingReady] = useState(false);
+  const [reconciliationStateError, setReconciliationStateError] = useState<string | null>(null);
   const [disposition, setDisposition] = useState<DemandCoverage | null>(null);
   const [lineError, setLineError] = useState<string | null>(null);
   const { data, error, isLoading, retry } = useSupabaseQuery(["purchase-planner", planId], () => fetchPlannerData(planId));
@@ -291,6 +301,33 @@ export default function PurchasePlannerView() {
     [data?.plans, effectiveTrip],
   );
   const plan = data?.plans.find((candidate) => candidate.plan_id === planId) ?? null;
+
+  useEffect(() => {
+    let live = true;
+    const restore = async () => {
+      try {
+        const client = createClient();
+        if (!client.auth?.getUser) return;
+        const { data: identity, error: identityError } = await client.auth.getUser();
+        if (identityError) throw identityError;
+        if (!identity.user) throw new Error("No authenticated operator");
+        const restored = readPendingPurchaseReconciliation(identity.user.id);
+        if (!live) return;
+        setReconciliationOwnerId(identity.user.id);
+        setPendingReconciliation(restored);
+        if (restored) {
+          setTripFilter("all");
+          setPlanId(restored.payload.p_plan_id);
+        }
+      } catch (restoreError) {
+        if (live) setReconciliationStateError(formatMutationError(restoreError));
+      } finally {
+        if (live) setReconciliationPendingReady(true);
+      }
+    };
+    void restore();
+    return () => { live = false; };
+  }, []);
   // One rule: the selected plan is one the operator can actually see.
   //
   // This was two effects, and they disagreed. One re-selected from EVERY plan
@@ -302,15 +339,25 @@ export default function PurchasePlannerView() {
   // Selecting from the same set the filter enforces is what makes it settle,
   // rather than the two effects agreeing by luck about which plans exist.
   useEffect(() => {
+    if (!data) return;
+    const pendingPlanId = pendingReconciliation?.payload.p_plan_id;
+    if (pendingPlanId != null && data.plans.some((row) => row.plan_id === pendingPlanId)) {
+      if (tripFilter !== "all") setTripFilter("all");
+      if (planId !== pendingPlanId) setPlanId(pendingPlanId);
+      return;
+    }
     if (planId != null && visiblePlans.some((p) => p.plan_id === planId)) return;
     const next = visiblePlans[0]?.plan_id ?? null;
     if (next !== planId) setPlanId(next);
-  }, [visiblePlans, planId]);
+  }, [data, pendingReconciliation, planId, tripFilter, visiblePlans]);
   const allocations = data?.allocations ?? [];
   const coverage = data?.coverage ?? [];
   const lines = data?.lines ?? [];
   const summary = useMemo(() => summarizePlan(lines, coverage, allocations), [lines, coverage, allocations]);
   const editable = plan?.status === "draft" || plan?.status === "ready";
+  const pendingPlanUnavailable = pendingReconciliation != null
+    && data != null
+    && !data.plans.some((row) => row.plan_id === pendingReconciliation.payload.p_plan_id);
 
   // Offered only for a plan nothing has happened to. The database refuses the
   // rest - a placed plan cascades to the agent's recorded purchases - so this
@@ -364,6 +411,7 @@ export default function PurchasePlannerView() {
             ))}
           </select>
           <select
+            aria-label={t("purchasePlanner.planPicker")}
             className={`${selectClass} min-w-48 flex-1 sm:flex-none`}
             value={planId ?? ""}
             onChange={(event) => setPlanId(event.target.value ? Number(event.target.value) : null)}
@@ -410,6 +458,20 @@ export default function PurchasePlannerView() {
         </Card>
       ) : (
         <>
+          {reconciliationStateError ? (
+            <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+              {t("purchasePlanner.reconcile.pendingStateError", {
+                error: reconciliationStateError,
+              })}
+            </p>
+          ) : null}
+          {pendingPlanUnavailable ? (
+            <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+              {t("purchasePlanner.reconcile.pendingPlanUnavailable", {
+                id: pendingReconciliation?.payload.p_plan_id ?? "",
+              })}
+            </p>
+          ) : null}
           <div className="grid grid-cols-2 gap-2 lg:grid-cols-6">
             <SummaryCard label={t("purchasePlanner.lines")} value={summary.lineCount} />
             <SummaryCard label={t("purchasePlanner.units")} value={summary.plannedUnits} />
@@ -433,6 +495,23 @@ export default function PurchasePlannerView() {
         </div>
       )}
       {plan && (plan.status === "ordered" || plan.status === "reconciled") && <BuyerProgressStrip planId={plan.plan_id} />}
+      {plan
+        && reconciliationPendingReady
+        && reconciliationOwnerId
+        && !pendingPlanUnavailable
+        && (pendingReconciliation == null
+          || pendingReconciliation.payload.p_plan_id === plan.plan_id)
+        && (plan.status === "ordered"
+          || pendingReconciliation?.payload.p_plan_id === plan.plan_id) ? (
+          <PurchaseReconciliationPanel
+            plan={plan}
+            trips={trips}
+            ownerId={reconciliationOwnerId}
+            pending={pendingReconciliation}
+            onPendingChange={setPendingReconciliation}
+            onChanged={retry}
+          />
+        ) : null}
 
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
             <div className="flex items-center gap-2 text-sm">
