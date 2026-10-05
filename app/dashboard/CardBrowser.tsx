@@ -29,8 +29,6 @@ import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
 import { useAvailableCardSources, useCardData, type CardRowData, type RegionFilter, cardVariant, getCardDisplayName } from "./use-card-data";
 import { createClient } from "@/lib/supabase/client";
-import { RefreshPricesAction } from "./RefreshPricesAction";
-import { RefreshInFlightStrip } from "./RefreshInFlightStrip";
 import { useLanguage } from "./LanguageContext";
 import { createColumns, createMtgColumns, createSelectColumn, PriceCell } from "./columns";
 import { MtgPrintingBadges } from "./MtgPrintingBadges";
@@ -164,8 +162,9 @@ export default function CardBrowser() {
   }, []);
 
   const [refreshOpen, setRefreshOpen] = useState(false);
-  // Multi-select for targeted price refresh (redesign R6). Pokemon singles only -
-  // request_card_refresh resolves pokemon cards.
+  // Multi-select, Pokemon singles only. It existed for targeted price refresh
+  // (redesign R6), which was retired on 2026-10-05; AddToPlanAction is now the
+  // only consumer, and it is Pokemon-scoped for the same identity reason.
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const selectionEnabled = activeGame === "pokemon";
   const availableSources = useAvailableCardSources(activeGame, sourceSide);
@@ -746,11 +745,6 @@ export default function CardBrowser() {
         <QueryError error={error} onRetry={refetch} />
       )}
 
-      {/* Multi-select refresh (redesign R6). The action hides itself when none of
-          the selected cards has a refreshable source, so this strip only appears
-          when there is something to actually do. */}
-      {selectionEnabled && <RefreshInFlightStrip />}
-
       {selectionEnabled && selectedCardIds.length > 0 && (
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-muted-foreground text-xs">
@@ -767,10 +761,6 @@ export default function CardBrowser() {
               )}
             </span>
           )}
-          {/* Re-read the page once the queued refresh lands, so the prices and
-              their freshness chips show the new values instead of the ages the
-              table was rendered with before the click. */}
-          <RefreshPricesAction cardIds={selectedCardIds} onRefreshed={refetch} />
           {/* Selecting cards here is where the operator decides what to buy, so
               this is where adding to a plan belongs - it used to be possible
               only one card at a time, inside the planner. */}

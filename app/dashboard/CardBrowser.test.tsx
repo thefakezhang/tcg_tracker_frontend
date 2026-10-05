@@ -82,9 +82,7 @@ vi.mock("./data-table", () => ({
 vi.mock("./DecisionActions", () => ({ DecisionActions: () => <div><button>decision.watch</button><button aria-label="decision.dismissOpportunity" /></div> }));
 vi.mock("./opportunity-exposures", () => ({ browserOpportunityPayloads: () => [], recordOpportunityExposures: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("./DecisionWatchlist", () => ({ default: () => <div>watchlist surface</div> }));
-vi.mock("./RefreshPricesAction", () => ({ RefreshPricesAction: () => null }));
 vi.mock("./AddToPlanAction", () => ({ AddToPlanAction: ({ cards }: { cards: { id: number; name: string }[] }) => <button>add to plan ({cards.map((c) => c.name).join(", ")})</button> }));
-vi.mock("./RefreshInFlightStrip", () => ({ RefreshInFlightStrip: () => null }));
 vi.mock("./CardDetailModal", () => ({
   default: ({ card, open, onClose }: { card: { card: { card_id: string } } | null; open: boolean; onClose: () => void }) => open ? (
     <div role="dialog" aria-label="card detail">
