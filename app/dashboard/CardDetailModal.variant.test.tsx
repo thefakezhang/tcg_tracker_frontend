@@ -57,7 +57,6 @@ vi.mock("./owned-inventory", () => ({
   bumpOwnedInventory: vi.fn(),
 }));
 vi.mock("./AddToLotPopover", () => ({ AddToLotPopover: () => null }));
-vi.mock("./RefreshPricesAction", () => ({ RefreshPricesAction: () => null }));
 vi.mock("./UidChip", () => ({ UidChip: () => null }));
 vi.mock("./FreshnessChip", () => ({ FreshnessChip: () => null }));
 vi.mock("./GradeEvidencePanel", () => ({ default: () => null }));

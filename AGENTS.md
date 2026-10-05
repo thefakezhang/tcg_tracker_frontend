@@ -180,8 +180,6 @@ app/
     PurchasePlannerView.tsx # Pre-order card plan, customer assignments, backups, coverage, and readiness review
     ReachOutView.tsx      # Customers who want cards currently in stock (customer_reachout_v)
     Receipts.tsx          # Generic receipt-photo gallery for any owning entity (polymorphic receipts table)
-    RefreshInFlightStrip.tsx # Per-source counts of outstanding refresh_requests (polling)
-    RefreshPricesAction.tsx # On-demand targeted price refresh button (request_card_refresh RPC)
     ReviewQueueNavigationContext.tsx # One-shot {game, source} navigation target for the match review queue
     SalesView.tsx         # All-sales history over sales_ledger_v with expandable groups and receipts
     SealedBrowser.tsx     # Sealed tab browser (condition/edition/region dropdowns; no PSA/tier)
@@ -426,10 +424,8 @@ The surface must never create page-level horizontal overflow.
 
 ### Targeted price refresh (redesign R6)
 
-- `RefreshPricesAction.tsx` requests an on-demand refresh for one or many cards via the `request_card_refresh` RPC and renders the verdict inline: queued (with an ETA from the source's lane), already queued, or not targetable.
 - **The button is absent, never disabled**, when nothing about the selected cards can be refreshed. It asks `card_refresh_targets` (read-only; queues nothing) to decide.
 - **Do not derive targetability client-side.** The source matrix lives in the RPC on purpose, so a shop that starts storing a durable per-card handle appears in the UI with no frontend change; duplicating the matrix here would break that.
-- `RefreshInFlightStrip.tsx` polls `refresh_requests` for outstanding `pending`/`running` rows and renders per-source counts; it renders nothing when nothing is in flight. Polling is deliberate - no realtime dependency.
 - `CardBrowser` wires the multi-select (Pokémon only - the RPC resolves pokemon cards). Selection is page-local and clears when the page or filters change; selected ids are deduped because PSA and non-PSA rows share a `card_id`.
 - Freshness itself stays on `FreshnessChip` (`last_updated`) - a completed refresh turns the dots green with no extra plumbing.
 - Backend contract: `docs/targeted_refresh.md` in the backend repo.
@@ -817,7 +813,7 @@ The authoritative schema is `docs/schema.md` in the backend repository; this tab
 | `deal_store_sightings` | operator-verified in-store sightings (written via `record_deal_store_sighting`) |
 | `deal_opportunity_exposures` | deduplicated first-view evidence for actual purchasable listings (written via `record_deal_opportunity_exposures`) |
 | `market_events` | event labels: dates, kind, scope, title, note, source URL, confirmed/rumored |
-| `refresh_requests` | targeted-refresh queue; `RefreshInFlightStrip` polls pending/running rows |
+| `refresh_requests` | retired 2026-10-05 with the targeted-refresh worker; no reader and no writer left in this app |
 | `source_run_*` (jobs, execution_jobs, scheduled_jobs, task_inventory, requests, operators, hosts) | whole-source run-control estate; the frontend reads it only through the redacted `source_run_control_snapshot` RPC |
 | `customers` | customer registry behind the CRM, wishlist, and sale attribution surfaces |
 | `source_health` | one materialized daily row per (run_date, source): listing count, match coverage, freshness |

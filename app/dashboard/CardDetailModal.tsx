@@ -68,7 +68,6 @@ import {
 import { useLanguage } from "./LanguageContext";
 import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
-import { RefreshPricesAction } from "./RefreshPricesAction";
 import { UidChip } from "./UidChip";
 import {
   PokemonCuratorFlagSwitches,
@@ -283,7 +282,6 @@ export default function CardDetailModal({
   // Bumped when a targeted refresh this modal requested has finished, which
   // re-runs the listings effect below so the panel shows the prices that just
   // landed rather than the ones it opened with.
-  const [refreshedVersion, setRefreshedVersion] = useState(0);
 
   const defaultSightingGrade = useCallback((tab: "non-psa" | "psa") => {
     const rowGrade = Number(card?.psaGrade ?? 0);
@@ -508,7 +506,7 @@ export default function CardDetailModal({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, open, activeGame, ownedVersion, refreshedVersion]);
+  }, [card, open, activeGame, ownedVersion]);
 
   const { buyNonPsa, sellNonPsa, buyPsa, sellPsa } = useMemo(() => {
     const normalize = (l: MarketListing) =>
@@ -717,15 +715,6 @@ export default function CardDetailModal({
                 ) : (
                   <span className="text-muted-foreground">{t("inventory.ownedNone")}</span>
                 )}
-              </div>
-              {/* On-demand price refresh for this card (redesign R6). The RPC's
-                  verdict renders inline; freshness itself stays on FreshnessChip,
-                  which turns green once a queued refresh lands. */}
-              <div className="mt-2">
-                <RefreshPricesAction
-                  cardIds={[Number(def.card_id)]}
-                  onRefreshed={() => setRefreshedVersion((v) => v + 1)}
-                />
               </div>
             </div>
           </div>
