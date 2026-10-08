@@ -327,8 +327,15 @@ The set box resolves typed text through `pokemon_set_search_v` (our set names pl
 - External-identifier lookup failures use a typed safe error, keep the last successful page visible, and expose an accessible Retry action without rendering database details.
 - AbortController cancels stale requests. No client-side caching needed (queries are fast paginated reads).
 - The `aggregate-prices` edge function pre-computes summaries from raw listings into `pokemon_price_summaries` / `mtg_price_summaries`. Invoke it to refresh data.
-  Each row carries exactly one lane: entry = the cheapest live ask in one region (`best_sell_*`, kind `ask` only), exit = the best realizable price in the other region (`best_buy_*`, ranked sold > bid > valuation by the listing's `price_kind`); both directions are scored per card and the better ROI is kept, so `best_sell_region -> best_buy_region` is the lane (JP->NA import, NA->JP export) and `best_buy_kind` / `best_sell_kind` say what each side is.
+  Each row carries exactly one lane: entry = what a copy costs in one region (`best_sell_*`, kind `ask` only), exit = the best realizable price in the other region (`best_buy_*`, ranked sold > bid > valuation by the listing's `price_kind`); both directions are scored per card and the better ROI is kept, so `best_sell_region -> best_buy_region` is the lane (JP->NA import, NA->JP export) and `best_buy_kind` / `best_sell_kind` say what each side is.
   A card with no cross-region lane keeps the informational fallback (best entry and exit from anywhere, `roi` NULL).
+  **The entry on a marketplace is the MEDIAN ask, not the minimum.**
+`*_market_listings` holds the minimum ask per condition, which on tcgplayer is one seller's price for one copy and frequently the worst copy, so an ROI computed off it is arbitrage against a single lucky listing.
+At the near-mint tier the function substitutes `GREATEST(minimum ask, tcgplayer_metrics.median_listing_price)`, joined one row per card through `*_external_identifiers` on `platform_name = 'tcgplayer_SKU'`.
+Only tcgplayer is substituted: every other source is a shop quoting its own single price, where the ask IS the cost.
+Only near mint is substituted: a TCGplayer SKU is a (product, language, printing, condition) tuple, so its median is a near-mint number, and the played tiers and the PSA pass keep the minimum ask.
+Measured 2026-10-08, the median ran 1.69x the minimum at the MTG median and 2.13x on average, which removed 4,240 of 18,601 positive-ROI MTG lanes (22.8%) and 436 of 9,310 Pokemon ones as false positives; no lane and no row was lost.
+`insertBySourceCards` deliberately keeps the true minimum, because the per-source snapshot answers "which shops carry this and at what price" and must match what the operator sees on clicking through.
   `lib/price-kind.ts` maps a kind to the one-word marker `PriceCell` and the detail modals show beside a price (sold / offer / est.; an ask has none); `lib/lane.ts` names the lane `RoiCell` shows under the ROI.
   Design and evidence: `docs/realized_sale_comps.md` in the backend repo.
 - Three caches still exist for `CardDetailModal` use:
@@ -786,6 +793,8 @@ The authoritative schema is `docs/schema.md` in the backend repository; this tab
 | `exchange_rates` | from_currency, to_currency, rate |
 | `conditions` | condition_id, tier |
 | `locations` | location_id, name |
+| `pokemon_external_identifiers` / `mtg_external_identifiers` | card_id, platform_name (`tcgplayer`, `tcgplayer_SKU`, `snkrdunk`, `collectr`, ...), external_reference_id |
+| `tcgplayer_metrics` | external_reference_id (a tcgplayer SKU), language, printing, last_updated, listing_count, total_quantity, min/median_listing_price, low_shipping, min/median_effective_price (`_effective_` adds shipping), sales_count_60d, volatility_label/zscore |
 | `pokemon_price_summaries` / `mtg_price_summaries` | card_id, tier (-1 for PSA), psa_grade, best_buy_*, best_sell_*, roi, updated_at |
 | `pokemon_grade_signals` | card_id, psa_grade, model_version, computed_at, band percentiles, pop, pop_velocity, demand and exit evidence |
 | `calibration_runs` | immutable model calibration headline fields plus detailed percentile, segment, decision, miss, and full-report JSON |
