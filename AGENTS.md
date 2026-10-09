@@ -329,13 +329,21 @@ The set box resolves typed text through `pokemon_set_search_v` (our set names pl
 - The `aggregate-prices` edge function pre-computes summaries from raw listings into `pokemon_price_summaries` / `mtg_price_summaries`. Invoke it to refresh data.
   Each row carries exactly one lane: entry = what a copy costs in one region (`best_sell_*`, kind `ask` only), exit = the best realizable price in the other region (`best_buy_*`, ranked sold > bid > valuation by the listing's `price_kind`); both directions are scored per card and the better ROI is kept, so `best_sell_region -> best_buy_region` is the lane (JP->NA import, NA->JP export) and `best_buy_kind` / `best_sell_kind` say what each side is.
   A card with no cross-region lane keeps the informational fallback (best entry and exit from anywhere, `roi` NULL).
-  **The entry on a marketplace is the MEDIAN ask, not the minimum.**
+  **On a marketplace both sides are corrected to what you would transact at.** The entry rises to the median ask; the exit falls to the cheapest competing ask.
 `*_market_listings` holds the minimum ask per condition, which on tcgplayer is one seller's price for one copy and frequently the worst copy, so an ROI computed off it is arbitrage against a single lucky listing.
 At the near-mint tier the function substitutes `GREATEST(minimum ask, tcgplayer_metrics.median_listing_price)`, joined one row per card through `*_external_identifiers` on `platform_name = 'tcgplayer_SKU'`.
 Only tcgplayer is substituted: every other source is a shop quoting its own single price, where the ask IS the cost.
 Only near mint is substituted: a TCGplayer SKU is a (product, language, printing, condition) tuple, so its median is a near-mint number, and the played tiers and the PSA pass keep the minimum ask.
 Measured 2026-10-08, the median ran 1.69x the minimum at the MTG median and 2.13x on average, which removed 4,240 of 18,601 positive-ROI MTG lanes (22.8%) and 436 of 9,310 Pokemon ones as false positives; no lane and no row was lost.
 `insertBySourceCards` deliberately keeps the true minimum, because the per-source snapshot answers "which shops carry this and at what price" and must match what the operator sees on clicking through.
+The exit is capped for the same reason, pointed the other way, and against the same number.
+A tcgplayer `Buy` row is `VolumeWeightedLowMedian`, the right conservative estimate of a realized sale, but it is historical: `CODIE, RAVENOUS CODEX` (FRA 431) carried a $3.39 sold estimate on 2026-10-09 against a $0.65 median ask with 625 copies listed, and nothing realizes $3.39 there.
+So the exit takes `LEAST(sold estimate, median_listing_price)`.
+**The cap is the median ask and not the minimum**, which is what it first shipped as and was wrong: the minimum is one seller's price for one copy, so the objection that disqualifies it as an entry disqualifies it as an exit reference, and capping there is refuted by our own sale data.
+`COUNT ON LUCK` (DFT 457 foil) carries a $5.00 sold estimate over 14 sales in 60 days while its cheapest listing sits at $3.49, so sales plainly clear above the floor; the minimum cap understated that exit by a quarter.
+Both corrections are clamped, so each can only move its own side the pessimistic way; a summary row's figure can still move the other way when the lane flips direction, which was every such row when measured (16 MTG and 132 Pokemon entries, 2 Pokemon exits, all changing region and source together).
+Combined, the two corrections take MTG from 19,002 positive-ROI near-mint lanes to 14,343 and Pokemon from 9,315 to 8,861; the entry accounts for almost all of it (4,240 of the 4,659 MTG lanes removed) and no lane or row is lost.
+A Japanese shop is never adjusted: its ask is the cost and its bid is a firm offer it will honour, so neither stands in for a market.
   `lib/price-kind.ts` maps a kind to the one-word marker `PriceCell` and the detail modals show beside a price (sold / offer / est.; an ask has none); `lib/lane.ts` names the lane `RoiCell` shows under the ROI.
   Design and evidence: `docs/realized_sale_comps.md` in the backend repo.
 - Three caches still exist for `CardDetailModal` use:
