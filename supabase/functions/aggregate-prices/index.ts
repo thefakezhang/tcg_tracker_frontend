@@ -55,6 +55,18 @@ const INDICATOR_LOCATIONS = "'collectr', 'cardladder', 'pricecharting'";
 // SQL fragment.
 const ESTIMATE_LOCATIONS = "'collectr', 'pricecharting'";
 
+// The one source whose asks are a LADDER rather than a price. tcgplayer is a
+// marketplace: its listing rows hold the minimum ask per condition, which is
+// one seller's price for one copy. Every other source here is a shop quoting
+// its own single price, where the ask IS the cost. See MEDIAN_ASK_CARDS and
+// the comment on computeAndInsert. SQL literal.
+const MARKETPLACE_LOCATION = "'tcgplayer'";
+
+// Near mint. tcgplayer_metrics carries one row per SKU and a SKU is a
+// (product, language, printing, condition) tuple, so the median it reports is
+// the near-mint median; it says nothing about a played copy.
+const NM_TIER = 1;
+
 serve(async () => {
   const pool = new Pool(Deno.env.get("SUPABASE_DB_URL")!, 1, true);
 
@@ -66,6 +78,7 @@ serve(async () => {
 
       for (const game of GAMES) {
         const listingsTable = `${game}_market_listings`;
+        const identifiersTable = `${game}_external_identifiers`;
         const summariesTable = `${game}_price_summaries`;
         const bySourceTable = `${game}_summary_by_source`;
 
@@ -89,6 +102,10 @@ serve(async () => {
           const count = await computeAndInsert(
             conn,
             listingsTable,
+            identifiersTable,
+            // Near mint only. The median is a near-mint number, so a played
+            // tier keeps the minimum ask it always had.
+            tier === NM_TIER,
             summariesTable,
             "non-psa",
             [tier],
@@ -104,6 +121,11 @@ serve(async () => {
         const psaCount = await computeAndInsert(
           conn,
           listingsTable,
+          identifiersTable,
+          // Graded slabs. A PSA 10 and a raw near-mint copy are different
+          // goods at different prices, and tcgplayer_metrics knows nothing of
+          // a grade, so its median says nothing about this row.
+          false,
           summariesTable,
           "psa",
           null,
@@ -166,15 +188,135 @@ serve(async () => {
 // point of view: a shop's "Buy" price is what it pays you, i.e. your exit.
 // best_buy_kind / best_sell_kind record what each side actually is so the UI
 // can label an estimate as one.
+// useTcgDepth corrects BOTH sides of a tcgplayer lane from "the price we
+// stored" to "the price you would transact at", using the live depth in
+// tcgplayer_metrics.
+//
+// The two sides were optimistic in opposite ways, and for the same reason: a
+// single stored number was standing in for a market with a ladder of sellers.
+//
+//   ENTRY was min(ask)        -> one seller's price for one copy, often the
+//                                worst copy. Understates what you PAY.
+//                                LTC 493, 2026-10-08: $21.50 minimum against a
+//                                $51.23 median, while the card had traded
+//                                above $45 since August.
+//   EXIT  was the sold median -> VolumeWeightedLowMedian, correctly
+//                                conservative but HISTORICAL. Overstates what
+//                                you GET once supply has buried the price.
+//                                FRA 431, 2026-10-09: a $3.39 sold estimate
+//                                with 625 copies listed from $0.11.
+//
+// buyestimate.go in the backend states the principle for the exit: "a Buy
+// price that overstates turns an unprofitable purchase into an apparently
+// profitable one. Understating costs a missed deal; overstating costs money."
+// Read in both directions it governs the whole lane - understating what you
+// pay and overstating what you receive are the same error - and before this
+// change neither side of a tcgplayer lane obeyed it fully.
+//
+// So: entry rises to the median ask, exit falls to the cheapest competing ask,
+// and each is clamped so it can only move the pessimistic way.
+//
+// Only tcgplayer, and only at near mint:
+//
+//   - tcgplayer is a marketplace. A Japanese shop lists ONE price per card, so
+//     its ask IS the cost and its bid is a firm offer it will honour; neither
+//     stands in for a market and neither is adjusted.
+//   - tcgplayer_metrics keys on a SKU, which is a (product, language, printing,
+//     condition) tuple, so its depth describes near mint only. Played tiers and
+//     the PSA pass keep the stored prices they always had.
+//
+// The join is pre-aggregated, because a card with two tcgplayer_SKU
+// identifiers would otherwise duplicate every listing row.
 async function computeAndInsert(
   // deno-lint-ignore no-explicit-any
   conn: any,
   listingsTable: string,
+  identifiersTable: string,
+  useTcgDepth: boolean,
   summariesTable: string,
   psaMode: "non-psa" | "psa",
   tiers: number[] | null,
   outputTier: number
 ): Promise<number> {
+  // One row per card, so a card with two tcgplayer_SKU identifiers cannot
+  // duplicate its listings. It is 1:1 today - 204,926 MTG identifiers across
+  // 204,926 cards, 2026-10-08 - but a join that is only correct because of
+  // today's data is a fan-out waiting to happen: an earlier ad-hoc query
+  // joined locations on name and silently reported 1,555 rows where 691
+  // existed, because five location rows are named 'cardrush'.
+  //
+  // Both sides reference the same number, the median ask, because that is the
+  // one figure here that describes the market rather than one listing in it.
+  // The two aggregates are the same column read the conservative way for each
+  // side - max() for the entry you pay, min() for the exit cap - so a card
+  // that ever does carry two SKUs cannot be made to look better by which side
+  // the join happens to pick.
+  const depthJoin = useTcgDepth
+    ? `LEFT JOIN (
+             SELECT ext.card_id,
+                    max(tm.median_listing_price) AS median_ask_high,
+                    min(tm.median_listing_price) AS median_ask_low
+               FROM ${identifiersTable} ext
+               JOIN tcgplayer_metrics tm
+                 ON tm.external_reference_id = ext.external_reference_id
+              WHERE ext.platform_name = 'tcgplayer_SKU'
+                AND tm.median_listing_price > 0
+              GROUP BY ext.card_id
+           ) med ON med.card_id = ml.card_id`
+    : "";
+
+  // Both sides of a tcgplayer lane are corrected here, by the same principle
+  // pointed in opposite directions: never let an optimistic figure stand when
+  // a live quote contradicts it.
+  //
+  // ENTRY (a 'Sell' row) rises to the median ask. The stored minimum is one
+  // seller's price for one copy and frequently the worst copy, so it
+  // understates what you will PAY.
+  //
+  // EXIT (a 'Buy' row) falls to the median ask. The stored number is
+  // VolumeWeightedLowMedian, the right conservative estimate of a realized
+  // sale and already used that way - but it is HISTORICAL, and when current
+  // supply has collapsed the price it overstates what you will GET. CODIE,
+  // RAVENOUS CODEX (FRA 431), measured 2026-10-09: a $3.39 sold estimate
+  // against a $0.65 median ask with 625 copies listed. Nothing realizes $3.39
+  // there.
+  //
+  // The cap is the MEDIAN ask and deliberately not the minimum, which is what
+  // this first shipped as and which was wrong. The minimum is one seller's
+  // price for one copy - the same objection that disqualifies it as an entry
+  // disqualifies it as an exit reference - and capping there is refuted by our
+  // own sale data: COUNT ON LUCK (DFT 457, foil) carries a $5.00 sold estimate
+  // over 14 sales in 60 days while its cheapest listing sits at $3.49, so
+  // sales plainly clear above the floor. Capping at $3.49 understated the exit
+  // by a quarter; the $4.72 median is what the market is.
+  //
+  // GREATEST and LEAST rather than plain substitutions, so each correction can
+  // only move its side the pessimistic way. The two tables refresh on their
+  // own cadences - on 2,026 of 191,306 MTG near-mint rows the median already
+  // sits BELOW the live minimum - and a bare substitution would then commit
+  // the very error it is fixing, in reverse.
+  //
+  // Only tcgplayer is touched, because only tcgplayer is a marketplace. A
+  // Japanese shop's ask is the cost and its bid is a firm offer it will honour;
+  // neither is an estimate standing in for a market, so neither is adjusted.
+  //
+  // A SUMMARY ROW can still show a lower entry than before, and that is the
+  // lane rule working rather than a leak: raising the US entry makes the
+  // export lane worse, so for a few cards the import lane now wins instead
+  // and the row's entry becomes a Japanese shop's ask. Measured 2026-10-08,
+  // every such row changed BOTH region and source - 16 of 253,344 MTG rows
+  // and 132 of 31,630 Pokemon - and none of them stayed on tcgplayer.
+  const lanePrice = useTcgDepth
+    ? `CASE
+             WHEN l.name NOT IN (${MARKETPLACE_LOCATION}) THEN ml.price
+             WHEN ml.price_type = 'Sell' AND med.median_ask_high IS NOT NULL
+               THEN GREATEST(ml.price, med.median_ask_high)
+             WHEN ml.price_type = 'Buy'  AND med.median_ask_low  IS NOT NULL
+               THEN LEAST(ml.price, med.median_ask_low)
+             ELSE ml.price
+           END`
+    : "ml.price";
+
   const query = `
     WITH filtered_listings AS (
       SELECT
@@ -183,16 +325,17 @@ async function computeAndInsert(
         ml.price_type,
         ml.price_kind,
         ${EXIT_KIND_RANK} AS kind_rank,
-        ml.price,
+        ${lanePrice} AS price,
         ml.currency,
         c.symbol AS currency_symbol,
         l.name AS location_name,
         l.market_region,
-        ml.price * COALESCE(er.rate, 1) AS normalized_price
+        ${lanePrice} * COALESCE(er.rate, 1) AS normalized_price
       FROM ${listingsTable} ml
       JOIN currencies c ON c.code = ml.currency
       JOIN locations l ON l.location_id = ml.location_id
       LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
+      ${depthJoin}
       WHERE
         -- Estimates are out of the card summary entirely; see
         -- ESTIMATE_LOCATIONS. Dropping them here rather than in the exit
