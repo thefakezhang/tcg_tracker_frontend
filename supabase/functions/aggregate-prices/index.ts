@@ -227,6 +227,39 @@ serve(async () => {
 //
 // The join is pre-aggregated, because a card with two tcgplayer_SKU
 // identifiers would otherwise duplicate every listing row.
+// netExit is what selling at an exit returns. A US exit loses the platform's
+// fee, per-order fee and postage (backend migrations 000549/000550 and
+// docs/net_exit_roi.md): raw copies sell on TCGplayer, graded ones on eBay.
+// A Japanese exit is a shop buylist paying cash, so it stays gross. Gross ROI
+// hid this: a Jirachi GX bought for $70.52 against a ~$90 market showed +28%
+// and returned +1.6%.
+//
+// The lane joins its exit's exit_cost_profiles row (exitCostJoin) and applies
+// public.exit_net_from_costs, a pure function PostgreSQL inlines. Calling
+// exit_net_unit_usd per row instead costs ~18us a call, measured 2026-10-13,
+// which is tens of seconds over the MTG lanes.
+//
+// A US copy can also go to a vendor, who pays a flat share of market with no
+// fees or postage (the 'vendor' profile, 80%; backend 000553). The net is the
+// better of the two channels, matching exit_net_best_unit_usd: with vendors at
+// 80%, TCGplayer wins only from about $20 to $50 and above about $100.
+function exitCostJoin(gradeExpr: string): string {
+  return `LEFT JOIN exit_cost_profiles xf
+        ON xf.platform = CASE WHEN x.market_region = 'NA'
+                              THEN CASE WHEN ${gradeExpr} > 0 THEN 'ebay' ELSE 'tcgplayer' END
+                         END
+      LEFT JOIN exit_cost_profiles vf
+        ON vf.platform = 'vendor' AND x.market_region = 'NA'`;
+}
+function netFrom(alias: string): string {
+  return `public.exit_net_from_costs(x.normalized_price::numeric, ${alias}.fee_pct, ${alias}.fixed_fee,
+                    ${alias}.postage_usd, ${alias}.tracked_postage_usd, ${alias}.tracked_from_usd,
+                    ${alias}.signature_postage_usd, ${alias}.signature_from_usd)`;
+}
+const NET_EXIT = `CASE WHEN xf.platform IS NULL THEN x.normalized_price::numeric
+             ELSE GREATEST(${netFrom("xf")}, ${netFrom("vf")})
+           END`;
+
 async function computeAndInsert(
   // deno-lint-ignore no-explicit-any
   conn: any,
@@ -405,18 +438,23 @@ async function computeAndInsert(
         e.market_region AS sell_region,
         e.normalized_price AS sell_normalized,
         e.price_kind AS sell_kind,
-        (x.normalized_price - e.normalized_price) / e.normalized_price * 100 AS roi
+        (x.normalized_price - e.normalized_price) / e.normalized_price * 100 AS roi,
+        (${NET_EXIT} - e.normalized_price) / e.normalized_price * 100 AS net_roi
       FROM entries e
       JOIN exits x
         ON x.card_id = e.card_id
         AND x.group_grade = e.group_grade
         AND x.market_region <> e.market_region
         AND x.rn = 1
+      ${exitCostJoin("e.group_grade")}
       WHERE e.rn = 1
       ORDER BY
         e.card_id,
         e.group_grade,
-        (x.normalized_price - e.normalized_price) / e.normalized_price DESC,
+        -- The better lane is the one that returns more after selling costs,
+        -- so a Japanese buylist can now beat a US exit that only looked
+        -- better gross.
+        (${NET_EXIT} - e.normalized_price) / e.normalized_price DESC,
         x.kind_rank ASC,
         (e.market_region = 'JP') DESC
     ),
@@ -441,7 +479,7 @@ async function computeAndInsert(
       card_id, tier, psa_grade,
       best_buy_price, best_buy_currency, best_buy_symbol, best_buy_location, best_buy_region, best_buy_normalized, best_buy_kind,
       best_sell_price, best_sell_currency, best_sell_symbol, best_sell_location, best_sell_region, best_sell_normalized, best_sell_kind,
-      roi, updated_at
+      roi, net_roi, updated_at
     )
     SELECT
       g.card_id,
@@ -462,6 +500,7 @@ async function computeAndInsert(
       COALESCE(ln.sell_normalized, ae.normalized_price),
       COALESCE(ln.sell_kind, ae.price_kind),
       ln.roi,
+      ln.net_roi,
       now()
     FROM all_groups g
     LEFT JOIN lanes ln
@@ -486,6 +525,7 @@ async function computeAndInsert(
       best_sell_normalized = EXCLUDED.best_sell_normalized,
       best_sell_kind = EXCLUDED.best_sell_kind,
       roi = EXCLUDED.roi,
+      net_roi = EXCLUDED.net_roi,
       updated_at = EXCLUDED.updated_at;
   `;
 
@@ -569,7 +609,8 @@ async function computeAndInsertSealed(
         e.market_region AS sell_region,
         e.normalized_price AS sell_normalized,
         e.price_kind AS sell_kind,
-        (x.normalized_price - e.normalized_price) / e.normalized_price * 100 AS roi
+        (x.normalized_price - e.normalized_price) / e.normalized_price * 100 AS roi,
+        (${NET_EXIT} - e.normalized_price) / e.normalized_price * 100 AS net_roi
       FROM entries e
       JOIN exits x
         ON x.product_id = e.product_id
@@ -577,12 +618,13 @@ async function computeAndInsertSealed(
         AND x.variant_edition = e.variant_edition
         AND x.market_region <> e.market_region
         AND x.rn = 1
+      ${exitCostJoin("0")}
       WHERE e.rn = 1
       ORDER BY
         e.product_id,
         e.sealed_condition,
         e.variant_edition,
-        (x.normalized_price - e.normalized_price) / e.normalized_price DESC,
+        (${NET_EXIT} - e.normalized_price) / e.normalized_price DESC,
         x.kind_rank ASC,
         (e.market_region = 'JP') DESC
     ),
@@ -606,7 +648,7 @@ async function computeAndInsertSealed(
       product_id, sealed_condition, variant_edition,
       best_buy_price, best_buy_currency, best_buy_symbol, best_buy_location, best_buy_region, best_buy_normalized, best_buy_kind,
       best_sell_price, best_sell_currency, best_sell_symbol, best_sell_location, best_sell_region, best_sell_normalized, best_sell_kind,
-      roi, updated_at
+      roi, net_roi, updated_at
     )
     SELECT
       g.product_id,
@@ -627,6 +669,7 @@ async function computeAndInsertSealed(
       COALESCE(ln.sell_normalized, ae.normalized_price),
       COALESCE(ln.sell_kind, ae.price_kind),
       ln.roi,
+      ln.net_roi,
       now()
     FROM all_groups g
     LEFT JOIN lanes ln
@@ -657,6 +700,7 @@ async function computeAndInsertSealed(
       best_sell_normalized = EXCLUDED.best_sell_normalized,
       best_sell_kind = EXCLUDED.best_sell_kind,
       roi = EXCLUDED.roi,
+      net_roi = EXCLUDED.net_roi,
       updated_at = EXCLUDED.updated_at;
   `;
 

@@ -76,12 +76,18 @@ export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }:
 // the export trade. No lane means the row has no cross-region pair and the
 // two prices are informational.
 export function RoiCell({ row }: { row: CardRowData }) {
+  const { t } = useTranslation();
   const lane = row.roi == null
     ? null
     : laneLabel(row.prices.lowestSell?.marketRegion, row.prices.highestBuy?.marketRegion);
   return (
     <div>
       <div>{formatRoi(row.roi ?? null)}</div>
+      {row.grossRoi != null && (
+        <div className="text-[10px] text-muted-foreground" title={t("roi.grossHint")}>
+          {t("roi.gross")} {formatRoi(row.grossRoi)}
+        </div>
+      )}
       {lane && <div className="text-[10px] text-muted-foreground">{lane}</div>}
     </div>
   );

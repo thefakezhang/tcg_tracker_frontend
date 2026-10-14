@@ -295,7 +295,11 @@ export interface CardRowData {
   observed?: import("./card-observations").CardObservation;
   psaGrade?: number;
   prices: PriceSummary;
+  // Net ROI: the return after the exit's selling costs (fee, per-order fee,
+  // postage; backend docs/net_exit_roi.md). Every sort and filter reads this.
   roi: number | null;
+  // The gross figure, (exit - entry) / entry, shown beside the net one.
+  grossRoi?: number | null;
   signal?: GradeSignal | null;
   deal?: CalculatedDealEconomics | null;
   rawToGradeEvUsd?: number | null;
@@ -412,7 +416,8 @@ type RpcSummaryRow = Omit<SummaryRow, string> & {
 };
 
 const SORT_COLUMN_MAP: Record<string, string> = {
-  roi: "roi",
+  roi: "net_roi",
+  grossRoi: "roi",
   lowestSell: "best_sell_normalized",
   highestBuy: "best_buy_normalized",
   psa_grade: "psa_grade",
@@ -421,7 +426,7 @@ const SORT_COLUMN_MAP: Record<string, string> = {
   relativeValue: "deal_relative_value_pct",
 };
 
-interface SummaryRow {
+export interface SummaryRow {
   card_id: number;
   tier: number;
   psa_grade: number;
@@ -440,6 +445,7 @@ interface SummaryRow {
   best_sell_normalized: number | null;
   best_sell_kind: PriceKind | null;
   roi: number | null;
+  net_roi: number | null;
   best_opportunity_grade: number | null;
   deal_net_usd: number | null;
   deal_annualized: number | null;
@@ -450,7 +456,7 @@ interface SummaryRow {
   [key: string]: unknown;
 }
 
-function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRowData {
+export function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRowData {
   const cardDef = row[cardDefKey] as CardDefinition;
 
   const highestBuy: PriceEntry | null =
@@ -486,7 +492,8 @@ function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRowData {
     card: cardDef,
     psaGrade: row.psa_grade > 0 ? row.psa_grade : undefined,
     prices,
-    roi: row.roi ?? null,
+    roi: row.net_roi == null ? null : Number(row.net_roi),
+    grossRoi: row.roi ?? null,
     rawToGradeEvUsd: row.raw_to_grade_ev_usd == null ? null : Number(row.raw_to_grade_ev_usd),
     dealRelativeValuePct: row.deal_relative_value_pct == null ? null : Number(row.deal_relative_value_pct),
   };
@@ -831,8 +838,8 @@ export function useCardData(options: {
     if (minSellPrice != null) query = query.gte("best_buy_normalized", minSellPrice);
 
     // ROI range filters
-    if (roiFloor != null) query = query.gte("roi", roiFloor);
-    if (roiCeiling != null) query = query.lte("roi", roiCeiling);
+    if (roiFloor != null) query = query.gte("net_roi", roiFloor);
+    if (roiCeiling != null) query = query.lte("net_roi", roiCeiling);
 
     // Sorting
     const cardDefSortCols = cardDefSortColumns;
