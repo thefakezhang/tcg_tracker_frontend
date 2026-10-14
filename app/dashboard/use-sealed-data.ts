@@ -67,6 +67,7 @@ export interface SealedSummaryRow {
   best_sell_region: string | null;
   best_sell_normalized: number | null;
   roi: number | null;
+  net_roi: number | null;
   product_uid?: string | null; // appended by 000216 (H3)
   best_buy_kind?: PriceKind | null; // appended by 000363
   best_sell_kind?: PriceKind | null;
@@ -107,7 +108,8 @@ export function sealedRowToCardRow(row: SealedSummaryRow): SealedRowData {
       highestBuy: toPrice(row, "buy"),
       lowestSell: toPrice(row, "sell"),
     },
-    roi: row.roi ?? null,
+    roi: row.net_roi == null ? null : Number(row.net_roi),
+    grossRoi: row.roi ?? null,
     productType: row.product_type,
     sealedCondition: row.sealed_condition,
     variantEdition: row.variant_edition,
@@ -154,7 +156,7 @@ export function productTypeLabel(t: TFn, value: string): string {
 }
 
 const SORT_COLUMN_MAP: Record<string, string> = {
-  roi: "roi",
+  roi: "net_roi",
   lowestSell: "best_sell_normalized",
   highestBuy: "best_buy_normalized",
   productType: "product_type",
@@ -270,8 +272,8 @@ export function useSealedData(options: {
     if (sellRegion !== "all") query = query.eq("best_sell_region", sellRegion);
     if (minBuyPrice != null) query = query.gte("best_sell_normalized", minBuyPrice);
     if (minSellPrice != null) query = query.gte("best_buy_normalized", minSellPrice);
-    if (roiFloor != null) query = query.gte("roi", roiFloor);
-    if (roiCeiling != null) query = query.lte("roi", roiCeiling);
+    if (roiFloor != null) query = query.gte("net_roi", roiFloor);
+    if (roiCeiling != null) query = query.lte("net_roi", roiCeiling);
 
     const dbCol = SORT_COLUMN_MAP[sortColumn] || sortColumn;
     query = query.order(dbCol, { ascending: sortAsc, nullsFirst: false });

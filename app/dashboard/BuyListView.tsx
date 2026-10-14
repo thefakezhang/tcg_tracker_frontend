@@ -87,6 +87,7 @@ interface SummaryRow {
   best_buy_kind?: PriceKind | null;
   best_sell_kind?: PriceKind | null;
   roi: number | null;
+  net_roi?: number | null;
   [key: string]: unknown;
 }
 
@@ -250,7 +251,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
             highestBuy: summary ? summaryToPrice(summary, "buy") : null,
             lowestSell: summary ? summaryToPrice(summary, "sell") : null,
           },
-          roi: summary?.roi ?? null,
+          roi: summary?.net_roi == null ? null : Number(summary.net_roi),
           game,
           entryId,
           targetPriceUsd: (entry.target_price_usd as number | null) ?? null,

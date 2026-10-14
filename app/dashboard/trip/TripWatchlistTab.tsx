@@ -39,6 +39,8 @@ interface WatchRow {
   us_bid_usd: number | null;
   us_bid_region: string | null;
   gross_roi_pct: number | null;
+  // After the US exit's selling costs; backend docs/net_exit_roi.md.
+  net_roi_pct: number | null;
 }
 
 export default function TripWatchlistTab({ tripId }: { tripId: number }) {
@@ -73,7 +75,7 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
     const cap = maxOwned.trim() === "" ? null : Number(maxOwned);
     let out = cap == null || Number.isNaN(cap) ? rows : rows.filter((r) => ownedQtyFor(r) <= cap);
     if (lowStockFirst) {
-      out = [...out].sort((a, b) => ownedQtyFor(a) - ownedQtyFor(b) || (b.gross_roi_pct ?? -Infinity) - (a.gross_roi_pct ?? -Infinity));
+      out = [...out].sort((a, b) => ownedQtyFor(a) - ownedQtyFor(b) || (b.net_roi_pct ?? -Infinity) - (a.net_roi_pct ?? -Infinity));
     }
     return out;
   }, [rows, maxOwned, lowStockFirst, ownedQtyFor]);
@@ -84,10 +86,10 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
     const { data } = await supabase
       .from("trip_deal_watchlist_v")
       .select(
-        "rule_id, card_id, psa_grade, regional_name, english_name, set_code, card_number, observed_store, observed_price_orig, observed_currency, observed_price_usd, us_bid_usd, us_bid_region, gross_roi_pct"
+        "rule_id, card_id, psa_grade, regional_name, english_name, set_code, card_number, observed_store, observed_price_orig, observed_currency, observed_price_usd, us_bid_usd, us_bid_region, gross_roi_pct, net_roi_pct"
       )
       .eq("trip_id", tripId)
-      .order("gross_roi_pct", { ascending: false, nullsFirst: false });
+      .order("net_roi_pct", { ascending: false, nullsFirst: false });
     setRows((data as WatchRow[]) ?? []);
   }, [tripId]);
 
@@ -217,8 +219,13 @@ export default function TripWatchlistTab({ tripId }: { tripId: number }) {
                   <TableCell>
                     {r.us_bid_usd != null ? formatUsd(Number(r.us_bid_usd)) : "-"}
                   </TableCell>
-                  <TableCell className={`text-right font-medium ${roiClass(r.gross_roi_pct)}`}>
-                    {r.gross_roi_pct != null ? `${r.gross_roi_pct > 0 ? "+" : ""}${Number(r.gross_roi_pct).toFixed(1)}%` : "-"}
+                  <TableCell className={`text-right font-medium ${roiClass(r.net_roi_pct)}`}>
+                    {r.net_roi_pct != null ? `${r.net_roi_pct > 0 ? "+" : ""}${Number(r.net_roi_pct).toFixed(1)}%` : "-"}
+                    {r.gross_roi_pct != null && (
+                      <div className="text-[10px] font-normal text-muted-foreground" title={t("roi.grossHint")}>
+                        {t("roi.gross")} {`${r.gross_roi_pct > 0 ? "+" : ""}${Number(r.gross_roi_pct).toFixed(1)}%`}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell className="text-right text-muted-foreground">
                     {formatRoi(cardData.get(String(r.card_id))?.roi)}
