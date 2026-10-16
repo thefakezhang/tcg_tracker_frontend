@@ -25,7 +25,37 @@ export function useSupabaseQuery<T>(key: Key, fetcher: () => Promise<T>) {
   };
 }
 
-export type QueryErrorKind = "session-expired" | "forbidden" | "external-identifier" | "generic";
+export type QueryErrorKind =
+  | "session-expired"
+  | "forbidden"
+  | "external-identifier"
+  | "schema"
+  | "timeout"
+  | "generic";
+
+// A read that names a column or relation the database does not have. The
+// operator cannot fix it and Retry cannot help: every attempt fails the same
+// way until a migration lands.
+//
+// Worth distinguishing because the generic message hid a total outage. net_roi
+// reached pokemon_price_summaries and never reached the view the browser reads,
+// so every card-browser request answered 400 42703 for both games on every
+// device, and the operator was shown only "Couldn't load data". The relation
+// name in PostgREST's own message is what identified it; this surfaces that
+// instead of discarding it.
+const SCHEMA_ERROR_CODES = new Set([
+  "42703", // undefined_column
+  "42P01", // undefined_table
+  "42883", // undefined_function, e.g. a renamed RPC
+  "PGRST200", // embed: no relationship found between the relations
+  "PGRST204", // column not found in the schema cache
+]);
+
+// A read the database gave up on. Unlike a schema error this is worth
+// retrying: the next attempt may land when the table is quieter.
+const TIMEOUT_ERROR_CODES = new Set([
+  "57014", // query_canceled, which is what a statement timeout raises
+]);
 
 export function classifyQueryError(error: unknown): QueryErrorKind {
   if (!error || typeof error !== "object") return "generic";
@@ -54,7 +84,23 @@ export function classifyQueryError(error: unknown): QueryErrorKind {
   ) {
     return "forbidden";
   }
+  if (typeof candidate.code === "string" && SCHEMA_ERROR_CODES.has(candidate.code)) {
+    return "schema";
+  }
+  if (typeof candidate.code === "string" && TIMEOUT_ERROR_CODES.has(candidate.code)) {
+    return "timeout";
+  }
   return "generic";
+}
+
+// The code and message, when the error carries them. Nothing else: no stack,
+// no SQL, no request URL.
+export function readFailureDetail(error: unknown): string {
+  if (!error || typeof error !== "object") return "";
+  const candidate = error as { code?: unknown; message?: unknown };
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  const message = typeof candidate.message === "string" ? candidate.message : "";
+  return [code, message].filter(Boolean).join(" · ");
 }
 
 export function QueryError({ error, onRetry }: { error?: unknown; onRetry: () => void }) {
@@ -66,7 +112,15 @@ export function QueryError({ error, onRetry }: { error?: unknown; onRetry: () =>
       ? t("common.accessDenied")
       : kind === "external-identifier"
         ? t("common.externalIdentifierLookupError")
-        : t("common.loadError");
+        : kind === "schema"
+          ? t("common.schemaError")
+          : kind === "timeout"
+            ? t("common.timeoutError")
+            : t("common.loadError");
+  // PostgREST's message names the relation and column, which is the one piece
+  // of information that identifies the fix. Shown verbatim for a schema error
+  // only, where there is nothing the operator could mistake it for.
+  const detail = kind === "schema" ? readFailureDetail(error) : "";
   return (
     <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
       <div className="min-w-0 text-destructive">
@@ -74,6 +128,9 @@ export function QueryError({ error, onRetry }: { error?: unknown; onRetry: () =>
         {kind === "session-expired" && <div className="text-xs text-muted-foreground">{t("common.sessionExpiredHelp")}</div>}
         {kind === "forbidden" && <div className="text-xs text-muted-foreground">{t("common.accessDeniedHelp")}</div>}
         {kind === "external-identifier" && <div className="text-xs text-muted-foreground">{t("common.externalIdentifierLookupHelp")}</div>}
+        {kind === "schema" && <div className="text-xs text-muted-foreground">{t("common.schemaErrorHelp")}</div>}
+        {kind === "schema" && detail && <div className="mt-1 break-words font-mono text-xs text-muted-foreground">{detail}</div>}
+        {kind === "timeout" && <div className="text-xs text-muted-foreground">{t("common.timeoutErrorHelp")}</div>}
       </div>
       {kind === "session-expired" ? (
         <a
@@ -82,7 +139,7 @@ export function QueryError({ error, onRetry }: { error?: unknown; onRetry: () =>
         >
           {t("common.signInAgain")}
         </a>
-      ) : kind === "generic" || kind === "external-identifier" ? (
+      ) : kind === "generic" || kind === "external-identifier" || kind === "timeout" ? (
         <Button variant="outline" size="sm" className="min-h-11 sm:min-h-11" onClick={onRetry}>{t("common.retry")}</Button>
       ) : null}
     </div>

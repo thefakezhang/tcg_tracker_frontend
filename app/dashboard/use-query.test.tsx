@@ -93,4 +93,82 @@ describe("QueryError", () => {
     expect(screen.queryByRole("link", { name: "Sign in again" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
+
+  // The outage this distinction exists for. net_roi reached
+  // pokemon_price_summaries and never reached the view the browser reads, so
+  // every card-browser request answered 400 42703 for both games on every
+  // device. The operator was shown "Couldn't load data" and a Retry button,
+  // neither of which said anything true: nothing was transient and nothing the
+  // operator could do would help. The relation name in PostgREST's message is
+  // what finally identified it, so it is shown rather than discarded.
+  it("names the relation when a read asks for a column the database lacks", () => {
+    const retry = vi.fn();
+    render(
+      <LanguageProvider>
+        <QueryError
+          error={{
+            status: 400,
+            code: "42703",
+            message: "column pokemon_price_summaries_browser_v.net_roi does not exist",
+          }}
+          onRetry={retry}
+        />
+      </LanguageProvider>,
+    );
+
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("This view is asking the database for something it doesn't have.");
+    expect(alert.textContent).toContain("pokemon_price_summaries_browser_v.net_roi");
+    expect(alert.textContent).toContain("42703");
+    expect(alert.textContent).not.toContain("Couldn't load data.");
+    // A migration is the only fix, so offering Retry would be a lie.
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("treats a missing relation as a schema failure too", () => {
+    render(
+      <LanguageProvider>
+        <QueryError
+          error={{ status: 404, code: "42P01", message: 'relation "public.gone_v" does not exist' }}
+          onRetry={vi.fn()}
+        />
+      </LanguageProvider>,
+    );
+
+    expect(screen.getByRole("alert").textContent).toContain("public.gone_v");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  // Opposite of a schema error: the query was fine and the database gave up, so
+  // the next attempt may well land.
+  it("offers Retry when the database cancelled the query", () => {
+    const retry = vi.fn();
+    render(
+      <LanguageProvider>
+        <QueryError
+          error={{ status: 500, code: "57014", message: "canceling statement due to statement timeout" }}
+          onRetry={retry}
+        />
+      </LanguageProvider>,
+    );
+
+    expect(screen.getByRole("alert").textContent).toContain("The database took too long to answer.");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  // A schema error must not be mistaken for an auth one: the two have opposite
+  // remedies, and "sign in again" on a missing column sends the operator to do
+  // something that cannot work.
+  it("keeps a schema failure out of the session-expired path", () => {
+    render(
+      <LanguageProvider>
+        <QueryError error={{ status: 400, code: "42703", message: "column x does not exist" }} onRetry={vi.fn()} />
+      </LanguageProvider>,
+    );
+
+    expect(screen.queryByText("Your session has expired.")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Sign in again" })).toBeNull();
+  });
 });
