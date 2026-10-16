@@ -19,6 +19,23 @@ describe("listingCols", () => {
     expect(listingCols("pokemon")).toContain("available_quantity");
   });
 
+  // Same failure mode, different column. 000559 put price_p25/price_p75 on both
+  // CARD listing tables and deliberately not on the sealed one, so selecting
+  // them for sealed would make PostgREST refuse the whole query and the sealed
+  // modal would show no listings at all rather than no spread bar.
+  it("omits the price spread for sealed, whose table does not have it", () => {
+    expect(listingCols("pokemon_sealed")).not.toContain("price_p25");
+    expect(listingCols("pokemon_sealed")).not.toContain("price_p75");
+  });
+
+  it.each(["pokemon", "mtg"] as const)(
+    "requests the price spread for %s, whose table has it",
+    (game) => {
+      expect(listingCols(game)).toContain("price_p25");
+      expect(listingCols(game)).toContain("price_p75");
+    },
+  );
+
   it("selects the columns every listings table shares, for every game", () => {
     const shared = [
       "card_id",

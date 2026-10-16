@@ -246,6 +246,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "column.setCode": "セットコード",
   "column.psa": "PSA",
   "column.highestBuy": "売却",
+  "column.compSpread": "成約幅",
   "column.lowestSell": "購入",
   "priceKind.sold": "成約",
   "priceKind.sold.title": "成約実績 - 実際に支払われた価格 (販売手数料控除前)",

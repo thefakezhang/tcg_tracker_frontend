@@ -350,6 +350,17 @@ async function computeAndInsert(
            END`
     : "ml.price";
 
+  // The depth adjustment above can move a MARKETPLACE_LOCATION price off
+  // ml.price. The percentiles describe ml.price's OWN distribution, so once the
+  // published number is nudged they no longer bracket it and the spread bar
+  // would be drawn around a number that is not in it. tcgplayer publishes no
+  // percentiles today, so this is a guard rather than a live correction - it
+  // keeps the invariant true if that ever changes.
+  const laneSpread = (col: string) =>
+    useTcgDepth
+      ? `CASE WHEN l.name IN (${MARKETPLACE_LOCATION}) THEN NULL ELSE ml.${col} END`
+      : `ml.${col}`;
+
   const query = `
     WITH filtered_listings AS (
       SELECT
@@ -363,7 +374,9 @@ async function computeAndInsert(
         c.symbol AS currency_symbol,
         l.name AS location_name,
         l.market_region,
-        ${lanePrice} * COALESCE(er.rate, 1) AS normalized_price
+        ${lanePrice} * COALESCE(er.rate, 1) AS normalized_price,
+        ${laneSpread("price_p25")} AS price_p25,
+        ${laneSpread("price_p75")} AS price_p75
       FROM ${listingsTable} ml
       JOIN currencies c ON c.code = ml.currency
       JOIN locations l ON l.location_id = ml.location_id
@@ -431,6 +444,8 @@ async function computeAndInsert(
         x.market_region AS buy_region,
         x.normalized_price AS buy_normalized,
         x.price_kind AS buy_kind,
+        x.price_p25 AS buy_p25,
+        x.price_p75 AS buy_p75,
         e.price AS sell_price,
         e.currency AS sell_currency,
         e.currency_symbol AS sell_symbol,
@@ -478,6 +493,7 @@ async function computeAndInsert(
     INSERT INTO ${summariesTable} (
       card_id, tier, psa_grade,
       best_buy_price, best_buy_currency, best_buy_symbol, best_buy_location, best_buy_region, best_buy_normalized, best_buy_kind,
+      best_buy_p25, best_buy_p75,
       best_sell_price, best_sell_currency, best_sell_symbol, best_sell_location, best_sell_region, best_sell_normalized, best_sell_kind,
       roi, net_roi, updated_at
     )
@@ -492,6 +508,8 @@ async function computeAndInsert(
       COALESCE(ln.buy_region, ax.market_region),
       COALESCE(ln.buy_normalized, ax.normalized_price),
       COALESCE(ln.buy_kind, ax.price_kind),
+      COALESCE(ln.buy_p25, ax.price_p25),
+      COALESCE(ln.buy_p75, ax.price_p75),
       COALESCE(ln.sell_price, ae.price),
       COALESCE(ln.sell_currency, ae.currency),
       COALESCE(ln.sell_symbol, ae.currency_symbol),
@@ -517,6 +535,8 @@ async function computeAndInsert(
       best_buy_region = EXCLUDED.best_buy_region,
       best_buy_normalized = EXCLUDED.best_buy_normalized,
       best_buy_kind = EXCLUDED.best_buy_kind,
+      best_buy_p25 = EXCLUDED.best_buy_p25,
+      best_buy_p75 = EXCLUDED.best_buy_p75,
       best_sell_price = EXCLUDED.best_sell_price,
       best_sell_currency = EXCLUDED.best_sell_currency,
       best_sell_symbol = EXCLUDED.best_sell_symbol,
