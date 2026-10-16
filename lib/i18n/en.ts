@@ -244,6 +244,7 @@ const en = {
   "column.setCode": "Set Code",
   "column.psa": "PSA",
   "column.highestBuy": "Sell",
+  "column.compSpread": "Comp spread",
   "column.lowestSell": "Buy",
   "priceKind.sold": "sold",
   "priceKind.sold.title": "Completed sales - what buyers actually paid, before selling fees",

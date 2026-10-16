@@ -4,6 +4,7 @@ import { ColumnDef } from "@tanstack/react-table";
 import { ArrowUp, ArrowDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { type CardRowData, type PriceEntry, cardVariant, getCardDisplayName } from "./use-card-data";
+import { CompSpreadBar, spreadRatio, toCompSpread } from "./CompSpreadBar";
 import { conditionLabel, editionLabel, productTypeLabel } from "./use-sealed-data";
 import { useCurrency } from "./CurrencyContext";
 import { type Language } from "./LanguageContext";
@@ -133,6 +134,23 @@ export function ConservativeExitCell({ row }: { row: CardRowData }) {
 
 // #3 buy-confidence: the quick read (color-coded grade) plus the reasons behind
 // it (volatility / trend / evidence / pop) so the operator sees why in one line.
+export function CompSpreadCell({ row }: { row: CardRowData }) {
+  const { displayCurrency, convertPrice } = useCurrency();
+  const buy = row.prices.highestBuy;
+  const spread = toCompSpread(buy?.price, buy?.p25, buy?.p75);
+  // Most sources publish one number, so no bar is the common case and must
+  // look deliberate rather than broken.
+  if (!buy || !spread) return <span className="text-muted-foreground">-</span>;
+  // Formatted exactly the way PriceCell formats the median beside it, so the
+  // band and the number it brackets never disagree about currency.
+  const show = (n: number) => {
+    if (displayCurrency === "none") return `${buy.symbol}${Math.round(n).toLocaleString()}`;
+    const c = convertPrice(n, buy.currencyCode);
+    return `${c.symbol}${Math.round(c.price).toLocaleString()}`;
+  };
+  return <CompSpreadBar spread={spread} format={show} />;
+}
+
 export function SlabConfidenceCell({ row }: { row: CardRowData }) {
   const { t } = useTranslation();
   const signal = row.signal;
@@ -336,6 +354,23 @@ export function createColumns(
       cell: ({ row }) => <PriceCell entry={row.original.prices.highestBuy} />,
       sortUndefined: "last",
       sortingFn: nullsLastNumber,
+    },
+    {
+      // The exit price is a median. This says how much the comps behind it
+      // actually agreed, which the number alone cannot. Sorts by how WIDE the
+      // band is relative to its own centre, not by price, so a descending sort
+      // surfaces the cards whose evidence is least settled.
+      id: "compSpread",
+      accessorFn: (row) => {
+        const buy = row.prices.highestBuy;
+        const spread = toCompSpread(buy?.price, buy?.p25, buy?.p75);
+        return spread ? spreadRatio(spread) : undefined;
+      },
+      header: ({ column }) => <SortableHeader column={column} label={t("column.compSpread")} />,
+      cell: ({ row }) => <CompSpreadCell row={row.original} />,
+      sortUndefined: "last",
+      sortingFn: nullsLastNumber,
+      meta: { className: "hidden xl:table-cell" },
     },
     {
       id: "roi",

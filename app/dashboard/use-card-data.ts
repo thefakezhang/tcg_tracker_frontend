@@ -136,11 +136,28 @@ const LISTING_HAS_AVAILABLE_QUANTITY: Record<Game, boolean> = {
   pokemon_sealed: false,
 };
 
+// price_p25 / price_p75 carry the interquartile spread of the comps a median
+// was taken over, so a median can be shown with a sense of how much its comps
+// agreed. Migration 000559 added them to the CARD listing tables for both
+// games - kept uniform because aggregate-prices templates one statement over
+// both - and deliberately NOT to pokemon_sealed_market_listings, which has no
+// source publishing a distribution.
+//
+// Gated for the same reason available_quantity is, and it is the same failure:
+// selecting a column the table lacks makes PostgREST refuse the whole query,
+// so the sealed modal would show zero listings rather than a null spread.
+const LISTING_HAS_PRICE_SPREAD: Record<Game, boolean> = {
+  pokemon: true,
+  mtg: true,
+  pokemon_sealed: false,
+};
+
 export function listingCols(game: Game): string {
   const quantity = LISTING_HAS_AVAILABLE_QUANTITY[game]
     ? ", available_quantity"
     : "";
-  return `${LISTING_COLS_COMMON}${quantity}, currencies(symbol)`;
+  const spread = LISTING_HAS_PRICE_SPREAD[game] ? ", price_p25, price_p75" : "";
+  return `${LISTING_COLS_COMMON}${quantity}${spread}, currencies(symbol)`;
 }
 
 export interface CardDefinition {
@@ -264,6 +281,10 @@ export interface MarketListing {
   // which is NOT none - the listing is purchasable at an unknown depth.
   // Optional because not every fetch selects it.
   available_quantity?: number | null;
+  // Interquartile spread of the comps this price is the median of. Both set or
+  // both null. Absent on sealed, which does not carry the columns.
+  price_p25?: number | null;
+  price_p75?: number | null;
 }
 
 export interface PriceEntry {
@@ -277,6 +298,12 @@ export interface PriceEntry {
   // Optional so callers that build entries by hand (tests, fixtures) need
   // not know; absent means "no marker".
   kind?: PriceKind | null;
+  // The interquartile spread of the comps this price is the median of, in the
+  // same currency as `price`. Both set or both null - one alone cannot draw a
+  // bar, and the database CHECK enforces that pairing. Null for any source
+  // that publishes a single number rather than a distribution.
+  p25?: number | null;
+  p75?: number | null;
 }
 
 export interface PriceSummary {
@@ -437,6 +464,8 @@ export interface SummaryRow {
   best_buy_region: string | null;
   best_buy_normalized: number | null;
   best_buy_kind: PriceKind | null;
+  best_buy_p25: number | null;
+  best_buy_p75: number | null;
   best_sell_price: number | null;
   best_sell_currency: string | null;
   best_sell_symbol: string | null;
@@ -469,6 +498,8 @@ export function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRo
           locationName: row.best_buy_location ?? "",
           marketRegion: row.best_buy_region ?? null,
           kind: row.best_buy_kind ?? null,
+          p25: row.best_buy_p25 ?? null,
+          p75: row.best_buy_p75 ?? null,
         }
       : null;
 

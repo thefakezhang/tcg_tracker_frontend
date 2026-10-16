@@ -65,6 +65,7 @@ import {
   cardVariant,
   getCardDisplayName,
 } from "./use-card-data";
+import { CompSpreadBar, toCompSpread } from "./CompSpreadBar";
 import { useLanguage } from "./LanguageContext";
 import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
@@ -115,6 +116,11 @@ export interface DetailListing {
   // Copies the shop published when we last looked. null means it does not
   // publish a count - not that it has none.
   availableQuantity?: number | null;
+  // Interquartile spread of the comps this price is the median of, in the same
+  // currency as `price`. Both set or both null. Only the sources that publish
+  // a distribution (130point today) carry it.
+  p25?: number | null;
+  p75?: number | null;
 }
 
 // TCGplayer's product page accepts query params to preselect a specific SKU
@@ -535,6 +541,8 @@ export default function CardDetailModal({
         lastUpdated: l.last_updated,
         kind: l.price_kind ?? null,
         availableQuantity: l.available_quantity ?? null,
+        p25: l.price_p25 ?? null,
+        p75: l.price_p75 ?? null,
       };
     };
 
@@ -1239,11 +1247,28 @@ export function ListingTable({
             }
             const kindKey = priceKindMarkerKey(l.kind);
             const kindTitle = priceKindTitleKey(l.kind);
+            // A median with no sense of its own dispersion reads the same
+            // whether twelve comps agreed or three disagreed wildly. Only
+            // sources publishing a distribution carry this; everyone else
+            // renders exactly as before.
+            const spread = toCompSpread(l.price, l.p25, l.p75);
+            const showSpread = (n: number) => {
+              if (displayCurrency === "none") {
+                return `${l.currencySymbol}${Math.round(n).toLocaleString()}`;
+              }
+              const c = convertPrice(n, l.currencyCode);
+              return `${c.symbol}${Math.round(c.price).toLocaleString()}`;
+            };
             return (
               <TableRow key={i}>
                 <TableCell>
-                  {symbol}
-                  {price}
+                  <div className="tabular-nums">
+                    {symbol}
+                    {price}
+                  </div>
+                  {spread && (
+                    <CompSpreadBar spread={spread} format={showSpread} className="mt-1" />
+                  )}
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1.5">
