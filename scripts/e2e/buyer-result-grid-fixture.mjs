@@ -142,6 +142,17 @@ async function runViewport(browser, viewportName, viewport) {
     [8, [planLine(201, "ミュウ")]],
   ]);
   const successfulWrites = [];
+  let receiptReadFailures = 0;
+  let receiptAuthFailures = 0;
+  let observedReceiptReadFailures = 0;
+  let observedReceiptAuthFailures = 0;
+  let expectedReceiptAuthConsoleErrors = 0;
+  const registrationGate = deferred();
+  const receiptUploads = [];
+  const receiptRegistrations = [];
+  const savedReceipts = [];
+  let expectedReceiptFailures = 0;
+  let observedReceiptFailureResponses = 0;
   const writeAttempts = [];
   const lineReads = [];
   let mockedRpcRequests = 0;
@@ -162,6 +173,13 @@ async function runViewport(browser, viewportName, viewport) {
     }
     mockedRpcRequests += 1;
     const url = new URL(request.url());
+    if (url.pathname.startsWith("/storage/v1/object/lot-receipts/") && request.method() === "POST") {
+      const path = decodeURIComponent(url.pathname.slice("/storage/v1/object/lot-receipts/".length));
+      assert(/^plan-receipts\/7\/cardrush\/[a-z0-9-]+-receipt\.pdf$/.test(path), `unexpected upload path ${path}`);
+      receiptUploads.push(path);
+      await route.fulfill({ status: 200, headers: corsHeaders, body: JSON.stringify({ Key: `lot-receipts/${path}` }) });
+      return;
+    }
     const rpcName = url.pathname.split("/").at(-1);
     const body = request.postDataJSON?.() ?? {};
     const fulfill = (data) => route.fulfill({
@@ -190,7 +208,34 @@ async function runViewport(browser, viewportName, viewport) {
       await fulfill(linesByPlan.get(planId) ?? []);
       return;
     }
-    if (rpcName === "buyer_source_totals" || rpcName === "buyer_source_receipts" || rpcName === "buyer_source_costs") {
+    if (rpcName === "buyer_record_source_receipt") {
+      receiptRegistrations.push(body);
+      assert(body.p_plan_id === 7 && body.p_source === "cardrush" && receiptUploads.includes(body.p_storage_path), "registration is not bound to the uploaded object");
+      if (receiptRegistrations.length === 1) {
+        expectedReceiptFailures += 1;
+        await route.fulfill({ status: 503, headers: corsHeaders, body: JSON.stringify({ message: "fixture receipt save failed", code: "P0001" }) });
+        return;
+      }
+      await registrationGate.promise;
+      savedReceipts.push({ receipt_id: 1, source: "cardrush", storage_path: body.p_storage_path, original_name: body.p_original_name, uploaded_at: "2026-09-12T00:00:00Z" });
+      await fulfill(null);
+      return;
+    }
+    if (rpcName === "buyer_source_receipts") {
+      if (body.p_plan_id === 7 && savedReceipts.length === 0 && receiptReadFailures === 0) {
+        receiptReadFailures += 1;
+        await route.fulfill({ status: 503, headers: corsHeaders, body: JSON.stringify({ message: "fixture receipt read unavailable" }) });
+        return;
+      }
+      if (body.p_plan_id === 7 && savedReceipts.length > 0 && receiptAuthFailures === 0) {
+        receiptAuthFailures += 1;
+        await route.fulfill({ status: 401, headers: corsHeaders, body: JSON.stringify({ code: "PGRST301", message: "JWT expired" }) });
+        return;
+      }
+      await fulfill(body.p_plan_id === 7 ? savedReceipts : []);
+      return;
+    }
+    if (rpcName === "buyer_source_totals" || rpcName === "buyer_source_costs") {
       await fulfill([]);
       return;
     }
@@ -248,6 +293,9 @@ async function runViewport(browser, viewportName, viewport) {
   let observedPlanLoadFailureResponses = 0;
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("response", (response) => {
+    if (response.url().endsWith("/rpc/buyer_source_receipts") && response.status() === 503) observedReceiptReadFailures += 1;
+    if (response.url().endsWith("/rpc/buyer_source_receipts") && response.status() === 401) observedReceiptAuthFailures += 1;
+    if (response.url().endsWith("/rpc/buyer_record_source_receipt") && response.status() === 503) observedReceiptFailureResponses += 1;
     if (response.url().endsWith("/rpc/buyer_record_result") && response.status() === 503) {
       observedSaveFailureResponses += 1;
     }
@@ -258,9 +306,15 @@ async function runViewport(browser, viewportName, viewport) {
   page.on("console", (message) => {
     if (message.type() !== "error") return;
     const text = message.text();
+    if (text === "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+      && observedReceiptAuthFailures === 1 && expectedReceiptAuthConsoleErrors === 0) {
+      expectedReceiptAuthConsoleErrors += 1;
+      expectedConsoleErrors.push(text);
+      return;
+    }
     if (
       text === "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
-      && observedExpectedRpcConsoleErrors < expectedSaveFailures + expectedPlanLoadFailures
+      && observedExpectedRpcConsoleErrors < expectedSaveFailures + expectedPlanLoadFailures + expectedReceiptFailures + receiptReadFailures
     ) {
       observedExpectedRpcConsoleErrors += 1;
       expectedConsoleErrors.push(text);
@@ -296,6 +350,52 @@ async function runViewport(browser, viewportName, viewport) {
   await sharedWantNotes.first().waitFor();
   assert(await sharedWantNotes.count() === 2, `${viewportName} did not explain both shared wants`);
   stage("verified initial load failure and retry");
+
+  const receiptLoadPanel = page.getByRole("region", { name: "領収書を読み込めませんでした。表示済みの件数は最新でない可能性があります。" });
+  await receiptLoadPanel.waitFor();
+  await receiptLoadPanel.getByRole("button", { name: "再試行" }).click();
+  await receiptLoadPanel.waitFor({ state: "hidden" });
+  const uploadTrigger = page.getByRole("button", { name: "領収書をアップロード", exact: true });
+  let uploadReachedByTab = false;
+  for (let presses = 0; presses < 80; presses += 1) {
+    await page.keyboard.press("Tab");
+    if (await uploadTrigger.evaluate((element) => document.activeElement === element)) {
+      uploadReachedByTab = true; break;
+    }
+  }
+  assert(uploadReachedByTab, `${viewportName} upload trigger is unreachable through keyboard Tab`);
+  if (viewport.width === 390) await assertTapTarget(uploadTrigger, `${viewportName} receipt upload`);
+  const chooserPromise = page.waitForEvent("filechooser");
+  await page.keyboard.press("Enter");
+  const chooser = await chooserPromise;
+  await chooser.setFiles({ name: "receipt.pdf", mimeType: "application/pdf", buffer: Buffer.from("disposable receipt fixture") });
+  await page.getByRole("alert").filter({ hasText: "fixture receipt save failed" }).waitFor();
+  const receiptRetry = page.getByRole("button", { name: "領収書の登録を再試行" });
+  await receiptRetry.waitFor();
+  if (viewport.width === 390) await assertTapTarget(receiptRetry, `${viewportName} receipt retry`);
+  const receiptPendingOverflow = await assertNoOverflow(page, `${viewportName} pending receipt`);
+  const receiptPendingScreenshot = `${artifactRoot}/${viewportName}-receipt-retry.png`;
+  await captureFullPage(context, page, receiptPendingScreenshot);
+  await receiptRetry.focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "領収書を登録中…" }).waitFor();
+  assert(await page.getByText("アップロード中…", { exact: true }).count() === 0, `${viewportName} registration retry implied a second upload`);
+  registrationGate.resolve();
+  await receiptLoadPanel.getByText("セッションの有効期限が切れました。", { exact: true }).waitFor();
+  const signInAgain = receiptLoadPanel.getByRole("link", { name: "もう一度サインイン" });
+  assert(await signInAgain.getAttribute("href") === "/login", `${viewportName} receipt session failure lacks sign-in recovery`);
+  if (viewport.width === 390) await assertTapTarget(signInAgain, `${viewportName} receipt sign-in`);
+  const receiptSessionScreenshot = `${artifactRoot}/${viewportName}-receipt-session-expired.png`;
+  await assertNoOverflow(page, `${viewportName} receipt session expired`);
+  await captureFullPage(context, page, receiptSessionScreenshot);
+  // The next fixture load represents a restored mocked session. Real GoTrue
+  // sign-in is covered separately by the authenticated #939 journey.
+  await page.goto(`${appUrl}/e2e/buyer-result-grid`, { waitUntil: "networkidle" });
+  await page.getByText("領収書 1件", { exact: true }).waitFor();
+  assert(receiptUploads.length === 1 && receiptRegistrations.length === 2, `${viewportName} receipt retry duplicated upload or registration`);
+  assert(JSON.stringify(receiptRegistrations[0]) === JSON.stringify(receiptRegistrations[1]), `${viewportName} receipt retry changed its uploaded path`);
+  assert(expectedReceiptFailures === 1 && observedReceiptFailureResponses === 1, `${viewportName} expected receipt failure was not observed exactly once`);
+  stage("verified same-object receipt retry");
 
   const filledOutcome = page.locator('[data-cell="103:outcome"]');
   const attemptsBeforeFilledWant = writeAttempts.length;
@@ -412,12 +512,25 @@ async function runViewport(browser, viewportName, viewport) {
   assert(observedSaveFailureResponses === 1, `${viewportName} did not observe the controlled 503 response`);
   assert(expectedPlanLoadFailures === 1, `${viewportName} did not exercise the initial plan-load failure`);
   assert(observedPlanLoadFailureResponses === 1, `${viewportName} did not observe the plan-load 503 response`);
+  assert(receiptReadFailures === 1 && observedReceiptReadFailures === 1, `${viewportName} did not observe exactly one receipt read failure`);
+  assert(receiptAuthFailures === 1 && observedReceiptAuthFailures === 1, `${viewportName} did not observe exactly one receipt session failure`);
   assert(consoleErrors.length === 0, `${viewportName} console errors: ${consoleErrors.join(" | ")}`);
   stage("complete");
   return {
     viewportName,
     viewport,
     mockedRpcRequests,
+    uploadReachedByTab,
+    receiptReadFailures,
+    observedReceiptReadFailures,
+    receiptAuthFailures,
+    observedReceiptAuthFailures,
+    receiptSessionScreenshot,
+    receiptUploads,
+    receiptRegistrations,
+    observedReceiptFailureResponses,
+    receiptPendingOverflow,
+    receiptPendingScreenshot,
     writeAttempts: writeAttempts.length,
     successfulWrites: successfulWrites.length,
     lineReads,
@@ -447,6 +560,7 @@ try {
     externalRequests: 0,
     journey: [
       "initial plan-load failure and retry",
+      "receipt registration failure and same-object retry",
       "fully filled shared-want boundary",
       "condition restoration",
       "visible stale timestamp and shared-want context",

@@ -57,6 +57,36 @@ beforeEach(() => {
 });
 
 describe("BuyerOrderView", () => {
+  it.each([
+    [{ code: "PGRST301", message: "JWT expired" }, 401, "common.sessionExpired"],
+    [{ code: "42501", message: "permission denied" }, 403, "common.accessDenied"],
+  ])("surfaces a receipt authorization failure instead of an empty list: %s", async (error, status, title) => {
+    const normal = rpc.getMockImplementation()!;
+    rpc.mockImplementation((fn: string, args: unknown) => fn === "buyer_source_receipts"
+      ? Promise.resolve({ data: null, error, status }) : normal(fn, args));
+    render(<BuyerOrderView />);
+    const panel = await screen.findByRole("region", { name: "buyer.receiptLoadFailed" });
+    expect(within(panel).getByRole("alert").textContent).toContain(title);
+    if (status === 401) expect(within(panel).getByRole("link", { name: "common.signInAgain" }).getAttribute("href")).toBe("/login");
+  });
+
+  it("retries a thrown receipt read failure and renders the returned count", async () => {
+    const normal = rpc.getMockImplementation()!;
+    let receiptReads = 0;
+    rpc.mockImplementation((fn: string, args: unknown) => {
+      if (fn !== "buyer_source_receipts") return normal(fn, args);
+      receiptReads += 1;
+      return receiptReads === 1 ? Promise.reject(new Error("connection lost"))
+        : Promise.resolve({ data: [{ receipt_id: 1, source: "cardrush", storage_path: "plan-receipts/7/cardrush/a.pdf" }], error: null });
+    });
+    render(<BuyerOrderView />);
+    const panel = await screen.findByRole("region", { name: "buyer.receiptLoadFailed" });
+    fireEvent.click(within(panel).getByRole("button", { name: "common.retry" }));
+    await screen.findByText("buyer.receiptCount 1");
+    expect(screen.queryByRole("region", { name: "buyer.receiptLoadFailed" })).toBeNull();
+    expect(receiptReads).toBe(2);
+  });
+
   it("shows an assigned-list session error and retries the initial load", async () => {
     let attempts = 0;
     rpc.mockImplementation((fn: string) => {
