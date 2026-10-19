@@ -753,6 +753,38 @@ The missing-signature compatibility path is marked verify-only before the non-id
 Each remittance, cancellation, and settlement has its own local-calendar date, note, inline error, and success state.
 Do not put those controls back into shared component state because that silently applies one movement's source facts to another movement.
 
+### MTG card labels (EDHREC)
+
+MTG cards carry five labels, rendered by `MtgLabelEvidence.tsx` and filterable as chips driven by `MTG_TAG_DIMENSIONS` in `mtg-tags.ts`.
+Adding a label is one entry in `TAG_COLUMNS`, one in `MTG_LABEL_COLS`, and a `cardBrowser.<dimension>` / `<dimension>Hint` key in both locales.
+
+- `is_reserved` comes from MTGJSON and is per printing. It is a published Wizards policy, not a measurement, so it has **no provenance and no evidence row** - a chip only.
+- `is_cedh_staple`, `is_cedh_exclusive`, `is_top_commander` come from edhrec.com's ranking pages, refreshed weekly by `refresh-edhrec-tags`.
+- `is_commander_stockable` comes from a different job on a different cadence, `refresh-edhrec-demand`, which reads the top commanders' own pages. It is a stocking signal, not a format fact: enough Commander decks play the card, and enough printings of it are priced, that the median price means something.
+
+**Provenance is per writer, not per label** (backend migration 000564). The three cEDH tags are set together by one refresh and share one `edhrec_tags_reason` / `_evidence_url` / `_as_of`; stockable has its own group. `MtgLabelEvidence` therefore renders **one row per group**, not one per label, and names the active tags in the badge.
+
+**The badge labels are `mtgLabel.*`, not the chip's `cardBrowser.*`.** A chip is an instruction over the catalog and reads in the plural ("cEDH staples"); a badge states something about the one card under it and reads in the singular ("cEDH staple").
+
+**The date is shown, unlike the Pokémon exclusivity labels.** Those are curated identity facts that do not expire. These are weekly measurements, and the provenance exists precisely because a reader could not otherwise tell a staple from a stale flag.
+
+**The two rows carry different deck counts on purpose.** The cEDH row counts cEDH decks; the stockable row counts all of Commander. Rhystic Study reads "25,418 decks" on one and "365,221 decks across 56 commanders" on the other, and both are right. Do not reconcile them.
+
+#### Both read paths, or the label silently disappears
+
+MTG cards reach the browser through two surfaces that share no SQL:
+
+| path | surface |
+|---|---|
+| browse | `mtg_card_definitions_v`, embedded by PostgREST per summary row |
+| search | `search_mtg_price_summaries`, which bypasses the view and builds its own `card` jsonb |
+
+A column added to one and not the other **does not fail**. The RPC's `jsonb_build_object` is a hand-kept list, so a missing key reads as null: the label renders on an unfiltered browse and vanishes the instant the user types a search term, with no error anywhere.
+`MTG_LABEL_COLS` in `use-card-data.ts` is the frontend half and is pinned by `use-card-data-variant.test.ts`; the backend half is pinned by `TestMtgLabelColumnsReachBothReadPaths` (backend migration 000566).
+A chip's column additionally has to be in the RPC's `tag_cols` whitelist, where omission means the chip is **silently ignored** rather than refused.
+
+Backend contract: `docs/commander_demand_signal.md`.
+
 ### Sealed Products (Pokémon)
 
 The **Sealed** tab is a parallel path to the card browser (`Game` union includes `"pokemon_sealed"`),
@@ -798,6 +830,7 @@ The authoritative schema is `docs/schema.md` in the backend repository; this tab
 |-------|-------------|
 | `pokemon_card_definitions` | card_id, regional_name, english_name, set_code, card_number, misc_info, edition, foil_treatment, image_url |
 | `mtg_card_definitions` | card_id, regional_name, set_code, card_number, misc_info, image_url |
+| `mtg_card_definitions_v` (view) | the above joined to `mtg_universal_cards`, plus the EDHREC labels and their provenance (see **MTG card labels**) |
 | `pokemon_market_listings` / `mtg_market_listings` | card_id, price_type (Buy/Sell), price, currency, psa_grade, condition, location_id |
 | `currencies` | code (PK), symbol |
 | `exchange_rates` | from_currency, to_currency, rate |

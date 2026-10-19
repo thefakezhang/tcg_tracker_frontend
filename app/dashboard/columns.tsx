@@ -17,6 +17,7 @@ import { UidChip } from "./UidChip";
 import { MarketEvidenceBadge } from "./MarketEvidenceCallout";
 import type { MarketEvidence } from "./market-evidence";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
+import { MtgLabelEvidence } from "./MtgLabelEvidence";
 
 import { formatJpy, formatRoi, formatUsd, formatUsdCompact } from "@/lib/money";
 import { priceKindMarkerKey, priceKindTitleKey } from "@/lib/price-kind";
@@ -292,6 +293,7 @@ export function createColumns(
             <div>{getCardDisplayName(card, language)}</div>
             {misc && <div className="text-xs text-muted-foreground">{misc}</div>}
             <JapanExclusiveEvidence card={card} compact />
+            <MtgLabelEvidence card={card} compact />
             <OwnedCountLine owned={row.original.ownedQty} incoming={row.original.incomingQty} avgCost={row.original.ownedAvgCostUsd} totalCost={row.original.ownedCostBasisUsd} consigned={row.original.ownedConsigned} availableOnly={availableOnly} />
             <ObservedLine observed={row.original.observed} />
           </div>

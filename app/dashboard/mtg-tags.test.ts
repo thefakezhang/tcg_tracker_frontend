@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  hasAnyMtgLabel,
   matchesMtgTagSelection,
   mtgTagSelectionQueryFilter,
   type MtgTagDimension,
@@ -62,5 +63,56 @@ describe("matchesMtgTagSelection", () => {
   it("treats an absent flag as not reserved", () => {
     expect(matchesMtgTagSelection({}, reserved)).toBe(false);
     expect(matchesMtgTagSelection({ is_reserved: null }, reserved)).toBe(false);
+  });
+});
+
+describe("commanderStockable", () => {
+  const stockable = new Set<MtgTagDimension>(["commanderStockable"]);
+
+  it("filters on the column the demand job writes", () => {
+    expect(mtgTagSelectionQueryFilter(stockable)).toEqual({
+      equalsTrue: ["is_commander_stockable"],
+      anyOfTrue: [],
+    });
+  });
+
+  // The label comes from a different job than the three cEDH tags, but it is
+  // still a tag: a second chip widens the list.
+  it("unions with a cEDH tag rather than intersecting it", () => {
+    const both = new Set<MtgTagDimension>(["cedhStaple", "commanderStockable"]);
+    expect(mtgTagSelectionQueryFilter(both)).toEqual({
+      equalsTrue: [],
+      anyOfTrue: ["is_cedh_staple", "is_commander_stockable"],
+    });
+    expect(matchesMtgTagSelection({ is_commander_stockable: true }, both)).toBe(true);
+    expect(matchesMtgTagSelection({ is_cedh_staple: true }, both)).toBe(true);
+    expect(matchesMtgTagSelection({ is_top_commander: true }, both)).toBe(false);
+  });
+
+  it("treats an absent flag as not stockable", () => {
+    expect(matchesMtgTagSelection({}, stockable)).toBe(false);
+    expect(matchesMtgTagSelection({ is_commander_stockable: null }, stockable)).toBe(false);
+  });
+});
+
+describe("hasAnyMtgLabel", () => {
+  // The Reserved List is a published Wizards policy, not an EDHREC
+  // measurement: it has no reason, no evidence URL and no date, so it must not
+  // make the evidence panel appear with "measured before the evidence was
+  // recorded" under it.
+  it("ignores the Reserved List", () => {
+    expect(hasAnyMtgLabel({ is_reserved: true })).toBe(false);
+  });
+
+  it("is true for any EDHREC label", () => {
+    expect(hasAnyMtgLabel({ is_cedh_staple: true })).toBe(true);
+    expect(hasAnyMtgLabel({ is_cedh_exclusive: true })).toBe(true);
+    expect(hasAnyMtgLabel({ is_top_commander: true })).toBe(true);
+    expect(hasAnyMtgLabel({ is_commander_stockable: true })).toBe(true);
+  });
+
+  it("is false for an unlabelled card", () => {
+    expect(hasAnyMtgLabel({})).toBe(false);
+    expect(hasAnyMtgLabel({ is_cedh_staple: false, is_commander_stockable: null })).toBe(false);
   });
 });

@@ -10,7 +10,9 @@ import { platformUrl } from "@/lib/platform-url";
 import { ZoomableImage } from "@/components/ui/zoomable-image";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
-import { useDebouncedValue } from "./use-card-data";
+import { useDebouncedValue, MTG_LABEL_COLS } from "./use-card-data";
+import { MtgLabelEvidence } from "./MtgLabelEvidence";
+import type { MtgLabelProvenance, MtgTagFlags } from "./mtg-tags";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,7 +33,7 @@ interface CardLink {
   platform_name: string;
   external_reference_id: string;
 }
-interface IndexCard {
+interface IndexCard extends MtgTagFlags, MtgLabelProvenance {
   card_id: number;
   card_uid: string;
   regional_name: string; // English name (aliased in the view)
@@ -48,7 +50,7 @@ interface IndexCard {
 }
 
 const COLS =
-  "card_id, card_uid, regional_name, local_name, set_code, card_number, language, is_foil, art_type, foil_type, misc_info, image_url";
+  `card_id, card_uid, regional_name, local_name, set_code, card_number, language, is_foil, art_type, foil_type, misc_info, image_url, ${MTG_LABEL_COLS}`;
 const PLATFORMS = ["tcgplayer", "tcgplayer_SKU", "cardmarket"];
 const PLATFORM_SHORT: Record<string, string> = { tcgplayer: "TCG", tcgplayer_SKU: "SKU", cardmarket: "CM" };
 const ART_TYPES = ["NON_FULL_ART", "FULL_ART"];
@@ -243,6 +245,7 @@ function MtgCardsTab() {
                             .filter(Boolean)
                             .join(" · ")}
                         </div>
+                        <MtgLabelEvidence card={c} compact />
                       </div>
                     </div>
                   </td>

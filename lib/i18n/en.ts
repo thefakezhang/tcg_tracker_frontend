@@ -467,6 +467,9 @@ const en = {
   "cardBrowser.topCommander": "Top 50 commanders",
   "cardBrowser.topCommanderHint":
     "The 50 most-registered commanders, by deck count. From edhrec.com, refreshed weekly.",
+  "cardBrowser.commanderStockable": "Stockable",
+  "cardBrowser.commanderStockableHint":
+    "Cards played in at least 50,000 Commander decks that the catalog also holds at least 10 priced printings of. A stocking signal, not a format fact: enough demand to resell and enough printings for the median price to mean something. From the top commanders' own pages on edhrec.com.",
   "cardBrowser.cuteOnly": "Cute",
   "cardBrowser.soldEvidenceOnly": "Sold evidence",
   "cardBrowser.soldEvidenceOnlyHint":
@@ -478,6 +481,12 @@ const en = {
   "japanExclusive.artwork": "Exclusive artwork",
   "japanExclusive.stamps": "Exclusive stamp / marking",
   "japanExclusive.evidenceUnavailable": "Evidence summary unavailable",
+  "mtgLabel.cedhStaple": "cEDH staple",
+  "mtgLabel.cedhExclusive": "cEDH exclusive",
+  "mtgLabel.topCommander": "Top commander",
+  "mtgLabel.stockable": "Stockable",
+  "mtgLabel.asOf": "measured {date}",
+  "mtgLabel.evidenceUnavailable": "No measurement recorded",
   "column.rarity": "Rarity",
   "cardBrowser.regionNA": "NA",
   "cardBrowser.regionJP": "JP",

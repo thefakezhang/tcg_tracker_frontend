@@ -183,6 +183,19 @@ export interface CardDefinition {
   is_foil?: boolean | null;
   foil_type?: string | null;
   language?: string | null;
+  // EDHREC-derived labels and their provenance (000564, 000566). MTG-only.
+  // MtgTagFlags and MtgLabelProvenance in mtg-tags.ts own these names; the
+  // shapes are structurally identical, so MtgLabelEvidence takes either.
+  is_cedh_staple?: boolean | null;
+  is_cedh_exclusive?: boolean | null;
+  is_top_commander?: boolean | null;
+  edhrec_tags_reason?: string | null;
+  edhrec_tags_evidence_url?: string | null;
+  edhrec_tags_as_of?: string | null;
+  is_commander_stockable?: boolean | null;
+  commander_demand_reason?: string | null;
+  commander_demand_evidence_url?: string | null;
+  commander_demand_as_of?: string | null;
 }
 
 export function getCardDisplayName(
@@ -241,8 +254,14 @@ export const POKEMON_VARIANT_COLS = "misc_info, edition, foil_treatment";
 
 export const POKEMON_CARD_DEF_COLS =
   `card_id, card_uid, regional_name, english_name, set_code, card_number, ${POKEMON_VARIANT_COLS}, image_url, rarity, is_cute, japan_exclusive_artwork, japan_exclusive_artwork_reason, japan_exclusive_artwork_evidence_url, japan_exclusive_stamps, japan_exclusive_stamps_reason, japan_exclusive_stamps_evidence_url, language`;
+// The EDHREC label columns are listed here AND in search_mtg_price_summaries'
+// jsonb_build_object (migration 000566). The browse path reads the view, the
+// search path bypasses it, so a column added to one and not the other renders
+// on an unfiltered browse and then vanishes the moment a search term is typed.
+export const MTG_LABEL_COLS =
+  "is_cedh_staple, is_cedh_exclusive, is_top_commander, edhrec_tags_reason, edhrec_tags_evidence_url, edhrec_tags_as_of, is_commander_stockable, commander_demand_reason, commander_demand_evidence_url, commander_demand_as_of";
 export const MTG_CARD_DEF_COLS =
-  "card_id, card_uid, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language";
+  `card_id, card_uid, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language, ${MTG_LABEL_COLS}`;
 
 export function cardDefCols(game: Game): string {
   return game === "pokemon" ? POKEMON_CARD_DEF_COLS : MTG_CARD_DEF_COLS;
