@@ -85,6 +85,7 @@ import { formatRoiPct, roiToneClass } from "./theoretical-roi";
 import { MarketEvidenceCallout } from "./MarketEvidenceCallout";
 import { compareMarketEstimates, type MarketEvidence } from "./market-evidence";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
+import { MtgLabelEvidence } from "./MtgLabelEvidence";
 import {
   PokemonJapanExclusivityEditor,
   pokemonJapanExclusivityValues,
@@ -707,6 +708,13 @@ export default function CardDetailModal({
                       />
                     </div>
                   </details>
+                </div>
+              )}
+              {activeGame === "mtg" && (
+                // Full width, not compact: the detail modal is where someone
+                // reads the measurement rather than glances at the label.
+                <div className="mt-2 max-w-2xl">
+                  <MtgLabelEvidence card={def} />
                 </div>
               )}
               <div className="mt-1 text-xs">

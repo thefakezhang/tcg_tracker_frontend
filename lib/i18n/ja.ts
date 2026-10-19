@@ -469,6 +469,9 @@ const ja: { [K in keyof typeof en]: string } = {
   "cardBrowser.topCommander": "統率者トップ50",
   "cardBrowser.topCommanderHint":
     "登録デッキ数が最も多い統率者50体。edhrec.com由来、週次更新。",
+  "cardBrowser.commanderStockable": "仕入れ候補",
+  "cardBrowser.commanderStockableHint":
+    "統率者戦デッキ5万件以上で使用され、かつ当カタログに価格の付いた印刷が10種類以上あるカード。環境上の位置づけではなく仕入れ判断の指標です。売り切れる需要があり、中央値が意味を持つだけの印刷数がある、という条件です。edhrec.comの統率者ページ由来。",
   "cardBrowser.cuteOnly": "かわいい",
   "cardBrowser.soldEvidenceOnly": "実売のみ",
   "cardBrowser.soldEvidenceOnlyHint":
@@ -480,6 +483,12 @@ const ja: { [K in keyof typeof en]: string } = {
   "japanExclusive.artwork": "日本限定の絵柄",
   "japanExclusive.stamps": "日本限定のスタンプ・表記",
   "japanExclusive.evidenceUnavailable": "根拠の要約なし",
+  "mtgLabel.cedhStaple": "cEDH定番",
+  "mtgLabel.cedhExclusive": "cEDH特化",
+  "mtgLabel.topCommander": "人気統率者",
+  "mtgLabel.stockable": "仕入れ候補",
+  "mtgLabel.asOf": "{date}計測",
+  "mtgLabel.evidenceUnavailable": "計測値の記録なし",
   "column.rarity": "レアリティ",
   "cardBrowser.regionNA": "NA",
   "cardBrowser.regionJP": "JP",

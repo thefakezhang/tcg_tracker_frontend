@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   MTG_CARD_DEF_COLS,
+  MTG_LABEL_COLS,
   POKEMON_CARD_DEF_COLS,
   POKEMON_VARIANT_COLS,
   cardDefCols,
@@ -70,12 +71,35 @@ describe("Pokemon card-definition variant propagation", () => {
 
   it("keeps the MTG summary projection byte-for-byte unchanged", () => {
     expect(cardDefCols("mtg")).toBe(MTG_CARD_DEF_COLS);
+    // The identity half, pinned literally: these are the columns every MTG
+    // surface reads, and a Pokemon variant change must never reach them.
     expect(MTG_CARD_DEF_COLS).toBe(
-      "card_id, card_uid, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language",
+      "card_id, card_uid, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language"
+      + `, ${MTG_LABEL_COLS}`,
     );
     expect(cardSummarySelect("mtg", "mtg_card_definitions_v"))
       .toBe(`*, mtg_card_definitions_v!inner(${MTG_CARD_DEF_COLS})`);
     expect(MTG_CARD_DEF_COLS).not.toMatch(/edition|foil_treatment|variant_attrs/);
+  });
+
+  // Every column here must also be a key in search_mtg_price_summaries'
+  // jsonb_build_object (migration 000566). The browse path reads the view and
+  // the search path bypasses it, so a label in one and not the other renders
+  // on an unfiltered browse and vanishes the moment a search term is typed.
+  // The backend half is pinned by TestMtgLabelColumnsReachBothReadPaths.
+  it("asks for every EDHREC label the browser renders", () => {
+    expect(MTG_LABEL_COLS.split(", ")).toEqual([
+      "is_cedh_staple",
+      "is_cedh_exclusive",
+      "is_top_commander",
+      "edhrec_tags_reason",
+      "edhrec_tags_evidence_url",
+      "edhrec_tags_as_of",
+      "is_commander_stockable",
+      "commander_demand_reason",
+      "commander_demand_evidence_url",
+      "commander_demand_as_of",
+    ]);
   });
 
   it("uses the typed shared projection at the Buy List PostgREST boundary", () => {

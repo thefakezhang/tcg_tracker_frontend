@@ -54,6 +54,7 @@ import { browserOpportunityPayloads, recordOpportunityExposures } from "./opport
 import { sourceLabel } from "@/lib/source-labels";
 import type { SourceSide } from "./source-availability";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
+import { MtgLabelEvidence } from "./MtgLabelEvidence";
 import type { JapanExclusivityDimension } from "./japan-exclusivity";
 import { JapanExclusivityFilter } from "./JapanExclusivityFilter";
 import { MTG_TAG_DIMENSIONS, type MtgTagDimension } from "./mtg-tags";
@@ -883,6 +884,7 @@ export default function CardBrowser() {
                     </CardDescription>
                   )}
                   <JapanExclusiveEvidence card={row.card} compact />
+                  <MtgLabelEvidence card={row.card} compact />
                   <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} avgCost={row.ownedAvgCostUsd} totalCost={row.ownedCostBasisUsd} consigned={row.ownedConsigned} availableOnly={availableOnly} />
                   <ObservedLine observed={row.observed} />
                 </CardHeader>
