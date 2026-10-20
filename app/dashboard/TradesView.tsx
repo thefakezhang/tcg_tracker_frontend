@@ -522,26 +522,29 @@ export async function searchForBasket(
     // rather than the catalogue: it already carries the condition, the grade
     // and how many are on hand, so a row cannot name a holding we lack.
     // Bounded by .limit(25), so no selectAll paging is needed.
+    // Same contract as every other search bar in the app (lib/card-search): a
+    // name/set/number term, a pasted uid (full or the displayed 8-hex prefix),
+    // or an exact platform external id. `name` here is the JAPANESE regional
+    // name, so english_name has to be in the text columns or "pikachu" matches
+    // nothing; item_uid and the external ids are what make a paste land.
+    // Both columns come from the view via backend migrations 000576 and 000577.
+    const heldExt = await externalIdMatches(
+      supabase, "pokemon_external_identifiers", "card_id", term,
+    );
     let q = supabase
       .from("inventory_holdings_v")
       .select(
-        "game, card_id, product_id, name, english_name, set_code, card_number, " +
-          "condition_id, psa_grade, qty_on_hand, sealed_condition, variant_edition, " +
-          "variant_label",
+        "game, card_id, product_id, item_uid, name, english_name, set_code, " +
+          "card_number, condition_id, psa_grade, qty_on_hand, sealed_condition, " +
+          "variant_edition, variant_label",
       )
       .gt("qty_on_hand", 0);
     for (const f of smartSearchFilters(
       term,
-      // english_name matters: `name` is the JAPANESE regional name for Pokemon,
-      // so without it "pikachu" matched nothing here while the incoming basket,
-      // which reads the catalogue, matched 411 cards. Added to the view by
-      // backend migration 000576.
       ["name", "english_name", "set_code", "card_number"],
-      // The view exposes no uid column, so the uid disjuncts have nothing to
-      // match; passing the id column for both keeps the text path intact.
+      "item_uid",
       "card_id",
-      "card_id",
-      [],
+      heldExt,
     )) {
       q = q.or(f);
     }

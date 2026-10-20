@@ -230,7 +230,7 @@ describe("TradesView data contracts", () => {
 // that, because it mocks this function out. These pin the columns.
 describe("searchForBasket", () => {
   function fakeSupabase() {
-    const calls = { table: "", select: "", filters: [] as string[], gt: [] as unknown[][] };
+    const calls = { table: "", tables: [] as string[], select: "", filters: [] as string[], gt: [] as unknown[][] };
     const builder: Record<string, unknown> = {};
     const chain = () => builder;
     Object.assign(builder, {
@@ -244,7 +244,13 @@ describe("searchForBasket", () => {
     });
     return {
       calls,
-      client: { from: (table: string) => { if (!calls.table) calls.table = table; return builder; } },
+      client: {
+        from: (table: string) => {
+          if (!calls.table) calls.table = table;
+          calls.tables.push(table);
+          return builder;
+        },
+      },
     };
   }
 
@@ -252,11 +258,34 @@ describe("searchForBasket", () => {
     const { calls, client } = fakeSupabase();
     await searchForBasket(client as never, "out", "pikachu", null);
 
-    expect(calls.table).toBe("inventory_holdings_v");
     expect(calls.select).toContain("english_name");
     // One filter per whitespace token; each must offer english_name as a disjunct.
     expect(calls.filters.length).toBeGreaterThan(0);
     expect(calls.filters.every((f) => f.includes("english_name"))).toBe(true);
+  });
+
+  // The whole point of lib/card-search is that a pasted identifier lands on the
+  // card, in every search bar. This basket used to aim uidCol at the integer
+  // card_id with no external ids, which both dropped the paste paths AND made a
+  // pasted uid emit `card_id.gte.<uuid>` - an error, not a miss.
+  it("resolves a pasted uid against item_uid, not an integer id column", async () => {
+    const { calls, client } = fakeSupabase();
+    await searchForBasket(client as never, "out", "a1b2c3d4", null);
+
+    const joined = calls.filters.join(" ");
+    expect(joined).toContain("item_uid");
+    expect(joined).not.toContain("card_id.gte");
+    expect(joined).not.toContain("card_id.lte");
+  });
+
+  it("asks the platform-id resolver for the outgoing side too", async () => {
+    const { calls, client } = fakeSupabase();
+    await searchForBasket(client as never, "out", "123456", null);
+
+    // externalIdMatches reads the identifier table before the holdings query,
+    // so the outgoing basket accepts a pasted TCGplayer id like the rest.
+    expect(calls.tables).toContain("pokemon_external_identifiers");
+    expect(calls.tables).toContain("inventory_holdings_v");
   });
 
   it("asks only for stock on hand, so a sold-out holding cannot be given away", async () => {
