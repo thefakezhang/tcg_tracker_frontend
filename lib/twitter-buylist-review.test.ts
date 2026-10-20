@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyTwitterBuylistReviewError,
   isStaleTwitterBuylistReviewError,
   parseTwitterBuylistReviewEnvelope,
+  twitterBuylistReviewErrorDetail,
 } from "./twitter-buylist-review";
 
 const sha = "a".repeat(64);
@@ -104,5 +106,33 @@ describe("Twitter buylist review contract", () => {
     expect(isStaleTwitterBuylistReviewError({ code: "40001" })).toBe(true);
     expect(isStaleTwitterBuylistReviewError({ message: "stale_review_document: reload" })).toBe(true);
     expect(isStaleTwitterBuylistReviewError({ code: "23514" })).toBe(false);
+  });
+
+  it("does not accept a fabricated not-applicable result as legacy authority", () => {
+    expect(() => parseTwitterBuylistReviewEnvelope({
+      status: "not_applicable",
+      candidate_kind: "singles",
+      candidate_id: 7,
+      reason: "non_twitter_source",
+    }, "singles", 7)).toThrow("review_document_invalid");
+  });
+
+  it.each([
+    [{ code: "23514", message: "candidate has no renderable current Twitter review document" }, "retry"],
+    [{ code: "PGRST202", message: "function not found" }, "capability"],
+    [{ code: "42883", message: "undefined function" }, "capability"],
+    [{ status: 401, message: "JWT expired" }, "sign_in"],
+    [{ code: "42501", message: "Twitter buylist review requires an authenticated curator" }, "sign_in"],
+    [{ status: 403, message: "permission denied" }, "forbidden"],
+  ] as const)("classifies review recovery for %o", (error, expected) => {
+    expect(classifyTwitterBuylistReviewError(error)).toBe(expected);
+  });
+
+  it("shows only the review error code and message", () => {
+    expect(twitterBuylistReviewErrorDetail({
+      code: "23514",
+      message: "candidate has no renderable current Twitter review document",
+      details: "private server detail",
+    })).toBe("23514 · candidate has no renderable current Twitter review document");
   });
 });

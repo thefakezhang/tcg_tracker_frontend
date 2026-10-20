@@ -4,7 +4,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageProvider } from "./LanguageContext";
 import CurationView, { ReviewedCurationCandidateCard } from "./CurationView";
-import { ReviewedSealedCurationCandidateCard } from "./SealedCurationView";
+import SealedCurationView, {
+  ReviewedSealedCurationCandidateCard,
+} from "./SealedCurationView";
 
 const mocks = vi.hoisted(() => ({
   rpc: vi.fn(),
@@ -234,6 +236,69 @@ function renderSealed(onApprove: ReturnType<typeof vi.fn>) {
   );
 }
 
+function queueCandidate(kind: "singles" | "sealed") {
+  const candidate = {
+    ...baseCandidate,
+    confidence: 0.99,
+    price_evidence: {
+      verified: true,
+      method: "currency_marker",
+      ocr_confidence: 0.99,
+      banner: null,
+    },
+  };
+  return kind === "singles"
+    ? {
+      ...candidate,
+      card_grading: "raw",
+      candidate_card_id: 5,
+      card: {
+        regional_name: "Queue Candidate",
+        english_name: "Queue Candidate",
+        set_code: "OLD",
+        card_number: "1",
+        misc_info: null,
+        image_url: null,
+      },
+    }
+    : {
+      ...candidate,
+      sealed_condition: "standard",
+      candidate_product_id: 6,
+      product: {
+        name: "Queue Product",
+        english_name: "Queue Product",
+        set_code: "OLD",
+        product_type: "booster_box",
+        language: "ja",
+        variant_edition: "standard",
+        misc_info: null,
+        image_url: null,
+      },
+    };
+}
+
+function setSingleCandidateQueue(kind: "singles" | "sealed") {
+  mocks.queueData = {
+    rows: [queueCandidate(kind)],
+    stats: {
+      high_water: 7,
+      total: 1,
+      matched: 1,
+      band_counts: { high: { total: 1, matched: 1 } },
+    },
+    loadedAll: true,
+  };
+}
+
+function renderQueue(kind: "singles" | "sealed") {
+  return render(
+    <LanguageProvider>
+      {kind === "singles" ? <CurationView /> : <SealedCurationView />}
+    </LanguageProvider>,
+  );
+}
+
 beforeEach(() => {
   mocks.rpc.mockReset();
   mocks.retry.mockReset();
@@ -454,5 +519,147 @@ describe("reviewed Twitter buylist item approval", () => {
       p_max: 5000,
     });
     expect(batchCall?.[1]).not.toHaveProperty("p_expected_review_sha256");
+  });
+});
+
+describe.each([
+  {
+    kind: "singles" as const,
+    queueLabel: "Queue Candidate",
+    legacyRPCs: [
+      "promote_image_buylist_candidate",
+      "correct_and_promote_image_buylist_candidate",
+    ],
+  },
+  {
+    kind: "sealed" as const,
+    queueLabel: "Queue Product",
+    legacyRPCs: [
+      "promote_sealed_image_buylist_candidate",
+      "correct_and_promote_sealed_image_buylist_candidate",
+    ],
+  },
+])("$kind review document refusal", ({ kind, queueLabel, legacyRPCs }) => {
+  it("keeps pointer and keyboard approval fail-closed on exact SQLSTATE 23514", async () => {
+    setSingleCandidateQueue(kind);
+    mocks.rpc.mockImplementation(async (name: string) => {
+      if (name === "get_twitter_buylist_review_document") {
+        return {
+          data: null,
+          error: {
+            code: "23514",
+            message: "candidate has no renderable current Twitter review document",
+          },
+        };
+      }
+      return { data: null, error: null };
+    });
+
+    renderQueue(kind);
+
+    expect(await screen.findByText(queueLabel)).toBeTruthy();
+    await waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith(
+      "get_twitter_buylist_review_document",
+      { p_candidate_kind: kind, p_candidate_id: 7 },
+    ));
+    const approve = screen.getByRole("button", { name: "Mark correct" });
+    const correct = screen.getByRole("button", { name: "Correct false match" });
+    expect.soft((approve as HTMLButtonElement).disabled).toBe(true);
+    expect.soft((correct as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.keyDown(window, { key: "y" });
+    await Promise.resolve();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(mocks.rpc.mock.calls.filter(
+      ([name]) => name === "get_twitter_buylist_review_document",
+    )).toHaveLength(2));
+
+    const mutationNames = mocks.rpc.mock.calls
+      .map(([name]) => name as string)
+      .filter((name) => name === "approve_twitter_buylist_review" || legacyRPCs.includes(name));
+    expect.soft(mutationNames).toEqual([]);
+  });
+
+  it("blocks an old backend without the canonical review RPC", async () => {
+    setSingleCandidateQueue(kind);
+    mocks.rpc.mockImplementation(async (name: string) => {
+      if (name === "get_twitter_buylist_review_document") {
+        return {
+          data: null,
+          error: {
+            code: "PGRST202",
+            message: "Could not find the function public.get_twitter_buylist_review_document",
+          },
+        };
+      }
+      return { data: null, error: null };
+    });
+
+    renderQueue(kind);
+
+    expect(await screen.findByText(queueLabel)).toBeTruthy();
+    expect(await screen.findByText(
+      "This server does not support evidence-bound review yet. Approval stays blocked until the backend rollout is complete.",
+    )).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Mark correct" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Correct false match" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+
+    fireEvent.keyDown(window, { key: "y" });
+    await Promise.resolve();
+    expect(mocks.rpc.mock.calls.some(([name]) => (
+      name === "approve_twitter_buylist_review" || legacyRPCs.includes(String(name))
+    ))).toBe(false);
+  });
+
+  it("offers sign-in recovery for an expired review session without enabling approval", async () => {
+    setSingleCandidateQueue(kind);
+    mocks.rpc.mockImplementation(async (name: string) => {
+      if (name === "get_twitter_buylist_review_document") {
+        return {
+          data: null,
+          error: { status: 401, code: "PGRST301", message: "JWT expired" },
+        };
+      }
+      return { data: null, error: null };
+    });
+
+    renderQueue(kind);
+
+    expect(await screen.findByText(queueLabel)).toBeTruthy();
+    const signIn = await screen.findByRole("link", { name: "Sign in again" });
+    expect(signIn.getAttribute("href")).toBe("/login");
+    expect((screen.getByRole("button", { name: "Mark correct" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Correct false match" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(window, { key: "y" });
+    await Promise.resolve();
+    expect(mocks.rpc.mock.calls.some(([name]) => (
+      name === "approve_twitter_buylist_review" || legacyRPCs.includes(String(name))
+    ))).toBe(false);
+  });
+
+  it("rejects malformed successful payloads instead of treating them as legacy candidates", async () => {
+    setSingleCandidateQueue(kind);
+    const malformed = reviewEnvelope(kind);
+    malformed.document.source.image_url = "https://fixture.invalid/not-content-addressed.jpg";
+    mocks.rpc.mockImplementation(async (name: string) => {
+      if (name === "get_twitter_buylist_review_document") {
+        return { data: malformed, error: null };
+      }
+      return { data: null, error: null };
+    });
+
+    renderQueue(kind);
+
+    expect(await screen.findByText(queueLabel)).toBeTruthy();
+    expect(await screen.findByText(/review_document_invalid/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Mark correct" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Correct false match" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(window, { key: "y" });
+    await Promise.resolve();
+    expect(mocks.rpc.mock.calls.some(([name]) => (
+      name === "approve_twitter_buylist_review" || legacyRPCs.includes(String(name))
+    ))).toBe(false);
   });
 });

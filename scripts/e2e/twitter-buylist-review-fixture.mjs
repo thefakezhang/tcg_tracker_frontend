@@ -29,6 +29,14 @@ const sourceSHA = "b37525560be9471f0375f4c3745a1f6829ac0456402b88f96e842d023a8ac
 const processTweetReportSHA = "18adad2127b11c15c4f3c1a2c905799d827374876228d7a6d4a7972b11defe5c";
 const tohokuUID = "4edf0d33-d1fa-459b-9645-30a332144fda";
 const pretendBossUID = "e798eed8-c2dd-4c36-96e3-0fbb5a7db31c";
+const reviewDocumentRPC = "get_twitter_buylist_review_document";
+const authorityMutationRPCs = new Set([
+  "approve_twitter_buylist_review",
+  "promote_image_buylist_candidate",
+  "correct_and_promote_image_buylist_candidate",
+  "promote_sealed_image_buylist_candidate",
+  "correct_and_promote_sealed_image_buylist_candidate",
+]);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -127,10 +135,13 @@ async function preparePage(browser, viewport, label) {
   const page = await context.newPage();
   const dialogs = [];
   const consoleErrors = [];
+  const expectedReviewNetworkErrors = [];
+  const expectedReviewConsoleErrors = [];
   const expectedStaleNetworkErrors = [];
   const unexpectedHTTPResponses = [];
   const outsideRequests = [];
   const requestFailures = [];
+  const mutationRequests = [];
   page.on("dialog", async (dialog) => {
     dialogs.push({ type: dialog.type(), message: dialog.message() });
     await dialog.dismiss();
@@ -138,11 +149,18 @@ async function preparePage(browser, viewport, label) {
   page.on("console", (message) => {
     if (message.type() !== "error") return;
     const content = message.text();
+    const location = message.location();
+    if (
+      content.includes("400 (Bad Request)")
+      && location.url.includes(reviewDocumentRPC)
+    ) {
+      expectedReviewConsoleErrors.push(content);
+      return;
+    }
     if (content.includes("409 (Conflict)")) {
       expectedStaleNetworkErrors.push(content);
       return;
     }
-    const location = message.location();
     const diagnostic = location.url
       ? `${content} (${location.url}:${location.lineNumber}:${location.columnNumber})`
       : content;
@@ -165,6 +183,10 @@ async function preparePage(browser, viewport, label) {
   page.on("response", (response) => {
     if (response.status() < 400) return;
     const failure = { url: response.url(), status: response.status() };
+    if (failure.status === 400 && failure.url.includes(reviewDocumentRPC)) {
+      expectedReviewNetworkErrors.push(failure);
+      return;
+    }
     if (failure.status === 409 && failure.url.includes("approve_twitter_buylist_review")) return;
     unexpectedHTTPResponses.push(failure);
     console.error(`${label} browser HTTP error: ${JSON.stringify(failure)}`);
@@ -172,6 +194,10 @@ async function preparePage(browser, viewport, label) {
   page.on("request", (request) => {
     const url = new URL(request.url());
     if (url.hostname !== "127.0.0.1") outsideRequests.push(request.url());
+    const rpcName = url.pathname.split("/").at(-1);
+    if (request.method() === "POST" && rpcName && authorityMutationRPCs.has(rpcName)) {
+      mutationRequests.push({ method: request.method(), rpc: rpcName, url: request.url() });
+    }
   });
   await page.goto(`${appUrl}/e2e/twitter-buylist-review`, { waitUntil: "networkidle" });
   const root = page.getByTestId("twitter-buylist-review-fixture");
@@ -183,10 +209,13 @@ async function preparePage(browser, viewport, label) {
     root,
     dialogs,
     consoleErrors,
+    expectedReviewNetworkErrors,
+    expectedReviewConsoleErrors,
     expectedStaleNetworkErrors,
     unexpectedHTTPResponses,
     outsideRequests,
     requestFailures,
+    mutationRequests,
     label,
   };
 }
@@ -243,6 +272,17 @@ const tohoku = initialState.candidates.find((row) => row.entity_uid === tohokuUI
 const pretend = initialState.candidates.find((row) => row.entity_uid === pretendBossUID);
 assert(tohoku && pretend, `actual producer subjects missing: ${JSON.stringify(initialState)}`);
 assert(tohoku.status === "pending" && pretend.status === "pending", "producer candidates did not begin pending");
+const suspendedReview = await fixture("/__fixture__/suspend-review-document", {
+  method: "POST",
+  body: { candidate_id: tohoku.candidate_id },
+});
+assert(suspendedReview.sqlstate === "23514", `review suspension lost SQLSTATE 23514: ${JSON.stringify(suspendedReview)}`);
+assert(
+  suspendedReview.message === "candidate has no renderable current Twitter review document",
+  `review suspension changed the server error: ${JSON.stringify(suspendedReview)}`,
+);
+assert(suspendedReview.before_sha256 === tohoku.review_sha256, "review suspension did not bind the rendered SHA");
+assert(suspendedReview.detector_price_jpy === 270000, "review suspension lost immutable detector proof");
 
 const browser = await chromium.launch({ headless: false });
 const evidence = {
@@ -263,6 +303,51 @@ try {
     const card = candidateCard(desktop.page, "Tohoku Pikachu");
     await card.getByText("Tohoku Pikachu", { exact: true }).waitFor();
     await card.getByText("¥270,000", { exact: true }).waitFor();
+    const reviewAlert = card.getByRole("alert");
+    await reviewAlert.getByText(
+      /23514 · candidate has no renderable current Twitter review document/,
+    ).waitFor();
+    const blockedApprove = card.getByRole("button", { name: "Mark correct" });
+    const blockedCorrect = card.getByRole("button", { name: "Correct false match" });
+    assert(await blockedApprove.isDisabled(), "23514 left Mark correct enabled");
+    assert(await blockedCorrect.isDisabled(), "23514 left Correct false match enabled");
+    const initialReviewFailureCount = desktop.expectedReviewNetworkErrors.length;
+    assert(initialReviewFailureCount >= 1, "initial review load did not surface SQLSTATE 23514");
+    assert(desktop.mutationRequests.length === 0, "review load issued an authority mutation");
+    await desktop.page.keyboard.press("y");
+    await desktop.page.waitForTimeout(200);
+    assert(desktop.mutationRequests.length === 0, "keyboard approval bypassed missing canonical review evidence");
+    const blockedScreenshot = await capture(desktop.page, "desktop-23514-review-blocked");
+
+    const retryResponse = desktop.page.waitForResponse(
+      (response) => response.status() === 400 && response.url().includes(reviewDocumentRPC),
+    );
+    const reviewFailuresBeforeRetry = desktop.expectedReviewNetworkErrors.length;
+    await reviewAlert.getByRole("button", { name: "Retry" }).click();
+    await retryResponse;
+    await reviewAlert.getByText(
+      /23514 · candidate has no renderable current Twitter review document/,
+    ).waitFor();
+    assert(await blockedApprove.isDisabled(), "failed Retry enabled Mark correct");
+    assert(await blockedCorrect.isDisabled(), "failed Retry enabled Correct false match");
+    assert(
+      desktop.expectedReviewNetworkErrors.length === reviewFailuresBeforeRetry + 1,
+      "explicit Retry did not produce exactly one new 23514 response",
+    );
+    assert(desktop.mutationRequests.length === 0, "failed Retry issued an authority mutation");
+    const blockedMutationRequests = desktop.mutationRequests.slice();
+
+    const restoredReview = await fixture("/__fixture__/restore-review-document", {
+      method: "POST",
+      body: { candidate_id: tohoku.candidate_id },
+    });
+    assert(restoredReview.document_sha256 === tohoku.review_sha256, "restored review SHA changed");
+    assert(restoredReview.detector_price_jpy === 270000, "restored detector proof changed");
+    const readyResponse = desktop.page.waitForResponse(
+      (response) => response.status() === 200 && response.url().includes(reviewDocumentRPC),
+    );
+    await reviewAlert.getByRole("button", { name: "Retry" }).click();
+    await readyResponse;
     await card.getByText(
       "Exact source, item, and price evidence ready for approval.",
       { exact: true },
@@ -333,13 +418,37 @@ try {
       desktop.page,
       "desktop-actual-cardrush-after-stale-recovery",
     );
+    assert(
+      desktop.mutationRequests.filter(
+        (request) => request.rpc === "approve_twitter_buylist_review",
+      ).length === 2,
+      `desktop approval request count changed: ${JSON.stringify(desktop.mutationRequests)}`,
+    );
+    assert(
+      desktop.mutationRequests.every((request) => request.rpc === "approve_twitter_buylist_review"),
+      `desktop invoked a legacy mutation: ${JSON.stringify(desktop.mutationRequests)}`,
+    );
     assert(desktop.consoleErrors.length === 0, `desktop console errors: ${JSON.stringify(desktop.consoleErrors)}`);
+    assert(
+      desktop.expectedReviewNetworkErrors.length >= initialReviewFailureCount + 1,
+      "desktop did not observe the initial and explicitly retried 23514 responses",
+    );
     assert(desktop.expectedStaleNetworkErrors.length === 1, "desktop did not observe exactly one stale CAS response");
     assert(desktop.unexpectedHTTPResponses.length === 0, `desktop HTTP errors: ${JSON.stringify(desktop.unexpectedHTTPResponses)}`);
     assert(desktop.outsideRequests.length === 0, `desktop attempted external requests: ${JSON.stringify(desktop.outsideRequests)}`);
     assert(desktop.requestFailures.length === 0, `desktop request failures: ${JSON.stringify(desktop.requestFailures)}`);
     evidence.desktop = {
       candidate: tohoku,
+      blockedReview: {
+        suspendedReview,
+        restoredReview,
+        screenshot: blockedScreenshot,
+        initialReviewFailureCount,
+        reviewFailuresBeforeRetry,
+        expectedNetworkErrors: desktop.expectedReviewNetworkErrors,
+        expectedConsoleErrors: desktop.expectedReviewConsoleErrors,
+        mutationRequestsBeforeRestore: blockedMutationRequests,
+      },
       stale,
       approvalRequests: approvedState.approval_requests.slice(0, 2),
       claim,
@@ -347,9 +456,12 @@ try {
       screenshot,
       dialogs: desktop.dialogs,
       consoleErrors: desktop.consoleErrors,
+      expectedReviewNetworkErrors: desktop.expectedReviewNetworkErrors,
+      expectedReviewConsoleErrors: desktop.expectedReviewConsoleErrors,
       expectedStaleNetworkErrors: desktop.expectedStaleNetworkErrors,
       unexpectedHTTPResponses: desktop.unexpectedHTTPResponses,
       requestFailures: desktop.requestFailures,
+      mutationRequests: desktop.mutationRequests,
     };
   } finally {
     await desktop.context.close();
@@ -395,8 +507,14 @@ try {
       "phone actual Cardrush review",
     );
     const screenshot = await capture(phone.page, "phone-actual-cardrush-review");
+    assert(
+      phone.mutationRequests.length === 1
+        && phone.mutationRequests[0].rpc === "approve_twitter_buylist_review",
+      `phone mutation requests changed: ${JSON.stringify(phone.mutationRequests)}`,
+    );
     assert(phone.dialogs.length === 0, `phone opened a dialog: ${JSON.stringify(phone.dialogs)}`);
     assert(phone.consoleErrors.length === 0, `phone console errors: ${JSON.stringify(phone.consoleErrors)}`);
+    assert(phone.expectedReviewNetworkErrors.length === 0, "phone observed an unexpected review-document error");
     assert(phone.expectedStaleNetworkErrors.length === 0, "phone observed an unexpected stale response");
     assert(phone.unexpectedHTTPResponses.length === 0, `phone HTTP errors: ${JSON.stringify(phone.unexpectedHTTPResponses)}`);
     assert(phone.outsideRequests.length === 0, `phone attempted external requests: ${JSON.stringify(phone.outsideRequests)}`);
@@ -409,8 +527,11 @@ try {
       screenshot,
       dialogs: phone.dialogs,
       consoleErrors: phone.consoleErrors,
+      expectedReviewNetworkErrors: phone.expectedReviewNetworkErrors,
+      expectedReviewConsoleErrors: phone.expectedReviewConsoleErrors,
       unexpectedHTTPResponses: phone.unexpectedHTTPResponses,
       requestFailures: phone.requestFailures,
+      mutationRequests: phone.mutationRequests,
     };
   } finally {
     await phone.context.close();

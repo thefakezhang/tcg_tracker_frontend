@@ -148,16 +148,61 @@ export function isStaleTwitterBuylistReviewError(error: unknown): boolean {
     (candidate?.message ?? "").includes("stale_review_document");
 }
 
-function isUnavailableReviewError(error: unknown): boolean {
-  const candidate = error as { code?: string; message?: string } | null;
-  return candidate?.code === "23514" ||
-    (candidate?.message ?? "").includes("no renderable current Twitter review document");
+export type TwitterBuylistReviewRecovery =
+  | "retry"
+  | "sign_in"
+  | "capability"
+  | "forbidden";
+
+export function classifyTwitterBuylistReviewError(
+  error: unknown,
+): TwitterBuylistReviewRecovery {
+  const candidate = error as {
+    status?: unknown;
+    code?: unknown;
+    message?: unknown;
+    name?: unknown;
+  } | null;
+  const code = typeof candidate?.code === "string" ? candidate.code : "";
+  const status = String(candidate?.status ?? candidate?.code ?? "");
+  const detail = [candidate?.code, candidate?.message, candidate?.name]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  if (
+    status === "401" ||
+    code === "PGRST301" ||
+    (code === "42501" && /authenticated curator|curator subject/i.test(detail)) ||
+    /\b(jwt|session|refresh[_ -]?token|access[_ -]?token)\b.*\b(expired|invalid|missing|not found)\b/i.test(detail) ||
+    /\b(expired|invalid|missing|not found)\b.*\b(jwt|session|refresh[_ -]?token|access[_ -]?token)\b/i.test(detail)
+  ) {
+    return "sign_in";
+  }
+  if (["42883", "42P01", "PGRST202", "PGRST204"].includes(code)) {
+    return "capability";
+  }
+  if (
+    status === "403" ||
+    code === "42501" ||
+    /\b(forbidden|permission denied|not authorized|unauthori[sz]ed|insufficient privilege)\b/i.test(detail)
+  ) {
+    return "forbidden";
+  }
+  return "retry";
+}
+
+export function twitterBuylistReviewErrorDetail(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (!error || typeof error !== "object") return "review_document_failed";
+  const candidate = error as { code?: unknown; message?: unknown };
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  const message = typeof candidate.message === "string" ? candidate.message : "";
+  return [code, message].filter(Boolean).join(" · ") || "review_document_failed";
 }
 
 export type TwitterReviewLoadState =
-  | { status: "idle" | "loading" | "unavailable"; envelope: null; error: null }
+  | { status: "idle" | "loading"; envelope: null; error: null }
   | { status: "ready" | "stale"; envelope: TwitterBuylistReviewEnvelope; error: null }
-  | { status: "error"; envelope: null; error: string };
+  | { status: "error"; envelope: null; error: unknown };
 
 export function useTwitterBuylistReview(
   kind: TwitterBuylistCandidateKind,
@@ -176,9 +221,7 @@ export function useTwitterBuylistReview(
       { p_candidate_kind: kind, p_candidate_id: candidateId },
     );
     if (error) {
-      setState(isUnavailableReviewError(error)
-        ? { status: "unavailable", envelope: null, error: null }
-        : { status: "error", envelope: null, error: error.message ?? "review_document_failed" });
+      setState({ status: "error", envelope: null, error });
       return;
     }
     try {
@@ -191,7 +234,7 @@ export function useTwitterBuylistReview(
       setState({
         status: "error",
         envelope: null,
-        error: parseError instanceof Error ? parseError.message : "review_document_invalid",
+        error: parseError,
       });
     }
   }, [candidateId, enabled, kind]);

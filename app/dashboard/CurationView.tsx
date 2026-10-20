@@ -16,7 +16,9 @@ import { useSupabaseQuery, QueryError } from "./use-query";
 import { getCardDisplayName, cardMeta, useDebouncedValue, POKEMON_VARIANT_COLS } from "./use-card-data";
 import type { PokemonVariantProjection } from "@/lib/pokemon-variant";
 import {
+  classifyTwitterBuylistReviewError,
   isStaleTwitterBuylistReviewError,
+  twitterBuylistReviewErrorDetail,
   useTwitterBuylistReview,
 } from "@/lib/twitter-buylist-review";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -663,8 +665,9 @@ interface CurationCardProps {
   onUndo?: (c: Candidate) => void;
   reviewBinding?: {
     state: "select" | "loading" | "ready" | "error";
-    detail?: string;
+    error?: unknown;
     evidenceReady: boolean;
+    onRetry?: () => void;
     onCardEvidenceLoad: (width: number, height: number) => void;
     onPriceEvidenceLoad: (width: number, height: number) => void;
     sha256?: string;
@@ -736,7 +739,8 @@ export function ReviewedCurationCandidateCard(
     }
     : review.status === "error"
       ? {
-        state: "error", detail: review.error, evidenceReady: false,
+        state: "error", error: review.error, evidenceReady: false,
+        onRetry: review.reload,
         onCardEvidenceLoad: () => undefined,
         onPriceEvidenceLoad: () => undefined,
       }
@@ -913,6 +917,12 @@ export function CurationCandidateCard({
   // Lightbox target falls back to whichever URL we actually have, so click
   // always opens *something* for the curator instead of blank black.
   const lightboxImg = sourceImg ?? cellCardImg;
+  const reviewRecovery = reviewBinding?.state === "error"
+    ? classifyTwitterBuylistReviewError(reviewBinding.error)
+    : null;
+  const reviewErrorDetail = reviewBinding?.state === "error"
+    ? twitterBuylistReviewErrorDetail(reviewBinding.error)
+    : "";
 
   return (
     <Card
@@ -922,26 +932,55 @@ export function CurationCandidateCard({
       className={`cursor-pointer transition-shadow ${selected ? "ring-2 ring-primary ring-offset-1" : ""}`}
     >
       <CardContent className="space-y-2 p-3">
-        {reviewBinding && (
+        {reviewBinding?.state === "error" ? (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-2 py-1 text-xs text-destructive"
+          >
+            <span>
+              {reviewRecovery === "sign_in"
+                ? t("curation.review.sessionExpired")
+                : reviewRecovery === "capability"
+                  ? t("curation.review.capabilityError")
+                  : reviewRecovery === "forbidden"
+                    ? t("curation.review.forbidden")
+                    : t("curation.review.error", { detail: reviewErrorDetail })}
+            </span>
+            {reviewRecovery === "sign_in" ? (
+              <a
+                href="/login"
+                className="inline-flex min-h-11 items-center justify-center rounded-lg border border-border bg-background px-2.5 font-medium text-foreground hover:bg-muted"
+              >
+                {t("common.signInAgain")}
+              </a>
+            ) : reviewRecovery === "retry" ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-11 sm:min-h-11"
+                onClick={() => reviewBinding.onRetry?.()}
+              >
+                {t("common.retry")}
+              </Button>
+            ) : null}
+          </div>
+        ) : reviewBinding && (
           <div
             role="status"
             className={`rounded-md border px-2 py-1 text-xs ${
               reviewBinding.state === "ready" && reviewBinding.evidenceReady
                 ? "border-green-500/50 bg-green-500/10 text-green-800 dark:text-green-300"
-                : reviewBinding.state === "error"
-                  ? "border-destructive/50 bg-destructive/10 text-destructive"
-                  : "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                : "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-300"
             }`}
           >
             {reviewBinding.state === "select"
               ? t("curation.review.select")
               : reviewBinding.state === "loading"
                 ? t("curation.review.loading")
-                : reviewBinding.state === "error"
-                  ? t("curation.review.error", { detail: reviewBinding.detail ?? "" })
-                  : reviewBinding.evidenceReady
-                    ? t("curation.review.ready")
-                    : t("curation.review.waitingForEvidence")}
+                : reviewBinding.evidenceReady
+                  ? t("curation.review.ready")
+                  : t("curation.review.waitingForEvidence")}
           </div>
         )}
         <div className="grid grid-cols-2 gap-2 sm:flex">
@@ -1124,7 +1163,7 @@ export function CurationCandidateCard({
               >
                 <Check className="size-4 mr-1" />{t("curation.markCorrect")}
               </Button>
-              <Button size="sm" variant={correcting ? "secondary" : "outline"} className="min-h-11 sm:min-h-11" disabled={saving} onClick={() => setCorrecting((v) => !v)}>
+              <Button size="sm" variant={correcting ? "secondary" : "outline"} className="min-h-11 sm:min-h-11" disabled={saving || reviewApprovalBlocked} onClick={() => setCorrecting((v) => !v)}>
                 <Pencil className="size-4 mr-1" />{t("curation.correctMatch")}
               </Button>
               <Button size="sm" variant="ghost" className="min-h-11 sm:min-h-11" onClick={() => setShowDetails((v) => !v)}>

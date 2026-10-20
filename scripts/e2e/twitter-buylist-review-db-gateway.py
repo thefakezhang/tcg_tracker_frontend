@@ -51,7 +51,18 @@ class GatewayState:
         self.source_path = source_path
         self.token = token
         self.approval_requests: list[dict[str, Any]] = []
+        self.suspended_detector_prices: dict[int, int] = {}
         self.lock = threading.Lock()
+
+    @staticmethod
+    def database_error(error: Exception) -> dict[str, str | None]:
+        original = getattr(error, "orig", None)
+        diagnostic = getattr(original, "diag", None)
+        message = getattr(diagnostic, "message_primary", None)
+        return {
+            "sqlstate": getattr(original, "sqlstate", None),
+            "message": message or str(original or error),
+        }
 
     def authenticated_scalar(
         self,
@@ -143,6 +154,70 @@ class GatewayState:
             "after_sha256": after["document_sha256"],
             "detector_price_jpy": row[1],
             "effective_price_jpy": row[0],
+        }
+
+    def suspend_review_document(self, candidate_id: int) -> dict[str, Any]:
+        """Temporarily remove immutable detector proof to exercise SQLSTATE 23514."""
+        before = self.review_document(candidate_id)
+        detector_price = before["document"]["displayed"]["detector_price_jpy"]
+        if not isinstance(detector_price, int) or detector_price <= 0:
+            raise RuntimeError("canonical document did not carry a positive detector price")
+        with self.lock:
+            if candidate_id in self.suspended_detector_prices:
+                raise RuntimeError(f"candidate {candidate_id} review is already suspended")
+            with self.engine.begin() as connection:
+                updated_candidate_id = connection.execute(text("""
+                    UPDATE pokemon_image_buylist_candidates
+                       SET original_price_jpy=NULL
+                     WHERE candidate_id=:candidate_id
+                       AND status IN ('pending', 'needs_review')
+                    RETURNING candidate_id
+                """), {"candidate_id": candidate_id}).scalar_one_or_none()
+                if updated_candidate_id != candidate_id:
+                    raise RuntimeError(f"candidate {candidate_id} detector proof was not suspended")
+            self.suspended_detector_prices[candidate_id] = detector_price
+
+        try:
+            self.review_document(candidate_id)
+        except Exception as error:
+            database_error = self.database_error(error)
+            if database_error["sqlstate"] != "23514":
+                self.restore_review_document(candidate_id)
+                raise
+            return {
+                "candidate_id": candidate_id,
+                "before_sha256": before["document_sha256"],
+                "detector_price_jpy": detector_price,
+                **database_error,
+            }
+
+        self.restore_review_document(candidate_id)
+        raise RuntimeError("candidate stayed renderable without immutable detector proof")
+
+    def restore_review_document(self, candidate_id: int) -> dict[str, Any]:
+        with self.lock:
+            detector_price = self.suspended_detector_prices.get(candidate_id)
+            if detector_price is None:
+                raise RuntimeError(f"candidate {candidate_id} review is not suspended")
+            with self.engine.begin() as connection:
+                restored = connection.execute(text("""
+                    UPDATE pokemon_image_buylist_candidates
+                       SET original_price_jpy=:detector_price
+                     WHERE candidate_id=:candidate_id
+                       AND original_price_jpy IS NULL
+                    RETURNING original_price_jpy
+                """), {
+                    "candidate_id": candidate_id,
+                    "detector_price": detector_price,
+                }).scalar_one_or_none()
+            if restored != detector_price:
+                raise RuntimeError(f"candidate {candidate_id} detector proof was not restored")
+            self.suspended_detector_prices.pop(candidate_id)
+        envelope = self.review_document(candidate_id)
+        return {
+            "candidate_id": candidate_id,
+            "document_sha256": envelope["document_sha256"],
+            "detector_price_jpy": detector_price,
         }
 
     def approve(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -450,7 +525,16 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/rest/v1/rpc/get_twitter_buylist_review_document":
                 if body.get("p_candidate_kind") != "singles":
                     raise ValueError("fixture carries actual singles producer rows only")
-                self.send_json(self.state.review_document(int(body["p_candidate_id"])))
+                try:
+                    self.send_json(self.state.review_document(int(body["p_candidate_id"])))
+                except Exception as error:
+                    database_error = self.state.database_error(error)
+                    self.send_json({
+                        "code": database_error["sqlstate"] or "fixture_database_error",
+                        "message": database_error["message"],
+                        "details": None,
+                        "hint": None,
+                    }, HTTPStatus.BAD_REQUEST)
                 return
             if parsed.path == "/rest/v1/rpc/approve_twitter_buylist_review":
                 try:
@@ -476,6 +560,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/__fixture__/mutate-stale":
                 self.send_json(self.state.mutate_stale(int(body["candidate_id"])))
+                return
+            if parsed.path == "/__fixture__/suspend-review-document":
+                self.send_json(
+                    self.state.suspend_review_document(int(body["candidate_id"])),
+                )
+                return
+            if parsed.path == "/__fixture__/restore-review-document":
+                self.send_json(
+                    self.state.restore_review_document(int(body["candidate_id"])),
+                )
                 return
             if parsed.path == "/__fixture__/reconcile-claim":
                 self.send_json(self.state.reconcile_and_claim(int(body["candidate_id"])))
