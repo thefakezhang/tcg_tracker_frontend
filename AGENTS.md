@@ -248,6 +248,8 @@ lib/
                           # (Card Index catalogs, curation override picker, match-review
                           # dialog): name/set/number text, card uid (full or the displayed
                           # 8-hex prefix), and exact platform external id all resolve.
+  trades.ts               # Trade money identity: value_in = value_out + cash (signed)
+  trade-items.ts          # Trade baskets: record_trade payloads, per-row problems
   e2e-auth-guard.ts       # Guard predicate for the local-only E2E auth seam (loopback + strong secret)
   i18n/
     index.ts              # useTranslation() hook, t() function, TranslationKey type
@@ -469,6 +471,16 @@ Never render a lease token, raw log, credential, arbitrary heartbeat failure sum
 - Mode buttons and dialog actions have a minimum 44-pixel touch target, job/host/evidence containers use `min-w-0`, and evidence references wrap rather than causing phone-width overflow.
 - Generic authorization failures use the translated restricted-state copy and do not echo backend error details.
 - Backend architecture and operations live in `docs/travel_run_control.md` and `docs/targeted_refresh.md` in the backend repository.
+
+### Recording a trade
+
+- `TradesView.tsx` **records** a trade through the backend `record_trade` RPC: one call creates the acquisition lot for what came in, the sale of what went out, and the link asserting they were one event.
+- It used to only **link** two already-finalized rows picked from dropdowns, which meant a trade could not be recorded without four manual steps first. That dialog is retired; `unlink_trade` remains per row.
+- **The operator types one value.** `value_out` is what the outgoing cards were credited at; `value_in` is derived and displayed, never entered, so the two halves cannot disagree. The RPC re-checks the identity in the same transaction.
+- **Per-item value is not collected.** `finalize_acquisition_lot` splits the lot total across incoming lines by market value, so a forty-card side needs one number, not forty. The per-row box is only for a card the engine cannot price.
+- The outgoing basket searches `inventory_holdings_v` (you can only give what you hold, and it carries condition/grade/qty); the incoming basket searches the catalogue with a condition picker. Both use `lib/card-search` semantics.
+- Cash runs both ways via `CashDirection`; cash back exceeding the outgoing value is refused, because that is a sale.
+- Full rationale, goals and non-goals: `docs/trade_recording.md`.
 
 ### Card Detail Modal
 
