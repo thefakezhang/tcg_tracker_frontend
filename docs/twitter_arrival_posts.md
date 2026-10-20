@@ -12,14 +12,17 @@ The route requires the existing Supabase user session and calls the backend `twi
 It never reads arrival tables directly and never uses a service key.
 The RPC performs the administrator authorization check and returns a bounded sanitized projection.
 
-The backend migration `000575_twitter_arrival_hourly_digest` is a runtime prerequisite for this frontend.
+The backend migration `000576_twitter_arrival_hourly_digest` is a runtime prerequisite for this frontend.
 Deploying the frontend before that migration and RPC are available produces the designed unavailable state rather than exposing a fallback data path.
 
 ## Operator journey
 
 Open Arrival posts from the dashboard navigation.
 The default request returns up to 100 newest eligible posts.
+Select Load more posts to append the next composite-cursor page without replacing posts already shown.
+If that request fails or the session expires, the loaded posts remain visible and Retry requests the same page again.
 Enter an exact canonical buyer handle in Shop account and select Show posts to narrow the list.
+Submitting a new filter resets the cursor and replaces the prior result set.
 Open an image to inspect the original media URL or select Open original post to inspect the complete source context.
 
 The view shows the canonical buyer, Twitter handle, Tokyo post time, unverified status, and every ordered media item.
@@ -42,8 +45,9 @@ The route returns 401 without a valid session and maps the backend administrator
 Successful responses use `Cache-Control: private, no-store`.
 Image previews use the existing authenticated image proxy, while the evidence links retain the original media URL.
 
-Component tests cover loading, empty, error, retry, filter submission, source links, ordered media, unverified labeling, forbidden fields, and complete-image fitting.
-The controlled browser journey covers loaded, empty, error, and unauthorized states at desktop and 390-pixel widths, keyboard navigation, mobile tap targets, horizontal overflow, landscape and portrait previews, and zero external requests.
+Component tests cover loading, empty, error, same-cursor retry, 100-row tied-timestamp pagination, stable-key deduplication, filter reset, source links, ordered media, unverified labeling, forbidden fields, and complete-image fitting.
+The isolated browser journey crosses real GoTrue password sessions, PostgREST, PostgreSQL, the protected Next API, and the production dashboard.
+It covers no-session 401, ordinary-user 403, administrator pages of 100 and 6 unique database rows, expired-session retry without losing loaded rows, filter and empty states, desktop and 390-pixel widths, mobile tap targets, horizontal overflow, landscape and portrait previews, and zero external requests.
 
 ## Non-goals and rollout state
 

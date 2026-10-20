@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ExternalLink, ImageIcon, LoaderCircle, RefreshCw, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +34,20 @@ export type ArrivalPost = {
   media: ArrivalMedia[];
 };
 
-export type ArrivalPostsLoader = (buyerHandle: string) => Promise<ArrivalPost[]>;
+export type ArrivalCursor = {
+  before: string;
+  before_key: string;
+};
+
+export type ArrivalPostsPage = {
+  posts: ArrivalPost[];
+  nextCursor: ArrivalCursor | null;
+};
+
+export type ArrivalPostsLoader = (
+  buyerHandle: string,
+  cursor: ArrivalCursor | null,
+) => Promise<ArrivalPostsPage>;
 
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim() === "") {
@@ -106,9 +119,27 @@ export function parseArrivalPosts(value: unknown): ArrivalPost[] {
   });
 }
 
-export const loadArrivalPosts: ArrivalPostsLoader = async (buyerHandle) => {
+function parseArrivalCursor(value: unknown): ArrivalCursor | null {
+  if (value === null) return null;
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Invalid arrival cursor");
+  }
+  const raw = value as Record<string, unknown>;
+  const before = requiredString(raw.before, "next_cursor.before");
+  const beforeKey = requiredString(raw.before_key, "next_cursor.before_key");
+  if (Number.isNaN(Date.parse(before)) || beforeKey.length > 512) {
+    throw new Error("Invalid arrival cursor");
+  }
+  return { before, before_key: beforeKey };
+}
+
+export const loadArrivalPosts: ArrivalPostsLoader = async (buyerHandle, cursor) => {
   const query = new URLSearchParams({ limit: "100" });
   if (buyerHandle) query.set("buyer_handle", buyerHandle);
+  if (cursor) {
+    query.set("before", cursor.before);
+    query.set("before_key", cursor.before_key);
+  }
   const response = await fetch(`/api/twitter-arrivals?${query}`, {
     cache: "no-store",
     headers: { accept: "application/json" },
@@ -121,10 +152,14 @@ export const loadArrivalPosts: ArrivalPostsLoader = async (buyerHandle) => {
       : `HTTP ${response.status}`;
     throw new Error(message);
   }
-  if (body == null || typeof body !== "object" || !("posts" in body)) {
+  if (body == null || typeof body !== "object" || !("posts" in body)
+    || !("next_cursor" in body)) {
     throw new Error("Invalid arrival response");
   }
-  return parseArrivalPosts(body.posts);
+  return {
+    posts: parseArrivalPosts(body.posts),
+    nextCursor: parseArrivalCursor(body.next_cursor),
+  };
 };
 
 function previewURL(sourceURL: string): string {
@@ -141,24 +176,60 @@ export default function ArrivalPostsView({
   const [filterDraft, setFilterDraft] = useState("");
   const [activeFilter, setActiveFilter] = useState("");
   const [posts, setPosts] = useState<ArrivalPost[]>([]);
+  const [nextCursor, setNextCursor] = useState<ArrivalCursor | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  const requestGeneration = useRef(0);
 
-  const load = useCallback(async (buyerHandle: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      setPosts(await loader(buyerHandle));
-    } catch (reason) {
+  const load = useCallback(async (
+    buyerHandle: string,
+    cursor: ArrivalCursor | null,
+    append: boolean,
+  ) => {
+    const generation = ++requestGeneration.current;
+    if (append) {
+      setLoadingMore(true);
+      setLoadMoreError(null);
+    } else {
+      setLoading(true);
+      setError(null);
+      setLoadMoreError(null);
       setPosts([]);
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setNextCursor(null);
+    }
+    try {
+      const page = await loader(buyerHandle, cursor);
+      if (requestGeneration.current !== generation) return;
+      setPosts((current) => {
+        if (!append) return page.posts;
+        const seen = new Set(current.map((post) => post.arrival_key));
+        return [
+          ...current,
+          ...page.posts.filter((post) => {
+            if (seen.has(post.arrival_key)) return false;
+            seen.add(post.arrival_key);
+            return true;
+          }),
+        ];
+      });
+      setNextCursor(page.nextCursor);
+    } catch (reason) {
+      if (requestGeneration.current !== generation) return;
+      const message = reason instanceof Error ? reason.message : String(reason);
+      if (append) setLoadMoreError(message);
+      else setError(message);
     } finally {
-      setLoading(false);
+      if (requestGeneration.current === generation) {
+        if (append) setLoadingMore(false);
+        else setLoading(false);
+      }
     }
   }, [loader]);
 
   useEffect(() => {
-    void load(activeFilter);
+    void load(activeFilter, null, false);
   }, [activeFilter, load]);
 
   const dateTime = useCallback((value: string | null, fallback: string) => {
@@ -187,7 +258,7 @@ export default function ArrivalPostsView({
         onSubmit={(event) => {
           event.preventDefault();
           const next = filterDraft.trim();
-          if (next === activeFilter) void load(next);
+          if (next === activeFilter) void load(next, null, false);
           else setActiveFilter(next);
         }}
       >
@@ -217,7 +288,7 @@ export default function ArrivalPostsView({
         <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4" role="alert">
           <p className="font-medium">{t("arrivals.errorTitle")}</p>
           <p className="mt-1 break-words text-sm text-muted-foreground">{error}</p>
-          <Button className="mt-3 h-11 sm:h-8" variant="outline" onClick={() => void load(activeFilter)}>
+          <Button className="mt-3 h-11 sm:h-8" variant="outline" onClick={() => void load(activeFilter, null, false)}>
             <RefreshCw aria-hidden="true" />
             {t("arrivals.retry")}
           </Button>
@@ -278,10 +349,33 @@ export default function ArrivalPostsView({
         </div>
       )}
       {!loading && !error && posts.length > 0 && (
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground" role="note">
-          <ImageIcon className="size-4" aria-hidden="true" />
-          {t("arrivals.evidenceNote")}
-        </p>
+        <div className="space-y-3">
+          {loadMoreError && (
+            <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3" role="alert">
+              <p className="font-medium">{t("arrivals.moreErrorTitle")}</p>
+              <p className="mt-1 break-words text-sm text-muted-foreground">{loadMoreError}</p>
+            </div>
+          )}
+          {nextCursor && (
+            <Button
+              className="h-11 w-full sm:w-auto"
+              variant="outline"
+              disabled={loadingMore}
+              onClick={() => void load(activeFilter, nextCursor, true)}
+            >
+              {loadingMore ? (
+                <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <RefreshCw className="size-4" aria-hidden="true" />
+              )}
+              {loadingMore ? t("arrivals.loadingMore") : t("arrivals.loadMore")}
+            </Button>
+          )}
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground" role="note">
+            <ImageIcon className="size-4" aria-hidden="true" />
+            {t("arrivals.evidenceNote")}
+          </p>
+        </div>
       )}
     </section>
   );

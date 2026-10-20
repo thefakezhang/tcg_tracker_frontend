@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { LanguageProvider } from "./LanguageContext";
-import ArrivalPostsView, { type ArrivalPost, parseArrivalPosts } from "./ArrivalPostsView";
+import ArrivalPostsView, {
+  type ArrivalCursor,
+  type ArrivalPost,
+  type ArrivalPostsPage,
+  parseArrivalPosts,
+} from "./ArrivalPostsView";
 
 const POST: ArrivalPost = {
   arrival_key: "alice_shop:2112064092735521045",
@@ -22,7 +27,14 @@ const POST: ArrivalPost = {
   }],
 };
 
-function view(loader: (buyerHandle: string) => Promise<ArrivalPost[]>) {
+function page(posts: ArrivalPost[], nextCursor: ArrivalCursor | null = null): ArrivalPostsPage {
+  return { posts, nextCursor };
+}
+
+function view(loader: (
+  buyerHandle: string,
+  cursor: ArrivalCursor | null,
+) => Promise<ArrivalPostsPage>) {
   return render(
     <LanguageProvider>
       <ArrivalPostsView loader={loader} />
@@ -38,7 +50,9 @@ afterEach(() => {
 describe("ArrivalPostsView", () => {
   it("keeps a visible loading state until the post-level evidence arrives", async () => {
     let resolve!: (posts: ArrivalPost[]) => void;
-    const loader = vi.fn(() => new Promise<ArrivalPost[]>((done) => { resolve = done; }));
+    const loader = vi.fn(() => new Promise<ArrivalPostsPage>((done) => {
+      resolve = (posts) => done(page(posts));
+    }));
     view(loader);
 
     expect(screen.getByRole("status").textContent).toContain("Loading arrival posts");
@@ -55,7 +69,9 @@ describe("ArrivalPostsView", () => {
       tweet_id: "2",
       tweet_url: "https://x.com/bob_shop/status/2",
     };
-    const loader = vi.fn(async (buyerHandle: string) => buyerHandle === "alice" ? [POST] : [POST, other]);
+    const loader = vi.fn(async (buyerHandle: string) => page(
+      buyerHandle === "alice" ? [POST] : [POST, other],
+    ));
     view(loader);
 
     expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(2);
@@ -72,13 +88,13 @@ describe("ArrivalPostsView", () => {
     fireEvent.change(screen.getByLabelText("Shop account"), { target: { value: " alice " } });
     fireEvent.submit(screen.getByRole("button", { name: "Show posts" }).closest("form")!);
     expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(1);
-    expect(loader).toHaveBeenLastCalledWith("alice");
+    expect(loader).toHaveBeenLastCalledWith("alice", null);
   });
 
   it("renders a retryable error and recovers without stale rows", async () => {
     const loader = vi.fn()
       .mockRejectedValueOnce(new Error("temporary fixture failure"))
-      .mockResolvedValueOnce([POST]);
+      .mockResolvedValueOnce(page([POST]));
     view(loader);
 
     expect((await screen.findByRole("alert")).textContent).toContain("temporary fixture failure");
@@ -92,5 +108,70 @@ describe("ArrivalPostsView", () => {
     expect(() => parseArrivalPosts([{ ...POST, media: [] }])).toThrow("Invalid arrival evidence");
     expect(() => parseArrivalPosts([{ ...POST, media: [{ ...POST.media[0], content_sha256: "bad" }] }])).toThrow("Invalid arrival media digest");
     expect(() => parseArrivalPosts([{ ...POST, price_jpy: 1000 }])).toThrow("Forbidden arrival field: price_jpy");
+  });
+
+  it("appends unique tied-timestamp pages and resets pagination for a filter", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      ...POST,
+      arrival_key: `alice_shop:${String(index).padStart(3, "0")}`,
+      tweet_id: String(index),
+      tweet_url: `https://x.com/alice_shop/status/${index}`,
+      tweet_created_at: "2026-10-20T10:15:00+09:00",
+    }));
+    const cursor = {
+      before: "2026-10-20T10:15:00+09:00",
+      before_key: firstPage.at(-1)!.arrival_key,
+    };
+    const secondPage = [
+      firstPage.at(-1)!,
+      ...Array.from({ length: 5 }, (_, index) => ({
+        ...POST,
+        arrival_key: `alice_shop:${100 + index}`,
+        tweet_id: String(100 + index),
+        tweet_url: `https://x.com/alice_shop/status/${100 + index}`,
+        tweet_created_at: "2026-10-20T10:15:00+09:00",
+      })),
+    ];
+    const loader = vi.fn(async (buyerHandle: string, requested: ArrivalCursor | null) => {
+      if (buyerHandle === "alice") return page([POST]);
+      return requested ? page(secondPage) : page(firstPage, cursor);
+    });
+    view(loader);
+
+    expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(100);
+    fireEvent.click(screen.getByRole("button", { name: "Load more posts" }));
+    await waitFor(() => {
+      expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(105);
+    });
+    expect(loader).toHaveBeenLastCalledWith("", cursor);
+
+    fireEvent.change(screen.getByLabelText("Shop account"), { target: { value: "alice" } });
+    fireEvent.submit(screen.getByRole("button", { name: "Show posts" }).closest("form")!);
+    expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Load more posts" })).toBeNull();
+    expect(loader).toHaveBeenLastCalledWith("alice", null);
+  });
+
+  it("keeps loaded rows when a later page fails and retries the same cursor", async () => {
+    const cursor = {
+      before: POST.tweet_created_at!,
+      before_key: POST.arrival_key,
+    };
+    const loader = vi.fn()
+      .mockResolvedValueOnce(page([POST], cursor))
+      .mockRejectedValueOnce(new Error("Unauthorized"))
+      .mockResolvedValueOnce(page([{ ...POST, arrival_key: "alice_shop:next", tweet_id: "next" }]));
+    view(loader);
+
+    expect(await screen.findByText("alice")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Load more posts" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Unauthorized");
+    expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more posts" }));
+    await waitFor(() => {
+      expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(2);
+    });
+    expect(loader).toHaveBeenLastCalledWith("", cursor);
   });
 });

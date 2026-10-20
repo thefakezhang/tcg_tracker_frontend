@@ -70,7 +70,46 @@ describe("protected Twitter arrivals route", () => {
       p_before_key: "alice_shop:1",
       p_limit: 25,
     });
-    expect(await response.json()).toEqual({ posts });
+    expect(await response.json()).toEqual({ posts, next_cursor: null });
+  });
+
+  it("returns the stable observed-time cursor when a page reaches its limit", async () => {
+    const posts = [
+      {
+        arrival_key: "alice_shop:2",
+        tweet_created_at: "2026-10-20T12:00:00Z",
+        acquired_at: "2026-10-20T12:01:00Z",
+      },
+      {
+        arrival_key: "alice_shop:3",
+        tweet_created_at: null,
+        acquired_at: "2026-10-20T11:59:00Z",
+      },
+    ];
+    mocks.rpc.mockResolvedValue({ data: posts, error: null });
+
+    const response = await GET(request("?limit=2"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      posts,
+      next_cursor: {
+        before: "2026-10-20T11:59:00Z",
+        before_key: "alice_shop:3",
+      },
+    });
+  });
+
+  it("fails closed when a full RPC page cannot produce a stable cursor", async () => {
+    mocks.rpc.mockResolvedValue({
+      data: [{ arrival_key: "alice:1" }],
+      error: null,
+    });
+
+    const response = await GET(request("?limit=1"));
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Arrival posts are unavailable" });
   });
 
   it("maps the database administrator boundary to forbidden", async () => {

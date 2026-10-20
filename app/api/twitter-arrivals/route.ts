@@ -10,6 +10,21 @@ function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
 }
 
+function nextCursor(rows: unknown[], limit: number) {
+  if (rows.length < limit) return null;
+  const last = rows.at(-1);
+  if (last == null || typeof last !== "object" || Array.isArray(last)) {
+    throw new Error("arrival RPC returned an invalid row");
+  }
+  const row = last as Record<string, unknown>;
+  const before = row.tweet_created_at ?? row.acquired_at;
+  if (typeof before !== "string" || Number.isNaN(Date.parse(before))
+    || typeof row.arrival_key !== "string" || row.arrival_key.trim() === "") {
+    throw new Error("arrival RPC returned an invalid cursor boundary");
+  }
+  return { before, before_key: row.arrival_key };
+}
+
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const {
@@ -60,8 +75,16 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  return NextResponse.json(
-    { posts: data ?? [] },
-    { headers: { "cache-control": "private, no-store" } },
-  );
+  const posts = data ?? [];
+  try {
+    return NextResponse.json(
+      { posts, next_cursor: nextCursor(posts, limit) },
+      { headers: { "cache-control": "private, no-store" } },
+    );
+  } catch {
+    return NextResponse.json(
+      { error: "Arrival posts are unavailable" },
+      { status: 500 },
+    );
+  }
 }

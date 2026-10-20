@@ -10,6 +10,14 @@ interface PendingCookie {
   options: CookieOptions;
 }
 
+type LocalE2EIdentity = "administrator" | "ordinary";
+
+function requestedIdentity(request: NextRequest): LocalE2EIdentity | null {
+  const value = request.headers.get("x-tcg-e2e-identity") ?? "administrator";
+  if (value === "administrator" || value === "ordinary") return value;
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   if (!allowLocalE2EAuth({
     enabled: process.env.E2E_AUTH_ENABLED,
@@ -21,8 +29,20 @@ export async function POST(request: NextRequest) {
     return new NextResponse(null, { status: 404 });
   }
 
-  const email = process.env.E2E_AUTH_EMAIL;
-  const password = process.env.E2E_AUTH_PASSWORD;
+  const identity = requestedIdentity(request);
+  if (!identity) {
+    return NextResponse.json(
+      { error: "unknown local E2E identity" },
+      { status: 400 },
+    );
+  }
+
+  const email = identity === "ordinary"
+    ? process.env.E2E_AUTH_ORDINARY_EMAIL
+    : process.env.E2E_AUTH_EMAIL;
+  const password = identity === "ordinary"
+    ? process.env.E2E_AUTH_ORDINARY_PASSWORD
+    : process.env.E2E_AUTH_PASSWORD;
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!email || !password || !supabaseUrl || !anonKey) {

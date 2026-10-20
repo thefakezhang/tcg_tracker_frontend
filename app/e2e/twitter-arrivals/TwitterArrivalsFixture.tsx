@@ -66,10 +66,13 @@ export function TwitterArrivalsFixture() {
   const loader = useCallback<ArrivalPostsLoader>(async (buyerHandle) => {
     if (scenario === "error") throw new Error("Controlled arrival API failure");
     if (scenario === "unauthorized") throw new Error("Forbidden");
-    if (scenario === "empty") return [];
-    return buyerHandle
-      ? POSTS.filter((post) => post.buyer_handle === buyerHandle)
-      : POSTS;
+    if (scenario === "empty") return { posts: [], nextCursor: null };
+    return {
+      posts: buyerHandle
+        ? POSTS.filter((post) => post.buyer_handle === buyerHandle)
+        : POSTS,
+      nextCursor: null,
+    };
   }, [scenario]);
 
   return (
