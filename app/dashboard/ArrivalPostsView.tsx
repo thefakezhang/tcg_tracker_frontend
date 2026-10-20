@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useTranslation } from "@/lib/i18n";
+import { classifyQueryError } from "./use-query";
 
 export type ArrivalMedia = {
   source_image_index: number;
@@ -48,6 +49,16 @@ export type ArrivalPostsLoader = (
   buyerHandle: string,
   cursor: ArrivalCursor | null,
 ) => Promise<ArrivalPostsPage>;
+
+export class ArrivalPostsRequestError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ArrivalPostsRequestError";
+    this.status = status;
+  }
+}
 
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim() === "") {
@@ -150,7 +161,7 @@ export const loadArrivalPosts: ArrivalPostsLoader = async (buyerHandle, cursor) 
       && "error" in body && typeof body.error === "string"
       ? body.error
       : `HTTP ${response.status}`;
-    throw new Error(message);
+    throw new ArrivalPostsRequestError(response.status, message);
   }
   if (body == null || typeof body !== "object" || !("posts" in body)
     || !("next_cursor" in body)) {
@@ -167,6 +178,74 @@ function previewURL(sourceURL: string): string {
   return `/api/proxy-image?url=${encodeURIComponent(sourceURL)}`;
 }
 
+function asError(reason: unknown): Error {
+  return reason instanceof Error ? reason : new Error(String(reason));
+}
+
+function ArrivalLoadFailure({
+  error,
+  title,
+  onRetry,
+}: {
+  error: Error;
+  title: string;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+  const kind = classifyQueryError(error);
+
+  if (kind === "session-expired") {
+    return (
+      <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4" role="alert">
+        <p className="font-medium">{t("arrivals.sessionExpiredTitle")}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{t("arrivals.sessionExpiredBody")}</p>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+          <a
+            href="/login"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-11 items-center justify-center rounded-lg border bg-background px-4 text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:min-h-8"
+          >
+            {t("arrivals.signInAgain")}
+          </a>
+          <Button className="min-h-11 sm:min-h-8" variant="outline" onClick={onRetry}>
+            <RefreshCw aria-hidden="true" />
+            {t("arrivals.continueAfterSignIn")}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === "forbidden") {
+    return (
+      <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4" role="alert">
+        <p className="font-medium">{t("arrivals.adminRequiredTitle")}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{t("arrivals.adminRequiredBody")}</p>
+        <a
+          href="/login"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 inline-flex min-h-11 items-center justify-center rounded-lg border bg-background px-4 text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:min-h-8"
+        >
+          {t("arrivals.signInAsAdmin")}
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4" role="alert">
+      <p className="font-medium">{title}</p>
+      <p className="mt-1 break-words text-sm text-muted-foreground">{error.message}</p>
+      <Button className="mt-3 min-h-11 sm:min-h-8" variant="outline" onClick={onRetry}>
+        <RefreshCw aria-hidden="true" />
+        {t("arrivals.retry")}
+      </Button>
+    </div>
+  );
+}
+
 export default function ArrivalPostsView({
   loader = loadArrivalPosts,
 }: {
@@ -179,8 +258,8 @@ export default function ArrivalPostsView({
   const [nextCursor, setNextCursor] = useState<ArrivalCursor | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<Error | null>(null);
   const requestGeneration = useRef(0);
 
   const load = useCallback(async (
@@ -217,9 +296,9 @@ export default function ArrivalPostsView({
       setNextCursor(page.nextCursor);
     } catch (reason) {
       if (requestGeneration.current !== generation) return;
-      const message = reason instanceof Error ? reason.message : String(reason);
-      if (append) setLoadMoreError(message);
-      else setError(message);
+      const failure = asError(reason);
+      if (append) setLoadMoreError(failure);
+      else setError(failure);
     } finally {
       if (requestGeneration.current === generation) {
         if (append) setLoadingMore(false);
@@ -232,8 +311,9 @@ export default function ArrivalPostsView({
     void load(activeFilter, null, false);
   }, [activeFilter, load]);
 
-  const dateTime = useCallback((value: string | null, fallback: string) => {
-    const parsed = new Date(value ?? fallback);
+  const dateTime = useCallback((value: string | null) => {
+    if (value === null) return t("arrivals.unknownTime");
+    const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return t("arrivals.unknownTime");
     return new Intl.DateTimeFormat(language === "ja" ? "ja-JP" : "en-US", {
       dateStyle: "medium",
@@ -285,14 +365,11 @@ export default function ArrivalPostsView({
           {t("arrivals.loading")}
         </div>
       ) : error ? (
-        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4" role="alert">
-          <p className="font-medium">{t("arrivals.errorTitle")}</p>
-          <p className="mt-1 break-words text-sm text-muted-foreground">{error}</p>
-          <Button className="mt-3 h-11 sm:h-8" variant="outline" onClick={() => void load(activeFilter, null, false)}>
-            <RefreshCw aria-hidden="true" />
-            {t("arrivals.retry")}
-          </Button>
-        </div>
+        <ArrivalLoadFailure
+          error={error}
+          title={t("arrivals.errorTitle")}
+          onRetry={() => void load(activeFilter, null, false)}
+        />
       ) : posts.length === 0 ? (
         <div className="rounded-xl border border-dashed p-8 text-center">
           <p className="font-medium">{t("arrivals.emptyTitle")}</p>
@@ -309,8 +386,14 @@ export default function ArrivalPostsView({
                     {t("arrivals.unverified")}
                   </Badge>
                 </div>
-                <CardDescription className="break-words">
-                  @{post.twitter_handle} · {dateTime(post.tweet_created_at, post.acquired_at)}
+                <CardDescription className="space-y-1 break-words">
+                  <div>@{post.twitter_handle}</div>
+                  <div>
+                    {t("arrivals.sourcePostTime")}: {dateTime(post.tweet_created_at)}
+                  </div>
+                  <div>
+                    {t("arrivals.collectedTime")}: {dateTime(post.acquired_at)}
+                  </div>
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -351,12 +434,13 @@ export default function ArrivalPostsView({
       {!loading && !error && posts.length > 0 && (
         <div className="space-y-3">
           {loadMoreError && (
-            <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3" role="alert">
-              <p className="font-medium">{t("arrivals.moreErrorTitle")}</p>
-              <p className="mt-1 break-words text-sm text-muted-foreground">{loadMoreError}</p>
-            </div>
+            <ArrivalLoadFailure
+              error={loadMoreError}
+              title={t("arrivals.moreErrorTitle")}
+              onRetry={() => void load(activeFilter, nextCursor, true)}
+            />
           )}
-          {nextCursor && (
+          {nextCursor && !loadMoreError && (
             <Button
               className="h-11 w-full sm:w-auto"
               variant="outline"

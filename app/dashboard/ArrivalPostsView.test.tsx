@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { LanguageProvider } from "./LanguageContext";
 import ArrivalPostsView, {
+  ArrivalPostsRequestError,
   type ArrivalCursor,
   type ArrivalPost,
   type ArrivalPostsPage,
@@ -76,7 +77,9 @@ describe("ArrivalPostsView", () => {
 
     expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(2);
     expect(screen.getAllByText("Unverified post")).toHaveLength(2);
-    expect(screen.getByText("@alice_shop · Oct 20, 2026, 10:15 AM")).toBeTruthy();
+    expect(screen.getByText("@alice_shop")).toBeTruthy();
+    expect(screen.getAllByText("Source post time (JST): Oct 20, 2026, 10:15 AM")).toHaveLength(2);
+    expect(screen.getAllByText("Evidence collected (JST): Oct 20, 2026, 10:16 AM")).toHaveLength(2);
     const source = screen.getAllByRole("link", { name: "Open original post" })[0];
     expect(source.getAttribute("href")).toBe(POST.tweet_url);
     const media = screen.getAllByRole("link", { name: "Open original image 1" })[0];
@@ -101,6 +104,23 @@ describe("ArrivalPostsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("alice")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("explains permanent administrator refusal without a transient retry", async () => {
+    const loader = vi.fn().mockRejectedValue(
+      new ArrivalPostsRequestError(403, "Forbidden"),
+    );
+    view(loader);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Administrator access required");
+    expect(alert.textContent).toContain("restricted to administrator accounts");
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    const signIn = screen.getByRole("link", {
+      name: "Sign in with an administrator account",
+    });
+    expect(signIn.getAttribute("href")).toBe("/login");
+    expect(signIn.getAttribute("target")).toBe("_blank");
   });
 
   it("fails closed on malformed or item-level responses", () => {
@@ -152,23 +172,27 @@ describe("ArrivalPostsView", () => {
     expect(loader).toHaveBeenLastCalledWith("alice", null);
   });
 
-  it("keeps loaded rows when a later page fails and retries the same cursor", async () => {
+  it("keeps loaded rows and the cursor through visible session recovery", async () => {
     const cursor = {
       before: POST.tweet_created_at!,
       before_key: POST.arrival_key,
     };
     const loader = vi.fn()
       .mockResolvedValueOnce(page([POST], cursor))
-      .mockRejectedValueOnce(new Error("Unauthorized"))
+      .mockRejectedValueOnce(new ArrivalPostsRequestError(401, "Unauthorized"))
       .mockResolvedValueOnce(page([{ ...POST, arrival_key: "alice_shop:next", tweet_id: "next" }]));
     view(loader);
 
     expect(await screen.findByText("alice")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Load more posts" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("Unauthorized");
+    expect((await screen.findByRole("alert")).textContent).toContain("Your session ended");
     expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(1);
+    const signIn = screen.getByRole("link", { name: "Sign in again" });
+    expect(signIn.getAttribute("href")).toBe("/login");
+    expect(signIn.getAttribute("target")).toBe("_blank");
+    expect(screen.queryByRole("button", { name: "Load more posts" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Load more posts" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue after signing in" }));
     await waitFor(() => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(2);
     });

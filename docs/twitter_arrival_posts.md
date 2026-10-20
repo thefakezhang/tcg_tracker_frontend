@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Arrival posts dashboard view lets an administrator inspect newly stocked Pokemon posts from reviewed shops without presenting item identity, grade, condition, or price as known facts.
+The Arrival posts dashboard view lets an administrator inspect captured Pokemon arrival posts from reviewed shops without presenting current availability, item identity, grade, condition, or price as known facts.
 Each card is explicitly marked unverified and links to the original post and each acquired source image.
 
 ## Architecture
@@ -20,12 +20,15 @@ Deploying the frontend before that migration and RPC are available produces the 
 Open Arrival posts from the dashboard navigation.
 The default request returns up to 100 newest eligible posts.
 Select Load more posts to append the next composite-cursor page without replacing posts already shown.
-If that request fails or the session expires, the loaded posts remain visible and Retry requests the same page again.
+If a later request fails, the loaded posts and cursor remain visible.
+An expired session provides a sign-in link that opens in a new tab and a Continue after signing in action that retries the same cursor.
+An administrator refusal explains the required role and offers an administrator sign-in path without presenting a transient Retry action.
 Enter an exact canonical buyer handle in Shop account and select Show posts to narrow the list.
 Submitting a new filter resets the cursor and replaces the prior result set.
 Open an image to inspect the original media URL or select Open original post to inspect the complete source context.
 
-The view shows the canonical buyer, Twitter handle, Tokyo post time, unverified status, and every ordered media item.
+The view labels the source-post time and evidence-collection time separately in Japan Standard Time, alongside the canonical buyer, Twitter handle, unverified status, and every ordered media item.
+Neither timestamp claims that the post is fresh or that the pictured stock remains available.
 Landscape and portrait media use `object-fit: contain` inside bounded previews so edges and labels remain visible.
 Loading, empty, error, retry, forbidden, and unauthorized outcomes remain explicit.
 
@@ -45,9 +48,9 @@ The route returns 401 without a valid session and maps the backend administrator
 Successful responses use `Cache-Control: private, no-store`.
 Image previews use the existing authenticated image proxy, while the evidence links retain the original media URL.
 
-Component tests cover loading, empty, error, same-cursor retry, 100-row tied-timestamp pagination, stable-key deduplication, filter reset, source links, ordered media, unverified labeling, forbidden fields, and complete-image fitting.
+Component tests cover loading, empty, transient retry, visible expired-session recovery with same-cursor retention, permanent administrator refusal, 100-row tied-timestamp pagination, stable-key deduplication, filter reset, source links, labeled source and collection times, ordered media, unverified labeling, forbidden fields, and complete-image fitting.
 The isolated browser journey crosses real GoTrue password sessions, PostgREST, PostgreSQL, the protected Next API, and the production dashboard.
-It covers no-session 401, ordinary-user 403, administrator pages of 100 and 6 unique database rows, expired-session retry without losing loaded rows, filter and empty states, desktop and 390-pixel widths, mobile tap targets, horizontal overflow, landscape and portrait previews, and zero external requests.
+It covers no-session 401, actionable ordinary-user 403 guidance, administrator pages of 100 and 6 unique database rows, visible sign-in recovery from an expired session without losing loaded rows or the cursor, filter and empty states, desktop and 390-pixel widths, mobile tap targets, horizontal overflow, landscape and portrait previews, and zero external requests.
 
 ## Non-goals and rollout state
 

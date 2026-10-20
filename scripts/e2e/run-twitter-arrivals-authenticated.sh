@@ -129,10 +129,8 @@ cmp -s \
   "$backend_root/internal/db/migrations/000576_twitter_arrival_hourly_digest.up.sql" \
   "$backend_root/supabase/migrations/000576_twitter_arrival_hourly_digest.up.sql" ||
   fail "migration 000576 canonical and Supabase copies differ"
-cmp -s \
-  "$backend_root/internal/db/migrations/000576_twitter_arrival_hourly_digest.down.sql" \
-  "$backend_root/supabase/migrations/000576_twitter_arrival_hourly_digest.down.sql" ||
-  fail "migration 000576 down copies differ"
+[[ ! -e "$backend_root/supabase/migrations/000576_twitter_arrival_hourly_digest.down.sql" ]] ||
+  fail "Supabase migrations must not include the canonical 000576 rollback file"
 
 exec 9>>"$lock_path"
 flock -n 9 || fail "the shared Docker/browser lock is held by another session"

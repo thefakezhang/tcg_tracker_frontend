@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 
 import ArrivalPostsView, {
+  ArrivalPostsRequestError,
   type ArrivalPost,
   type ArrivalPostsLoader,
 } from "@/app/dashboard/ArrivalPostsView";
@@ -65,7 +66,9 @@ export function TwitterArrivalsFixture() {
   const [scenario, setScenario] = useState<Scenario>("loaded");
   const loader = useCallback<ArrivalPostsLoader>(async (buyerHandle) => {
     if (scenario === "error") throw new Error("Controlled arrival API failure");
-    if (scenario === "unauthorized") throw new Error("Forbidden");
+    if (scenario === "unauthorized") {
+      throw new ArrivalPostsRequestError(403, "Forbidden");
+    }
     if (scenario === "empty") return { posts: [], nextCursor: null };
     return {
       posts: buyerHandle

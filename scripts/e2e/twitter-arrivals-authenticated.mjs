@@ -138,8 +138,22 @@ try {
   apiReceipts.push({ state: "ordinary_user", status: ordinaryAPI.status() });
   const ordinaryPage = await ordinary.newPage();
   await gotoArrivals(ordinaryPage);
-  const forbidden = await ordinaryPage.getByRole("alert").filter({ hasText: "Forbidden" }).textContent();
-  assert(forbidden?.includes("Forbidden"), `ordinary dashboard did not render forbidden state: ${forbidden}`);
+  const forbidden = await ordinaryPage.getByRole("alert")
+    .filter({ hasText: "Administrator access required" })
+    .textContent();
+  assert(forbidden?.includes("restricted to administrator accounts"),
+    `ordinary dashboard did not explain administrator access: ${forbidden}`);
+  assert(await ordinaryPage.getByRole("button", { name: "Try again" }).count() === 0,
+    "ordinary dashboard offered a transient retry for permanent refusal");
+  const administratorSignIn = ordinaryPage.getByRole("link", {
+    name: "Sign in with an administrator account",
+  });
+  assert(await administratorSignIn.getAttribute("href") === "/login",
+    "ordinary dashboard did not provide an administrator sign-in path");
+  await ordinaryPage.screenshot({
+    path: `${artifactRoot}/ordinary-admin-required.png`,
+    fullPage: false,
+  });
   await ordinary.close();
 
   const desktop = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -177,6 +191,10 @@ try {
   const desktopCards = await waitForCardCount(desktopPage, 100);
   assert(await desktopPage.getByText("Unverified post", { exact: true }).count() === 100,
     "unverified status was not rendered for every initial post");
+  assert(await desktopPage.getByText("Source post time (JST)", { exact: false }).count() === 100,
+    "source-post times were not explicitly labeled in JST");
+  assert(await desktopPage.getByText("Evidence collected (JST)", { exact: false }).count() === 100,
+    "evidence-collection times were not explicitly labeled in JST");
   await desktopCards.nth(0).getByRole("img").waitFor();
   await desktopCards.nth(1).getByRole("img").waitFor();
   await desktopPage.waitForFunction(() => Array.from(
@@ -212,20 +230,41 @@ try {
   await desktopPage.getByRole("button", { name: "Load more posts" }).click();
   const expiredResponse = await expiredResponsePromise;
   assert(expiredResponse.status() === 401, "expired caller session did not fail with 401");
-  const expiredAlert = await desktopPage.getByRole("alert").filter({ hasText: "Unauthorized" }).textContent();
-  assert(expiredAlert?.includes("Unauthorized"), `expired-session error missing: ${expiredAlert}`);
+  const expiredAlertPanel = desktopPage.getByRole("alert")
+    .filter({ hasText: "Your session ended" });
+  const expiredAlert = await expiredAlertPanel.textContent();
+  assert(expiredAlert?.includes("Already loaded posts remain here"),
+    `expired-session recovery guidance missing: ${expiredAlert}`);
   assert(await desktopPage.getByTestId("arrival-post-card").count() === 100,
     "expired-session pagination discarded already loaded rows");
-  apiReceipts.push({ state: "expired_session", status: expiredResponse.status(), retained: 100 });
+  assert(await desktopPage.getByRole("button", { name: "Load more posts" }).count() === 0,
+    "expired-session state left an ambiguous Load more action");
+  await expiredAlertPanel.evaluate((node) => node.scrollIntoView({ block: "center" }));
+  await desktopPage.screenshot({
+    path: `${artifactRoot}/desktop-session-expired.png`,
+    fullPage: false,
+  });
+  apiReceipts.push({
+    state: "expired_session",
+    status: expiredResponse.status(),
+    retained: 100,
+    visible_sign_in_path: "/login",
+    visible_resume_action: "Continue after signing in",
+  });
 
+  const signInPagePromise = desktop.waitForEvent("page");
+  await desktopPage.getByRole("link", { name: "Sign in again" }).click();
+  const signInPage = await signInPagePromise;
+  await signInPage.waitForURL(/\/login(?:\?|$)/, { timeout: 90_000 });
   await authenticate(desktop);
+  await signInPage.close();
   const secondResponsePromise = desktopPage.waitForResponse((response) => {
     const parsed = new URL(response.url());
     return parsed.pathname === "/api/twitter-arrivals"
       && parsed.searchParams.has("before")
       && parsed.searchParams.has("before_key");
   });
-  await desktopPage.getByRole("button", { name: "Load more posts" }).click();
+  await desktopPage.getByRole("button", { name: "Continue after signing in" }).click();
   const secondResponse = await secondResponsePromise;
   assert(secondResponse.status() === 200, `pagination retry returned ${secondResponse.status()}`);
   const secondBody = await secondResponse.json();
@@ -291,7 +330,12 @@ try {
     `browser attempted external requests: ${JSON.stringify(externalRequests, null, 2)}`);
 
   const screenshotHashes = {};
-  for (const name of ["desktop-arrivals.png", "phone-arrivals.png"]) {
+  for (const name of [
+    "ordinary-admin-required.png",
+    "desktop-session-expired.png",
+    "desktop-arrivals.png",
+    "phone-arrivals.png",
+  ]) {
     screenshotHashes[name] = createHash("sha256")
       .update(readFileSync(`${artifactRoot}/${name}`))
       .digest("hex");

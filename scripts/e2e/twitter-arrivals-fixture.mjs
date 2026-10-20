@@ -71,7 +71,10 @@ async function runViewport(browser, name, viewport) {
   await page.getByRole("heading", { name: "Pokemon arrival posts" }).waitFor();
   assert(await page.getByTestId("arrival-post-card").count() === 3, `${name} did not render three arrival posts`);
   assert(await page.getByText("Unverified post").count() === 3, `${name} lost explicit unverified labels`);
-  assert(await page.getByText(/Oct 20, 2026/).count() >= 3, `${name} did not render post/acquisition times`);
+  assert(await page.getByText("Source post time (JST)", { exact: false }).count() === 3,
+    `${name} did not label source-post times`);
+  assert(await page.getByText("Evidence collected (JST)", { exact: false }).count() === 3,
+    `${name} did not label acquisition times`);
 
   const sourceLink = page.getByRole("link", { name: "Open original post" }).first();
   assert(
@@ -119,7 +122,9 @@ async function runViewport(browser, name, viewport) {
   await page.getByRole("button", { name: "error" }).click();
   await page.getByRole("alert").getByText("Controlled arrival API failure").waitFor();
   await page.getByRole("button", { name: "unauthorized" }).click();
-  await page.getByRole("alert").getByText("Forbidden").waitFor();
+  await page.getByRole("alert").getByText("Administrator access required").waitFor();
+  assert(await page.getByRole("button", { name: "Try again" }).count() === 0,
+    `${name} offered a transient retry for permanent administrator refusal`);
   await page.getByRole("button", { name: "loaded" }).click();
   assert(await page.getByTestId("arrival-post-card").count() === 3, `${name} loaded recovery failed`);
 
