@@ -22,6 +22,10 @@ import { Badge } from "@/components/ui/badge";
 import { ImageGeometryEditor } from "./ImageGeometryEditor";
 import { PriceEvidenceBadge } from "./PriceEvidenceBadge";
 import {
+  isStaleTwitterBuylistReviewError,
+  useTwitterBuylistReview,
+} from "@/lib/twitter-buylist-review";
+import {
   GridBBoxJSON,
   ImageBox,
   ImageGeometry,
@@ -121,6 +125,19 @@ interface Candidate {
   source_thread_root_text: string | null;
   candidate_product_id: number | null;
   product: MatchedProduct | null;
+}
+
+type SealedCurationApprovalOutcome = "approved" | "stale" | "failed";
+interface SealedCurationApproveOptions {
+  productId?: number | null;
+  condition?: string | null;
+  priceJpy?: number | null;
+  notes?: string | null;
+  geometry?: ImageGeometry;
+  naturalWidth?: number;
+  naturalHeight?: number;
+  reviewSHA256?: string;
+  reviewRequestId?: string;
 }
 
 const CAND_COLS =
@@ -255,11 +272,34 @@ export default function SealedCurationView() {
     setUndoState(null);
     setLastDecision({ id: c.candidate_id, label: c.product?.english_name ?? c.product?.name ?? c.ocr_cell_label_text ?? `#${c.candidate_id}` });
   }, []);
-  const approve = useCallback(async (c: Candidate, o?: {
-    productId?: number; condition?: string | null; priceJpy?: number | null; notes?: string | null;
-    geometry?: ImageGeometry; naturalWidth?: number; naturalHeight?: number;
-  }) => {
-    if (await act(() => o?.geometry && o.naturalWidth && o.naturalHeight
+  const approve = useCallback(async (
+    c: Candidate,
+    o?: SealedCurationApproveOptions,
+  ): Promise<SealedCurationApprovalOutcome> => {
+    let stale = false;
+    const ok = await act(async () => {
+      if (o?.reviewSHA256 && o.reviewRequestId) {
+        const result = await supabase.rpc("approve_twitter_buylist_review", {
+          p_candidate_kind: "sealed",
+          p_candidate_id: c.candidate_id,
+          p_expected_review_sha256: o.reviewSHA256,
+          p_request_id: o.reviewRequestId,
+          p_target_id: o.productId ?? null,
+          p_grade_or_condition: o.condition ?? null,
+          p_price_jpy: o.priceJpy ?? null,
+          p_curator_notes: o.notes ?? null,
+        });
+        if (result.error) {
+          stale = isStaleTwitterBuylistReviewError(result.error);
+          // A stale review is an expected compare-and-swap outcome. The card
+          // reloads the server document and requires another click, so do not
+          // interrupt that recovery with the generic mutation alert.
+          if (stale) return { error: null };
+          throw result.error;
+        }
+        return result;
+      }
+      return o?.geometry && o.naturalWidth && o.naturalHeight
       ? supabase.rpc("correct_and_promote_sealed_image_buylist_candidate", {
         p_candidate_id: c.candidate_id,
         p_product_id: o.productId ?? c.candidate_product_id,
@@ -274,7 +314,12 @@ export default function SealedCurationView() {
         p_candidate_id: c.candidate_id,
         p_product_id: o?.productId ?? null, p_sealed_condition: o?.condition ?? null,
         p_price_jpy: o?.priceJpy ?? null, p_curator_notes: o?.notes ?? null,
-      }))) rememberDecision(c);
+      });
+    });
+    if (stale) return "stale";
+    if (!ok) return "failed";
+    rememberDecision(c);
+    return "approved";
   },
   // supabase + save + retry are stable within a render pass; act closes over
   // them from the enclosing scope.
@@ -361,7 +406,13 @@ export default function SealedCurationView() {
         setSelectedIdx((i) => Math.max(0, i - 1));
       } else if (e.key === "y" && cur?.candidate_product_id && status !== "auto_approved") {
         e.preventDefault();
-        void approve(cur);
+        const card = document.querySelector<HTMLElement>(
+          `[data-candidate-idx="${selectedIdx}"]`,
+        );
+        const button = card?.querySelector<HTMLButtonElement>(
+          "[data-reviewed-item-approve]",
+        );
+        if (button && !button.disabled) button.click();
       } else if (e.key === "n" && cur && status !== "auto_approved") {
         e.preventDefault();
         void reject(cur);
@@ -375,7 +426,7 @@ export default function SealedCurationView() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [flat, selectedIdx, status, approve, reject, sendBack, lastDecision, undoState, undoDecision]);
+  }, [flat, selectedIdx, status, reject, sendBack, lastDecision, undoState, undoDecision]);
 
   // Scroll the selected card into view whenever the selection index changes.
   useEffect(() => {
@@ -546,7 +597,7 @@ export default function SealedCurationView() {
               {list.map((c, i) => {
                 const idx = offset + i;
                 return (
-                  <SealedCurationCandidateCard
+                  <ReviewedSealedCurationCandidateCard
                     key={c.candidate_id}
                     c={c}
                     idx={idx}
@@ -608,17 +659,139 @@ function productMeta(setCode?: string | null, productType?: string | null, miscI
   return [setBits, edition, productVariant(miscInfo)].filter(Boolean).join(" · ");
 }
 
-export function SealedCurationCandidateCard({ c, idx, status, language, saving, selected, onSelect, onApprove, onReject, onSendBack, onUndo }: {
+interface SealedCurationCardProps {
   c: Candidate; idx: number; status: Status; language: "en" | "ja"; saving: boolean;
   selected: boolean; onSelect: () => void;
-  onApprove: (c: Candidate, o?: {
-    productId?: number; condition?: string | null; priceJpy?: number | null; notes?: string | null;
-    geometry?: ImageGeometry; naturalWidth?: number; naturalHeight?: number;
-  }) => void;
+  onApprove: (c: Candidate, o?: SealedCurationApproveOptions) => void;
   onReject: (c: Candidate, notes?: string | null) => void; onSendBack: (c: Candidate, notes?: string | null) => void;
   // Spot-check reversal for the auto_approved tab (G4 compensation).
   onUndo?: (c: Candidate) => void;
-}) {
+  reviewBinding?: {
+    state: "select" | "loading" | "ready" | "error";
+    detail?: string;
+    evidenceReady: boolean;
+    onCardEvidenceLoad: (width: number, height: number) => void;
+    onPriceEvidenceLoad: (width: number, height: number) => void;
+    sha256?: string;
+  };
+}
+
+export function ReviewedSealedCurationCandidateCard(
+  props: Omit<SealedCurationCardProps, "reviewBinding" | "onApprove"> & {
+    onApprove: (
+      c: Candidate,
+      o?: SealedCurationApproveOptions,
+    ) => Promise<SealedCurationApprovalOutcome>;
+  },
+) {
+  const review = useTwitterBuylistReview(
+    "sealed",
+    props.c.candidate_id,
+    props.selected && props.status !== "auto_approved",
+  );
+  const [cardEvidenceSHA, setCardEvidenceSHA] = useState<string | null>(null);
+  const [priceEvidenceSHA, setPriceEvidenceSHA] = useState<string | null>(null);
+  const envelope = review.envelope;
+
+  const candidate = useMemo((): Candidate => {
+    if (!envelope) return props.c;
+    const projection = envelope.document.candidate_projection as Partial<Candidate>;
+    const product = envelope.document.catalog as unknown as MatchedProduct;
+    return {
+      ...props.c,
+      ...projection,
+      candidate_product_id: envelope.document.displayed.target_id,
+      sealed_condition: envelope.document.displayed.grade_or_condition,
+      variant_attrs: envelope.document.displayed.variant_attrs,
+      ocr_price_jpy: envelope.document.displayed.effective_bid_price_jpy,
+      price_evidence: envelope.document.displayed.price_evidence as unknown as PriceEvidence,
+      source_tweet_url: envelope.document.source.tweet_url,
+      source_image_url: envelope.document.source.image_url,
+      source_image_width: envelope.document.source.width,
+      source_image_height: envelope.document.source.height,
+      effective_source_grid_bbox: envelope.document.source.geometry as GridBBoxJSON,
+      product,
+    };
+  }, [envelope, props.c]);
+
+  const expectedWidth = envelope?.document.source.width ?? 0;
+  const expectedHeight = envelope?.document.source.height ?? 0;
+  const verifyDimensions = (
+    setReadySHA: (sha: string | null) => void,
+    width: number,
+    height: number,
+  ) => setReadySHA(
+    width === expectedWidth && height === expectedHeight
+      ? envelope?.document_sha256 ?? null
+      : null,
+  );
+
+  const reviewBinding: SealedCurationCardProps["reviewBinding"] = review.status === "idle"
+    ? {
+      state: "select", evidenceReady: false,
+      onCardEvidenceLoad: () => undefined,
+      onPriceEvidenceLoad: () => undefined,
+    }
+    : review.status === "loading"
+      ? {
+        state: "loading", evidenceReady: false,
+        onCardEvidenceLoad: () => undefined,
+        onPriceEvidenceLoad: () => undefined,
+      }
+      : review.status === "error"
+        ? {
+          state: "error", detail: review.error, evidenceReady: false,
+          onCardEvidenceLoad: () => undefined,
+          onPriceEvidenceLoad: () => undefined,
+        }
+        : envelope
+          ? {
+            state: "ready",
+            evidenceReady: cardEvidenceSHA === envelope.document_sha256 &&
+              priceEvidenceSHA === envelope.document_sha256,
+            sha256: envelope.document_sha256,
+            onCardEvidenceLoad: (width, height) => verifyDimensions(
+              setCardEvidenceSHA, width, height,
+            ),
+            onPriceEvidenceLoad: (width, height) => verifyDimensions(
+              setPriceEvidenceSHA, width, height,
+            ),
+          }
+          : undefined;
+
+  const approve = (c: Candidate, options?: SealedCurationApproveOptions) => {
+    const reviewedOptions = reviewBinding?.state === "ready" &&
+      reviewBinding.evidenceReady && !options?.geometry
+      ? {
+        ...options,
+        productId: options?.productId ?? null,
+        condition: options?.condition ?? null,
+        priceJpy: options?.priceJpy ?? null,
+        notes: options?.notes ?? null,
+        reviewSHA256: reviewBinding.sha256,
+        reviewRequestId: crypto.randomUUID(),
+      }
+      : options;
+    void props.onApprove(c, reviewedOptions).then((outcome) => {
+      if (outcome === "stale") review.markStaleAndReload();
+    });
+  };
+
+  return (
+    <SealedCurationCandidateCard
+      key={envelope?.document_sha256 ?? `queue-${props.c.candidate_id}`}
+      {...props}
+      c={candidate}
+      onApprove={approve}
+      reviewBinding={reviewBinding}
+    />
+  );
+}
+
+export function SealedCurationCandidateCard({
+  c, idx, status, language, saving, selected, onSelect, onApprove, onReject,
+  onSendBack, onUndo, reviewBinding,
+}: SealedCurationCardProps) {
   const { t } = useTranslation();
   const [correcting, setCorrecting] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
@@ -695,6 +868,9 @@ export function SealedCurationCandidateCard({ c, idx, status, language, saving, 
     naturalSize.width,
     naturalSize.height,
   );
+  const reviewApprovalBlocked = !!reviewBinding && (
+    reviewBinding.state !== "ready" || !reviewBinding.evidenceReady
+  );
 
   function doApprove() {
     const priceJpy = price.trim() ? Math.round(Number(price)) : null;
@@ -736,6 +912,28 @@ export function SealedCurationCandidateCard({ c, idx, status, language, saving, 
       className={`cursor-pointer transition-shadow ${selected ? "ring-2 ring-primary ring-offset-1" : ""}`}
     >
       <CardContent className="space-y-2 p-3">
+        {reviewBinding && (
+          <div
+            role="status"
+            className={`rounded-md border px-2 py-1 text-xs ${
+              reviewBinding.state === "ready" && reviewBinding.evidenceReady
+                ? "border-green-500/50 bg-green-500/10 text-green-800 dark:text-green-300"
+                : reviewBinding.state === "error"
+                  ? "border-destructive/50 bg-destructive/10 text-destructive"
+                  : "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+            }`}
+          >
+            {reviewBinding.state === "select"
+              ? t("curation.review.select")
+              : reviewBinding.state === "loading"
+                ? t("curation.review.loading")
+                : reviewBinding.state === "error"
+                  ? t("curation.review.error", { detail: reviewBinding.detail ?? "" })
+                  : reviewBinding.evidenceReady
+                    ? t("curation.review.ready")
+                    : t("curation.review.waitingForEvidence")}
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2 sm:flex">
           {/* The card we found. New candidates have a real source URL + a
               card bbox - we CSS-crop the card region. Legacy candidates
@@ -744,6 +942,7 @@ export function SealedCurationCandidateCard({ c, idx, status, language, saving, 
           <figure className="order-1 shrink-0 text-center sm:order-none">
             {showCardCrop ? (
               <CropPreview src={sourceImg!} bbox={cardBBox!} w={96} h={128}
+                onLoad={reviewBinding?.onCardEvidenceLoad}
                 onClick={() => lightboxImg && setZoom(lightboxImg)} />
             ) : cellCardImg ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -762,6 +961,7 @@ export function SealedCurationCandidateCard({ c, idx, status, language, saving, 
           <figure className="order-3 shrink-0 text-center sm:order-none">
             {showPriceCrop ? (
               <CropPreview src={sourceImg!} bbox={priceBBox!} w={96} h={48}
+                onLoad={reviewBinding?.onPriceEvidenceLoad}
                 onClick={() => lightboxImg && setZoom(lightboxImg)} />
             ) : (
               <div className="flex h-12 w-24 items-center justify-center rounded bg-muted">
@@ -858,7 +1058,7 @@ export function SealedCurationCandidateCard({ c, idx, status, language, saving, 
             <div className="flex flex-col items-stretch gap-2 border-t pt-2 sm:flex-row sm:items-center">
               <Button
                 size="sm"
-                disabled={saving || !(override || hasMatch) || (geometryEdited && !geometryDirty)}
+                disabled={saving || reviewApprovalBlocked || !(override || hasMatch) || (geometryEdited && !geometryDirty)}
                 className="min-h-11 sm:min-h-11"
                 onClick={doApprove}
               >
@@ -906,8 +1106,9 @@ export function SealedCurationCandidateCard({ c, idx, status, language, saving, 
               {/* the three curator decisions: it's right · it's wrong (fix or reject) · later */}
               <Button
                 size="sm"
+                data-reviewed-item-approve
                 className="min-h-11 sm:min-h-11"
-                disabled={saving || !hasMatch || (geometryEdited && !geometryDirty)}
+                disabled={saving || reviewApprovalBlocked || !hasMatch || (geometryEdited && !geometryDirty)}
                 onClick={() => geometryEdited ? doApprove() : onApprove(c, { notes: notesArg() })}
               >
                 <Check className="size-4 mr-1" />{t("curation.markCorrect")}
@@ -979,12 +1180,27 @@ export function SealedCurationCandidateCard({ c, idx, status, language, saving, 
 // loads. `object-fit: none` plus a negative `object-position` shows the
 // crop region at 1:1 image pixels, then transform:scale shrinks it down
 // (or up) so it fills the display rectangle while preserving aspect.
-function CropPreview({ src, bbox, w, h, onClick }: {
+function CropPreview({ src, bbox, w, h, onClick, onLoad }: {
   src: string; bbox: ImageBox; w: number; h: number; onClick?: () => void;
+  onLoad?: (width: number, height: number) => void;
 }) {
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const cw = Math.max(1, bbox.x1 - bbox.x0);
   const ch = Math.max(1, bbox.y1 - bbox.y0);
   const scale = Math.min(w / cw, h / ch);
+  const reportImageDimensions = useCallback((image: HTMLImageElement) => {
+    if (image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+    onLoad?.(image.naturalWidth, image.naturalHeight);
+  }, [onLoad]);
+
+  // A stale review refresh can bind a new server document to the same source
+  // URL. Browsers may satisfy that image from memory without dispatching a
+  // second load event, so verify an already-complete element as well as the
+  // ordinary network load path.
+  useEffect(() => {
+    if (imageRef.current?.complete) reportImageDimensions(imageRef.current);
+  }, [reportImageDimensions, src]);
+
   return (
     <div
       onClick={onClick}
@@ -993,7 +1209,9 @@ function CropPreview({ src, bbox, w, h, onClick }: {
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
+        ref={imageRef}
         src={src} alt="" loading="lazy" draggable={false}
+        onLoad={(event) => reportImageDimensions(event.currentTarget)}
         style={{
           width: `${cw}px`, height: `${ch}px`,
           objectFit: "none",

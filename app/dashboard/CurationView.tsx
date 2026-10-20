@@ -15,6 +15,10 @@ import { useLanguage } from "./LanguageContext";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { getCardDisplayName, cardMeta, useDebouncedValue, POKEMON_VARIANT_COLS } from "./use-card-data";
 import type { PokemonVariantProjection } from "@/lib/pokemon-variant";
+import {
+  isStaleTwitterBuylistReviewError,
+  useTwitterBuylistReview,
+} from "@/lib/twitter-buylist-review";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -123,6 +127,19 @@ interface Candidate {
   source_thread_root_text: string | null;
   candidate_card_id: number | null;
   card: MatchedCard | null;
+}
+
+type CurationApprovalOutcome = "approved" | "stale" | "failed";
+interface CurationApproveOptions {
+  cardId?: number | null;
+  grading?: string | null;
+  priceJpy?: number | null;
+  notes?: string | null;
+  geometry?: ImageGeometry;
+  naturalWidth?: number;
+  naturalHeight?: number;
+  reviewSHA256?: string;
+  reviewRequestId?: string;
 }
 
 const CAND_COLS =
@@ -256,11 +273,34 @@ export default function CurationView() {
     setUndoState(null);
     setLastDecision({ id: c.candidate_id, label: c.card?.english_name ?? c.card?.regional_name ?? c.ocr_cell_label_text ?? `#${c.candidate_id}` });
   }, []);
-  const approve = useCallback(async (c: Candidate, o?: {
-    cardId?: number; grading?: string | null; priceJpy?: number | null; notes?: string | null;
-    geometry?: ImageGeometry; naturalWidth?: number; naturalHeight?: number;
-  }) => {
-    if (await act(() => o?.geometry && o.naturalWidth && o.naturalHeight
+  const approve = useCallback(async (
+    c: Candidate,
+    o?: CurationApproveOptions,
+  ): Promise<CurationApprovalOutcome> => {
+    let stale = false;
+    const ok = await act(async () => {
+      if (o?.reviewSHA256 && o.reviewRequestId) {
+        const result = await supabase.rpc("approve_twitter_buylist_review", {
+          p_candidate_kind: "singles",
+          p_candidate_id: c.candidate_id,
+          p_expected_review_sha256: o.reviewSHA256,
+          p_request_id: o.reviewRequestId,
+          p_target_id: o.cardId ?? null,
+          p_grade_or_condition: o.grading ?? null,
+          p_price_jpy: o.priceJpy ?? null,
+          p_curator_notes: o.notes ?? null,
+        });
+        if (result.error) {
+          stale = isStaleTwitterBuylistReviewError(result.error);
+          // A stale review is an expected compare-and-swap outcome. The card
+          // reloads the server document and requires another click, so do not
+          // interrupt that recovery with the generic mutation alert.
+          if (stale) return { error: null };
+          throw result.error;
+        }
+        return result;
+      }
+      return o?.geometry && o.naturalWidth && o.naturalHeight
       ? supabase.rpc("correct_and_promote_image_buylist_candidate", {
         p_candidate_id: c.candidate_id,
         p_card_id: o.cardId ?? c.candidate_card_id,
@@ -275,7 +315,12 @@ export default function CurationView() {
         p_candidate_id: c.candidate_id,
         p_card_id: o?.cardId ?? null, p_card_grading: o?.grading ?? null,
         p_price_jpy: o?.priceJpy ?? null, p_curator_notes: o?.notes ?? null,
-      }))) rememberDecision(c);
+      });
+    });
+    if (stale) return "stale";
+    if (!ok) return "failed";
+    rememberDecision(c);
+    return "approved";
   },
   // supabase + save + retry are stable within a render pass; act closes over
   // them from the enclosing scope.
@@ -367,7 +412,13 @@ export default function CurationView() {
         setSelectedIdx((i) => Math.max(0, i - 1));
       } else if (e.key === "y" && cur?.candidate_card_id && status !== "auto_approved") {
         e.preventDefault();
-        void approve(cur);
+        const card = document.querySelector<HTMLElement>(
+          `[data-candidate-idx="${selectedIdx}"]`,
+        );
+        const button = card?.querySelector<HTMLButtonElement>(
+          "[data-reviewed-item-approve]",
+        );
+        if (button && !button.disabled) button.click();
       } else if (e.key === "n" && cur && status !== "auto_approved") {
         e.preventDefault();
         void reject(cur);
@@ -381,7 +432,7 @@ export default function CurationView() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [flat, selectedIdx, status, approve, reject, sendBack, lastDecision, undoState, undoDecision]);
+  }, [flat, selectedIdx, status, reject, sendBack, lastDecision, undoState, undoDecision]);
 
   // Scroll the selected card into view whenever the selection index changes.
   useEffect(() => {
@@ -559,7 +610,7 @@ export default function CurationView() {
               {list.map((c, i) => {
                 const idx = offset + i;
                 return (
-                  <CurationCandidateCard
+                  <ReviewedCurationCandidateCard
                     key={c.candidate_id}
                     c={c}
                     idx={idx}
@@ -598,19 +649,145 @@ export default function CurationView() {
 
 interface SearchHit extends PokemonVariantProjection { card_id: number; regional_name: string; english_name: string | null; set_code: string; card_number: string | null; misc_info: string | null; image_url: string | null; }
 
-export function CurationCandidateCard({ c, idx, status, language, saving, selected, onSelect, onApprove, onReject, onSendBack, onUndo }: {
-  c: Candidate; idx: number; status: Status; language: "en" | "ja"; saving: boolean;
-  selected: boolean; onSelect: () => void;
-  onApprove: (c: Candidate, o?: {
-    cardId?: number; grading?: string | null; priceJpy?: number | null; notes?: string | null;
-    geometry?: ImageGeometry; naturalWidth?: number; naturalHeight?: number;
-  }) => void;
-  onReject: (c: Candidate, notes?: string | null) => void; onSendBack: (c: Candidate, notes?: string | null) => void;
-  // Spot-check reversal for the auto_approved tab: routed through the G4
-  // compensation RPC, so it undoes the listing projection and feedback state,
-  // never a bare status write. Absent -> the card offers no reversal.
+interface CurationCardProps {
+  c: Candidate;
+  idx: number;
+  status: Status;
+  language: "en" | "ja";
+  saving: boolean;
+  selected: boolean;
+  onSelect: () => void;
+  onApprove: (c: Candidate, o?: CurationApproveOptions) => void;
+  onReject: (c: Candidate, notes?: string | null) => void;
+  onSendBack: (c: Candidate, notes?: string | null) => void;
   onUndo?: (c: Candidate) => void;
-}) {
+  reviewBinding?: {
+    state: "select" | "loading" | "ready" | "error";
+    detail?: string;
+    evidenceReady: boolean;
+    onCardEvidenceLoad: (width: number, height: number) => void;
+    onPriceEvidenceLoad: (width: number, height: number) => void;
+    sha256?: string;
+  };
+}
+
+export function ReviewedCurationCandidateCard(
+  props: Omit<CurationCardProps, "reviewBinding" | "onApprove"> & {
+    onApprove: (c: Candidate, o?: CurationApproveOptions) => Promise<CurationApprovalOutcome>;
+  },
+) {
+  const review = useTwitterBuylistReview(
+    "singles",
+    props.c.candidate_id,
+    props.selected && props.status !== "auto_approved",
+  );
+  const [cardEvidenceSHA, setCardEvidenceSHA] = useState<string | null>(null);
+  const [priceEvidenceSHA, setPriceEvidenceSHA] = useState<string | null>(null);
+  const envelope = review.envelope;
+
+  const candidate = useMemo((): Candidate => {
+    if (!envelope) return props.c;
+    const projection = envelope.document.candidate_projection as Partial<Candidate>;
+    const catalog = envelope.document.catalog;
+    const card = {
+      ...catalog,
+      card_id: Number(catalog.target_id),
+    } as unknown as MatchedCard;
+    return {
+      ...props.c,
+      ...projection,
+      candidate_card_id: envelope.document.displayed.target_id,
+      card_grading: envelope.document.displayed.grade_or_condition,
+      variant_attrs: envelope.document.displayed.variant_attrs,
+      ocr_price_jpy: envelope.document.displayed.effective_bid_price_jpy,
+      price_evidence: envelope.document.displayed.price_evidence as unknown as PriceEvidence,
+      source_tweet_url: envelope.document.source.tweet_url,
+      source_image_url: envelope.document.source.image_url,
+      source_image_width: envelope.document.source.width,
+      source_image_height: envelope.document.source.height,
+      effective_source_grid_bbox: envelope.document.source.geometry as GridBBoxJSON,
+      card,
+    };
+  }, [envelope, props.c]);
+
+  const expectedWidth = envelope?.document.source.width ?? 0;
+  const expectedHeight = envelope?.document.source.height ?? 0;
+  const verifyDimensions = (
+    setReadySHA: (sha: string | null) => void,
+    width: number,
+    height: number,
+  ) => setReadySHA(
+    width === expectedWidth && height === expectedHeight
+      ? envelope?.document_sha256 ?? null
+      : null,
+  );
+
+  const reviewBinding: CurationCardProps["reviewBinding"] = review.status === "idle"
+    ? {
+      state: "select", evidenceReady: false,
+      onCardEvidenceLoad: () => undefined,
+      onPriceEvidenceLoad: () => undefined,
+    }
+    : review.status === "loading"
+    ? {
+      state: "loading", evidenceReady: false,
+      onCardEvidenceLoad: () => undefined,
+      onPriceEvidenceLoad: () => undefined,
+    }
+    : review.status === "error"
+      ? {
+        state: "error", detail: review.error, evidenceReady: false,
+        onCardEvidenceLoad: () => undefined,
+        onPriceEvidenceLoad: () => undefined,
+      }
+      : envelope
+        ? {
+          state: "ready",
+          evidenceReady: cardEvidenceSHA === envelope.document_sha256 &&
+            priceEvidenceSHA === envelope.document_sha256,
+          sha256: envelope.document_sha256,
+          onCardEvidenceLoad: (width, height) => verifyDimensions(
+            setCardEvidenceSHA, width, height,
+          ),
+          onPriceEvidenceLoad: (width, height) => verifyDimensions(
+            setPriceEvidenceSHA, width, height,
+          ),
+        }
+        : undefined;
+
+  const approve = (c: Candidate, options?: CurationApproveOptions) => {
+    const reviewedOptions = reviewBinding?.state === "ready" &&
+      reviewBinding.evidenceReady && !options?.geometry
+      ? {
+        ...options,
+        cardId: options?.cardId ?? null,
+        grading: options?.grading ?? null,
+        priceJpy: options?.priceJpy ?? null,
+        notes: options?.notes ?? null,
+        reviewSHA256: reviewBinding.sha256,
+        reviewRequestId: crypto.randomUUID(),
+      }
+      : options;
+    void props.onApprove(c, reviewedOptions).then((outcome) => {
+      if (outcome === "stale") review.markStaleAndReload();
+    });
+  };
+
+  return (
+    <CurationCandidateCard
+      key={envelope?.document_sha256 ?? `queue-${props.c.candidate_id}`}
+      {...props}
+      c={candidate}
+      onApprove={approve}
+      reviewBinding={reviewBinding}
+    />
+  );
+}
+
+export function CurationCandidateCard({
+  c, idx, status, language, saving, selected, onSelect, onApprove, onReject,
+  onSendBack, onUndo, reviewBinding,
+}: CurationCardProps) {
   const { t } = useTranslation();
   const [correcting, setCorrecting] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
@@ -701,6 +878,9 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
     naturalSize.width,
     naturalSize.height,
   );
+  const reviewApprovalBlocked = !!reviewBinding && (
+    reviewBinding.state !== "ready" || !reviewBinding.evidenceReady
+  );
 
   function doApprove() {
     const priceJpy = price.trim() ? Math.round(Number(price)) : null;
@@ -742,6 +922,28 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
       className={`cursor-pointer transition-shadow ${selected ? "ring-2 ring-primary ring-offset-1" : ""}`}
     >
       <CardContent className="space-y-2 p-3">
+        {reviewBinding && (
+          <div
+            role="status"
+            className={`rounded-md border px-2 py-1 text-xs ${
+              reviewBinding.state === "ready" && reviewBinding.evidenceReady
+                ? "border-green-500/50 bg-green-500/10 text-green-800 dark:text-green-300"
+                : reviewBinding.state === "error"
+                  ? "border-destructive/50 bg-destructive/10 text-destructive"
+                  : "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+            }`}
+          >
+            {reviewBinding.state === "select"
+              ? t("curation.review.select")
+              : reviewBinding.state === "loading"
+                ? t("curation.review.loading")
+                : reviewBinding.state === "error"
+                  ? t("curation.review.error", { detail: reviewBinding.detail ?? "" })
+                  : reviewBinding.evidenceReady
+                    ? t("curation.review.ready")
+                    : t("curation.review.waitingForEvidence")}
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2 sm:flex">
           {/* The card we found. New candidates have a real source URL + a
               card bbox - we CSS-crop the card region. Legacy candidates
@@ -750,6 +952,7 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
           <figure className="order-1 shrink-0 text-center sm:order-none">
             {showCardCrop ? (
               <CropPreview src={sourceImg!} bbox={cardBBox!} w={96} h={128}
+                onLoad={reviewBinding?.onCardEvidenceLoad}
                 onClick={() => lightboxImg && setZoom(lightboxImg)} />
             ) : cellCardImg ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -768,6 +971,7 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
           <figure className="order-3 shrink-0 text-center sm:order-none">
             {showPriceCrop ? (
               <CropPreview src={sourceImg!} bbox={priceBBox!} w={96} h={48}
+                onLoad={reviewBinding?.onPriceEvidenceLoad}
                 onClick={() => lightboxImg && setZoom(lightboxImg)} />
             ) : (
               <div className="flex h-12 w-24 items-center justify-center rounded bg-muted">
@@ -864,7 +1068,7 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
             <div className="flex flex-col items-stretch gap-2 border-t pt-2 sm:flex-row sm:items-center">
               <Button
                 size="sm"
-                disabled={saving || !(override || hasMatch) || (geometryEdited && !geometryDirty)}
+                disabled={saving || reviewApprovalBlocked || !(override || hasMatch) || (geometryEdited && !geometryDirty)}
                 className="min-h-11 sm:min-h-11"
                 onClick={doApprove}
               >
@@ -913,8 +1117,9 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
               {/* the three curator decisions: it's right · it's wrong (fix or reject) · later */}
               <Button
                 size="sm"
+                data-reviewed-item-approve
                 className="min-h-11 sm:min-h-11"
-                disabled={saving || !hasMatch || (geometryEdited && !geometryDirty)}
+                disabled={saving || reviewApprovalBlocked || !hasMatch || (geometryEdited && !geometryDirty)}
                 onClick={() => geometryEdited ? doApprove() : onApprove(c, { notes: notesArg() })}
               >
                 <Check className="size-4 mr-1" />{t("curation.markCorrect")}
@@ -986,12 +1191,27 @@ export function CurationCandidateCard({ c, idx, status, language, saving, select
 // loads. `object-fit: none` plus a negative `object-position` shows the
 // crop region at 1:1 image pixels, then transform:scale shrinks it down
 // (or up) so it fills the display rectangle while preserving aspect.
-function CropPreview({ src, bbox, w, h, onClick }: {
+function CropPreview({ src, bbox, w, h, onClick, onLoad }: {
   src: string; bbox: ImageBox; w: number; h: number; onClick?: () => void;
+  onLoad?: (width: number, height: number) => void;
 }) {
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const cw = Math.max(1, bbox.x1 - bbox.x0);
   const ch = Math.max(1, bbox.y1 - bbox.y0);
   const scale = Math.min(w / cw, h / ch);
+  const reportImageDimensions = useCallback((image: HTMLImageElement) => {
+    if (image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+    onLoad?.(image.naturalWidth, image.naturalHeight);
+  }, [onLoad]);
+
+  // A stale review refresh can bind a new server document to the same source
+  // URL. Browsers may satisfy that image from memory without dispatching a
+  // second load event, so verify an already-complete element as well as the
+  // ordinary network load path.
+  useEffect(() => {
+    if (imageRef.current?.complete) reportImageDimensions(imageRef.current);
+  }, [reportImageDimensions, src]);
+
   return (
     <div
       onClick={onClick}
@@ -1000,7 +1220,9 @@ function CropPreview({ src, bbox, w, h, onClick }: {
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
+        ref={imageRef}
         src={src} alt="" loading="lazy" draggable={false}
+        onLoad={(event) => reportImageDimensions(event.currentTarget)}
         style={{
           width: `${cw}px`, height: `${ch}px`,
           objectFit: "none",
