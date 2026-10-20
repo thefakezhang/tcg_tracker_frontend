@@ -10,16 +10,31 @@
 //
 //     value_in = value_out + cash        (cash signed: + paid, - received)
 //
-// So this screen links rather than records. That is deliberate: it means a
-// trade's outbound side realises a real gain or loss against the cards given
-// up, instead of inventing a parallel way to dispose of stock.
+// This screen used to only LINK: you built the sale and the lot by hand
+// elsewhere, then picked them from two dropdowns. That was deliberate - it
+// keeps a trade's outbound side realising a real gain or loss against the cards
+// given up, instead of inventing a parallel way to dispose of stock - but it
+// left the operator unable to record a trade at all without an engineer doing
+// four steps first. For one card out and forty vintage singles in, unusable.
+//
+// It now RECORDS, through backend record_trade (migration 000575), which is the
+// same four steps in one transaction. The principle above is intact, because
+// record_trade calls record_lot_sale and finalize_acquisition_lot rather than
+// writing the rows itself: the outbound side still realises a real gain or loss.
+// The link-only dialog is retired; link_trade remains the backend primitive
+// record_trade finishes with, and unlink_trade is still here to undo one.
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ArrowLeftRight, Check, Loader2, Link2Off, TriangleAlert } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { formatMutationError } from "@/lib/mutation-error";
-import { balanceOf, signedCash, deriveValueIn, type CashDirection, type TradeDraft } from "@/lib/trades";
+import { signedCash, deriveValueIn, type CashDirection } from "@/lib/trades";
+import {
+  canRecordTrade, itemProblems, itemsInPayload, itemsOutPayload,
+  type ItemProblem, type TradeGame, type TradeItemDraft,
+} from "@/lib/trade-items";
+import { externalIdMatches, smartSearchFilters } from "@/lib/card-search";
 import { selectAll } from "@/lib/supabase/select-all";
 import { formatDate } from "@/lib/dates";
 import { formatUsd } from "@/lib/money";
@@ -51,8 +66,6 @@ interface TradeRow {
   notes: string | null;
 }
 
-interface SaleOption { sale_group: number; sold_at: string; gross_proceeds_usd: number; leg: string }
-interface LotOption { lot_id: number; acquired_at: string; total_cost_usd: number; shop_label: string | null }
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -200,201 +213,407 @@ export default function TradesView() {
     </div>
   );
 }
-
 function RecordTradeDialog(props: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onRecorded: () => void;
 }) {
   const { t } = useTranslation();
-  const { language } = useLanguage();
   const [saving, setSaving] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
-  const [saleGroup, setSaleGroup] = useState<number | null>(null);
-  const [lotId, setLotId] = useState<number | null>(null);
+
+  const [itemsOut, setItemsOut] = useState<TradeItemDraft[]>([]);
+  const [itemsIn, setItemsIn] = useState<TradeItemDraft[]>([]);
+  const [valueOut, setValueOut] = useState("");
   const [cashAmount, setCashAmount] = useState("");
   const [direction, setDirection] = useState<CashDirection>("none");
   const [counterparty, setCounterparty] = useState("");
+  const [tradedAt, setTradedAt] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
 
-  // Only sides that are not already spoken for. A sale or lot already in a
-  // trade is not offered, because the RPC would refuse it anyway and finding
-  // that out after filling in the form is worse than not seeing it.
-  const options = useSupabaseQuery<{ sales: SaleOption[]; lots: LotOption[] }>(
-    props.open ? "trades:options" : null,
-    async () => {
-      const supabase = createClient();
-      const [taken, sales, lots] = await Promise.all([
-        selectAll<{ trade_id: number; sale_group: number; lot_id: number }>(
-          () => supabase.from("trades").select("trade_id, sale_group, lot_id"),
-          ["trade_id"],
-        ),
-        selectAll<SaleOption>(
-          () => supabase.from("sale_lots")
-            .select("sale_group, sold_at, gross_proceeds_usd, leg")
-            .eq("status", "finalized"),
-          ["sold_at", "sale_group"],
-        ),
-        selectAll<LotOption>(
-          () => supabase.from("acquisition_lots")
-            .select("lot_id, acquired_at, total_cost_usd, shop_label")
-            .eq("lines_imported", true),
-          ["acquired_at", "lot_id"],
-        ),
-      ]);
-      const usedSales = new Set(taken.map((r) => r.sale_group));
-      const usedLots = new Set(taken.map((r) => r.lot_id));
-      return {
-        sales: sales.filter((s) => !usedSales.has(s.sale_group)).sort((a, b) =>
-          b.sold_at.localeCompare(a.sold_at) || b.sale_group - a.sale_group,
-        ),
-        lots: lots.filter((l) => !usedLots.has(l.lot_id)).sort((a, b) =>
-          b.acquired_at.localeCompare(a.acquired_at) || b.lot_id - a.lot_id,
-        ),
-      };
-    },
-  );
-
-  const sale = options.data?.sales.find((s) => s.sale_group === saleGroup) ?? null;
-  const lot = options.data?.lots.find((l) => l.lot_id === lotId) ?? null;
-
-  const draft: TradeDraft = useMemo(() => ({
-    valueOutUsd: sale ? Number(sale.gross_proceeds_usd) : null,
-    valueInUsd: lot ? Number(lot.total_cost_usd) : null,
+  const signed = signedCash({
     cashAmount: cashAmount === "" ? 0 : Number(cashAmount),
     direction,
-  }), [sale, lot, cashAmount, direction]);
+  });
+  const valueOutUsd = valueOut.trim() === "" ? null : Number(valueOut);
+  // value_in is DERIVED, never typed. The backend computes the same figure from
+  // the same two inputs, so the two sides cannot disagree. This is only the
+  // preview of what it will be.
+  const valueInUsd = valueOutUsd == null ? null : deriveValueIn(valueOutUsd, signed);
 
-  const balance = balanceOf(draft);
+  const outProblems = itemProblems(itemsOut, true);
+  const inProblems = itemProblems(itemsIn, false);
+  const recordable = canRecordTrade({ itemsOut, itemsIn, valueOutUsd, signedCashUsd: signed });
+
+  const reset = useCallback(() => {
+    setItemsOut([]); setItemsIn([]); setValueOut(""); setCashAmount("");
+    setDirection("none"); setCounterparty(""); setNotes("");
+    setTradedAt(new Date().toISOString().slice(0, 10));
+    setMutationError(null);
+  }, []);
 
   const submit = useCallback(async () => {
-    if (saleGroup == null || lotId == null) return;
+    if (!recordable || valueOutUsd == null) return;
     setSaving(true);
     setMutationError(null);
     try {
-      const { error } = await createClient().rpc("link_trade", {
-        p_sale_group: saleGroup,
-        p_lot_id: lotId,
-        p_cash_usd: signedCash(draft),
+      const { error } = await createClient().rpc("record_trade", {
+        p_items_out: itemsOutPayload(itemsOut),
+        p_items_in: itemsInPayload(itemsIn),
+        p_value_out: valueOutUsd,
+        p_cash_usd: signed,
         p_counterparty: counterparty.trim() || null,
-        p_traded_at: null,
+        p_traded_at: tradedAt || null,
         p_notes: notes.trim() || null,
       });
       if (error) throw error;
+      reset();
       props.onRecorded();
     } catch (error) {
-      setMutationError(t("trades.linkError", { error: formatMutationError(error) }));
+      setMutationError(t("trades.recordError", { error: formatMutationError(error) }));
     } finally {
       setSaving(false);
     }
-  }, [saleGroup, lotId, draft, counterparty, notes, props, t]);
+  }, [recordable, valueOutUsd, itemsOut, itemsIn, signed, counterparty, tradedAt, notes, props, t, reset]);
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
+    <Dialog open={props.open} onOpenChange={(v) => { if (!v) reset(); props.onOpenChange(v); }}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl">
         <DialogHeader><DialogTitle>{t("trades.record")}</DialogTitle></DialogHeader>
 
         <div className="space-y-4">
           <p className="text-xs text-muted-foreground">{t("trades.dialogHint")}</p>
 
-          {options.error && <QueryError error={options.error} onRetry={options.retry} />}
-          {mutationError && <p role="alert" className="text-sm text-destructive">{mutationError}</p>}
-
-          <label className="block space-y-1">
-            <span className="text-xs font-medium">{t("trades.gaveLabel")}</span>
-            <select className="min-h-12 w-full rounded-md border bg-background px-2 text-sm sm:min-h-9"
-              value={saleGroup ?? ""} onChange={(e) => setSaleGroup(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">{t("trades.pickSale")}</option>
-              {(options.data?.sales ?? []).map((s) => (
-                <option key={s.sale_group} value={s.sale_group}>
-                  #{s.sale_group} · {formatDate(s.sold_at, language)} · {formatUsd(Number(s.gross_proceeds_usd))}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block space-y-1">
-            <span className="text-xs font-medium">{t("trades.gotLabel")}</span>
-            <select className="min-h-12 w-full rounded-md border bg-background px-2 text-sm sm:min-h-9"
-              value={lotId ?? ""} onChange={(e) => setLotId(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">{t("trades.pickLot")}</option>
-              {(options.data?.lots ?? []).map((l) => (
-                <option key={l.lot_id} value={l.lot_id}>
-                  #{l.lot_id} · {formatDate(l.acquired_at, language)} · {formatUsd(Number(l.total_cost_usd))}{l.shop_label ? ` · ${l.shop_label}` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
+          {/* Two baskets. The outgoing one is picked from stock we hold, because
+              you cannot give away what you do not have; the incoming one from
+              the catalogue, because you do not hold it yet. */}
+          <TradeBasket
+            side="out"
+            items={itemsOut}
+            problems={outProblems}
+            onChange={setItemsOut}
+          />
+          <TradeBasket
+            side="in"
+            items={itemsIn}
+            problems={inProblems}
+            onChange={setItemsIn}
+          />
 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="space-y-1">
-              <span className="text-xs font-medium">{t("trades.cashDirection")}</span>
-              <select className="min-h-12 w-full rounded-md border bg-background px-2 text-sm sm:min-h-9"
-                value={direction} onChange={(e) => setDirection(e.target.value as CashDirection)}>
-                <option value="none">{t("trades.cashNone")}</option>
-                <option value="paid">{t("trades.cashPaid")}</option>
-                <option value="received">{t("trades.cashReceived")}</option>
-              </select>
+              <span className="text-xs text-muted-foreground">{t("trades.valueOutLabel")}</span>
+              <Input inputMode="decimal" value={valueOut} placeholder="0.00"
+                onChange={(e) => setValueOut(e.target.value)} />
+              <span className="block text-xs text-muted-foreground">{t("trades.valueOutHint")}</span>
             </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium">{t("trades.cashAmount")}</span>
-              <Input className="min-h-12 sm:min-h-9" type="number" step="0.01" min="0" value={cashAmount} disabled={direction === "none"}
-                onChange={(e) => setCashAmount(e.target.value)} placeholder="0.00" />
-            </label>
-          </div>
 
-          {/* The arithmetic, shown reconciling as you type rather than as a
-              rejection after you have filled everything in. */}
-          <div className={`rounded-md border p-3 text-sm ${
-            !balance.complete ? "border-border bg-muted/30"
-            : balance.balanced ? "border-green-500/50 bg-green-500/10"
-            : "border-amber-500/50 bg-amber-500/10"}`}>
-            {!balance.complete ? (
-              <p className="text-muted-foreground">{t("trades.pickBothSides")}</p>
-            ) : (
-              <div className="space-y-1 font-mono text-xs">
-                <p>{t("trades.balanceOut", { amount: formatUsd(draft.valueOutUsd ?? 0) })}</p>
-                <p>{t("trades.balanceCash", { amount: formatUsd(signedCash(draft)) })}</p>
-                <p className="border-t pt-1">
-                  {t("trades.balanceExpected", { amount: formatUsd(balance.expectedIn ?? 0) })}
-                </p>
-                <p>{t("trades.balanceActual", { amount: formatUsd(draft.valueInUsd ?? 0) })}</p>
-                <p className={balance.balanced ? "font-semibold text-green-700 dark:text-green-400" : "font-semibold text-amber-700 dark:text-amber-400"}>
-                  {balance.balanced
-                    ? t("trades.balances")
-                    : t("trades.doesNotBalance", { amount: formatUsd(balance.imbalance ?? 0) })}
-                </p>
-                {!balance.balanced && draft.valueOutUsd != null && (
-                  <p className="text-muted-foreground">
-                    {t("trades.balanceFixHint", {
-                      amount: formatUsd(deriveValueIn(draft.valueOutUsd, signedCash(draft))),
-                    })}
-                  </p>
-                )}
+            <div className="space-y-1">
+              <span className="text-xs text-muted-foreground">{t("trades.cashLabel")}</span>
+              <div className="flex gap-2">
+                <select aria-label={t("trades.cashDirection")}
+                  className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm"
+                  value={direction} onChange={(e) => setDirection(e.target.value as CashDirection)}>
+                  <option value="none">{t("trades.cashNone")}</option>
+                  <option value="paid">{t("trades.cashPaid")}</option>
+                  <option value="received">{t("trades.cashReceived")}</option>
+                </select>
+                <Input inputMode="decimal" className="flex-1" placeholder="0.00"
+                  disabled={direction === "none"} value={direction === "none" ? "" : cashAmount}
+                  onChange={(e) => setCashAmount(e.target.value)} />
               </div>
-            )}
+              <span className="block text-xs text-muted-foreground">{t("trades.cashHint")}</span>
+            </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          {/* The identity, shown as it resolves. value_in is not an input. */}
+          <div className="rounded-md border bg-muted/30 p-3 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-muted-foreground">{t("trades.derivedIn")}</span>
+              <span className="font-medium tabular-nums">
+                {valueInUsd == null ? "-" : formatUsd(valueInUsd)}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("trades.identityHint", {
+                out: valueOutUsd == null ? "-" : formatUsd(valueOutUsd),
+                cash: formatUsd(signed),
+                in: valueInUsd == null ? "-" : formatUsd(valueInUsd),
+              })}
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
             <label className="space-y-1">
-              <span className="text-xs font-medium">{t("trades.counterparty")}</span>
-              <Input className="min-h-12 sm:min-h-9" value={counterparty} onChange={(e) => setCounterparty(e.target.value)} />
+              <span className="text-xs text-muted-foreground">{t("trades.counterparty")}</span>
+              <Input value={counterparty} onChange={(e) => setCounterparty(e.target.value)} />
             </label>
             <label className="space-y-1">
-              <span className="text-xs font-medium">{t("trades.notes")}</span>
-              <Input className="min-h-12 sm:min-h-9" value={notes} onChange={(e) => setNotes(e.target.value)} />
+              <span className="text-xs text-muted-foreground">{t("trades.tradedAt")}</span>
+              <Input type="date" value={tradedAt} onChange={(e) => setTradedAt(e.target.value)} />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-muted-foreground">{t("trades.notes")}</span>
+              <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
             </label>
           </div>
 
+          {mutationError && <p role="alert" className="text-sm text-destructive">{mutationError}</p>}
         </div>
 
         <DialogFooter>
-          <Button className="min-h-12 sm:min-h-9" disabled={saving || !balance.balanced || saleGroup == null || lotId == null} onClick={submit}>
-            {saving ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Check className="size-4" aria-hidden />}
-            <span className="ml-1">{t("trades.record")}</span>
+          <Button variant="outline" className="min-h-12 sm:min-h-9"
+            onClick={() => props.onOpenChange(false)}>{t("common.cancel")}</Button>
+          <Button className="min-h-12 sm:min-h-9" disabled={saving || !recordable} onClick={submit}>
+            {saving ? <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
+                    : <Check className="mr-1 size-4" aria-hidden />}
+            {t("trades.record")}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
+}
+
+// One basket, with its own search. The two sides search different things, which
+// is the only real difference between them: outgoing must exist in inventory,
+// incoming is a catalogue lookup plus a condition you choose.
+function TradeBasket(props: {
+  side: "out" | "in";
+  items: TradeItemDraft[];
+  problems: ItemProblem[];
+  onChange: (items: TradeItemDraft[]) => void;
+}) {
+  const { t } = useTranslation();
+  const [term, setTerm] = useState("");
+  const [conditions, setConditions] = useState<Array<{ condition_id: number; code: string }>>([]);
+  const [conditionId, setConditionId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (props.side !== "in") return;
+    createClient().from("conditions").select("condition_id, code").eq("standard", "tcgplayer")
+      .then(({ data }) => {
+        const rows = (data as Array<{ condition_id: number; code: string }>) ?? [];
+        setConditions(rows);
+        setConditionId(rows.find((c) => c.code === "NM")?.condition_id ?? rows[0]?.condition_id ?? null);
+      });
+  }, [props.side]);
+
+  const results = useSupabaseQuery<TradeSearchHit[]>(
+    term.trim() ? `trades:search:${props.side}:${term.trim()}` : null,
+    async () => searchForBasket(createClient(), props.side, term.trim(), conditionId),
+  );
+
+  const add = (hit: TradeSearchHit) => {
+    const key = `${hit.game}:${hit.itemId}:${hit.conditionId ?? "s"}:${hit.psaGrade}`;
+    if (props.items.some((i) => i.key === key)) return;
+    props.onChange([...props.items, { ...hit, key, quantity: 1 }]);
+    setTerm("");
+  };
+  const patch = (key: string, p: Partial<TradeItemDraft>) =>
+    props.onChange(props.items.map((i) => (i.key === key ? { ...i, ...p } : i)));
+  const drop = (key: string) => props.onChange(props.items.filter((i) => i.key !== key));
+
+  const label = props.side === "out" ? t("trades.basketOut") : t("trades.basketIn");
+  const hint = props.side === "out" ? t("trades.basketOutHint") : t("trades.basketInHint");
+
+  return (
+    <div className="space-y-2 rounded-md border p-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-sm font-medium">{label}</span>
+        <span className="text-xs text-muted-foreground">{hint}</span>
+      </div>
+
+      <div className="flex gap-2">
+        <Input value={term} placeholder={t("trades.searchPlaceholder")}
+          onChange={(e) => setTerm(e.target.value)} />
+        {props.side === "in" && conditions.length > 0 && (
+          <select aria-label={t("trades.condition")}
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+            value={conditionId ?? ""} onChange={(e) => setConditionId(Number(e.target.value))}>
+            {conditions.map((c) => <option key={c.condition_id} value={c.condition_id}>{c.code}</option>)}
+          </select>
+        )}
+      </div>
+
+      {results.error && <QueryError error={results.error} onRetry={results.retry} />}
+      {term.trim() && (results.data?.length ?? 0) > 0 && (
+        <ul className="max-h-40 space-y-1 overflow-y-auto rounded border bg-background p-1">
+          {results.data!.map((hit) => (
+            <li key={`${hit.game}:${hit.itemId}:${hit.conditionId ?? "s"}`}>
+              <button type="button" onClick={() => add(hit)}
+                className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-sm hover:bg-muted">
+                <span className="truncate">{hit.label}</span>
+                {hit.available != null && (
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {t("trades.haveQty", { n: String(hit.available) })}
+                  </span>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {props.items.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{t("trades.basketEmpty")}</p>
+      ) : (
+        <ul className="space-y-1">
+          {props.items.map((item) => {
+            const problem = props.problems.find((p) => p.key === item.key);
+            return (
+              <li key={item.key} className="flex flex-wrap items-center gap-2 rounded border px-2 py-1">
+                <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                <Input aria-label={t("trades.quantity")} inputMode="numeric"
+                  className="h-8 w-16" value={String(item.quantity)}
+                  onChange={(e) => patch(item.key, { quantity: Math.floor(Number(e.target.value) || 0) })} />
+                {props.side === "in" && (
+                  <Input aria-label={t("trades.marketValue")} inputMode="decimal"
+                    className="h-8 w-24" placeholder={t("trades.marketValuePlaceholder")}
+                    value={item.marketValueUsd == null ? "" : String(item.marketValueUsd)}
+                    onChange={(e) => patch(item.key, {
+                      marketValueUsd: e.target.value.trim() === "" ? null : Number(e.target.value),
+                    })} />
+                )}
+                <Button variant="ghost" size="sm" className="h-8" onClick={() => drop(item.key)}>
+                  {t("trades.removeItem")}
+                </Button>
+                {problem && (
+                  <span role="alert" className="w-full text-xs text-destructive">
+                    {t(`trades.problem.${problem.reason}` as "trades.problem.quantity")}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// What a search row offers up. The outgoing side fills conditionId and
+// available from the holding; the incoming side takes the condition from the
+// picker beside the box, because the card is not ours yet.
+interface TradeSearchHit {
+  game: TradeGame;
+  itemId: number;
+  conditionId: number | null;
+  psaGrade: number;
+  label: string;
+  available?: number;
+  sealedCondition?: string | null;
+  variantEdition?: string | null;
+}
+
+function hitLabel(parts: Array<string | null | undefined>): string {
+  // "UNKNOWN" is this schema's null; never show it (see AGENTS.md conventions).
+  return parts.filter((p) => p && p !== "UNKNOWN").join(" ");
+}
+
+async function searchForBasket(
+  supabase: SupabaseClient,
+  side: "out" | "in",
+  term: string,
+  conditionId: number | null,
+): Promise<TradeSearchHit[]> {
+  if (side === "out") {
+    // Outgoing stock must be stock we hold, so this reads the holdings view
+    // rather than the catalogue: it already carries the condition, the grade
+    // and how many are on hand, so a row cannot name a holding we lack.
+    // Bounded by .limit(25), so no selectAll paging is needed.
+    let q = supabase
+      .from("inventory_holdings_v")
+      .select(
+        "game, card_id, product_id, name, set_code, card_number, condition_id, " +
+          "psa_grade, qty_on_hand, sealed_condition, variant_edition, variant_label",
+      )
+      .gt("qty_on_hand", 0);
+    for (const f of smartSearchFilters(
+      term,
+      ["name", "set_code", "card_number"],
+      // The view exposes no uid column, so the uid disjuncts have nothing to
+      // match; passing the id column for both keeps the text path intact.
+      "card_id",
+      "card_id",
+      [],
+    )) {
+      q = q.or(f);
+    }
+    const { data } = await q.limit(25);
+    const rows = (data as Array<{
+      game: string; card_id: number | null; product_id: number | null;
+      name: string; set_code: string | null; card_number: string | null;
+      condition_id: number | null; psa_grade: number | null; qty_on_hand: number;
+      sealed_condition: string | null; variant_edition: string | null;
+      variant_label: string | null;
+    }>) ?? [];
+    return rows.map((r) => {
+      const sealed = r.game === "pokemon_sealed";
+      return {
+        game: (sealed ? "pokemon_sealed" : r.game === "mtg" ? "mtg" : "pokemon") as TradeGame,
+        itemId: (sealed ? r.product_id : r.card_id) ?? 0,
+        conditionId: sealed ? null : r.condition_id,
+        psaGrade: r.psa_grade ?? 0,
+        available: r.qty_on_hand,
+        sealedCondition: r.sealed_condition,
+        variantEdition: r.variant_edition,
+        label: hitLabel([
+          r.name, r.set_code, r.card_number, r.variant_label,
+          r.psa_grade ? `PSA ${r.psa_grade}` : null,
+        ]),
+      };
+    });
+  }
+
+  // Incoming cards are not ours yet, so this is a catalogue lookup and the
+  // condition comes from the picker. Pokemon and MTG singles only: trading for
+  // sealed product is rare enough that sending it through the lot screen beats
+  // a half-built path here.
+  const pokemonExt = await externalIdMatches(supabase, "pokemon_external_identifiers", "card_id", term);
+  let pq = supabase
+    .from("pokemon_card_definitions")
+    .select("card_id, regional_name, english_name, set_code, card_number");
+  for (const f of smartSearchFilters(
+    term,
+    ["regional_name", "english_name", "set_code", "card_number"],
+    "card_uid", "card_id", pokemonExt,
+  )) {
+    pq = pq.or(f);
+  }
+  const { data: pdata } = await pq.limit(20);
+  const pokemon: TradeSearchHit[] = ((pdata as Array<{
+    card_id: number; regional_name: string; english_name: string | null;
+    set_code: string | null; card_number: string | null;
+  }>) ?? []).map((r) => ({
+    game: "pokemon",
+    itemId: r.card_id,
+    conditionId,
+    psaGrade: 0,
+    label: hitLabel([r.english_name ?? r.regional_name, r.set_code, r.card_number]),
+  }));
+
+  const mtgExt = await externalIdMatches(supabase, "mtg_external_identifiers", "card_id", term);
+  let mq = supabase
+    .from("mtg_card_definitions_v")
+    .select("card_id, regional_name, set_code, card_number");
+  for (const f of smartSearchFilters(
+    term,
+    ["regional_name", "local_name", "set_code", "card_number"],
+    "card_uid", "card_id", mtgExt,
+  )) {
+    mq = mq.or(f);
+  }
+  const { data: mdata } = await mq.limit(10);
+  const mtg: TradeSearchHit[] = ((mdata as Array<{
+    card_id: number; regional_name: string; set_code: string | null; card_number: string | null;
+  }>) ?? []).map((r) => ({
+    game: "mtg",
+    itemId: r.card_id,
+    conditionId,
+    psaGrade: 0,
+    label: hitLabel([r.regional_name, r.set_code, r.card_number]),
+  }));
+
+  return [...pokemon, ...mtg];
 }

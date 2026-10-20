@@ -6,14 +6,22 @@ import { LanguageProvider } from "./LanguageContext";
 
 const mocks = vi.hoisted(() => ({
   mainError: null as Error | null,
-  optionsError: null as Error | null,
+  searchError: null as Error | null,
   mainData: [] as unknown[],
-  optionsData: { sales: [] as unknown[], lots: [] as unknown[] },
+  searchData: [] as unknown[],
   rpc: vi.fn(),
+  conditions: [{ condition_id: 1, code: "NM" }] as unknown[],
 }));
 
 vi.mock("@/lib/supabase/client", () => ({
-  createClient: () => ({ rpc: mocks.rpc }),
+  // The basket's condition picker reads `conditions` directly; everything else
+  // it needs comes through the mocked useSupabaseQuery below.
+  createClient: () => ({
+    rpc: mocks.rpc,
+    from: () => ({
+      select: () => ({ eq: () => Promise.resolve({ data: mocks.conditions }) }),
+    }),
+  }),
 }));
 
 vi.mock("./use-query", () => ({
@@ -22,10 +30,10 @@ vi.mock("./use-query", () => ({
     if (key == null) {
       return { data: undefined, error: undefined, isLoading: false, retry: vi.fn() };
     }
-    const isOptions = key === "trades:options";
-    const error = isOptions ? mocks.optionsError : mocks.mainError;
+    const isSearch = key.startsWith("trades:search:");
+    const error = isSearch ? mocks.searchError : mocks.mainError;
     return {
-      data: isOptions ? mocks.optionsData : mocks.mainData,
+      data: isSearch ? mocks.searchData : mocks.mainData,
       error: error ?? undefined,
       isLoading: false,
       retry: vi.fn(),
@@ -39,9 +47,9 @@ afterEach(cleanup);
 
 beforeEach(() => {
   mocks.mainError = null;
-  mocks.optionsError = null;
+  mocks.searchError = null;
   mocks.mainData = [];
-  mocks.optionsData = { sales: [], lots: [] };
+  mocks.searchData = [];
   mocks.rpc.mockReset().mockResolvedValue({ error: null });
 });
 
@@ -102,29 +110,98 @@ describe("TradesView data contracts", () => {
     expect(screen.getByRole("alert").textContent).toContain("trade list unavailable");
   });
 
-  it("surfaces option-query failures inside the record dialog", () => {
-    mocks.optionsError = new Error("trade options unavailable");
+  it("surfaces a card-search failure inside the record dialog", async () => {
+    mocks.searchError = new Error("card search unavailable");
     render(<LanguageProvider><TradesView /></LanguageProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Record trade" }));
+    // A search only runs once there is a term, so type one.
+    fireEvent.change(screen.getAllByPlaceholderText("Search name, set or number")[0], {
+      target: { value: "pikachu" },
+    });
 
-    expect(screen.getByRole("alert").textContent).toContain("trade options unavailable");
+    expect((await screen.findByRole("alert")).textContent).toContain("card search unavailable");
   });
 
-  it("surfaces a link failure and keeps the record dialog open", async () => {
-    mocks.optionsData = {
-      sales: [{ sale_group: 7, sold_at: "2026-10-01", gross_proceeds_usd: 10, leg: "import" }],
-      lots: [{ lot_id: 9, acquired_at: "2026-10-01", total_cost_usd: 10, shop_label: "Trade" }],
-    };
-    mocks.rpc.mockResolvedValueOnce({ error: { message: "link rejected" } });
+  // The whole reason record_trade exists: the operator gives ONE value and the
+  // other side is derived, so the two halves cannot be entered inconsistently.
+  it("will not submit until both baskets have cards and a value is set", async () => {
+    mocks.searchData = [
+      { game: "pokemon", itemId: 1, conditionId: 1, psaGrade: 0, label: "Pikachu M2A 234", available: 1 },
+    ];
     render(<LanguageProvider><TradesView /></LanguageProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Record trade" }));
-    const selects = screen.getAllByRole("combobox");
-    fireEvent.change(selects[0], { target: { value: "7" } });
-    fireEvent.change(selects[1], { target: { value: "9" } });
+    const submit = () => screen.getAllByRole("button", { name: "Record trade" }).at(-1)!;
 
+    // Nothing picked: refused.
+    expect((submit() as HTMLButtonElement).disabled).toBe(true);
+
+    // Cards on both sides but no agreed value: still refused.
+    const boxes = screen.getAllByPlaceholderText("Search name, set or number");
+    for (const box of boxes) {
+      fireEvent.change(box, { target: { value: "pika" } });
+      fireEvent.click((await screen.findAllByRole("button", { name: /Pikachu/ }))[0]);
+    }
+    expect((submit() as HTMLButtonElement).disabled).toBe(true);
+
+    // With a value it is recordable, and the RPC gets the one number plus the
+    // signed cash, never a second value for the other side.
+    fireEvent.change(screen.getByLabelText("Agreed value of what you gave (USD)", { exact: false }), {
+      target: { value: "220" },
+    });
+    await waitFor(() => expect((submit() as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(submit());
+
+    await waitFor(() => expect(mocks.rpc).toHaveBeenCalled());
+    const [fn, args] = mocks.rpc.mock.calls[0];
+    expect(fn).toBe("record_trade");
+    expect(args.p_value_out).toBe(220);
+    expect(args.p_cash_usd).toBe(0);
+    expect(args.p_items_out).toHaveLength(1);
+    expect(args.p_items_in).toHaveLength(1);
+    expect(args).not.toHaveProperty("p_value_in");
+  });
+
+  it("refuses cash back larger than the cards given, which would leave nothing coming in", async () => {
+    mocks.searchData = [
+      { game: "pokemon", itemId: 1, conditionId: 1, psaGrade: 0, label: "Pikachu M2A 234", available: 1 },
+    ];
+    render(<LanguageProvider><TradesView /></LanguageProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Record trade" }));
+    for (const box of screen.getAllByPlaceholderText("Search name, set or number")) {
+      fireEvent.change(box, { target: { value: "pika" } });
+      fireEvent.click((await screen.findAllByRole("button", { name: /Pikachu/ }))[0]);
+    }
+    fireEvent.change(screen.getByLabelText("Agreed value of what you gave (USD)", { exact: false }), {
+      target: { value: "100" },
+    });
+    // Two selects exist: the incoming basket's condition picker, then the
+    // cash direction. Cash is last in DOM order.
+    const dir = screen.getAllByRole("combobox").at(-1)!;
+    fireEvent.change(dir, { target: { value: "received" } });
+    const cash = screen.getAllByPlaceholderText("0.00").at(-1)!;
+    fireEvent.change(cash, { target: { value: "150" } });
+
+    const submit = screen.getAllByRole("button", { name: "Record trade" }).at(-1)!;
+    await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(true));
+  });
+
+  it("surfaces a record failure and keeps the dialog open", async () => {
+    mocks.searchData = [
+      { game: "pokemon", itemId: 1, conditionId: 1, psaGrade: 0, label: "Pikachu M2A 234", available: 1 },
+    ];
+    mocks.rpc.mockResolvedValueOnce({ error: { message: "trade rejected" } });
+    render(<LanguageProvider><TradesView /></LanguageProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Record trade" }));
+    for (const box of screen.getAllByPlaceholderText("Search name, set or number")) {
+      fireEvent.change(box, { target: { value: "pika" } });
+      fireEvent.click((await screen.findAllByRole("button", { name: /Pikachu/ }))[0]);
+    }
+    fireEvent.change(screen.getByLabelText("Agreed value of what you gave (USD)", { exact: false }), {
+      target: { value: "220" },
+    });
     fireEvent.click(screen.getAllByRole("button", { name: "Record trade" }).at(-1)!);
 
-    expect((await screen.findByRole("alert")).textContent).toContain("link rejected");
+    expect((await screen.findByRole("alert")).textContent).toContain("trade rejected");
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
