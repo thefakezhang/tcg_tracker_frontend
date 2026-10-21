@@ -189,6 +189,7 @@ app/
     SourceHealthView.tsx  # Source health board, calibration summary, and run-control drill-down
     SourceRunsPanel.tsx   # Operator whole-source run control (source_run_control_snapshot RPC)
     SourceStalenessBadge.tsx # Header chip shown only when a source crosses the staleness threshold
+    UnresolvedPriceObservationsPanel.tsx # Operator evidence cards for verified prices with unknown catalog identity
     StoreSightingForm.tsx # Records an in-store sighting (record_deal_store_sighting RPC)
     TheoreticalRoiSummary.tsx # Shared mark-to-market rollup strip (leg strip, lot header, filtered totals)
     TripContext.tsx       # Trips state + activeTripId (0 = overview, negatives = standalone views, positive = a trip)
@@ -265,6 +266,7 @@ lib/
   platform-url.ts         # Canonical platform item URLs, copied-URL parsing, platform inference, search links
   purchase-planning.ts    # Planner read-model types, demand ordering, and summary calculations
   source-labels.ts        # Source key -> human-readable label map
+  unresolved-buylist-observations.ts # Strict parser and keyset cursor for unknown-identity price evidence
   supabase/
     client.ts             # Browser-side Supabase client (per-request timeout ceiling)
     server.ts             # Server-side Supabase client (cookie-based)
@@ -637,6 +639,9 @@ It reads the same `source_health` snapshot as the board, renders nothing on a fe
 - `identity` and `aop` remain database health snapshots but are omitted from the operator-facing source comparison because they are internal bookkeeping labels rather than actionable market sources.
 - `SourceHealthView` reads structured collection coverage from `source_health.notes.collection_coverage`.
   A known retired side renders its localized reason and historical `last_good_at` beneath the source name; malformed or unknown coverage notes render no retirement claim.
+- `UnresolvedPriceObservationsPanel.tsx` uses the operator-authorized `list_unresolved_buylist_price_observations` RPC to retain inspectable per-cell prices when recognition has verified a physical cell but the shared matcher abstained.
+  It renders all price tiers, explicit unknown identity, raw or observed grade state, source and effective geometry, content digest, routing receipt, and crop previews without creating a candidate or financial action.
+  Its architecture and browser acceptance are documented in `docs/unresolved_price_observations.md`.
 - Freshness has a headline and a secondary signal.
 `freshness_p50_hours` (median listing age) is the honest "how stale is what you see"; `notes.last_run_hours` (newest successful `source_run_requests` completion) and `notes.last_write_hours` (newest listing write) tell "dead" from "alive but incremental" - a source that only re-stamps changed rows (tcgplayer) shows a p50 of weeks while it ran days ago.
 The board renders the secondary line under the p50 and downgrades a bad p50 to warn when the source ran inside the window; `SourceStalenessBadge` (`isStaleSource`) fires only when BOTH the p50 and the last run are past the threshold.
@@ -861,6 +866,7 @@ The authoritative schema is `docs/schema.md` in the backend repository; this tab
 | `pokemon_sealed_price_summaries` | (product_id, sealed_condition, variant_edition) PK, best_buy_*, best_sell_*, roi, updated_at |
 | `pokemon_sealed_summaries_v` / `_best_v` (views) | flat card-shaped projection of summaries+products; `_best_v` = DISTINCT ON product (best ROI) |
 | `pokemon_sealed_buylist_entries` | entry_id (PK), buylist_id (FK→buylists), product_id (FK→pokemon_sealed_products), sealed_condition, variant_edition, target_price_usd, notes, added_at |
+| `list_unresolved_buylist_price_observations` (RPC) | bounded operator-only projection of verified per-cell buylist prices whose catalog identity is explicitly unresolved; complete cursor is routing_outcome_id plus observation_ordinal |
 | `customer_wishlist` / `customer_wish_criteria` | exact or broad customer demand, priority, target quantity, intent, optional expiry, and price or grade constraints |
 | `purchase_plans` | plan_id, name, status, trip_id, budget, reviewed_at, ordered_at |
 | `purchase_plan_wants` | plan-wide quantity and ceiling, plus exact condition and edition for new sealed wants |
