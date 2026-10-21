@@ -10,7 +10,10 @@ const mocks = vi.hoisted(() => ({
   mainData: [] as unknown[],
   searchData: [] as unknown[],
   rpc: vi.fn(),
-  conditions: [{ condition_id: 1, code: "NM" }] as unknown[],
+  conditions: [
+    { condition_id: 1, code: "NM", display_name: "Near Mint", standard: "tcgplayer" },
+    { condition_id: 2, code: "LP", display_name: "Lightly Played", standard: "tcgplayer" },
+  ] as unknown[],
 }));
 
 vi.mock("@/lib/supabase/client", () => ({
@@ -18,9 +21,18 @@ vi.mock("@/lib/supabase/client", () => ({
   // it needs comes through the mocked useSupabaseQuery below.
   createClient: () => ({
     rpc: mocks.rpc,
-    from: () => ({
-      select: () => ({ eq: () => Promise.resolve({ data: mocks.conditions }) }),
-    }),
+    // The condition lookup now reads every standard, so select() is awaited
+    // directly with no .eq() narrowing it. Keeping .eq() available means this
+    // fake does not care which of the two shapes the component uses.
+    from: () => {
+      const result = Promise.resolve({ data: mocks.conditions });
+      return {
+        select: () => Object.assign(result, {
+          eq: () => result,
+          then: result.then.bind(result),
+        }),
+      };
+    },
   }),
 }));
 
@@ -41,7 +53,7 @@ vi.mock("./use-query", () => ({
   },
 }));
 
-import TradesView, { fetchTrades, searchForBasket } from "./TradesView";
+import TradesView, { conditionText, fetchTrades, searchForBasket } from "./TradesView";
 
 afterEach(cleanup);
 
@@ -301,5 +313,86 @@ describe("searchForBasket", () => {
 
     expect(calls.table).toBe("pokemon_external_identifiers");
     expect(calls.filters.some((f) => f.includes("english_name"))).toBe(true);
+  });
+});
+
+// A holding's condition is part of WHICH card it is. Six cards in the live book
+// appear two or three times told apart only by condition - Kangaskhan OLD-PJ is
+// held Near Mint AND Damaged - so a row that omits it cannot be picked
+// correctly, and the first version of this screen omitted it everywhere.
+describe("conditionText", () => {
+  const names = new Map([[1, "Near Mint"], [2, "Lightly Played"], [6, "ニアミント NM"]]);
+
+  it("names the condition a single is held in", () => {
+    expect(conditionText(
+      { game: "pokemon", conditionId: 1, psaGrade: 0 } as never, names,
+    )).toBe("Near Mint");
+    expect(conditionText(
+      { game: "pokemon", conditionId: 2, psaGrade: 0 } as never, names,
+    )).toBe("Lightly Played");
+  });
+
+  it("handles a non-tcgplayer standard, because stock comes from JP shops too", () => {
+    expect(conditionText(
+      { game: "mtg", conditionId: 6, psaGrade: 0 } as never, names,
+    )).toBe("ニアミント NM");
+  });
+
+  it("prefers the grade for a slab, which is its condition", () => {
+    expect(conditionText(
+      { game: "pokemon", conditionId: 1, psaGrade: 10 } as never, names,
+    )).toBe("PSA 10");
+  });
+
+  it("falls back to the id rather than rendering nothing for an unknown condition", () => {
+    expect(conditionText(
+      { game: "pokemon", conditionId: 99, psaGrade: 0 } as never, names,
+    )).toBe("condition 99");
+  });
+
+  it("describes sealed by its own axes, which have no condition_id", () => {
+    expect(conditionText(
+      { game: "pokemon_sealed", conditionId: null, psaGrade: 0,
+        sealedCondition: "shrink", variantEdition: "1ed" } as never, names,
+    )).toBe("shrink 1ed");
+    // "standard" on both axes is the unremarkable case and reads as noise.
+    expect(conditionText(
+      { game: "pokemon_sealed", conditionId: null, psaGrade: 0,
+        sealedCondition: "standard", variantEdition: "standard" } as never, names,
+    )).toBe("sealed");
+  });
+});
+
+describe("search result labels", () => {
+  it("keeps the condition out of the label so it cannot be truncated away", async () => {
+    const calls = { select: "", filters: [] as string[] };
+    const builder: Record<string, unknown> = {};
+    const chain = () => builder;
+    Object.assign(builder, {
+      select: (c: string) => { calls.select = c; return chain(); },
+      gt: chain, eq: chain, in: chain,
+      or: (f: string) => { calls.filters.push(f); return chain(); },
+      limit: () => Promise.resolve({
+        // A slab, so the assertion below actually discriminates: with the grade
+        // folded back into the label the first expect fails. With psa_grade 0
+        // that branch yields null either way and the test proves nothing.
+        data: [{
+          game: "pokemon", card_id: 1, product_id: null, item_uid: null,
+          name: "ピカチュウ", english_name: "Pikachu", set_code: "CLL",
+          card_number: "008/032", condition_id: 1, psa_grade: 10, qty_on_hand: 5,
+          sealed_condition: null, variant_edition: null, variant_label: null,
+        }],
+      }),
+    });
+    const hits = await searchForBasket(
+      { from: () => builder } as never, "out", "kangaskhan", null,
+    );
+
+    expect(hits[0].label).toBe("Pikachu CLL 008/032");
+    expect(hits[0].label).not.toContain("PSA");
+    // The caller renders the condition from these, so the hit must carry them.
+    expect(hits[0].psaGrade).toBe(10);
+    expect(hits[0].conditionId).toBe(1);
+    expect(hits[0].available).toBe(5);
   });
 });
