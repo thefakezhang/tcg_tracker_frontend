@@ -1,5 +1,12 @@
 \set ON_ERROR_STOP on
 
+CREATE TEMP TABLE generated_recognition_fixture (
+    value jsonb NOT NULL
+);
+INSERT INTO generated_recognition_fixture (value)
+SELECT pg_read_file('/tmp/ordinary-recognition-output.json')::jsonb;
+GRANT SELECT ON generated_recognition_fixture TO service_role;
+
 INSERT INTO public.source_run_operators (user_id, note)
 SELECT auth_user.id, 'isolated unresolved price observation browser fixture'
   FROM auth.users auth_user
@@ -310,9 +317,8 @@ SELECT :'singles_pending_id'::bigint,
   FROM evidence;
 
 WITH generated AS (
-    SELECT pg_read_file(
-        '/tmp/ordinary-recognition-output.json'
-    )::jsonb -> 'outcome' AS value
+    SELECT fixture.value -> 'outcome' AS value
+      FROM generated_recognition_fixture fixture
 )
 INSERT INTO public.buylist_media_routing_outcomes (
     pending_id, tweet_id, buyer_handle, source_image_index,
@@ -390,12 +396,12 @@ BEGIN
       FROM public.buylist_media_routing_outcomes outcome
      WHERE outcome.tweet_id = '2114000000000000003'
        AND outcome.evidence = (
-           pg_read_file('/tmp/ordinary-recognition-output.json')::jsonb
-               -> 'outcome' -> 'evidence'
+           SELECT fixture.value -> 'outcome' -> 'evidence'
+             FROM generated_recognition_fixture fixture
        )
        AND outcome.source_content_sha256 = (
-           pg_read_file('/tmp/ordinary-recognition-output.json')::jsonb
-               -> 'outcome' ->> 'source_content_sha256'
+           SELECT fixture.value -> 'outcome' ->> 'source_content_sha256'
+             FROM generated_recognition_fixture fixture
        )
        AND outcome.candidate_count = 0;
     SELECT count(*) INTO v_active_rule_count
