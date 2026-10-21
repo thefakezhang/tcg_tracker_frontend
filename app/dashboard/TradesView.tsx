@@ -511,7 +511,7 @@ function hitLabel(parts: Array<string | null | undefined>): string {
   return parts.filter((p) => p && p !== "UNKNOWN").join(" ");
 }
 
-async function searchForBasket(
+export async function searchForBasket(
   supabase: SupabaseClient,
   side: "out" | "in",
   term: string,
@@ -522,28 +522,37 @@ async function searchForBasket(
     // rather than the catalogue: it already carries the condition, the grade
     // and how many are on hand, so a row cannot name a holding we lack.
     // Bounded by .limit(25), so no selectAll paging is needed.
+    // Same contract as every other search bar in the app (lib/card-search): a
+    // name/set/number term, a pasted uid (full or the displayed 8-hex prefix),
+    // or an exact platform external id. `name` here is the JAPANESE regional
+    // name, so english_name has to be in the text columns or "pikachu" matches
+    // nothing; item_uid and the external ids are what make a paste land.
+    // Both columns come from the view via backend migrations 000576 and 000577.
+    const heldExt = await externalIdMatches(
+      supabase, "pokemon_external_identifiers", "card_id", term,
+    );
     let q = supabase
       .from("inventory_holdings_v")
       .select(
-        "game, card_id, product_id, name, set_code, card_number, condition_id, " +
-          "psa_grade, qty_on_hand, sealed_condition, variant_edition, variant_label",
+        "game, card_id, product_id, item_uid, name, english_name, set_code, " +
+          "card_number, condition_id, psa_grade, qty_on_hand, sealed_condition, " +
+          "variant_edition, variant_label",
       )
       .gt("qty_on_hand", 0);
     for (const f of smartSearchFilters(
       term,
-      ["name", "set_code", "card_number"],
-      // The view exposes no uid column, so the uid disjuncts have nothing to
-      // match; passing the id column for both keeps the text path intact.
+      ["name", "english_name", "set_code", "card_number"],
+      "item_uid",
       "card_id",
-      "card_id",
-      [],
+      heldExt,
     )) {
       q = q.or(f);
     }
     const { data } = await q.limit(25);
     const rows = (data as Array<{
       game: string; card_id: number | null; product_id: number | null;
-      name: string; set_code: string | null; card_number: string | null;
+      name: string; english_name: string | null;
+      set_code: string | null; card_number: string | null;
       condition_id: number | null; psa_grade: number | null; qty_on_hand: number;
       sealed_condition: string | null; variant_edition: string | null;
       variant_label: string | null;
@@ -559,7 +568,7 @@ async function searchForBasket(
         sealedCondition: r.sealed_condition,
         variantEdition: r.variant_edition,
         label: hitLabel([
-          r.name, r.set_code, r.card_number, r.variant_label,
+          r.english_name ?? r.name, r.set_code, r.card_number, r.variant_label,
           r.psa_grade ? `PSA ${r.psa_grade}` : null,
         ]),
       };

@@ -41,7 +41,7 @@ vi.mock("./use-query", () => ({
   },
 }));
 
-import TradesView, { fetchTrades } from "./TradesView";
+import TradesView, { fetchTrades, searchForBasket } from "./TradesView";
 
 afterEach(cleanup);
 
@@ -220,5 +220,86 @@ describe("TradesView data contracts", () => {
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("unlink rejected"));
     expect(screen.getByText("Counterparty 42")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+});
+
+// The outgoing basket reads inventory_holdings_v, whose `name` is the JAPANESE
+// regional name for Pokemon. It shipped searching name/set/number only, so
+// "pikachu" matched nothing there while the incoming basket, which reads the
+// catalogue and sees english_name, matched 411 cards. The suite could not see
+// that, because it mocks this function out. These pin the columns.
+describe("searchForBasket", () => {
+  function fakeSupabase() {
+    const calls = { table: "", tables: [] as string[], select: "", filters: [] as string[], gt: [] as unknown[][] };
+    const builder: Record<string, unknown> = {};
+    const chain = () => builder;
+    Object.assign(builder, {
+      select: (cols: string) => { calls.select = cols; return chain(); },
+      gt: (...args: unknown[]) => { calls.gt.push(args); return chain(); },
+      eq: chain,
+      or: (f: string) => { calls.filters.push(f); return chain(); },
+      limit: () => Promise.resolve({ data: [] }),
+      // externalIdMatches reads a platform table; an empty answer is fine here.
+      in: chain,
+    });
+    return {
+      calls,
+      client: {
+        from: (table: string) => {
+          if (!calls.table) calls.table = table;
+          calls.tables.push(table);
+          return builder;
+        },
+      },
+    };
+  }
+
+  it("searches the holdings view by english_name as well as the japanese name", async () => {
+    const { calls, client } = fakeSupabase();
+    await searchForBasket(client as never, "out", "pikachu", null);
+
+    expect(calls.select).toContain("english_name");
+    // One filter per whitespace token; each must offer english_name as a disjunct.
+    expect(calls.filters.length).toBeGreaterThan(0);
+    expect(calls.filters.every((f) => f.includes("english_name"))).toBe(true);
+  });
+
+  // The whole point of lib/card-search is that a pasted identifier lands on the
+  // card, in every search bar. This basket used to aim uidCol at the integer
+  // card_id with no external ids, which both dropped the paste paths AND made a
+  // pasted uid emit `card_id.gte.<uuid>` - an error, not a miss.
+  it("resolves a pasted uid against item_uid, not an integer id column", async () => {
+    const { calls, client } = fakeSupabase();
+    await searchForBasket(client as never, "out", "a1b2c3d4", null);
+
+    const joined = calls.filters.join(" ");
+    expect(joined).toContain("item_uid");
+    expect(joined).not.toContain("card_id.gte");
+    expect(joined).not.toContain("card_id.lte");
+  });
+
+  it("asks the platform-id resolver for the outgoing side too", async () => {
+    const { calls, client } = fakeSupabase();
+    await searchForBasket(client as never, "out", "123456", null);
+
+    // externalIdMatches reads the identifier table before the holdings query,
+    // so the outgoing basket accepts a pasted TCGplayer id like the rest.
+    expect(calls.tables).toContain("pokemon_external_identifiers");
+    expect(calls.tables).toContain("inventory_holdings_v");
+  });
+
+  it("asks only for stock on hand, so a sold-out holding cannot be given away", async () => {
+    const { calls, client } = fakeSupabase();
+    await searchForBasket(client as never, "out", "pikachu", null);
+
+    expect(calls.gt).toEqual([["qty_on_hand", 0]]);
+  });
+
+  it("searches the catalogue for the incoming side, where we hold nothing yet", async () => {
+    const { calls, client } = fakeSupabase();
+    await searchForBasket(client as never, "in", "pikachu", 1);
+
+    expect(calls.table).toBe("pokemon_external_identifiers");
+    expect(calls.filters.some((f) => f.includes("english_name"))).toBe(true);
   });
 });
