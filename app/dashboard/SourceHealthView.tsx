@@ -15,6 +15,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n";
 import { SourceRunsPanel } from "./SourceRunsPanel";
+import UnresolvedPriceObservationsPanel from "./UnresolvedPriceObservationsPanel";
 import { DuplicateConflictsPanel } from "./DuplicateConflictsPanel";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
@@ -487,6 +488,8 @@ export default function SourceHealthView() {
       )}
 
       <DuplicateConflictsPanel />
+
+      <UnresolvedPriceObservationsPanel />
 
       <SourceRunsPanel />
     </div>
