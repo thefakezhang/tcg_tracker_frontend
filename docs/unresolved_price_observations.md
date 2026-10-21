@@ -35,9 +35,10 @@ Crop previews use the existing authenticated same-origin image proxy and the sto
 
 ## Acceptance
 
-Component tests cover loading, empty, error, pagination, every price tier, crop URLs, grade absence, observed grade, sealed semantics, and operator-facing eligibility text.
+Evidence-card component tests cover every price tier, crop URLs, raw grade absence, observed grade, sealed grade semantics, and operator-facing eligibility text.
 Parser tests cover the complete contract and reject fabricated identity or financial eligibility, invalid geometry, bad digests, and inconsistent grade states.
 
 The browser journey runs against isolated PostgreSQL, GoTrue, PostgREST, and Next.js processes.
-It proves anonymous redirect, ordinary-user denial, operator sign-in, a 24-row first page, a sealed row on the next page, retained 110,000 JPY and 74,000 JPY tiers, crop rendering, provenance text, 390px phone behavior, 44px controls, and no page-level horizontal overflow.
-The journey performs only test-fixture writes and removes its containers, network, volume, auth files, and `.next` output on exit.
+It generates an ordinary `orchestrator.process_tweet` result, persists that exact routing evidence, executes the canonical alert reconciliation query, and reads the result through the operator RPC and panel.
+It proves zero candidates and alerts, anonymous redirect, ordinary-user denial, operator sign-in, a 24-row first page, a sealed row on the next page, retained 110,000 JPY and 74,000 JPY tiers, crop rendering, provenance text, keyboard focus traversal, 390px phone behavior, 44px controls, and no page-level horizontal overflow.
+The journey performs only test-fixture writes, creates no Docker network, and removes its containers, volume, auth files, and `.next` output on exit.

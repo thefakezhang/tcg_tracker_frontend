@@ -93,4 +93,22 @@ describe("unresolved priced observation evidence card", () => {
 
     expect(screen.getByText(/Observed grade: psa_10/)).toBeTruthy();
   });
+
+  it("renders sealed grade semantics as not applicable", () => {
+    render(
+      <LanguageProvider defaultLanguage="en">
+        <UnresolvedObservationCard
+          row={{
+            ...row,
+            productKind: "sealed",
+            grade: { status: "not_applicable", value: null },
+            variant: "shrink_wrapped",
+          }}
+        />
+      </LanguageProvider>,
+    );
+
+    expect(screen.getByText(/Grade not applicable/)).toBeTruthy();
+    expect(screen.getByText(/Observed variant: shrink_wrapped/)).toBeTruthy();
+  });
 });

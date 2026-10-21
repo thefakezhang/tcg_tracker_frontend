@@ -20,6 +20,12 @@ INSERT INTO public.buylist_tweet_acquisitions (
         'https://x.com/fixture_singles/status/2114000000000000002',
         timestamptz '2026-10-20 14:00:00+00',
         timestamptz '2026-10-20 14:01:00+00'
+    ),
+    (
+        '2114000000000000003', 'snkrdunk', 'fixture_generated',
+        'https://x.com/fixture_generated/status/2114000000000000003',
+        timestamptz '2026-10-20 15:00:00+00',
+        timestamptz '2026-10-20 15:01:00+00'
     );
 
 INSERT INTO public.pending_buylist_tweets (
@@ -40,6 +46,13 @@ INSERT INTO public.pending_buylist_tweets (
         'Pokemon singles buylist', date '2026-10-20',
         '["https://unresolved-fixture.invalid/singles.jpg"]'::jsonb,
         '2114000000000000002', 0, 'Pokemon singles buylist', 'processing'
+    ),
+    (
+        'snkrdunk', 'fixture_generated', '2114000000000000003',
+        'https://x.com/fixture_generated/status/2114000000000000003',
+        'Pokemon singles buylist', date '2026-10-20',
+        '["ordinary-recognition-source.bin"]'::jsonb,
+        '2114000000000000003', 0, 'Pokemon singles buylist', 'processing'
     );
 
 SELECT pending_id AS sealed_pending_id
@@ -51,6 +64,17 @@ SELECT pending_id AS singles_pending_id
   FROM public.pending_buylist_tweets
  WHERE tweet_id = '2114000000000000002'
 \gset
+
+SELECT pending_id AS generated_pending_id
+  FROM public.pending_buylist_tweets
+ WHERE tweet_id = '2114000000000000003'
+\gset
+
+INSERT INTO public.alert_rules (kind, card_id, cohort, sources, active)
+VALUES (
+    'tweet_inventory', NULL, 'twitter_inventory_v1:snkrdunk',
+    ARRAY['snkrdunk'], true
+);
 
 SET ROLE service_role;
 
@@ -161,7 +185,7 @@ WITH cells AS (
     SELECT cell,
            10 + (cell % 6) * 190 AS x0,
            10 + (cell / 6) * 190 AS y0
-      FROM generate_series(0, 23) cell
+      FROM generate_series(0, 21) cell
 ), observations AS (
     SELECT cell,
            jsonb_build_object(
@@ -212,69 +236,29 @@ WITH cells AS (
                    'calibration', jsonb_build_object('x_offset', 1),
                    'routing_policy_version', 'fixture-singles-v1:outcome-v2'
                ),
-               'prices', CASE
-                   WHEN cell = 0 THEN jsonb_build_array(
-                       jsonb_build_object(
-                           'amount_jpy', 110000,
-                           'tier', 'item',
-                           'source_bbox', jsonb_build_object(
-                               'x0', x0, 'y0', y0 + 140,
-                               'x1', x0 + 100, 'y1', y0 + 165
-                           ),
-                           'effective_bbox', jsonb_build_object(
-                               'x0', x0 + 1, 'y0', y0 + 140,
-                               'x1', x0 + 101, 'y1', y0 + 165
-                           ),
-                           'evidence', jsonb_build_object(
-                               'verified', true,
-                               'method', 'currency_marker',
-                               'ocr_confidence', 0.94,
-                               'banner', NULL
-                           )
+               'prices', jsonb_build_array(
+                   jsonb_build_object(
+                       'amount_jpy', CASE
+                           WHEN cell = 1 THEN 88000
+                           ELSE 10000 + cell * 1000
+                       END,
+                       'tier', 'item',
+                       'source_bbox', jsonb_build_object(
+                           'x0', x0, 'y0', y0 + 140,
+                           'x1', x0 + 100, 'y1', y0 + 165
                        ),
-                       jsonb_build_object(
-                           'amount_jpy', 74000,
-                           'tier', 'cash',
-                           'source_bbox', jsonb_build_object(
-                               'x0', x0, 'y0', y0 + 166,
-                               'x1', x0 + 100, 'y1', y0 + 186
-                           ),
-                           'effective_bbox', jsonb_build_object(
-                               'x0', x0 + 1, 'y0', y0 + 166,
-                               'x1', x0 + 101, 'y1', y0 + 186
-                           ),
-                           'evidence', jsonb_build_object(
-                               'verified', true,
-                               'method', 'grouped_number',
-                               'ocr_confidence', 0.91,
-                               'banner', NULL
-                           )
+                       'effective_bbox', jsonb_build_object(
+                           'x0', x0 + 1, 'y0', y0 + 140,
+                           'x1', x0 + 101, 'y1', y0 + 165
+                       ),
+                       'evidence', jsonb_build_object(
+                           'verified', true,
+                           'method', 'currency_marker',
+                           'ocr_confidence', 0.93,
+                           'banner', NULL
                        )
                    )
-                   ELSE jsonb_build_array(
-                       jsonb_build_object(
-                           'amount_jpy', CASE
-                               WHEN cell = 1 THEN 88000
-                               ELSE 10000 + cell * 1000
-                           END,
-                           'tier', 'item',
-                           'source_bbox', jsonb_build_object(
-                               'x0', x0, 'y0', y0 + 140,
-                               'x1', x0 + 100, 'y1', y0 + 165
-                           ),
-                           'effective_bbox', jsonb_build_object(
-                               'x0', x0 + 1, 'y0', y0 + 140,
-                               'x1', x0 + 101, 'y1', y0 + 165
-                           ),
-                           'evidence', jsonb_build_object(
-                               'verified', true,
-                               'method', 'currency_marker',
-                               'ocr_confidence', 0.93,
-                               'banner', NULL
-                           )
-                       )
-                   )
-               END,
+               ),
                'financial_eligibility', 'ineligible_unresolved_identity'
            ) AS observation
       FROM cells
@@ -325,6 +309,51 @@ SELECT :'singles_pending_id'::bigint,
        timestamptz '2026-10-20 14:02:00+00'
   FROM evidence;
 
+WITH generated AS (
+    SELECT pg_read_file(
+        '/tmp/ordinary-recognition-output.json'
+    )::jsonb -> 'outcome' AS value
+)
+INSERT INTO public.buylist_media_routing_outcomes (
+    pending_id, tweet_id, buyer_handle, source_image_index,
+    source_image_url, policy_version, disposition,
+    selected_product_kind, reason_code, evidence,
+    outcome_schema_version, twitter_handle, tweet_url,
+    source_thread_root_id, source_thread_position, source_thread_root_text,
+    media_kind, game_classification, actionability, recognition_reason,
+    candidate_count, uncertainty_flags, source_content_sha256, routed_at
+)
+SELECT :'generated_pending_id'::bigint,
+       value ->> 'tweet_id',
+       value ->> 'buyer_handle',
+       (value ->> 'source_image_index')::integer,
+       value ->> 'source_image_url',
+       value ->> 'policy_version',
+       value ->> 'disposition',
+       value ->> 'selected_product_kind',
+       value ->> 'reason_code',
+       value -> 'evidence',
+       2,
+       value ->> 'twitter_handle',
+       value ->> 'tweet_url',
+       value ->> 'source_thread_root_id',
+       (value ->> 'source_thread_position')::smallint,
+       value ->> 'source_thread_root_text',
+       value ->> 'media_kind',
+       value ->> 'game_classification',
+       value ->> 'actionability',
+       value ->> 'recognition_reason',
+       (value ->> 'candidate_count')::integer,
+       value -> 'uncertainty_flags',
+       value ->> 'source_content_sha256',
+       timestamptz '2026-10-20 15:02:00+00'
+  FROM generated;
+
+UPDATE public.pending_buylist_tweets
+   SET status = 'processed',
+       processed_at = timestamptz '2026-10-20 15:02:01+00'
+ WHERE tweet_id = '2114000000000000003';
+
 RESET ROLE;
 
 DO $fixture$
@@ -333,6 +362,8 @@ DECLARE
     v_observation_count integer;
     v_candidate_count integer;
     v_alert_count integer;
+    v_generated_exact_count integer;
+    v_active_rule_count integer;
 BEGIN
     SELECT count(*) INTO v_operator_count
       FROM public.source_run_operators
@@ -355,13 +386,34 @@ BEGIN
       JOIN public.buylist_media_routing_outcomes outcome
         ON outcome.routing_outcome_id = alert.routing_outcome_id
      WHERE outcome.tweet_id LIKE '211400000000000000%';
+    SELECT count(*) INTO v_generated_exact_count
+      FROM public.buylist_media_routing_outcomes outcome
+     WHERE outcome.tweet_id = '2114000000000000003'
+       AND outcome.evidence = (
+           pg_read_file('/tmp/ordinary-recognition-output.json')::jsonb
+               -> 'outcome' -> 'evidence'
+       )
+       AND outcome.source_content_sha256 = (
+           pg_read_file('/tmp/ordinary-recognition-output.json')::jsonb
+               -> 'outcome' ->> 'source_content_sha256'
+       )
+       AND outcome.candidate_count = 0;
+    SELECT count(*) INTO v_active_rule_count
+      FROM public.alert_rules
+     WHERE active
+       AND kind = 'tweet_inventory'
+       AND card_id IS NULL
+       AND 'snkrdunk' = ANY(sources);
     IF v_operator_count <> 1
        OR v_observation_count <> 25
        OR v_candidate_count <> 0
-       OR v_alert_count <> 0 THEN
+       OR v_alert_count <> 0
+       OR v_generated_exact_count <> 1
+       OR v_active_rule_count <> 1 THEN
         RAISE EXCEPTION
-            'unresolved observation fixture mismatch operators=% observations=% candidates=% alerts=%',
-            v_operator_count, v_observation_count, v_candidate_count, v_alert_count;
+            'unresolved observation fixture mismatch operators=% observations=% candidates=% alerts=% generated_exact=% active_rules=%',
+            v_operator_count, v_observation_count, v_candidate_count, v_alert_count,
+            v_generated_exact_count, v_active_rule_count;
     END IF;
 END
 $fixture$;

@@ -10,6 +10,7 @@ assigned_data_revision="481456fe63b0236aad372d6956fea00cacb08bf5"
 lock_path="${TCG_DOCKER_BROWSER_LOCK_PATH:-/tmp/tcg-tracker-docker-browser.lock}"
 next_bin="${dependency_root}/node_modules/.bin/next"
 contained_next_bin="${frontend_root}/node_modules/.bin/next"
+recognition_python="/home/tzhan/tcg_tracker/services/image-recognition/.venv/bin/python"
 handoff_file="${E2E_PG_HANDOFF_FILE:-}"
 
 volume=""
@@ -180,6 +181,8 @@ resolved_data_root="$(readlink -f "$TCG_DATA_ROOT")"
   fail "assigned data revision moved"
 
 [[ -x "$next_bin" ]] || fail "Next.js is unavailable at ${next_bin}"
+[[ -x "$recognition_python" ]] ||
+  fail "shared image-recognition Python is unavailable at ${recognition_python}"
 [[ -d "$dependency_root/node_modules" ]] ||
   fail "shared frontend dependencies are unavailable at ${dependency_root}/node_modules"
 for command_name in docker node openssl flock; do
@@ -236,6 +239,22 @@ mkdir -p "$artifact_root"
 printf 'postgres_port=%s\nauth_port=%s\nrest_port=%s\nrouter_port=%s\napp_port=%s\ncdp_port=%s\n' \
   "$postgres_port" "$auth_port" "$rest_port" "$router_port" "$app_port" "$cdp_port" \
   >"${artifact_root}/reserved-ports.txt"
+
+TCG_DATA_ROOT="$assigned_data_root" \
+MPLCONFIGDIR="${artifact_root}/matplotlib" \
+  "$recognition_python" \
+  "$frontend_root/scripts/e2e/generate-unresolved-price-observation.py" \
+  --backend-root "$backend_root" \
+  --data-root "$assigned_data_root" \
+  --data-revision "$assigned_data_revision" \
+  --output "${artifact_root}/ordinary-recognition-output.json" \
+  >"${artifact_root}/ordinary-recognition-generator.log" 2>&1
+generated_digest="$(node -e '
+  const payload = require(process.argv[1]);
+  process.stdout.write(payload.outcome.source_content_sha256);
+' "${artifact_root}/ordinary-recognition-output.json")"
+[[ "$generated_digest" =~ ^[0-9a-f]{64}$ ]] ||
+  fail "ordinary recognition did not emit a source digest"
 
 jwt_secret="$(openssl rand -hex 32)"
 auth_secret="$(openssl rand -hex 32)"
@@ -390,6 +409,10 @@ done < <(find "$backend_root/internal/db/migrations" -maxdepth 1 -type f \
   -name '*.up.sql' -print | sort)
 [[ "$migration_count" -gt 0 ]] || fail "no backend migrations were found"
 
+docker cp \
+  "${artifact_root}/ordinary-recognition-output.json" \
+  "${postgres_container}:/tmp/ordinary-recognition-output.json"
+
 docker create --pull never \
   --name "$rest_container" \
   --label "tcg.test.owner=${owner}" \
@@ -454,6 +477,27 @@ docker exec -i "$postgres_container" psql -X \
   -f - <"$frontend_root/scripts/e2e/unresolved-price-observations-seed.sql" \
   >"${artifact_root}/seed.log"
 
+alert_query="${artifact_root}/enqueue-twitter-media-alerts-for-tweet.sql"
+awk '
+  /^-- name: EnqueueTwitterMediaAlertsForTweet / { capture = 1; next }
+  capture && /^-- name: / { exit }
+  capture { print }
+' "$backend_root/services/image-recognition/db/queries.sql" |
+  sed "s/@tweet_id/'2114000000000000003'/g" >"$alert_query"
+[[ -s "$alert_query" ]] || fail "canonical alert reconciliation query was not extracted"
+docker exec -i "$postgres_container" psql -X \
+  -h 127.0.0.1 -p "$postgres_port" -U postgres -d test \
+  -v ON_ERROR_STOP=1 -f - <"$alert_query" \
+  >"${artifact_root}/alert-reconciliation.log"
+alert_count="$(docker exec "$postgres_container" psql -X -At \
+  -h 127.0.0.1 -p "$postgres_port" -U postgres -d test \
+  -v ON_ERROR_STOP=1 -c \
+  "SELECT count(*) FROM public.buylist_alert_outbox outbox JOIN public.buylist_media_routing_outcomes outcome USING (routing_outcome_id) WHERE outcome.tweet_id = '2114000000000000003'")"
+[[ "$alert_count" == "0" ]] ||
+  fail "ordinary unresolved observations produced ${alert_count} alert rows"
+printf 'tweet_id=2114000000000000003\nactive_rule_source=snkrdunk\ncanonical_query_rows=0\ndurable_outbox_rows=%s\n' \
+  "$alert_count" >>"${artifact_root}/alert-reconciliation.log"
+
 operator_token="$(docker exec "$runtime_container" node -e 'const v=require(process.argv[1]); process.stdout.write(v.accessToken)' "${artifact_root}/operator-auth.json")"
 ordinary_token="$(docker exec "$runtime_container" node -e 'const v=require(process.argv[1]); process.stdout.write(v.accessToken)' "${artifact_root}/ordinary-auth.json")"
 operator_role="$(docker exec "$runtime_container" node -e 'const v=require(process.argv[1]); const p=JSON.parse(Buffer.from(v.accessToken.split(".")[1], "base64url")); process.stdout.write(p.role ?? "")' "${artifact_root}/operator-auth.json")"
@@ -508,8 +552,11 @@ node -e '
   if (!Array.isArray(rows) || rows.length !== 24) process.exit(2);
   const prices = rows[0]?.observation?.prices?.map((price) => price.amount_jpy);
   if (JSON.stringify(prices) !== JSON.stringify([110000, 74000])) process.exit(3);
-  if (rows[0]?.source_content_sha256 !== "a".repeat(64)) process.exit(4);
-' "${artifact_root}/operator-rpc.json" || fail "operator RPC changed durable tiers or provenance"
+  if (rows[0]?.source_content_sha256 !== process.argv[2]) process.exit(4);
+  if (rows[0]?.tweet_id !== "2114000000000000003") process.exit(5);
+  if (rows[0]?.observation?.grade?.value !== "psa_10") process.exit(6);
+' "${artifact_root}/operator-rpc.json" "$generated_digest" ||
+  fail "operator RPC changed ordinary recognition tiers, grade, or provenance"
 base_table_status="$(contained_http_request \
   "${api_url}/rest/v1/buylist_media_routing_outcomes?select=routing_outcome_id&limit=1" \
   "${artifact_root}/base-table.json" "$operator_headers")"
@@ -608,6 +655,10 @@ printf 'backend_revision=%s\nfrontend_revision=%s\ndata_revision=%s\nmigration_0
   "$assigned_data_revision" \
   "$(sha256sum "$backend_root/internal/db/migrations/000579_unresolved_buylist_price_observations.up.sql" | cut -d' ' -f1)" \
   "$(sha256sum "$frontend_root/scripts/e2e/run-unresolved-price-observations-authenticated.sh" | cut -d' ' -f1)" \
+  >>"${artifact_root}/resources.txt"
+printf 'ordinary_recognition_sha256=%s\ncanonical_alert_query_sha256=%s\n' \
+  "$(sha256sum "${artifact_root}/ordinary-recognition-output.json" | cut -d' ' -f1)" \
+  "$(sha256sum "$alert_query" | cut -d' ' -f1)" \
   >>"${artifact_root}/resources.txt"
 for image_name in \
   postgres:17-alpine \

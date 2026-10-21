@@ -27,6 +27,10 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function fileSHA256(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
 function originIsLocal(value) {
   const parsed = new URL(value);
   return parsed.protocol === "data:"
@@ -147,6 +151,48 @@ async function panelLayout(panel, viewportWidth) {
   return dimensions;
 }
 
+async function verifyPanelKeyboardTraversal(page, panel, viewport) {
+  const controls = panel.locator('button:not([disabled]), a[href]');
+  const count = await controls.count();
+  assert(count >= 3, `${viewport} panel has only ${count} keyboard controls`);
+  await controls.first().focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  const sequence = [];
+  for (let index = 0; index < count; index += 1) {
+    if (index > 0) await page.keyboard.press("Tab");
+    const state = await controls.nth(index).evaluate((node) => ({
+      active: document.activeElement === node,
+      focusVisible: node.matches(":focus-visible"),
+      kind: node.tagName.toLowerCase(),
+      label: (node.getAttribute("aria-label") ?? node.textContent ?? "").trim(),
+      href: node.getAttribute("href"),
+    }));
+    assert(state.active, `${viewport} keyboard traversal skipped control ${index}`);
+    assert(state.focusVisible, `${viewport} control ${index} lacks visible keyboard focus`);
+    sequence.push(state);
+  }
+  assert(sequence[0]?.label.includes("Reload"), `${viewport} traversal did not begin at reload`);
+  assert(sequence.at(-1)?.label.includes("Load older observations"),
+    `${viewport} traversal did not reach pagination`);
+  assert(sequence.some((item) => item.label.includes("Open source post")),
+    `${viewport} traversal did not reach source evidence links`);
+  return sequence;
+}
+
+const ordinaryRecognitionPath = `${artifactRoot}/ordinary-recognition-output.json`;
+const ordinaryRecognition = JSON.parse(readFileSync(ordinaryRecognitionPath, "utf8"));
+const generatedObservations = ordinaryRecognition.outcome?.evidence?.recognition
+  ?.unresolved_priced_observations;
+assert(ordinaryRecognition.generator === "orchestrator.process_tweet",
+  "ordinary recognition generator receipt is missing");
+assert(ordinaryRecognition.candidate_count === 0,
+  "ordinary recognition produced a financial candidate");
+assert(JSON.stringify(generatedObservations?.map((observation) =>
+  observation.prices.map((price) => price.amount_jpy))) === JSON.stringify([[110000, 74000], [36000]]),
+  "ordinary recognition output lost its verified price tiers");
+const generatedDigest = ordinaryRecognition.outcome.source_content_sha256;
+
 const browser = process.env.E2E_CDP_URL
   ? await chromium.connectOverCDP(process.env.E2E_CDP_URL)
   : await chromium.launch({ headless: process.env.E2E_HEADED !== "1" });
@@ -154,6 +200,7 @@ const externalRequests = [];
 const proxyRequests = [];
 const rpcReceipts = [];
 const browserEvents = [];
+const keyboardEvidence = {};
 try {
   const noSession = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await installNetworkBoundary(noSession, externalRequests, proxyRequests);
@@ -203,12 +250,12 @@ try {
     "74000 JPY tier is missing");
   assert(await desktopPage.getByText(/Grade not observed/).count() >= 1,
     "raw card grade absence is missing");
-  assert(await desktopPage.getByText(/Observed grade: psa_10/).count() === 1,
-    "source-observed PSA grade is missing");
+  assert(await desktopPage.getByText(/Observed grade: psa_10/).count() >= 2,
+    "configured PSA10 grade from ordinary recognition is missing");
   assert(await desktopPage.getByText(/Observed variant: reverse_holo/).count() === 1,
     "observed variant is missing");
-  assert(await desktopPage.getByText(/Source SHA-256: a{64}/).count() === 24,
-    "source digest provenance is missing");
+  assert(await desktopPage.getByText(new RegExp(`Source SHA-256: ${generatedDigest}`)).count() === 2,
+    "ordinary recognition source digest provenance is missing");
   assert(await desktopPage.getByText(/Excluded from every automatic financial and alert path/).count() === 24,
     "financial exclusion is missing");
 
@@ -225,13 +272,16 @@ try {
     `crop proxy provenance is missing: ${JSON.stringify(cropEvidence)}`);
   assert(cropEvidence.every((crop) => crop.width > 0 && crop.height > 0),
     `crop geometry did not render: ${JSON.stringify(cropEvidence)}`);
-  assert((await firstCard.textContent())?.includes("[10, 10, 110, 140] → [11, 10, 111, 140]"),
+  assert((await firstCard.textContent())?.includes("[0, 0, 80, 120] → [0, 0, 80, 120]"),
     "card source/effective geometry is missing");
   assert((await firstCard.textContent())?.includes("Verified association: grouped_number"),
     "second-tier price association is missing");
   const desktopSourceTarget = await firstCard.getByRole("link", { name: "Open source post" }).boundingBox();
   assert(desktopSourceTarget && desktopSourceTarget.height >= 44,
     "desktop source-post target is below 44px");
+  keyboardEvidence.desktop = await verifyPanelKeyboardTraversal(
+    desktopPage, desktopPanel, "desktop",
+  );
   await panelLayout(desktopPanel, 1440);
   await desktopPage.screenshot({
     path: `${artifactRoot}/desktop-observations.png`,
@@ -299,6 +349,7 @@ try {
     "390px source-post target is below 44px");
   assert(phoneLoadTarget && phoneLoadTarget.height >= 44 && phoneLoadTarget.width >= 44,
     "390px load-more target is below 44px");
+  keyboardEvidence.phone = await verifyPanelKeyboardTraversal(phonePage, phonePanel, "phone");
   await phonePage.screenshot({
     path: `${artifactRoot}/phone-observations.png`,
     fullPage: false,
@@ -311,6 +362,11 @@ try {
     `browser did not request both desktop/phone singles and sealed crop sources: ${JSON.stringify(proxyRequests)}`);
   assert(externalRequests.length === 0,
     `browser attempted external requests: ${JSON.stringify(externalRequests, null, 2)}`);
+
+  writeFileSync(
+    `${artifactRoot}/keyboard-focus.json`,
+    `${JSON.stringify(keyboardEvidence, null, 2)}\n`,
+  );
 
   const screenshotHashes = {};
   for (const name of [
@@ -327,6 +383,15 @@ try {
     schema_version: 1,
     production_route: "/dashboard?view=health",
     postgrest_rpc: "list_unresolved_buylist_price_observations",
+    composed_path: {
+      recognition_generator: ordinaryRecognition.generator,
+      recognition_output_sha256: fileSHA256(ordinaryRecognitionPath),
+      recognition_candidate_count: ordinaryRecognition.candidate_count,
+      recognition_price_tiers_jpy: generatedObservations.map((observation) =>
+        observation.prices.map((price) => price.amount_jpy)),
+      alert_reconciliation_sha256: fileSHA256(`${artifactRoot}/alert-reconciliation.log`),
+      keyboard_focus_sha256: fileSHA256(`${artifactRoot}/keyboard-focus.json`),
+    },
     first_page_count: 24,
     terminal_count: 25,
     rpc_receipts: rpcReceipts,
