@@ -355,12 +355,12 @@ SELECT :'generated_pending_id'::bigint,
        timestamptz '2026-10-20 15:02:00+00'
   FROM generated;
 
+RESET ROLE;
+
 UPDATE public.pending_buylist_tweets
    SET status = 'processed',
        processed_at = timestamptz '2026-10-20 15:02:01+00'
  WHERE tweet_id = '2114000000000000003';
-
-RESET ROLE;
 
 DO $fixture$
 DECLARE
