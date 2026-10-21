@@ -386,16 +386,27 @@ function TradeBasket(props: {
 }) {
   const { t } = useTranslation();
   const [term, setTerm] = useState("");
+  // Two different needs from one small reference table: the incoming side
+  // offers the tcgplayer ladder to choose from, and BOTH sides need a display
+  // name for a condition_id a holding already has - which may be from any
+  // standard, since stock comes from cardrush and shinsoku too.
   const [conditions, setConditions] = useState<Array<{ condition_id: number; code: string }>>([]);
+  const [conditionNames, setConditionNames] = useState<Map<number, string>>(new Map());
   const [conditionId, setConditionId] = useState<number | null>(null);
 
   useEffect(() => {
-    if (props.side !== "in") return;
-    createClient().from("conditions").select("condition_id, code").eq("standard", "tcgplayer")
+    createClient().from("conditions").select("condition_id, code, display_name, standard")
       .then(({ data }) => {
-        const rows = (data as Array<{ condition_id: number; code: string }>) ?? [];
-        setConditions(rows);
-        setConditionId(rows.find((c) => c.code === "NM")?.condition_id ?? rows[0]?.condition_id ?? null);
+        const rows = (data as Array<{
+          condition_id: number; code: string; display_name: string | null; standard: string | null;
+        }>) ?? [];
+        setConditionNames(new Map(rows.map((c) => [c.condition_id, c.display_name || c.code])));
+        if (props.side !== "in") return;
+        const ladder = rows.filter((c) => c.standard === "tcgplayer");
+        setConditions(ladder);
+        setConditionId(
+          ladder.find((c) => c.code === "NM")?.condition_id ?? ladder[0]?.condition_id ?? null,
+        );
       });
   }, [props.side]);
 
@@ -444,11 +455,18 @@ function TradeBasket(props: {
               <button type="button" onClick={() => add(hit)}
                 className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-sm hover:bg-muted">
                 <span className="truncate">{hit.label}</span>
-                {hit.available != null && (
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {t("trades.haveQty", { n: String(hit.available) })}
-                  </span>
-                )}
+                <span className="flex shrink-0 items-center gap-2 text-xs">
+                  {conditionText(hit, conditionNames) && (
+                    <Badge variant="outline" className="font-normal">
+                      {conditionText(hit, conditionNames)}
+                    </Badge>
+                  )}
+                  {hit.available != null && (
+                    <span className="text-muted-foreground">
+                      {t("trades.haveQty", { n: String(hit.available) })}
+                    </span>
+                  )}
+                </span>
               </button>
             </li>
           ))}
@@ -464,6 +482,11 @@ function TradeBasket(props: {
             return (
               <li key={item.key} className="flex flex-wrap items-center gap-2 rounded border px-2 py-1">
                 <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                {conditionText(item, conditionNames) && (
+                  <Badge variant="outline" className="shrink-0 font-normal">
+                    {conditionText(item, conditionNames)}
+                  </Badge>
+                )}
                 <Input aria-label={t("trades.quantity")} inputMode="numeric"
                   className="h-8 w-16" value={String(item.quantity)}
                   onChange={(e) => patch(item.key, { quantity: Math.floor(Number(e.target.value) || 0) })} />
@@ -504,6 +527,25 @@ interface TradeSearchHit {
   available?: number;
   sealedCondition?: string | null;
   variantEdition?: string | null;
+}
+
+// A holding's condition is part of WHICH card it is, not decoration. Six cards
+// in the live book appear two or three times told apart only by condition -
+// Kangaskhan OLD-PJ is held Near Mint AND Damaged - so a row without it is a
+// row you cannot pick correctly. The holdings view carries condition_id only,
+// so the display name is looked up from the conditions table once and shared.
+export function conditionText(
+  item: Pick<TradeItemDraft, "game" | "conditionId" | "psaGrade" | "sealedCondition" | "variantEdition">,
+  names: Map<number, string>,
+): string | null {
+  if (item.game === "pokemon_sealed") {
+    const parts = [item.sealedCondition, item.variantEdition]
+      .filter((v) => v && v !== "standard");
+    return parts.length ? parts.join(" ") : "sealed";
+  }
+  if (item.psaGrade) return `PSA ${item.psaGrade}`;
+  if (item.conditionId == null) return null;
+  return names.get(item.conditionId) ?? `condition ${item.conditionId}`;
 }
 
 function hitLabel(parts: Array<string | null | undefined>): string {
@@ -567,9 +609,10 @@ export async function searchForBasket(
         available: r.qty_on_hand,
         sealedCondition: r.sealed_condition,
         variantEdition: r.variant_edition,
+        // Condition is NOT folded into the label: it is rendered separately so
+        // it cannot be truncated away with a long card name.
         label: hitLabel([
           r.english_name ?? r.name, r.set_code, r.card_number, r.variant_label,
-          r.psa_grade ? `PSA ${r.psa_grade}` : null,
         ]),
       };
     });
