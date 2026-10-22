@@ -14,16 +14,56 @@ const GAMES = ["pokemon", "mtg"] as const;
 //
 // The exit on each side is ranked by what the number IS
 // (market_listings.price_kind, derived per source by the backend's
-// price_kind_for_source()): a completed sale beats a standing offer beats a
-// third-party estimate; an unclassified source (NULL) ranks last so a new feed
-// is visible rather than silently winning. Within one kind the highest price
-// wins. Before 2026-08-27 estimates were excluded outright and the exit was
-// simply the highest Buy row; for a card whose only US exit evidence was an
-// estimate that left no US exit at all, so the only pair left was the export
-// trade scored against a Japanese buylist bid - 201/SV-P read -86.8% while
-// importing it worked. See docs/realized_sale_comps.md in the backend repo.
-const EXIT_KIND_RANK =
-  "CASE price_kind WHEN 'sold' THEN 0 WHEN 'bid' THEN 1 WHEN 'valuation' THEN 2 ELSE 3 END";
+// price_kind_for_source()), and - for a sold - by whether it carries EVIDENCE
+// OF RECENT VOLUME. An unclassified source (NULL) ranks last so a new feed is
+// visible rather than silently winning. Within one rank the highest price wins.
+//
+// Before 2026-08-27 estimates were excluded outright and the exit was simply
+// the highest Buy row; for a card whose only US exit evidence was an estimate
+// that left no US exit at all, so the only pair left was the export trade
+// scored against a Japanese buylist bid - 201/SV-P read -86.8% while importing
+// it worked. See docs/realized_sale_comps.md in the backend repo.
+//
+// WHY A SOLD MUST EARN ITS PLACE ABOVE A BID (2026-10-22). Until now every
+// sold outranked every bid, so a historical sale beat a standing offer even
+// when the offer was higher and the sale was old. Measured on cloud: 83.7% of
+// MTG exits and 83.7% of Pokemon exits were sold-kind, and where a real USD
+// bid also existed the displayed exit ran 1.69x that bid at the median and
+// 54.5x at worst. The exit was claiming more than any actual buyer had
+// offered.
+//
+// A bid needs no evidence - the quote IS the buyer, and its issuer will honour
+// it. A sold is an observation, and an observation of unknown age and unknown
+// volume is not an exit. docs/price_anchor_policy.md gates a sold-anchored
+// exit on freshness and liquidity for exactly this reason, and rule 1 of that
+// policy asks for a sold figure WITH a comp spread.
+//
+// THE SPREAD IS THE GATE, and it is available per row with no join. A sold row
+// carries price_p25/price_p75 only when it was built from a measured window:
+// Mana Pool writes a quantity-weighted median over 30 days requiring at least
+// two sales, and all 119,339 of its sold rows carry the spread. TCGplayer's
+// 278,444 sold rows carry none at all - its sold figure is a market statistic
+// with no volume attached - so they now rank BELOW a bid rather than above it.
+//
+// Nothing is excluded. A spreadless sold still wins when there is no bid,
+// which is rule 3 of the policy: no trusted anchor is not the same as no
+// evidence. Measured effect on a 3,000-row sample of sold exits: 896 are
+// volume-backed and keep their exit, 1,236 flip to a committed bid, and the
+// rest keep an ungated sold because nothing better exists. Of the flips the
+// exit falls 1.54x at the median - but 19% go UP, because a buylist was
+// already paying more than the historical sale and the old ranking hid it.
+//
+// Takes the lane-adjusted spread expressions, not ml.price_p25 directly: a
+// lane that suppresses a spread (see laneSpread) has no evidence in that lane,
+// and must be ranked as such.
+const exitKindRank = (p25: string, p75: string) =>
+  `CASE
+     WHEN ml.price_kind = 'sold' AND ${p25} IS NOT NULL AND ${p75} IS NOT NULL THEN 0
+     WHEN ml.price_kind = 'bid' THEN 1
+     WHEN ml.price_kind = 'sold' THEN 2
+     WHEN ml.price_kind = 'valuation' THEN 3
+     ELSE 4
+   END`;
 
 // Indicator sources: price guides and sold-comp trackers, not shops the
 // operator can transact with. They no longer need excluding from the summary
@@ -368,7 +408,7 @@ async function computeAndInsert(
         CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE ml.psa_grade END AS group_grade,
         ml.price_type,
         ml.price_kind,
-        ${EXIT_KIND_RANK} AS kind_rank,
+        ${exitKindRank(laneSpread("price_p25"), laneSpread("price_p75"))} AS kind_rank,
         ${lanePrice} AS price,
         ml.currency,
         c.symbol AS currency_symbol,
@@ -545,22 +585,40 @@ async function computeAndInsert(
       g.card_id,
       ${outputTier},
       g.group_grade,
-      COALESCE(ln.buy_price, ax.price),
-      COALESCE(ln.buy_currency, ax.currency),
-      COALESCE(ln.buy_symbol, ax.currency_symbol),
-      COALESCE(ln.buy_location, ax.location_name),
-      COALESCE(ln.buy_region, ax.market_region),
-      COALESCE(ln.buy_normalized, ax.normalized_price),
-      COALESCE(ln.buy_kind, ax.price_kind),
-      COALESCE(ln.buy_p25, ax.price_p25),
-      COALESCE(ln.buy_p75, ax.price_p75),
-      COALESCE(ln.sell_price, ae.price),
-      COALESCE(ln.sell_currency, ae.currency),
-      COALESCE(ln.sell_symbol, ae.currency_symbol),
-      COALESCE(ln.sell_location, ae.location_name),
-      COALESCE(ln.sell_region, ae.market_region),
-      COALESCE(ln.sell_normalized, ae.normalized_price),
-      COALESCE(ln.sell_kind, ae.price_kind),
+      -- SWITCHED ON LANE PRESENCE, NOT ON EACH FIELD BEING NULL.
+      --
+      -- These were per-field COALESCEs, which silently mixed two different
+      -- listings into one row. A lane whose exit is TCGplayer has a real price
+      -- and a NULL spread, so COALESCE(ln.buy_p25, ax.price_p25) fell through
+      -- to any_exit - a DIFFERENT row, often Mana Pool - and attached its
+      -- spread to TCGplayer's price. Measured on cloud 2026-10-22 before this
+      -- change: 17,506 MTG rows carried a spread belonging to another source's
+      -- row, and on 10,592 of them the spread did not even bracket the price
+      -- it was drawn around (1,888 more in Pokemon). One example: card
+      -- 26217327 showed exit 0.17 from TCGplayer with p25/p75 of 0.20/0.26,
+      -- which are Mana Pool's 0.26 row's percentiles.
+      --
+      -- The comment above laneSpread already states the invariant this broke:
+      -- a spread must bracket the number it is drawn around. Switching on
+      -- ln.card_id makes every buy field come from one listing and every sell
+      -- field from one listing, so a NULL spread now reads as "this source
+      -- publishes none", which is the truth.
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_price      ELSE ax.price             END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_currency   ELSE ax.currency          END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_symbol     ELSE ax.currency_symbol   END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_location   ELSE ax.location_name     END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_region     ELSE ax.market_region     END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_normalized ELSE ax.normalized_price  END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_kind       ELSE ax.price_kind        END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_p25        ELSE ax.price_p25         END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_p75        ELSE ax.price_p75         END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_price      ELSE ae.price            END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_currency   ELSE ae.currency         END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_symbol     ELSE ae.currency_symbol  END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_location   ELSE ae.location_name    END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_region     ELSE ae.market_region    END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_normalized ELSE ae.normalized_price END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_kind       ELSE ae.price_kind       END,
       ln.roi,
       ln.net_roi,
       now()
@@ -616,7 +674,11 @@ async function computeAndInsertSealed(
         ml.variant_edition,
         ml.price_type,
         ml.price_kind,
-        ${EXIT_KIND_RANK} AS kind_rank,
+        -- NULL spread, deliberately: pokemon_sealed_market_listings carries no
+        -- price_p25/price_p75 at all, so a sealed sold can never show evidence
+        -- of recent volume and therefore never outranks a committed bid. When
+        -- sealed gains a windowed sold median, pass its spread here.
+        ${exitKindRank("NULL", "NULL")} AS kind_rank,
         ml.price,
         ml.currency,
         c.symbol AS currency_symbol,
@@ -744,20 +806,22 @@ async function computeAndInsertSealed(
       g.product_id,
       g.sealed_condition,
       g.variant_edition,
-      COALESCE(ln.buy_price, ax.price),
-      COALESCE(ln.buy_currency, ax.currency),
-      COALESCE(ln.buy_symbol, ax.currency_symbol),
-      COALESCE(ln.buy_location, ax.location_name),
-      COALESCE(ln.buy_region, ax.market_region),
-      COALESCE(ln.buy_normalized, ax.normalized_price),
-      COALESCE(ln.buy_kind, ax.price_kind),
-      COALESCE(ln.sell_price, ae.price),
-      COALESCE(ln.sell_currency, ae.currency),
-      COALESCE(ln.sell_symbol, ae.currency_symbol),
-      COALESCE(ln.sell_location, ae.location_name),
-      COALESCE(ln.sell_region, ae.market_region),
-      COALESCE(ln.sell_normalized, ae.normalized_price),
-      COALESCE(ln.sell_kind, ae.price_kind),
+      -- Same lane-presence switch as the card lane above: one listing per
+      -- side, never a mix of two.
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.buy_price      ELSE ax.price            END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.buy_currency   ELSE ax.currency         END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.buy_symbol     ELSE ax.currency_symbol  END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.buy_location   ELSE ax.location_name    END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.buy_region     ELSE ax.market_region    END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.buy_normalized ELSE ax.normalized_price END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.buy_kind       ELSE ax.price_kind       END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.sell_price      ELSE ae.price            END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.sell_currency   ELSE ae.currency         END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.sell_symbol     ELSE ae.currency_symbol  END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.sell_location   ELSE ae.location_name    END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.sell_region     ELSE ae.market_region    END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.sell_normalized ELSE ae.normalized_price END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.sell_kind       ELSE ae.price_kind       END,
       ln.roi,
       ln.net_roi,
       now()
