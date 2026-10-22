@@ -402,15 +402,59 @@ async function computeAndInsert(
           ELSE TRUE
         END
     ),
-    -- Best exit PER REGION: best kind first, then the highest price.
-    exits AS (
-      SELECT *,
-        ROW_NUMBER() OVER (
-          PARTITION BY card_id, group_grade, market_region
-          ORDER BY kind_rank, normalized_price DESC
-        ) AS rn
+    -- The CENTRAL sold price per group, which is what a sale actually realises.
+    --
+    -- A sold is an OBSERVATION, not an offer. docs/price_anchor_policy.md in
+    -- the backend repo names max(sold) as an exit "the headline defect this
+    -- policy exists to prevent", and aggregates a sold centrally for exactly
+    -- this reason, while a bid is aggregated at its maximum because a buylist
+    -- quote is a commitment its issuer will honour.
+    --
+    -- Measured on cloud, 2026-10-21, before this change: 83.7% of MTG exits
+    -- (268,626 rows) and 83.7% of Pokemon exits (39,676) were sold-kind. On a
+    -- 600-card sample of those where a real USD bid ALSO existed, the
+    -- displayed exit was 1.55x the best committed bid at the median, 2.20x on
+    -- average, and 25.5x at worst. The exit was claiming more than any actual
+    -- buyer had offered.
+    --
+    -- The kind PREFERENCE is deliberately untouched: a sold still outranks a
+    -- bid, because NET_EXIT models a US sold exit as selling into the
+    -- marketplace net of fees and postage, which legitimately beats a buylist.
+    -- What was wrong was taking the top of the distribution instead of its
+    -- middle.
+    sold_central AS (
+      SELECT
+        card_id,
+        group_grade,
+        market_region,
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY normalized_price) AS central
       FROM filtered_listings
-      WHERE price_type = 'Buy' AND market_region IS NOT NULL
+      WHERE price_type = 'Buy'
+        AND market_region IS NOT NULL
+        AND price_kind::text = 'sold'
+      GROUP BY 1, 2, 3
+    ),
+    -- Best exit PER REGION: best kind first, then - within that kind - the
+    -- row nearest the central sold value for a sold, or the highest price for
+    -- a quote. Selecting the NEAREST ROW rather than the computed median
+    -- keeps the price, currency, location and spread all belonging to one
+    -- real listing, so nothing downstream displays a figure no source
+    -- published.
+    exits AS (
+      SELECT f.*,
+        ROW_NUMBER() OVER (
+          PARTITION BY f.card_id, f.group_grade, f.market_region
+          ORDER BY f.kind_rank,
+                   CASE WHEN f.price_kind::text = 'sold'
+                        THEN abs(f.normalized_price - sc.central) END ASC NULLS LAST,
+                   f.normalized_price DESC
+        ) AS rn
+      FROM filtered_listings f
+      LEFT JOIN sold_central sc
+        ON sc.card_id = f.card_id
+       AND sc.group_grade = f.group_grade
+       AND sc.market_region = f.market_region
+      WHERE f.price_type = 'Buy' AND f.market_region IS NOT NULL
     ),
     -- Best entry PER REGION: the cheapest live ask.
     entries AS (
@@ -584,14 +628,40 @@ async function computeAndInsertSealed(
       JOIN locations l ON l.location_id = ml.location_id
       LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
     ),
-    exits AS (
-      SELECT *,
-        ROW_NUMBER() OVER (
-          PARTITION BY product_id, sealed_condition, variant_edition, market_region
-          ORDER BY kind_rank, normalized_price DESC
-        ) AS rn
+    -- The central sold price per sealed group. Same reasoning as the card
+    -- lane: a sold is an observation, so its middle is what a sale realises
+    -- and its maximum is the highest anyone ever paid. Sealed carries the
+    -- same defect because it shares the ranking, so it gets the same fix - the
+    -- policy is unified across both games and both product shapes.
+    sold_central AS (
+      SELECT
+        product_id,
+        sealed_condition,
+        variant_edition,
+        market_region,
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY normalized_price) AS central
       FROM filtered_listings
-      WHERE price_type = 'Buy' AND market_region IS NOT NULL
+      WHERE price_type = 'Buy'
+        AND market_region IS NOT NULL
+        AND price_kind::text = 'sold'
+      GROUP BY 1, 2, 3, 4
+    ),
+    exits AS (
+      SELECT f.*,
+        ROW_NUMBER() OVER (
+          PARTITION BY f.product_id, f.sealed_condition, f.variant_edition, f.market_region
+          ORDER BY f.kind_rank,
+                   CASE WHEN f.price_kind::text = 'sold'
+                        THEN abs(f.normalized_price - sc.central) END ASC NULLS LAST,
+                   f.normalized_price DESC
+        ) AS rn
+      FROM filtered_listings f
+      LEFT JOIN sold_central sc
+        ON sc.product_id = f.product_id
+       AND sc.sealed_condition = f.sealed_condition
+       AND sc.variant_edition = f.variant_edition
+       AND sc.market_region = f.market_region
+      WHERE f.price_type = 'Buy' AND f.market_region IS NOT NULL
     ),
     entries AS (
       SELECT *,
