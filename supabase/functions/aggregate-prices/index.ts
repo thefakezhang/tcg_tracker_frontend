@@ -56,9 +56,21 @@ const GAMES = ["pokemon", "mtg"] as const;
 // Takes the lane-adjusted spread expressions, not ml.price_p25 directly: a
 // lane that suppresses a spread (see laneSpread) has no evidence in that lane,
 // and must be ranked as such.
-const exitKindRank = (p25: string, p75: string) =>
+// `liquid` is the second, independent way a sold can show volume, and it is
+// what keeps TCGplayer in the game. Its sold figure is a market statistic with
+// no percentiles, so the spread test alone would demote all 278,444 of its
+// sold rows forever - not because they lack volume, but because TCGplayer does
+// not publish quartiles. The evidence it DOES publish (quantity_sold,
+// transaction_count, listing depth) is precomputed per card by backend
+// migration 000595 into mtg_card_liquidity.
+//
+// A LEFT JOIN that misses yields NULL, and `false OR NULL` is NULL, which no
+// WHEN clause matches - so a card with no liquidity row falls through to the
+// ungated rank. Missing evidence gates a sold exit OFF, never on.
+const exitKindRank = (p25: string, p75: string, liquid: string) =>
   `CASE
-     WHEN ml.price_kind = 'sold' AND ${p25} IS NOT NULL AND ${p75} IS NOT NULL THEN 0
+     WHEN ml.price_kind = 'sold'
+          AND ((${p25} IS NOT NULL AND ${p75} IS NOT NULL) OR ${liquid}) THEN 0
      WHEN ml.price_kind = 'bid' THEN 1
      WHEN ml.price_kind = 'sold' THEN 2
      WHEN ml.price_kind = 'valuation' THEN 3
@@ -121,6 +133,12 @@ serve(async () => {
         const identifiersTable = `${game}_external_identifiers`;
         const summariesTable = `${game}_price_summaries`;
         const bySourceTable = `${game}_summary_by_source`;
+        // MTG only. Backend 000595 builds mtg_card_liquidity; Pokemon has no
+        // counterpart and needs none, because 130point carries a comp spread
+        // on every one of its sold rows so the spread test already admits
+        // them. Passing null here keeps the liquidity term out of the SQL
+        // entirely rather than joining an absent table.
+        const liquidityTable = game === "mtg" ? "mtg_card_liquidity" : null;
 
         // Get all distinct tiers
         const tierResult = await conn.queryObject<{ tier: number }>(
@@ -149,7 +167,8 @@ serve(async () => {
             summariesTable,
             "non-psa",
             [tier],
-            tier
+            tier,
+            liquidityTable
           );
           totalRows += count;
           await insertBySourceCards(
@@ -169,7 +188,13 @@ serve(async () => {
           summariesTable,
           "psa",
           null,
-          -1
+          -1,
+          // null for the same reason useTcgDepth is false above:
+          // mtg_card_liquidity is built from TCGplayer SKU sales, which are
+          // raw copies. A PSA 10's liquidity is not the raw card's, and
+          // lending it the raw volume would be the same cross-attribution
+          // that put one row's spread on another row's price.
+          null
         );
         totalRows += psaCount;
         await insertBySourceCards(
@@ -309,7 +334,11 @@ async function computeAndInsert(
   summariesTable: string,
   psaMode: "non-psa" | "psa",
   tiers: number[] | null,
-  outputTier: number
+  outputTier: number,
+  // null where the game has no precomputed liquidity. Pokemon does not need
+  // one: 130point carries a comp spread on 100% of its sold rows, so the
+  // spread test already admits its volume-backed solds.
+  liquidityTable: string | null
 ): Promise<number> {
   // One row per card, so a card with two tcgplayer_SKU identifiers cannot
   // duplicate its listings. It is 1:1 today - 204,926 MTG identifiers across
@@ -396,6 +425,28 @@ async function computeAndInsert(
   // would be drawn around a number that is not in it. tcgplayer publishes no
   // percentiles today, so this is a guard rather than a live correction - it
   // keeps the invariant true if that ever changes.
+  // A sold counts as volume-backed when a copy actually SOLD recently AND the
+  // printing clears its supply. Both halves matter:
+  //
+  //   last_sale_date  the newest day a copy really sold - NOT the newest price
+  //                   bucket, which is written daily whether or not anything
+  //                   moved and overstated freshness 3.2x before 000595.
+  //   sell-through    sales over available supply. Calibrated against cards
+  //                   the format plays, which run 12-20%; the catalogue-wide
+  //                   median is 1.3%. 14 sales is their 25th percentile.
+  //
+  // The OR is what rescues a scarce printing: 2 sales against 3 copies has
+  // cleared its supply, while 2 sales against 189 copies has not, and a flat
+  // sales-count bar cannot tell those apart. Of 4,261 played printings selling
+  // under 10 copies per 60 days, 541 are scarce and 2,325 are oversupplied.
+  const liquidExpr = liquidityTable
+    ? `(liq.last_sale_date >= current_date - 30
+         AND (liq.sell_through_60d >= 0.10 OR liq.sales_60d >= 14))`
+    : "FALSE";
+  const liquidityJoin = liquidityTable
+    ? `LEFT JOIN ${liquidityTable} liq ON liq.card_id = ml.card_id`
+    : "";
+
   const laneSpread = (col: string) =>
     useTcgDepth
       ? `CASE WHEN l.name IN (${MARKETPLACE_LOCATION}) THEN NULL ELSE ml.${col} END`
@@ -408,7 +459,7 @@ async function computeAndInsert(
         CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE ml.psa_grade END AS group_grade,
         ml.price_type,
         ml.price_kind,
-        ${exitKindRank(laneSpread("price_p25"), laneSpread("price_p75"))} AS kind_rank,
+        ${exitKindRank(laneSpread("price_p25"), laneSpread("price_p75"), liquidExpr)} AS kind_rank,
         ${lanePrice} AS price,
         ml.currency,
         c.symbol AS currency_symbol,
@@ -422,6 +473,7 @@ async function computeAndInsert(
       JOIN locations l ON l.location_id = ml.location_id
       LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
       ${depthJoin}
+      ${liquidityJoin}
       WHERE
         -- Estimates are out of the card summary entirely; see
         -- ESTIMATE_LOCATIONS. Dropping them here rather than in the exit
@@ -678,7 +730,7 @@ async function computeAndInsertSealed(
         -- price_p25/price_p75 at all, so a sealed sold can never show evidence
         -- of recent volume and therefore never outranks a committed bid. When
         -- sealed gains a windowed sold median, pass its spread here.
-        ${exitKindRank("NULL", "NULL")} AS kind_rank,
+        ${exitKindRank("NULL", "NULL", "FALSE")} AS kind_rank,
         ml.price,
         ml.currency,
         c.symbol AS currency_symbol,
