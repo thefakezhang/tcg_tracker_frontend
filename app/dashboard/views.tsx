@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import {
   Boxes, CalendarDays, ClipboardCheck, DollarSign, Filter, Landmark, Library, PackageOpen,
-  ArrowLeftRight, Languages, Map as MapIcon, Receipt, ScanLine, ScanSearch, Send, ShieldCheck, ShoppingBasket, Users, Activity, type LucideIcon } from "lucide-react";
+  ArrowLeftRight, Languages, Map as MapIcon, Receipt, ScanLine, ScanSearch, Send, ShieldCheck, ShoppingBasket, Store, Users, Activity, type LucideIcon } from "lucide-react";
 import type { TranslationKey } from "@/lib/i18n";
 import TripsOverview from "./TripsOverview";
 import InventoryView from "./InventoryView";
@@ -24,6 +24,7 @@ import ExpensesTab from "./trip/ExpensesTab";
 import EnglishCounterpartReviewView from "./EnglishCounterpartReviewView";
 import EnglishCatalogReviewView from "./EnglishCatalogReviewView";
 import ArrivalPostsView from "./ArrivalPostsView";
+import MercariDealsView from "./MercariDealsView";
 import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNavigationContext";
 
 function RoutedMatchReviewView() {
@@ -68,6 +69,7 @@ export const VIEWS: ViewDef[] = [
   { sentinel: -12, slug: "health", group: "catalog.section", icon: Activity, sidebarKey: "sidebar.sourceHealth", titleKey: "health.title", render: () => <SourceHealthView key="source-health" /> },
   { sentinel: -13, slug: "events", group: "catalog.section", icon: CalendarDays, sidebarKey: "events.title", titleKey: "events.title", render: () => <EventsCalendarView key="events-calendar" /> },
   { sentinel: -21, slug: "arrivals", group: "catalog.section", icon: PackageOpen, sidebarKey: "arrivals.nav", titleKey: "arrivals.title", render: () => <ArrivalPostsView key="arrival-posts" /> },
+  { sentinel: -22, slug: "mercari", group: "catalog.section", icon: Store, sidebarKey: "mercari.nav", titleKey: "mercari.title", render: () => <MercariDealsView key="mercari-deals" /> },
   // Lives with the curation surfaces: it governs what the image-curation
   // pipeline auto-promotes, so the operator looks for it next to the queues.
   { sentinel: -15, slug: "auto-accept", group: "curation.title", icon: ShieldCheck, sidebarKey: "autoAccept.title", titleKey: "autoAccept.title", render: () => <ImageAutoAcceptView key="image-autoaccept" /> },
