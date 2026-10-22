@@ -4,11 +4,13 @@ import { createClient } from "@/lib/supabase/server";
 
 import { DEAL_COLUMNS, MAX_LIMIT, SAFE_ITEM_ID, nextCursor } from "./deals-query";
 
-// The Mercari deals tab reads the backend view mercari_deals_v under the
-// caller's own session. The view is security_invoker, so row-level security on
-// the Mercari surfaces applies: only an active source-run operator sees rows.
-// The route asks that predicate first so a non-operator gets a clear 403
-// instead of an empty page.
+// The Mercari deals tab reads the backend view mercari_published_deals_v under
+// the caller's own session. That view sits on the cloud publication of the
+// acquisition host's deal rows (backend migration 000596), because the Mercari
+// pipeline itself writes only to the acquisition host's local catalog. It is
+// security_invoker, so row-level security applies: only an active source-run
+// operator sees rows. The route asks that predicate first so a non-operator
+// gets a clear 403 instead of an empty page.
 
 const DEFAULT_LIMIT = 50;
 const HOLDERS = new Set(["raw", "graded"]);
@@ -77,7 +79,7 @@ export async function GET(request: NextRequest) {
   }
 
   let query = supabase
-    .from("mercari_deals_v")
+    .from("mercari_published_deals_v")
     .select(DEAL_COLUMNS)
     .order("observed_at", { ascending: false })
     .order("external_item_id", { ascending: true })

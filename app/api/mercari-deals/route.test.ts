@@ -114,7 +114,7 @@ describe("protected Mercari deals route", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
-    expect(mocks.from).toHaveBeenCalledWith("mercari_deals_v");
+    expect(mocks.from).toHaveBeenCalledWith("mercari_published_deals_v");
     expect(query.calls).toEqual([
       ["select", [DEAL_COLUMNS]],
       ["order", ["observed_at", { ascending: false }]],
