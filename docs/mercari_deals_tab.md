@@ -25,8 +25,10 @@ Backend tracking: tcg_tracker issue #2061, part of the Mercari sequence on #948.
 ## Architecture
 
 The dashboard view `MercariDealsView` (slug `mercari`, sidebar group Catalog) loads `/api/mercari-deals` with a private no-store request.
-The route requires the Supabase user session, asks the backend predicate `source_run_is_operator()` and answers 403 when it is false, then reads the backend view `mercari_deals_v` under that caller session.
-The view is `security_invoker`, so row-level security on the Mercari market surfaces applies and only an active source-run operator sees rows; the explicit predicate call exists so a non-operator gets a clear refusal rather than an empty page.
+The route requires the Supabase user session, asks the backend predicate `source_run_is_operator()` and answers 403 when it is false, then reads the backend view `mercari_published_deals_v` under that caller session.
+That view sits on the cloud publication of the acquisition host's deal rows (backend migration `000596`, `cmd/util/publish-mercari-deals`), because the Mercari pipeline writes only to the acquisition host's local catalog and the operational view `mercari_deals_v` is therefore empty on cloud; see the backend `docs/mercari_published_deals.md`.
+The view is `security_invoker`, so row-level security on the publication applies and only an active source-run operator sees rows; the explicit predicate call exists so a non-operator gets a clear refusal rather than an empty page.
+`current_card_uid` is the cloud catalog uid when the publisher resolved one and the acquisition catalog's uid otherwise; the row's `card_resolution` says which, and an unresolved row carries the acquisition catalog's identity text.
 Rows are ordered by `observed_at` descending then `external_item_id`, and the cursor is that pair, so tied timestamps are never skipped.
 Filters: holder (`raw` or `graded`), evidence lane (`strict` or `candidate`), and whether dismissed listings are included; dismissed listings are hidden by default.
 
