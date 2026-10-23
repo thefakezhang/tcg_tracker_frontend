@@ -10,6 +10,10 @@ const mocks = vi.hoisted(() => ({
   mainData: [] as unknown[],
   searchData: [] as unknown[],
   rpc: vi.fn(),
+  customers: [
+    { customer_id: 39, name: "End User" },
+    { customer_id: 50, name: "Vendor" },
+  ] as unknown[],
   conditions: [
     { condition_id: 1, code: "NM", display_name: "Near Mint", standard: "tcgplayer" },
     { condition_id: 2, code: "LP", display_name: "Lightly Played", standard: "tcgplayer" },
@@ -42,6 +46,9 @@ vi.mock("./use-query", () => ({
     if (key == null) {
       return { data: undefined, error: undefined, isLoading: false, retry: vi.fn() };
     }
+    if (key === "trades:customers") {
+      return { data: mocks.customers, error: undefined, isLoading: false, retry: vi.fn() };
+    }
     const isSearch = key.startsWith("trades:search:");
     const error = isSearch ? mocks.searchError : mocks.mainError;
     return {
@@ -53,7 +60,7 @@ vi.mock("./use-query", () => ({
   },
 }));
 
-import TradesView, { conditionText, fetchTrades, searchForBasket } from "./TradesView";
+import TradesView, { conditionText, fetchCustomers, fetchTrades, searchForBasket } from "./TradesView";
 
 afterEach(cleanup);
 
@@ -155,11 +162,16 @@ describe("TradesView data contracts", () => {
     }
     expect((submit() as HTMLButtonElement).disabled).toBe(true);
 
-    // With a value it is recordable, and the RPC gets the one number plus the
-    // signed cash, never a second value for the other side.
+    // With a value but no customer: still refused, because the outgoing side
+    // is a sale and every sale has a customer.
     fireEvent.change(screen.getByLabelText("Agreed value of what you gave (USD)", { exact: false }), {
       target: { value: "220" },
     });
+    expect((submit() as HTMLButtonElement).disabled).toBe(true);
+
+    // With a customer it is recordable, and the RPC gets the one number plus the
+    // signed cash, never a second value for the other side.
+    fireEvent.change(screen.getByRole("combobox", { name: "Customer" }), { target: { value: "39" } });
     await waitFor(() => expect((submit() as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(submit());
 
@@ -171,6 +183,10 @@ describe("TradesView data contracts", () => {
     expect(args.p_items_out).toHaveLength(1);
     expect(args.p_items_in).toHaveLength(1);
     expect(args).not.toHaveProperty("p_value_in");
+    // The sale is attributed to the chosen customer, and the trade list keeps
+    // showing a name.
+    expect(args.p_customer_id).toBe(39);
+    expect(args.p_counterparty).toBe("End User");
   });
 
   it("refuses cash back larger than the cards given, which would leave nothing coming in", async () => {
@@ -186,9 +202,8 @@ describe("TradesView data contracts", () => {
     fireEvent.change(screen.getByLabelText("Agreed value of what you gave (USD)", { exact: false }), {
       target: { value: "100" },
     });
-    // Two selects exist: the incoming basket's condition picker, then the
-    // cash direction. Cash is last in DOM order.
-    const dir = screen.getAllByRole("combobox").at(-1)!;
+    fireEvent.change(screen.getByRole("combobox", { name: "Customer" }), { target: { value: "39" } });
+    const dir = screen.getByRole("combobox", { name: "Cash" });
     fireEvent.change(dir, { target: { value: "received" } });
     const cash = screen.getAllByPlaceholderText("0.00").at(-1)!;
     fireEvent.change(cash, { target: { value: "150" } });
@@ -211,6 +226,7 @@ describe("TradesView data contracts", () => {
     fireEvent.change(screen.getByLabelText("Agreed value of what you gave (USD)", { exact: false }), {
       target: { value: "220" },
     });
+    fireEvent.change(screen.getByRole("combobox", { name: "Customer" }), { target: { value: "50" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Record trade" }).at(-1)!);
 
     expect((await screen.findByRole("alert")).textContent).toContain("trade rejected");
@@ -240,6 +256,17 @@ describe("TradesView data contracts", () => {
 // "pikachu" matched nothing there while the incoming basket, which reads the
 // catalogue and sees english_name, matched 411 cards. The suite could not see
 // that, because it mocks this function out. These pin the columns.
+describe("fetchCustomers", () => {
+  it("pages the whole customer list with a total order and sorts it by name", async () => {
+    const rows = Array.from({ length: 1201 }, (_, i) => ({ customer_id: i + 1, name: `C${String(1201 - i).padStart(4, "0")}` }));
+    const { client, ranges } = pagedClient(rows as unknown as ReturnType<typeof row>[]);
+    const got = await fetchCustomers(client as never);
+    expect(got).toHaveLength(1201);
+    expect(ranges.length).toBeGreaterThan(1);
+    expect(got[0].name).toBe("C0001");
+  });
+});
+
 describe("searchForBasket", () => {
   function fakeSupabase() {
     const calls = { table: "", tables: [] as string[], select: "", filters: [] as string[], gt: [] as unknown[][] };

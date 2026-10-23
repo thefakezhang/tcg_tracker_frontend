@@ -50,6 +50,14 @@ The incoming basket searches the card catalogue, because we do not hold those ca
 Flattening that asymmetry would let you "give away" a card you never had.
 Both searches use `lib/card-search`'s shared semantics, so a pasted uid or platform id resolves the same way it does everywhere else, and both are bounded by `.limit()` rather than paging (see the PostgREST cap note in `AGENTS.md`).
 
+### The customer is chosen, not typed
+
+The outbound side is a sale, and every sale is attributed to a customer.
+The dialog therefore picks one from `customers` (paged with `selectAll`) and sends it as `p_customer_id`, which `record_trade` passes to `set_lot_customer`; the customer's name also goes in `p_counterparty`, so the trade list keeps showing it.
+A trade cannot be recorded without one.
+
+The counterparty used to be a free-text box, and the dialog never sent a customer, so every trade recorded through it booked a sale with no customer: it appeared in the sales ledger and the trade list but under no customer (backend issue #2076, found on trade 6).
+
 ### Cash runs in both directions
 
 `CashDirection` is `none | paid | received`, and `signedCash` turns it into the sign the backend wants.
@@ -66,6 +74,7 @@ Cash back larger than the outgoing value is refused in the UI and again in the R
 - The two halves cannot drift apart, by construction rather than by care.
 - The outbound side keeps realising a real gain or loss against the cards given up.
 - Cash in either direction, including none.
+- Every trade's sale is attributed to a customer.
 
 ## Non-goals
 

@@ -81,6 +81,22 @@ export async function fetchTrades(supabase: SupabaseClient): Promise<TradeRow[]>
   );
 }
 
+export interface CustomerOption {
+  customer_id: number;
+  name: string;
+}
+
+// Every sale has a customer (operator rule), and a trade's outgoing side is a
+// sale, so the dialog picks one from the customers table rather than taking a
+// free-text name. Paged, because the customer list grows with the business.
+export async function fetchCustomers(supabase: SupabaseClient): Promise<CustomerOption[]> {
+  const rows = await selectAll<CustomerOption>(
+    () => supabase.from("customers").select("customer_id, name"),
+    ["customer_id"],
+  );
+  return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export default function TradesView() {
   const { t } = useTranslation();
   const { language } = useLanguage();
@@ -227,7 +243,12 @@ function RecordTradeDialog(props: {
   const [valueOut, setValueOut] = useState("");
   const [cashAmount, setCashAmount] = useState("");
   const [direction, setDirection] = useState<CashDirection>("none");
-  const [counterparty, setCounterparty] = useState("");
+  const [customerId, setCustomerId] = useState<number | null>(null);
+  const customers = useSupabaseQuery<CustomerOption[]>(
+    props.open ? "trades:customers" : null,
+    () => fetchCustomers(createClient()),
+  );
+  const customer = customers.data?.find((c) => c.customer_id === customerId) ?? null;
   const [tradedAt, setTradedAt] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
 
@@ -243,17 +264,17 @@ function RecordTradeDialog(props: {
 
   const outProblems = itemProblems(itemsOut, true);
   const inProblems = itemProblems(itemsIn, false);
-  const recordable = canRecordTrade({ itemsOut, itemsIn, valueOutUsd, signedCashUsd: signed });
+  const recordable = canRecordTrade({ itemsOut, itemsIn, valueOutUsd, signedCashUsd: signed }) && customer != null;
 
   const reset = useCallback(() => {
     setItemsOut([]); setItemsIn([]); setValueOut(""); setCashAmount("");
-    setDirection("none"); setCounterparty(""); setNotes("");
+    setDirection("none"); setCustomerId(null); setNotes("");
     setTradedAt(new Date().toISOString().slice(0, 10));
     setMutationError(null);
   }, []);
 
   const submit = useCallback(async () => {
-    if (!recordable || valueOutUsd == null) return;
+    if (!recordable || valueOutUsd == null || customer == null) return;
     setSaving(true);
     setMutationError(null);
     try {
@@ -262,7 +283,8 @@ function RecordTradeDialog(props: {
         p_items_in: itemsInPayload(itemsIn),
         p_value_out: valueOutUsd,
         p_cash_usd: signed,
-        p_counterparty: counterparty.trim() || null,
+        p_customer_id: customer.customer_id,
+        p_counterparty: customer.name,
         p_traded_at: tradedAt || null,
         p_notes: notes.trim() || null,
       });
@@ -274,7 +296,7 @@ function RecordTradeDialog(props: {
     } finally {
       setSaving(false);
     }
-  }, [recordable, valueOutUsd, itemsOut, itemsIn, signed, counterparty, tradedAt, notes, props, t, reset]);
+  }, [recordable, valueOutUsd, itemsOut, itemsIn, signed, customer, tradedAt, notes, props, t, reset]);
 
   return (
     <Dialog open={props.open} onOpenChange={(v) => { if (!v) reset(); props.onOpenChange(v); }}>
@@ -345,8 +367,17 @@ function RecordTradeDialog(props: {
 
           <div className="grid gap-3 sm:grid-cols-3">
             <label className="space-y-1">
-              <span className="text-xs text-muted-foreground">{t("trades.counterparty")}</span>
-              <Input value={counterparty} onChange={(e) => setCounterparty(e.target.value)} />
+              <span className="text-xs text-muted-foreground">{t("trades.customer")}</span>
+              <select aria-label={t("trades.customer")}
+                value={customerId ?? ""}
+                onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : null)}
+                className="h-9 w-full rounded-md border bg-background px-2 text-sm">
+                <option value="">{t("trades.customerChoose")}</option>
+                {(customers.data ?? []).map((c) => (
+                  <option key={c.customer_id} value={c.customer_id}>{c.name}</option>
+                ))}
+              </select>
+              {customers.error ? <QueryError error={customers.error} onRetry={customers.retry} /> : null}
             </label>
             <label className="space-y-1">
               <span className="text-xs text-muted-foreground">{t("trades.tradedAt")}</span>
