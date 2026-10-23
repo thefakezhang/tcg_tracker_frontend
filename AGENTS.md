@@ -129,18 +129,22 @@ app/
     aggregate-prices/route.ts # Authenticated proxy that invokes the aggregate-prices edge function
     build-revision/route.ts   # Reports the deployed git commit SHA (used by E2E revision checks)
     proxy-image/route.ts      # Same-origin proxy for external card images (PDF export needs canvas-safe images)
+    twitter-arrivals/route.ts # Administrator-only arrival posts (RPC twitter_arrival_posts): buyer_handle filter + composite cursor
+    twitter-arrivals/sources/route.ts # Per-account arrival summary (RPC twitter_arrival_sources); 501 while the RPC is absent so the tab derives the list itself
   dashboard/
     layout.tsx            # Auth guard, renders DashboardShell
     page.tsx              # Main-pane router, first match wins: views-registry sentinel -> TripDashboard (positive trip id) -> BuyListView -> SealedBrowser (pokemon_sealed) -> CardBrowser
     DashboardShell.tsx    # Context providers + sidebar + header
     views.tsx             # Single source of truth for top-level views (sentinel -> slug/group/icon/label/component)
-    url-state.ts          # Pure codec: view-selection contexts <-> /dashboard query string (?view=, ?trip=&tab=, ?buylist=, ?game=)
-    UrlStateSync.tsx      # Applies the URL on first paint / popstate, pushes history on context change; readUrlParam / writeUrlParam for leaf state
+    url-state.ts          # Pure codec: view-selection contexts <-> /dashboard query string (?view=, ?view=arrivals&shop=, ?trip=&tab=, ?buylist=, ?game=)
+    url-params.ts         # Leaf query params a view owns (?tab=, ?shop=): readUrlParam / writeUrlParam (replaceState) and the shop validator; import-free so a view can use it without the views registry cycle
+    UrlStateSync.tsx      # Applies the URL on first paint / popstate, pushes history on context change, carries a leaf param while its selection stays
     AppSidebar.tsx        # Navigation, game picker, buy lists, user settings menu
     AccountMenuContent.tsx # Sidebar account dropdown: language, display currency, sign out
     AccountRegisterModal.tsx # GL account register dialog (get_account_register RPC)
     AccountingRollupView.tsx # Monthly accounting rollup table (accounting_rollup_v) with CSV export
     AddToLotPopover.tsx   # Popover that adds a browsed card to an open acquisition lot
+    ArrivalPostsView.tsx  # Arrivals tab: account panel (RPC summary, or derived from loaded posts), ?shop= selection, grouped or flat post feed
     BalanceSheetCard.tsx  # Business-wide balance sheet card (get_balance_sheet RPC)
     BuyerOrderView.tsx    # Buyer result-entry grid, save states, paste, and plan-switch fencing
     BuyerShell.tsx        # Minimal translated buyer shell and administrator preview wrapper
@@ -212,6 +216,7 @@ app/
     TripsOverview.tsx     # All-trips table (trips_overview_v)
     UidChip.tsx           # 8-hex uid prefix chip; one click copies the full uid
     UpcomingEventsStrip.tsx # Next two events within 90 days, in the dashboard header
+    arrival-accounts.ts   # Pure Arrivals account logic: summary parsing, derived fallback, per-account grouping, remembered preferences
     card-observations.ts  # Aggregated own store sightings per card (trip_observations_v)
     columns.tsx           # Column definitions + PriceCell component
     data-table.tsx        # Generic TanStack React Table wrapper
@@ -276,6 +281,7 @@ lib/
   image-curation-geometry.ts # Crop-box geometry types and edit math
   image-curation-price-evidence.ts # Price-evidence types + bulk-action eligibility predicate
   keyboard-activation.ts  # Enter/Space activation helper for actionable rows
+  local-storage.ts        # Guarded localStorage read/write (try/catch; absent on the server) for per-viewer preferences
   money.ts                # Shared USD formatting and native -> USD conversion helpers
   mutation-error.ts       # Normalizes Supabase or thrown mutation errors into readable text
   platform-url.ts         # Canonical platform item URLs, copied-URL parsing, platform inference, search links
@@ -688,7 +694,7 @@ The board renders the secondary line under the p50 and downgrades a bad p50 to w
 - Match rate is durable confirmed-link coverage against durable confirmed links plus the still-pending candidate queue, not matcher accuracy.
 - The same view reads the newest immutable `calibration_runs` row and surfaces its sample count, band coverage, bias, and representative-price recommendation.
   A zero-overlap run is explicitly a watch state and never presents a fabricated percentile.
-- Dashboard navigation is sentinel-based in memory (`activeTripId`: 0 = trips overview, negatives = standalone views, positives = a trip; plus `activeBuylistId`, `activeGame`) and mirrored to the URL by `UrlStateSync` (`url-state.ts` is the pure codec): `/dashboard?view=<slug>` (slug from `views.tsx`), `?trip=<id>&tab=<tab>`, `?buylist=<id>`, `?game=mtg|pokemon_sealed`; no params = Pokémon browse.
+- Dashboard navigation is sentinel-based in memory (`activeTripId`: 0 = trips overview, negatives = standalone views, positives = a trip; plus `activeBuylistId`, `activeGame`) and mirrored to the URL by `UrlStateSync` (`url-state.ts` is the pure codec): `/dashboard?view=<slug>` (slug from `views.tsx`), `?trip=<id>&tab=<tab>`, `?buylist=<id>`, `?game=mtg|pokemon_sealed`; no params = Pokémon browse. Leaf params a view owns (`?tab=`, the Arrivals `?shop=`) go through `url-params.ts` with `replaceState`, and `UrlStateSync` keeps them only while their selection is unchanged.
   The URL wins on first paint (deep links, reload, bookmarks - `page.tsx` renders nothing until it has been applied so a deep link never flashes the browse view), every context change pushes a history entry so back/forward move between views, and leaf state such as the trip tab is written with `writeUrlParam` (replaceState) and dropped when its owner changes.
   Give every new top-level view a `slug`; give any new leaf sub-state that a user would want to return to a `readUrlParam` / `writeUrlParam` pair.
 `ReviewQueueNavigationContext` carries a one-shot `{ game, source }` target to `RoutedMatchReviewView`; the route captures and consumes it so a later ordinary sidebar visit starts unfiltered.
@@ -980,7 +986,7 @@ Bake its data in at build time rather than adding anon grants.
   `lib/dates.ts`: `formatDate` ("Aug 16, 2026" / "2026年8月16日" - month names so day/month order cannot be misread across a JP-US business) and `formatDateTime` (adds a short local time, for ops surfaces); both take the app `language`, and both pin a bare `YYYY-MM-DD` to local midnight (`new Date("2026-08-16")` is UTC midnight and renders as the previous day in the Americas).
   Before the 2026-08-18 unification the app had four USD formats, three JPY copies, six inline ROI formulas and dates rendered three ways.
 - **API routes require a session and validate their inputs**: the middleware only guards `/dashboard`, so every `app/api/*` route must check `supabase.auth.getUser()` itself. `/api/proxy-image` does, and only proxies `http(s)` to public hosts (`lib/proxy-image-policy.ts`, tested) - it was an anonymous open proxy before the 2026-08-18 audit. Browser-side database access rules live in the backend repo's `docs/security_model.md` (anon holds no privileges in `public` since migration 000290; new RPCs must be granted to `authenticated` explicitly).
-- **The Arrivals tab stays post-level and administrator-only**: `/api/twitter-arrivals` passes the caller session to backend RPC `twitter_arrival_posts` (migration 000580), which checks the administrator mapping. Posts are collected hourly during shop hours, 11:00-20:00 JST. The response must stay explicitly unverified and must not carry item identity, price, grade, or condition; see `docs/twitter_arrival_posts.md`.
+- **The Arrivals tab stays post-level and administrator-only**: `/api/twitter-arrivals` passes the caller session to backend RPC `twitter_arrival_posts` (migration 000580), which checks the administrator mapping, and `/api/twitter-arrivals/sources` does the same with `twitter_arrival_sources` for the per-account panel (answering 501 while that RPC is absent, so the tab derives the list from loaded posts). Posts are collected hourly during shop hours, 11:00-20:00 JST. The response must stay explicitly unverified and must not carry item identity, price, grade, or condition. The X handle is the primary identity (most enrolled shops have no `source-labels` entry); the selected shop lives in `?view=arrivals&shop=<buyer_handle>`; see `docs/twitter_arrival_posts.md`.
 - **The Mercari tab is operator-only and reads one backend view**: `/api/mercari-deals` checks `source_run_is_operator()` through the caller session and then reads `mercari_published_deals_v` (backend migration 000596, `security_invoker`), the cloud publication of the acquisition host's deal rows; the operational `mercari_deals_v` is empty on cloud by design, so never point the tab back at it. Identity, holder, and grade are the pipeline's proposal and the seller chose the condition; the tab says so and never presents a listing as a completed sale. Operator actions go through `/api/mercari-deals/action` to backend RPC `record_mercari_deal_item_action`; see `docs/mercari_deals_tab.md`.
 - **No `window.alert` / `window.confirm` for errors**: action failures render inline as `<p role="alert" className="text-xs text-destructive">` next to the control that failed (lot panel `lotError`, receipt uploaders `uploadError`, dialogs' `error`), cleared at the start of the next attempt.
   Browser alerts block the tab, are unstyled, and vanish without a trace; the last ones were removed 2026-08-18.

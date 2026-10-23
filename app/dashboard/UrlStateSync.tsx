@@ -4,7 +4,10 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { useGame } from "./GameContext";
 import { useTrips } from "./TripContext";
 import { useBuyList } from "./BuyListContext";
+import { ARRIVALS_SHOP_PARAM, parseShopParam } from "./url-params";
 import { buildDashboardSearch, parseDashboardSearch } from "./url-state";
+
+export { readUrlParam, writeUrlParam } from "./url-params";
 
 // Keeps /dashboard's query string and the view-selection contexts in step,
 // both ways:
@@ -12,8 +15,9 @@ import { buildDashboardSearch, parseDashboardSearch } from "./url-state";
 //   - afterwards, every context change pushes a history entry, so the browser
 //     back/forward buttons move between views;
 //   - popstate re-applies the URL to the contexts.
-// The trip tab is a leaf param owned by TripDashboard (replaceState); it is
-// carried over unchanged while the trip stays the same and dropped otherwise.
+// Leaf params are owned by a view (replaceState): the trip tab by
+// TripDashboard, the arrivals shop by ArrivalPostsView. Each is carried over
+// unchanged while its selection stays the same and dropped otherwise.
 const UrlHydratedContext = createContext(false);
 
 /** True once the URL has been applied to the contexts (always false on the server). */
@@ -28,7 +32,7 @@ export default function UrlStateSync({ children }: { children: ReactNode }) {
   const { activeBuylistId, setActiveBuylistId } = useBuyList();
   const hydrated = useRef(false);
   const applyingFromUrl = useRef(false);
-  const lastTrip = useRef<number | null>(null);
+  const lastSelection = useRef<number | null>(null);
 
   const applyFromUrl = () => {
     const s = parseDashboardSearch(window.location.search);
@@ -36,7 +40,7 @@ export default function UrlStateSync({ children }: { children: ReactNode }) {
     setActiveGame(s.game);
     setActiveTripId(s.activeTripId);
     setActiveBuylistId(s.activeBuylistId);
-    lastTrip.current = s.activeTripId != null && s.activeTripId > 0 ? s.activeTripId : null;
+    lastSelection.current = s.activeTripId;
   };
 
   // Before first paint so a deep link never flashes the default browse view.
@@ -53,33 +57,22 @@ export default function UrlStateSync({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!hydrated.current) return;
     if (applyingFromUrl.current) { applyingFromUrl.current = false; return; }
-    const trip = activeTripId != null && activeTripId > 0 ? activeTripId : null;
-    const currentTab = new URLSearchParams(window.location.search).get("tab");
+    const current = new URLSearchParams(window.location.search);
+    // A leaf param survives only while the selection it belongs to is unchanged
+    // (a game switch, say): the trip tab while the trip stays, the arrivals
+    // shop while the view stays.
+    const sameSelection = activeTripId != null && activeTripId === lastSelection.current;
+    const isTrip = activeTripId != null && activeTripId > 0;
     const next = buildDashboardSearch({
       game: activeGame, activeTripId, activeBuylistId,
-      tab: trip != null && trip === lastTrip.current ? currentTab : null,
+      tab: sameSelection && isTrip ? current.get("tab") : null,
+      shop: sameSelection ? parseShopParam(current.get(ARRIVALS_SHOP_PARAM)) : null,
     });
-    lastTrip.current = trip;
+    lastSelection.current = activeTripId;
     if (next !== window.location.search) {
       window.history.pushState(null, "", `${window.location.pathname}${next}`);
     }
   }, [activeGame, activeTripId, activeBuylistId]);
 
   return <UrlHydratedContext value={hydratedState}>{children}</UrlHydratedContext>;
-}
-
-/** Read one leaf query param (for components that own a sub-state, e.g. a trip tab). */
-export function readUrlParam(name: string): string | null {
-  if (typeof window === "undefined") return null;
-  return new URLSearchParams(window.location.search).get(name);
-}
-
-/** Write one leaf query param in place (no history entry). */
-export function writeUrlParam(name: string, value: string | null) {
-  if (typeof window === "undefined") return;
-  const p = new URLSearchParams(window.location.search);
-  if (value == null || value === "") p.delete(name); else p.set(name, value);
-  const s = p.toString();
-  const next = `${window.location.pathname}${s ? `?${s}` : ""}`;
-  if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(null, "", next);
 }
