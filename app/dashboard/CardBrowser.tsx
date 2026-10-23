@@ -137,6 +137,11 @@ export default function CardBrowser() {
   const [cuteOnly, setCuteOnly] = useState(false); // manual "cute" flag (293)
   // Exit must be a completed transaction rather than a third party's estimate.
   const [soldEvidenceOnly, setSoldEvidenceOnly] = useState(false);
+  // Off by default, deliberately. An unmeasured exit is still the best figure
+  // available for that card, so hiding it without being asked would lose rows
+  // rather than qualify them; the marker in PriceCell is what makes the state
+  // visible, and this is for when the operator wants them gone.
+  const [measuredExitsOnly, setMeasuredExitsOnly] = useState(false);
   const [minBuyPrice, setMinBuyPrice] = useState<string>("");
   const [minSellPrice, setMinSellPrice] = useState<string>("");
   const [roiFloor, setRoiFloor] = useState<string>("");
@@ -184,6 +189,7 @@ export default function CardBrowser() {
       rarity: rarity || null,
       promosOnly,
       soldEvidenceOnly,
+      measuredExitsOnly,
       japanExclusivity,
       mtgTags,
       cuteOnly,
@@ -343,7 +349,7 @@ export default function CardBrowser() {
   useEffect(() => {
     setPage(0);
     setRowSelection({});
-  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, japanExclusivity, mtgTags, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, measuredExitsOnly, japanExclusivity, mtgTags, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -583,6 +589,14 @@ export default function CardBrowser() {
           title={t("cardBrowser.soldEvidenceOnlyHint")}
         >
           {t("cardBrowser.soldEvidenceOnly")}
+        </Button>
+        <Button
+          variant={measuredExitsOnly ? "default" : "outline"}
+          className="h-11 shrink-0 sm:h-8"
+          onClick={() => setMeasuredExitsOnly((v) => !v)}
+          title={t("cardBrowser.measuredExitsOnlyHint")}
+        >
+          {t("cardBrowser.measuredExitsOnly")}
         </Button>
         {activeGame === "pokemon" && (
           <Button

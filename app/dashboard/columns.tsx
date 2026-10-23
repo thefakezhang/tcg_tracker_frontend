@@ -21,6 +21,7 @@ import { MtgLabelEvidence } from "./MtgLabelEvidence";
 
 import { formatJpy, formatRoi, formatUsd, formatUsdCompact } from "@/lib/money";
 import { priceKindMarkerKey, priceKindTitleKey } from "@/lib/price-kind";
+import { exitEvidenceDetail, exitEvidenceMarkerKey } from "@/lib/exit-evidence";
 import { laneLabel } from "@/lib/lane";
 import { MtgPrintingBadges, mtgLanguageLabel } from "./MtgPrintingBadges";
 
@@ -43,6 +44,29 @@ export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }:
   const kindKey = priceKindMarkerKey(entry.kind);
   const kindTitle = priceKindTitleKey(entry.kind);
 
+  // A second marker ONLY when the exit needs qualifying: a completed sale with
+  // nothing showing the printing still trades. 78,279 of 321,281 exits are in
+  // that state, and before this they were indistinguishable from the 175,253
+  // that are measured - same word, same number, no way to tell.
+  //
+  // Nothing is marked "fine". A badge on the other 243,002 rows would train
+  // the eye to ignore badges, which is how the operator stops seeing the one
+  // that matters.
+  //
+  // The tooltip carries the provenance rather than just a warning, because 56%
+  // of these DID sell recently and merely fell under the liquidity bar - "last
+  // sold 2026-10-09, 2 copies in 30 days" is actionable where "unverified"
+  // alone is only discouraging.
+  const evidenceKey = exitEvidenceMarkerKey(entry.evidence);
+  const evidenceDetail = exitEvidenceDetail(
+    entry.evidence,
+    entry.lastSaleDate,
+    entry.qty30d,
+  );
+  const evidenceTitle = evidenceDetail
+    ? `${t("exitEvidence.unmeasured.title")} ${t(evidenceDetail.key, evidenceDetail.params)}`
+    : undefined;
+
   return (
     <div>
       <div className={`flex items-center gap-1 ${align === "right" ? "justify-end" : ""}`}>
@@ -54,6 +78,15 @@ export function PriceCell({ entry, align = "left", badgeVariant = "secondary" }:
             title={kindTitle ? t(kindTitle) : undefined}
           >
             {t(kindKey)}
+          </Badge>
+        )}
+        {evidenceKey && (
+          <Badge
+            variant="outline"
+            className="h-auto border-amber-500/60 px-1 py-px text-[10px] font-normal text-amber-600 dark:text-amber-400"
+            title={evidenceTitle}
+          >
+            {t(evidenceKey)}
           </Badge>
         )}
       </div>
