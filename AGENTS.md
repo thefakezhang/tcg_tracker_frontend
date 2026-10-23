@@ -60,6 +60,22 @@ Found something overlapping? Read its commits before writing your own - its diag
 **Anything you did not personally edit belongs to someone else.** Never `git add -A` / `git add .` / `git commit -a`; stage by explicit path and check `git status --porcelain` before committing.
 
 ## Agent tooling (committed for both machines)
+
+### Deploying an edge function
+
+**Use `scripts/deploy-edge-function.sh <name>`. Never `supabase functions deploy` directly.**
+
+The CLI bundles whatever sits in the current directory, and a checkout on a feature branch looks exactly like one on `main`.
+The deploy is also the only step in this repository with no review gate: a merge needs a green PR, a deploy needs a shell.
+
+This is written down because it was crossed on 2026-10-22.
+`aggregate-prices` was deployed from the primary checkout `/home/tzhan/tcg_tracker_frontend`, which was sitting on another session's feature branch, and that branch's copy of the function predated the `best_buy_kind` and p25/p75 columns entirely.
+So the deploy did not ship an old version of the change - it shipped a function older than production, and `best_buy_kind` and `best_buy_p25` went NULL across every summary row until it was redeployed from the right tree.
+Nothing warned, and the symptom was two columns going null that the change had never touched.
+
+The script proves the exact file is byte-identical to `origin/main` before pushing anything, which is the property that was false.
+It refuses a divergent tree and prints the diff.
+`git status` is not sufficient on its own: a worktree can sit on a detached merge commit and be perfectly correct, while a clean checkout of someone else's branch is clean and wrong.
 - Skill `.claude/skills/ship-pr` - the branch -> commit -> PR -> poll -> merge -> cleanup flow.
 - Script `scripts/check.sh` - `tsc --noEmit` + `next build` (node bin auto-detected).
 - Pull requests run the unit tests, TypeScript check, and production build in one Linux CI job; see [docs/continuous_integration.md](docs/continuous_integration.md).
