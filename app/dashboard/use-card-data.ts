@@ -28,6 +28,7 @@ import {
   type MtgTagDimension,
 } from "./mtg-tags";
 import type { PriceKind } from "@/lib/price-kind";
+import { MEASURED_EXIT_EVIDENCE, type ExitEvidence } from "@/lib/exit-evidence";
 import {
   pokemonVariantLabel,
   pokemonVariantSearchFilters,
@@ -45,6 +46,10 @@ interface SoldEvidenceQueryBuilder {
   eq(column: string, value: string): unknown;
 }
 
+interface MeasuredExitQueryBuilder {
+  in(column: string, values: readonly string[]): unknown;
+}
+
 // Restrict the browse to exits backed by a completed transaction.
 //
 // best_buy is the EXIT leg, so its kind is what decides whether an ROI is
@@ -60,6 +65,30 @@ interface SoldEvidenceQueryBuilder {
 export function applySoldEvidenceQuery<T>(query: T, soldEvidenceOnly: boolean): T {
   if (!soldEvidenceOnly) return query;
   return (query as SoldEvidenceQueryBuilder).eq("best_buy_kind", "sold") as T;
+}
+
+// Restrict the browse to exits we have grounds to believe.
+//
+// This is the stronger sibling of applySoldEvidenceQuery above, and the two
+// ask different questions. That one keys on the KIND, so it excludes
+// estimates - but it admits every completed sale, including the 78,279 where
+// nothing shows the printing still trades. Its promise of "backed by a
+// completed transaction" is true and insufficient: a sale from four months ago
+// on a card with 189 copies sitting unsold passes it.
+//
+// This keys on best_buy_evidence (backend 000597) and admits a committed bid
+// or a sale with recent volume behind it. Keyed on the evidence rather than a
+// source list for the same reason: a new feed is judged the day it lands.
+//
+// The two compose, and usefully: both on means measured SALES only, excluding
+// bids, which is the right screen when the question is "what does this
+// actually sell for" rather than "what can I get for it today".
+export function applyMeasuredExitQuery<T>(query: T, measuredExitsOnly: boolean): T {
+  if (!measuredExitsOnly) return query;
+  return (query as MeasuredExitQueryBuilder).in(
+    "best_buy_evidence",
+    MEASURED_EXIT_EVIDENCE as readonly string[] as string[],
+  ) as T;
 }
 
 export function applyJapanExclusivityQuery<T>(
@@ -317,6 +346,14 @@ export interface PriceEntry {
   // Optional so callers that build entries by hand (tests, fixtures) need
   // not know; absent means "no marker".
   kind?: PriceKind | null;
+  // WHY this number is what it is (backend 000597). Distinct from `kind`: the
+  // kind says what a price IS, the evidence says whether we have grounds to
+  // believe it still holds. Optional for the same reason `kind` is.
+  evidence?: ExitEvidence | null;
+  // Provenance for an unmeasured exit, which is the difference between "do
+  // not trust this" and "last sold on this day, this many copies".
+  lastSaleDate?: string | null;
+  qty30d?: number | null;
   // The interquartile spread of the comps this price is the median of, in the
   // same currency as `price`. Both set or both null - one alone cannot draw a
   // bar, and the database CHECK enforces that pairing. Null for any source
@@ -483,6 +520,9 @@ export interface SummaryRow {
   best_buy_region: string | null;
   best_buy_normalized: number | null;
   best_buy_kind: PriceKind | null;
+  best_buy_evidence: ExitEvidence | null;
+  best_buy_last_sale_date: string | null;
+  best_buy_qty_30d: number | null;
   best_buy_p25: number | null;
   best_buy_p75: number | null;
   best_sell_price: number | null;
@@ -517,6 +557,9 @@ export function summaryRowToCardRow(row: SummaryRow, cardDefKey: string): CardRo
           locationName: row.best_buy_location ?? "",
           marketRegion: row.best_buy_region ?? null,
           kind: row.best_buy_kind ?? null,
+          evidence: row.best_buy_evidence ?? null,
+          lastSaleDate: row.best_buy_last_sale_date ?? null,
+          qty30d: row.best_buy_qty_30d ?? null,
           p25: row.best_buy_p25 ?? null,
           p75: row.best_buy_p75 ?? null,
         }
@@ -710,6 +753,7 @@ export function useCardData(options: {
   rarity: string | null;
   promosOnly: boolean;
   soldEvidenceOnly: boolean;
+  measuredExitsOnly: boolean;
   japanExclusivity: ReadonlySet<JapanExclusivityDimension>;
   mtgTags: ReadonlySet<MtgTagDimension>;
   cuteOnly: boolean;
@@ -744,6 +788,7 @@ export function useCardData(options: {
     rarity,
     promosOnly,
     soldEvidenceOnly,
+    measuredExitsOnly,
     japanExclusivity,
     mtgTags,
     cuteOnly,
@@ -776,7 +821,7 @@ export function useCardData(options: {
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, japanExclusivity, mtgTags, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, measuredExitsOnly, japanExclusivity, mtgTags, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -874,6 +919,7 @@ export function useCardData(options: {
       query = applyMtgTagQuery(query, cardDefTable, mtgTags);
     }
     query = applySoldEvidenceQuery(query, soldEvidenceOnly);
+    query = applyMeasuredExitQuery(query, measuredExitsOnly);
     if (cuteOnly && activeGame === "pokemon") {
       query = query.eq(`${cardDefTable}.is_cute`, true);
     }

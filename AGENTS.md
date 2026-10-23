@@ -405,6 +405,24 @@ The raw reads that remain are either reference tables that cannot approach the c
 
 `lib/supabase/select-all.test.ts` is the regression guard (`npm test`). Its fake emulates the clamp; keep the "cap smaller than PAGE" case.
 
+### Exit evidence: the marker and the filter
+
+`best_buy_evidence` (backend 000597) says WHY an exit is the number it is, and it is a different question from `best_buy_kind`.
+The kind says what a price IS; the evidence says whether there are grounds to believe it still holds.
+
+`PriceCell` shows a second, amber badge ONLY for `sale_unmeasured` - a completed sale with nothing showing the printing still trades.
+Measured by the live data: 78,279 of 321,281 MTG exits are in that state, and before this they were indistinguishable from the 175,253 that are measured, carrying the same word and the same number.
+Nothing is marked "fine": a badge on the other 243,002 rows would train the eye to ignore badges, which is how the one that matters stops being seen.
+
+The tooltip carries provenance rather than a warning, because 56% of unmeasured exits DID sell recently and merely fell under the liquidity bar.
+"Last sold 2026-10-09, 2 copies in 30 days" is actionable; "unverified" alone is only discouraging.
+
+`applyMeasuredExitQuery` is the filter, and it is the stronger sibling of `applySoldEvidenceQuery`.
+That one keys on the kind, so it excludes estimates but admits every completed sale - its promise of "backed by a completed transaction" is true and insufficient, since a four-month-old sale on a card with 189 copies sitting unsold passes it.
+The two compose: both on means measured SALES only, excluding bids.
+
+**Where the value is, and so what this is for.** 81% of unmeasured exits are under a dollar. The money is ~2,040 rows at $20 or more, of which ~1,597 have no recent sale at all - and the pattern inverts with price, 81% cold above $100 against 41% under a dollar. Expensive cards trade rarely, so the untrusted exits that cost real money are the ones with the least evidence. Screen on the filter, then work that short list.
+
 ### Price Display & Currency Conversion
 
 Rendering: see the shared formatters rule under Conventions (`lib/money.ts`, `lib/dates.ts`).
