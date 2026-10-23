@@ -67,15 +67,42 @@ const GAMES = ["pokemon", "mtg"] as const;
 // A LEFT JOIN that misses yields NULL, and `false OR NULL` is NULL, which no
 // WHEN clause matches - so a card with no liquidity row falls through to the
 // ungated rank. Missing evidence gates a sold exit OFF, never on.
+//
+// The measured test is factored out and shared with exitEvidence below, so the
+// rank and the label it is recorded under CANNOT disagree. They are the same
+// predicate written once; a second copy would be a bug waiting for someone to
+// edit one of them.
+const soldIsMeasured = (p25: string, p75: string, liquid: string) =>
+  `((${p25} IS NOT NULL AND ${p75} IS NOT NULL) OR ${liquid})`;
+
 const exitKindRank = (p25: string, p75: string, liquid: string) =>
   `CASE
      WHEN ml.price_kind = 'sold'
-          AND ((${p25} IS NOT NULL AND ${p75} IS NOT NULL) OR ${liquid}) THEN 0
+          AND ${soldIsMeasured(p25, p75, liquid)} THEN 0
      WHEN ml.price_kind = 'bid' THEN 1
      WHEN ml.price_kind = 'sold' THEN 2
      WHEN ml.price_kind = 'valuation' THEN 3
      ELSE 4
    END`;
+
+// WHY the exit is the number it is, written to best_buy_evidence (backend
+// 000597). The ranking decides; this records the decision, because until now
+// it decided and then threw the reason away - best_buy_kind read 'sold' for
+// the 88,410 exits that passed the volume test and the 22,607 that did not.
+//
+// sale_unmeasured is the value worth screening on. It is still the best
+// available figure for that card, per rule 3 of
+// docs/price_anchor_policy.md - it is simply no longer wearing the same face
+// as a committed bid or a measured sale.
+const exitEvidence = (p25: string, p75: string, liquid: string) =>
+  `CASE
+     WHEN ml.price_kind = 'bid' THEN 'bid'
+     WHEN ml.price_kind = 'sold'
+          AND ${soldIsMeasured(p25, p75, liquid)} THEN 'sale_measured'
+     WHEN ml.price_kind = 'sold' THEN 'sale_unmeasured'
+     WHEN ml.price_kind = 'valuation' THEN 'estimate'
+     ELSE 'unclassified'
+   END::exit_evidence_enum`;
 
 // Indicator sources: price guides and sold-comp trackers, not shops the
 // operator can transact with. They no longer need excluding from the summary
@@ -446,6 +473,8 @@ async function computeAndInsert(
   const liquidityJoin = liquidityTable
     ? `LEFT JOIN ${liquidityTable} liq ON liq.card_id = ml.card_id`
     : "";
+  const liqLastSaleExpr = liquidityTable ? "liq.last_sale_date" : "NULL::date";
+  const liqQtyExpr = liquidityTable ? "liq.qty_30d" : "NULL::integer";
 
   const laneSpread = (col: string) =>
     useTcgDepth
@@ -460,6 +489,12 @@ async function computeAndInsert(
         ml.price_type,
         ml.price_kind,
         ${exitKindRank(laneSpread("price_p25"), laneSpread("price_p75"), liquidExpr)} AS kind_rank,
+        ${exitEvidence(laneSpread("price_p25"), laneSpread("price_p75"), liquidExpr)} AS evidence,
+        -- Provenance for a weak exit: when a copy last really sold, and
+        -- how many. NULL where the game has no liquidity table, which
+        -- reads as "no evidence recorded" rather than as zero sales.
+        ${liqLastSaleExpr} AS liq_last_sale_date,
+        ${liqQtyExpr} AS liq_qty_30d,
         ${lanePrice} AS price,
         ml.currency,
         c.symbol AS currency_symbol,
@@ -580,6 +615,9 @@ async function computeAndInsert(
         x.market_region AS buy_region,
         x.normalized_price AS buy_normalized,
         x.price_kind AS buy_kind,
+        x.evidence AS buy_evidence,
+        x.liq_last_sale_date AS buy_last_sale_date,
+        x.liq_qty_30d AS buy_qty_30d,
         x.price_p25 AS buy_p25,
         x.price_p75 AS buy_p75,
         e.price AS sell_price,
@@ -629,6 +667,7 @@ async function computeAndInsert(
     INSERT INTO ${summariesTable} (
       card_id, tier, psa_grade,
       best_buy_price, best_buy_currency, best_buy_symbol, best_buy_location, best_buy_region, best_buy_normalized, best_buy_kind,
+      best_buy_evidence, best_buy_last_sale_date, best_buy_qty_30d,
       best_buy_p25, best_buy_p75,
       best_sell_price, best_sell_currency, best_sell_symbol, best_sell_location, best_sell_region, best_sell_normalized, best_sell_kind,
       roi, net_roi, updated_at
@@ -662,6 +701,9 @@ async function computeAndInsert(
       CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_region     ELSE ax.market_region     END,
       CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_normalized ELSE ax.normalized_price  END,
       CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_kind       ELSE ax.price_kind        END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_evidence       ELSE ax.evidence            END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_last_sale_date ELSE ax.liq_last_sale_date  END,
+      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_qty_30d        ELSE ax.liq_qty_30d         END,
       CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_p25        ELSE ax.price_p25         END,
       CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_p75        ELSE ax.price_p75         END,
       CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_price      ELSE ae.price            END,
@@ -689,6 +731,9 @@ async function computeAndInsert(
       best_buy_region = EXCLUDED.best_buy_region,
       best_buy_normalized = EXCLUDED.best_buy_normalized,
       best_buy_kind = EXCLUDED.best_buy_kind,
+      best_buy_evidence = EXCLUDED.best_buy_evidence,
+      best_buy_last_sale_date = EXCLUDED.best_buy_last_sale_date,
+      best_buy_qty_30d = EXCLUDED.best_buy_qty_30d,
       best_buy_p25 = EXCLUDED.best_buy_p25,
       best_buy_p75 = EXCLUDED.best_buy_p75,
       best_sell_price = EXCLUDED.best_sell_price,
@@ -731,6 +776,11 @@ async function computeAndInsertSealed(
         -- of recent volume and therefore never outranks a committed bid. When
         -- sealed gains a windowed sold median, pass its spread here.
         ${exitKindRank("NULL", "NULL", "FALSE")} AS kind_rank,
+        -- Structurally sale_unmeasured for every sold: sealed listings
+        -- carry no percentiles and there is no sealed liquidity source.
+        -- Recording that is better than leaving it indistinguishable
+        -- from a measured one.
+        ${exitEvidence("NULL", "NULL", "FALSE")} AS evidence,
         ml.price,
         ml.currency,
         c.symbol AS currency_symbol,
@@ -806,6 +856,7 @@ async function computeAndInsertSealed(
         x.market_region AS buy_region,
         x.normalized_price AS buy_normalized,
         x.price_kind AS buy_kind,
+        x.evidence AS buy_evidence,
         e.price AS sell_price,
         e.currency AS sell_currency,
         e.currency_symbol AS sell_symbol,
@@ -851,6 +902,7 @@ async function computeAndInsertSealed(
     INSERT INTO ${summariesTable} (
       product_id, sealed_condition, variant_edition,
       best_buy_price, best_buy_currency, best_buy_symbol, best_buy_location, best_buy_region, best_buy_normalized, best_buy_kind,
+      best_buy_evidence,
       best_sell_price, best_sell_currency, best_sell_symbol, best_sell_location, best_sell_region, best_sell_normalized, best_sell_kind,
       roi, net_roi, updated_at
     )
@@ -867,6 +919,7 @@ async function computeAndInsertSealed(
       CASE WHEN ln.product_id IS NOT NULL THEN ln.buy_region     ELSE ax.market_region    END,
       CASE WHEN ln.product_id IS NOT NULL THEN ln.buy_normalized ELSE ax.normalized_price END,
       CASE WHEN ln.product_id IS NOT NULL THEN ln.buy_kind       ELSE ax.price_kind       END,
+      CASE WHEN ln.product_id IS NOT NULL THEN ln.buy_evidence   ELSE ax.evidence         END,
       CASE WHEN ln.product_id IS NOT NULL THEN ln.sell_price      ELSE ae.price            END,
       CASE WHEN ln.product_id IS NOT NULL THEN ln.sell_currency   ELSE ae.currency         END,
       CASE WHEN ln.product_id IS NOT NULL THEN ln.sell_symbol     ELSE ae.currency_symbol  END,
@@ -898,6 +951,7 @@ async function computeAndInsertSealed(
       best_buy_region = EXCLUDED.best_buy_region,
       best_buy_normalized = EXCLUDED.best_buy_normalized,
       best_buy_kind = EXCLUDED.best_buy_kind,
+      best_buy_evidence = EXCLUDED.best_buy_evidence,
       best_sell_price = EXCLUDED.best_sell_price,
       best_sell_currency = EXCLUDED.best_sell_currency,
       best_sell_symbol = EXCLUDED.best_sell_symbol,
