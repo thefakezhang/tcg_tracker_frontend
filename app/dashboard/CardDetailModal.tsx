@@ -78,6 +78,7 @@ import {
 import { useOwnedInventoryVersion, bumpOwnedInventory } from "./owned-inventory";
 import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
 import GradeEvidencePanel from "./GradeEvidencePanel";
+import ExitChannelPanel from "./ExitChannelPanel";
 import { DecisionActions, decisionSnapshot } from "./DecisionActions";
 import { detailOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
 import { isPriceKind, priceKindMarkerKey, priceKindTitleKey, type PriceKind } from "@/lib/price-kind";
@@ -1024,6 +1025,14 @@ export default function CardDetailModal({
               </div>
             ))}
           </div>
+        )}
+
+        {/* Which channel to sell on, and what each leaves after its own fees.
+            Pokemon only: pokemon_card_exit_options is the backing table and
+            130point, whose comps feed the eBay side, is scoped to Pokemon
+            singles. */}
+        {activeGame === "pokemon" && (
+          <ExitChannelPanel cardId={Number(def.card_id)} psaGrade={Number(card.psaGrade ?? 0)} />
         )}
 
         {activeGame === "pokemon" && (
