@@ -3,10 +3,11 @@
 // posts already loaded (the fallback while that RPC is not applied yet), the
 // per-account grouping of the feed, and the per-viewer preferences that the
 // view remembers in localStorage.
+import { arrivalObservedAt } from "@/lib/arrival-observed-at";
 import { readLocalStorage, writeLocalStorage } from "@/lib/local-storage";
 import { sourceLabel } from "@/lib/source-labels";
 
-/** The window behind `recent_count`: posts observed in the last 24 hours. */
+/** The default window behind `recent_count`, the backend RPC's as well: posts observed in the last 24 hours. */
 export const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export const GROUP_BY_ACCOUNT_KEY = "arrivals.groupByAccount";
@@ -27,6 +28,8 @@ export type ArrivalAccountPost = {
   twitter_handle: string;
   tweet_created_at: string | null;
   acquired_at: string;
+  /** When the shop last re-surfaced the post by retweeting it; absent or null when never. */
+  last_boosted_at?: string | null;
 };
 
 export type ArrivalAccountGroup<P extends ArrivalAccountPost> = {
@@ -74,9 +77,9 @@ export function parseArrivalSources(value: unknown): ArrivalSource[] {
   });
 }
 
-/** The time a post is ordered by: when the shop posted it, else when it was collected. */
+/** The time a post is ordered by: when the shop posted it, else when it was collected, lifted to a later re-post. */
 export function postObservedAt(post: ArrivalAccountPost): string {
-  return post.tweet_created_at ?? post.acquired_at;
+  return arrivalObservedAt(post);
 }
 
 function epoch(value: string | null): number {
@@ -105,17 +108,21 @@ export function sortArrivalSources(sources: readonly ArrivalSource[]): ArrivalSo
 /**
  * The account summary computed from the posts seen so far, for use before the
  * backend RPC exists. Counts cover only those posts, which the view says.
+ * `recent_count` counts posts observed at or after `recentSince` (the tab's
+ * window cutoff); null means the RPC's own default, the last 24 hours.
  */
 export function deriveArrivalSources(
   posts: Iterable<ArrivalAccountPost>,
   now: number,
+  recentSince: number | null = null,
 ): ArrivalSource[] {
+  const since = recentSince ?? now - RECENT_WINDOW_MS;
   const byAccount = new Map<string, ArrivalSource & { latestEpoch: number }>();
   for (const post of posts) {
     const observed = postObservedAt(post);
     const observedEpoch = epoch(observed);
     const current = byAccount.get(post.buyer_handle);
-    const recent = observedEpoch >= now - RECENT_WINDOW_MS && observedEpoch <= now ? 1 : 0;
+    const recent = observedEpoch >= since && observedEpoch <= now ? 1 : 0;
     if (!current) {
       byAccount.set(post.buyer_handle, {
         buyer_handle: post.buyer_handle,

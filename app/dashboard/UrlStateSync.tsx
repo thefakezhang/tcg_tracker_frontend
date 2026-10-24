@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { useGame } from "./GameContext";
 import { useTrips } from "./TripContext";
 import { useBuyList } from "./BuyListContext";
-import { ARRIVALS_SHOP_PARAM, parseShopParam } from "./url-params";
+import { ARRIVALS_SHOP_PARAM, ARRIVALS_WINDOW_PARAM, parseShopParam, parseWindowParam } from "./url-params";
 import { buildDashboardSearch, parseDashboardSearch } from "./url-state";
 
 export { readUrlParam, writeUrlParam } from "./url-params";
@@ -16,8 +16,8 @@ export { readUrlParam, writeUrlParam } from "./url-params";
 //     back/forward buttons move between views;
 //   - popstate re-applies the URL to the contexts.
 // Leaf params are owned by a view (replaceState): the trip tab by
-// TripDashboard, the arrivals shop by ArrivalPostsView. Each is carried over
-// unchanged while its selection stays the same and dropped otherwise.
+// TripDashboard, the arrivals shop and time window by ArrivalPostsView. Each is
+// carried over unchanged while its selection stays the same and dropped otherwise.
 const UrlHydratedContext = createContext(false);
 
 /** True once the URL has been applied to the contexts (always false on the server). */
@@ -60,13 +60,14 @@ export default function UrlStateSync({ children }: { children: ReactNode }) {
     const current = new URLSearchParams(window.location.search);
     // A leaf param survives only while the selection it belongs to is unchanged
     // (a game switch, say): the trip tab while the trip stays, the arrivals
-    // shop while the view stays.
+    // shop and window while the view stays.
     const sameSelection = activeTripId != null && activeTripId === lastSelection.current;
     const isTrip = activeTripId != null && activeTripId > 0;
     const next = buildDashboardSearch({
       game: activeGame, activeTripId, activeBuylistId,
       tab: sameSelection && isTrip ? current.get("tab") : null,
       shop: sameSelection ? parseShopParam(current.get(ARRIVALS_SHOP_PARAM)) : null,
+      since: sameSelection ? parseWindowParam(current.get(ARRIVALS_WINDOW_PARAM)) : null,
     });
     lastSelection.current = activeTripId;
     if (next !== window.location.search) {
