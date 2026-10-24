@@ -1,5 +1,5 @@
 // Leaf query params: sub-state a single view owns inside /dashboard's query
-// string (a trip's ?tab=, the Arrivals ?shop=). The view reads its param on
+// string (a trip's ?tab=, the Arrivals ?shop= and ?since=). The view reads its param on
 // mount and writes it in place, with no history entry; UrlStateSync decides
 // whether it survives a view-selection change. This module has no imports so
 // a view can use it without pulling in the views registry.
@@ -31,4 +31,20 @@ const SHOP_HANDLE = /^[^\u0000-\u001f\u007f]{1,100}$/;
 export function parseShopParam(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return SHOP_HANDLE.test(trimmed) ? trimmed : null;
+}
+
+/** The Arrivals view's time window leaf param: how far back the feed and the account counts look. */
+export const ARRIVALS_WINDOW_PARAM = "since";
+
+/** The windows the Arrivals tab offers, spelled as they appear in `?since=`. */
+export const ARRIVAL_WINDOWS = ["24h", "48h", "7d", "all"] as const;
+export type ArrivalWindow = (typeof ARRIVAL_WINDOWS)[number];
+
+/** The window a viewer gets before choosing one; the view keeps it out of the URL. */
+export const DEFAULT_ARRIVAL_WINDOW: ArrivalWindow = "48h";
+
+/** The validated `?since=` value, or null when absent or not a window the tab offers. */
+export function parseWindowParam(value: string | null | undefined): ArrivalWindow | null {
+  const trimmed = value?.trim() ?? "";
+  return (ARRIVAL_WINDOWS as readonly string[]).includes(trimmed) ? (trimmed as ArrivalWindow) : null;
 }

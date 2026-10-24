@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 
+import { laterOf } from "@/lib/arrival-observed-at";
 import { createClient } from "@/lib/supabase/server";
 
 const MAX_LIMIT = 100;
@@ -10,6 +11,16 @@ function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
 }
 
+// `last_boosted_at` is optional on the rows (older backends do not send it);
+// present, it must be a timestamp or the cursor would be unstable.
+function optionalTimestamp(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
+    throw new Error("arrival RPC returned an invalid cursor boundary");
+  }
+  return value;
+}
+
 function nextCursor(rows: unknown[], limit: number) {
   if (rows.length < limit) return null;
   const last = rows.at(-1);
@@ -17,12 +28,14 @@ function nextCursor(rows: unknown[], limit: number) {
     throw new Error("arrival RPC returned an invalid row");
   }
   const row = last as Record<string, unknown>;
-  const before = row.tweet_created_at ?? row.acquired_at;
-  if (typeof before !== "string" || Number.isNaN(Date.parse(before))
+  const base = row.tweet_created_at ?? row.acquired_at;
+  if (typeof base !== "string" || Number.isNaN(Date.parse(base))
     || typeof row.arrival_key !== "string" || row.arrival_key.trim() === "") {
     throw new Error("arrival RPC returned an invalid cursor boundary");
   }
-  return { before, before_key: row.arrival_key };
+  // The RPC orders rows by the later of the tweet time and the last re-post,
+  // so the cursor carries that same value; a row never re-posted is unchanged.
+  return { before: laterOf(base, optionalTimestamp(row.last_boosted_at)), before_key: row.arrival_key };
 }
 
 export async function GET(request: NextRequest) {

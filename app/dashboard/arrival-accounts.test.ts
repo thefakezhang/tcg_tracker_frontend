@@ -9,6 +9,7 @@ import {
   groupPostsByAccount,
   matchesAccountQuery,
   parseArrivalSources,
+  postObservedAt,
   readCollapsedAccounts,
   readGroupByAccount,
   sortArrivalSources,
@@ -82,6 +83,18 @@ describe("deriveArrivalSources", () => {
     ]);
   });
 
+  it("counts recent posts from an explicit cutoff when the tab's window is not 24 hours", () => {
+    const [source] = deriveArrivalSources([
+      post("alice:1", "alice", "alice_shop", at(30)),
+      post("alice:2", "alice", "alice_shop", at(47)),
+      post("alice:3", "alice", "alice_shop", at(48)),
+      post("alice:4", "alice", "alice_shop", at(49)),
+    ], NOW, NOW - 48 * HOUR);
+
+    expect(source.post_count).toBe(4);
+    expect(source.recent_count).toBe(3);
+  });
+
   it("takes the handle from the newest post when a shop was renamed", () => {
     const [source] = deriveArrivalSources([
       post("alice:1", "alice", "alice_old", at(40)),
@@ -97,6 +110,35 @@ describe("deriveArrivalSources", () => {
       { buyer_handle: "alice", twitter_handle: "a", post_count: 1, recent_count: 0, latest_post_at: at(1) },
       { buyer_handle: "dan", twitter_handle: "d", post_count: 1, recent_count: 0, latest_post_at: "not a time" },
     ]).map((source) => source.buyer_handle)).toEqual(["alice", "bob", "dan", "zed"]);
+  });
+});
+
+describe("postObservedAt", () => {
+  it("is the tweet time, else the collection time, lifted to a later re-post", () => {
+    const base = post("alice:1", "alice", "alice_shop", at(72));
+    expect(postObservedAt(base)).toBe(at(72));
+    expect(postObservedAt(post("alice:2", "alice", "alice_shop", null, at(5)))).toBe(at(5));
+    expect(postObservedAt({ ...base, last_boosted_at: at(3) })).toBe(at(3));
+    // A re-post that is not later, or not readable, changes nothing.
+    expect(postObservedAt({ ...base, last_boosted_at: at(100) })).toBe(at(72));
+    expect(postObservedAt({ ...base, last_boosted_at: "not a time" })).toBe(at(72));
+    expect(postObservedAt({ ...base, last_boosted_at: null })).toBe(at(72));
+  });
+
+  it("counts and orders re-posted rows by their re-post", () => {
+    const [source] = deriveArrivalSources([
+      post("alice:1", "alice", "alice_shop", at(72)),
+      { ...post("alice:2", "alice", "alice_shop", at(80)), last_boosted_at: at(2) },
+    ], NOW);
+    expect(source.recent_count).toBe(1);
+    expect(source.latest_post_at).toBe(at(2));
+
+    const groups = groupPostsByAccount([
+      post("bob:1", "bob", "bob_shop", at(10)),
+      { ...post("alice:1", "alice", "alice_shop", at(72)), last_boosted_at: at(1) },
+    ]);
+    expect(groups.map((group) => group.buyer_handle)).toEqual(["alice", "bob"]);
+    expect(groups[0].latest_post_at).toBe(at(1));
   });
 });
 

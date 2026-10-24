@@ -17,6 +17,7 @@ import {
   GROUP_BY_ACCOUNT_KEY,
   type ArrivalSource,
 } from "./arrival-accounts";
+import { ARRIVALS_WINDOW_KEY } from "./arrival-window";
 
 const POST: ArrivalPost = {
   arrival_key: "alice_shop:2112064092735521045",
@@ -26,6 +27,9 @@ const POST: ArrivalPost = {
   tweet_url: "https://x.com/alice_shop/status/2112064092735521045",
   tweet_created_at: "2026-10-20T10:15:00+09:00",
   acquired_at: "2026-10-20T10:16:00+09:00",
+  last_boosted_at: null,
+  boost_count: 0,
+  via_retweet_of: null,
   unverified: true,
   media: [{
     source_image_index: 0,
@@ -83,6 +87,10 @@ function accountList() {
   return within(screen.getByTestId("arrival-accounts"));
 }
 
+function windowChip(name: string) {
+  return within(screen.getByRole("group", { name: "Time window" })).getByRole("button", { name });
+}
+
 beforeEach(() => {
   window.history.replaceState(null, "", "/dashboard?view=arrivals");
 });
@@ -93,6 +101,13 @@ afterEach(() => {
 });
 
 describe("ArrivalPostsView", () => {
+  // These fixtures carry fixed dates so the JST rendering can be asserted, and
+  // the default 48-hour window would hide them as the clock moves on. The
+  // viewer here has chosen All; the window itself is covered further down.
+  beforeEach(() => {
+    localStorage.setItem(ARRIVALS_WINDOW_KEY, "all");
+  });
+
   it("keeps a visible loading state until the post-level evidence arrives", async () => {
     let resolve!: (posts: ArrivalPost[]) => void;
     const loader = vi.fn(() => new Promise<ArrivalPostsPage>((done) => {
@@ -130,6 +145,9 @@ describe("ArrivalPostsView", () => {
     expect(media.querySelector("img")?.className).toContain("object-contain");
     expect(media.querySelector("img")?.className).not.toContain("object-cover");
     expect(document.body.textContent).toContain("No item, grade, or price has been inferred");
+    // Never re-posted: no re-post badge and no "via" line, exactly as before the fields existed.
+    expect(screen.queryByTestId("arrival-reposted")).toBeNull();
+    expect(screen.queryByTestId("arrival-via")).toBeNull();
 
     fireEvent.click(accountList().getByRole("button", { name: /@bob_shop/ }));
     await waitFor(() => {
@@ -178,6 +196,25 @@ describe("ArrivalPostsView", () => {
     expect(() => parseArrivalPosts([{ ...POST, media: [] }])).toThrow("Invalid arrival evidence");
     expect(() => parseArrivalPosts([{ ...POST, media: [{ ...POST.media[0], content_sha256: "bad" }] }])).toThrow("Invalid arrival media digest");
     expect(() => parseArrivalPosts([{ ...POST, price_jpy: 1000 }])).toThrow("Forbidden arrival field: price_jpy");
+    expect(() => parseArrivalPosts([{ ...POST, last_boosted_at: "yesterday" }])).toThrow("Invalid arrival timestamp: last_boosted_at");
+    expect(() => parseArrivalPosts([{ ...POST, boost_count: -1 }])).toThrow("Invalid arrival count: boost_count");
+    expect(() => parseArrivalPosts([{ ...POST, boost_count: 1.5 }])).toThrow("Invalid arrival count: boost_count");
+    expect(() => parseArrivalPosts([{ ...POST, via_retweet_of: "" }])).toThrow("Invalid arrival field: via_retweet_of");
+  });
+
+  it("reads the re-post fields when the backend sends them and defaults them when it does not", () => {
+    const legacy: Record<string, unknown> = { ...POST };
+    delete legacy.last_boosted_at;
+    delete legacy.boost_count;
+    delete legacy.via_retweet_of;
+    expect(parseArrivalPosts([legacy])).toEqual([POST]);
+    expect(parseArrivalPosts([{ ...POST, last_boosted_at: null, boost_count: null, via_retweet_of: null }])).toEqual([POST]);
+    expect(parseArrivalPosts([{
+      ...POST,
+      last_boosted_at: "2026-10-23T01:00:00Z",
+      boost_count: "2",
+      via_retweet_of: "dave_shop",
+    }])).toEqual([{ ...POST, last_boosted_at: "2026-10-23T01:00:00Z", boost_count: 2, via_retweet_of: "dave_shop" }]);
   });
 
   it("appends unique tied-timestamp pages into the account's group and resets pagination for a selection", async () => {
@@ -330,7 +367,8 @@ describe("ArrivalPostsView", () => {
     await waitFor(() => {
       expect(loader).toHaveBeenLastCalledWith("bob", null);
     });
-    expect(window.location.search).toBe("?view=arrivals&shop=bob");
+    // The remembered All window rides along as ?since=all; the shop keeps its place.
+    expect(window.location.search).toBe("?view=arrivals&shop=bob&since=all");
     expect(accountList().getByRole("button", { name: /@bob_shop/ }).getAttribute("aria-pressed")).toBe("true");
     expect(accountList().getByRole("button", { name: /@alice_shop/ }).getAttribute("aria-pressed")).toBe("false");
 
@@ -338,7 +376,7 @@ describe("ArrivalPostsView", () => {
     await waitFor(() => {
       expect(loader).toHaveBeenLastCalledWith("", null);
     });
-    expect(window.location.search).toBe("?view=arrivals");
+    expect(window.location.search).toBe("?view=arrivals&since=all");
     expect(screen.getByRole("button", { name: "Group by account" }).getAttribute("aria-pressed")).toBe("true");
   });
 
@@ -349,7 +387,7 @@ describe("ArrivalPostsView", () => {
 
     expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(1);
     expect(loader).toHaveBeenLastCalledWith("", null);
-    expect(window.location.search).toBe("?view=arrivals");
+    expect(window.location.search).toBe("?view=arrivals&since=all");
   });
 
   it("groups the All view by account newest first, collapses per account, and remembers both choices", async () => {
@@ -452,5 +490,207 @@ describe("ArrivalPostsView", () => {
     fireEvent.change(search, { target: { value: "zzz" } });
     expect(screen.getByText("No account matches this search.")).toBeTruthy();
     expect(accountList().getAllByRole("button")).toHaveLength(1);
+  });
+});
+
+describe("ArrivalPostsView time window", () => {
+  // Relative to the clock, because the window is.
+  const now = Date.now();
+  const hoursAgo = (hours: number) => new Date(now - hours * 60 * 60 * 1000).toISOString();
+  const recentAlice: ArrivalPost = {
+    ...POST,
+    arrival_key: "alice_shop:recent",
+    tweet_id: "recent",
+    tweet_created_at: hoursAgo(1),
+    acquired_at: hoursAgo(1),
+  };
+  const yesterdayBob: ArrivalPost = {
+    ...BOB_POST,
+    arrival_key: "bob_shop:yesterday",
+    tweet_id: "yesterday",
+    tweet_created_at: hoursAgo(30),
+    acquired_at: hoursAgo(30),
+  };
+  const oldCarol: ArrivalPost = {
+    ...POST,
+    arrival_key: "carol_shop:old",
+    buyer_handle: "carol",
+    twitter_handle: "carol_shop",
+    tweet_id: "old",
+    tweet_url: "https://x.com/carol_shop/status/old",
+    tweet_created_at: hoursAgo(72),
+    acquired_at: hoursAgo(72),
+  };
+  const CAROL_SOURCE: ArrivalSource = {
+    buyer_handle: "carol",
+    twitter_handle: "carol_shop",
+    post_count: 5,
+    recent_count: 0,
+    latest_post_at: hoursAgo(72),
+  };
+  const everyone: ArrivalSourcesLoader = async () => [ALICE_SOURCE, BOB_SOURCE, CAROL_SOURCE];
+
+  // The cutoff the view sent to the account summary, within a minute of the expected one.
+  function expectSinceNear(since: string | null | undefined, hours: number) {
+    expect(since).toEqual(expect.any(String));
+    expect(Math.abs(Date.parse(since!) - (now - hours * 60 * 60 * 1000))).toBeLessThan(60_000);
+  }
+
+  it("shows the last 48 hours by default, drops older rows, stops paging past the cutoff, and sends the cutoff to the account summary", async () => {
+    const cursor: ArrivalCursor = { before: oldCarol.tweet_created_at!, before_key: oldCarol.arrival_key };
+    const loader = vi.fn(async () => page([recentAlice, yesterdayBob, oldCarol], cursor));
+    const sourcesLoader = vi.fn<ArrivalSourcesLoader>(everyone);
+    view(loader, sourcesLoader);
+
+    expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(2);
+    expect(windowChip("48 h").getAttribute("aria-pressed")).toBe("true");
+    expect(window.location.search).toBe("?view=arrivals");
+    expect(screen.getByText("2 posts loaded")).toBeTruthy();
+    // Carol's only post is outside the window, so she has no section; the panel still lists her.
+    expect(screen.getAllByTestId("arrival-account-group").map((group) => group.textContent)).toEqual([
+      expect.stringContaining("@alice_shop"),
+      expect.stringContaining("@bob_shop"),
+    ]);
+    const carol = accountList().getByRole("button", { name: /@carol_shop/ });
+    expect(carol.textContent).toContain("0 in 48 h");
+    expect(carol.textContent).toContain("5 posts");
+    // The page ended past the cutoff, so nothing newer is left to page to.
+    expect(screen.queryByRole("button", { name: "Load more posts" })).toBeNull();
+    expectSinceNear(sourcesLoader.mock.calls[0][0], 48);
+
+    fireEvent.click(windowChip("24 h"));
+    await waitFor(() => {
+      expect(loader).toHaveBeenCalledTimes(2);
+      expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(1);
+    });
+    expect(windowChip("24 h").getAttribute("aria-pressed")).toBe("true");
+    expect(window.location.search).toBe("?view=arrivals&since=24h");
+    expect(localStorage.getItem(ARRIVALS_WINDOW_KEY)).toBe("24h");
+    expect(screen.getAllByTestId("arrival-account-group")).toHaveLength(1);
+    expectSinceNear(sourcesLoader.mock.calls.at(-1)?.[0], 24);
+    await waitFor(() => {
+      expect(accountList().getByRole("button", { name: /@alice_shop/ }).textContent).toContain("3 in 24 h");
+    });
+  });
+
+  it("keeps Load more while a page ends inside the window and drops it once a page crosses the cutoff", async () => {
+    const secondAlice: ArrivalPost = {
+      ...recentAlice,
+      arrival_key: "alice_shop:second",
+      tweet_id: "second",
+      tweet_created_at: hoursAgo(2),
+      acquired_at: hoursAgo(2),
+    };
+    const firstCursor: ArrivalCursor = { before: secondAlice.tweet_created_at!, before_key: secondAlice.arrival_key };
+    const secondCursor: ArrivalCursor = { before: oldCarol.tweet_created_at!, before_key: oldCarol.arrival_key };
+    const loader = vi.fn(async (_buyerHandle: string, requested: ArrivalCursor | null) => (
+      requested ? page([yesterdayBob, oldCarol], secondCursor) : page([recentAlice, secondAlice], firstCursor)
+    ));
+    view(loader, everyone);
+
+    expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Load more posts" }));
+    await waitFor(() => {
+      expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(3);
+    });
+    expect(loader).toHaveBeenLastCalledWith("", firstCursor);
+    expect(screen.queryByRole("button", { name: "Load more posts" })).toBeNull();
+    expect(screen.getAllByTestId("arrival-account-group")).toHaveLength(2);
+  });
+
+  it("names the window in the empty state and offers Show all when the selection has older posts", async () => {
+    // Nothing at all is the plain empty state, in any window.
+    const { unmount } = view(vi.fn(async () => page([])), everyone);
+    expect((await screen.findByTestId("arrival-empty")).textContent).toContain("No arrival posts found");
+    expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
+    unmount();
+
+    const loader = vi.fn(async (buyerHandle: string) => page(buyerHandle === "alice" ? [] : [oldCarol]));
+    const sourcesLoader = vi.fn<ArrivalSourcesLoader>(everyone);
+    view(loader, sourcesLoader);
+
+    const empty = await screen.findByTestId("arrival-empty");
+    expect(empty.textContent).toContain("No arrival posts in the last 48 hours");
+    expect(empty.textContent).toContain("older posts outside the window");
+    expect(screen.queryByRole("button", { name: "Load more posts" })).toBeNull();
+
+    fireEvent.click(within(empty).getByRole("button", { name: "Show all" }));
+    expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(1);
+    expect(windowChip("All").getAttribute("aria-pressed")).toBe("true");
+    expect(window.location.search).toBe("?view=arrivals&since=all");
+    expect(localStorage.getItem(ARRIVALS_WINDOW_KEY)).toBe("all");
+    // All leaves the summary's own 24-hour recent count in place, and says so.
+    expect(sourcesLoader).toHaveBeenLastCalledWith(null);
+    await waitFor(() => {
+      expect(accountList().getByRole("button", { name: /@carol_shop/ }).textContent).toContain("0 in 24 h");
+    });
+
+    // A selection with no posts in any window is the plain empty state again.
+    fireEvent.click(accountList().getByRole("button", { name: /@alice_shop/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId("arrival-empty").textContent).toContain("No arrival posts found");
+    });
+    expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
+  });
+
+  it("treats a re-posted arrival as current for the window and the order, and says when and how it was re-posted", async () => {
+    const boostedCarol: ArrivalPost = {
+      ...oldCarol,
+      arrival_key: "carol_shop:boosted",
+      tweet_id: "boosted",
+      last_boosted_at: hoursAgo(3),
+      boost_count: 3,
+      via_retweet_of: "dave_shop",
+    };
+    const onceBob: ArrivalPost = { ...yesterdayBob, last_boosted_at: hoursAgo(0.5), boost_count: 1 };
+    // The backend orders by the re-posted time, so this is the order a page arrives in.
+    const cursor: ArrivalCursor = { before: oldCarol.tweet_created_at!, before_key: oldCarol.arrival_key };
+    const loader = vi.fn(async () => page([onceBob, recentAlice, boostedCarol, oldCarol], cursor));
+    view(loader, everyone);
+
+    const cards = await screen.findAllByTestId("arrival-post-card");
+    // Carol's 72-hour-old post was re-posted 3 hours ago, so it is inside the 48-hour window.
+    expect(cards).toHaveLength(3);
+    expect(screen.getAllByTestId("arrival-account-group").map((group) => group.textContent)).toEqual([
+      expect.stringContaining("@bob_shop"),
+      expect.stringContaining("@alice_shop"),
+      expect.stringContaining("@carol_shop"),
+    ]);
+    expect(screen.queryByRole("button", { name: "Load more posts" })).toBeNull();
+    expect(screen.getAllByTestId("arrival-reposted").map((badge) => badge.textContent)).toEqual([
+      "Re-posted 30 minutes ago",
+      "Re-posted 3 times, last 3 hours ago",
+    ]);
+    expect(screen.getByTestId("arrival-via").textContent).toBe("via @dave_shop");
+    expect(within(cards[1]).queryByTestId("arrival-reposted")).toBeNull();
+    expect(within(cards[1]).queryByTestId("arrival-via")).toBeNull();
+  });
+
+  it("hydrates the window from ?since=, labels the counts with it, and otherwise applies the remembered choice", async () => {
+    window.history.replaceState(null, "", "/dashboard?view=arrivals&since=7d");
+    const loader = vi.fn(async () => page([recentAlice, yesterdayBob, oldCarol]));
+    const sourcesLoader = vi.fn<ArrivalSourcesLoader>(everyone);
+    const { unmount } = view(loader, sourcesLoader);
+
+    expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(3);
+    expect(windowChip("7 days").getAttribute("aria-pressed")).toBe("true");
+    expect(window.location.search).toBe("?view=arrivals&since=7d");
+    expectSinceNear(sourcesLoader.mock.calls[0][0], 7 * 24);
+    await waitFor(() => {
+      expect(accountList().getByRole("button", { name: /@alice_shop/ }).textContent).toContain("3 in 7 days");
+    });
+    expect(screen.getAllByTestId("arrival-account-group")).toHaveLength(3);
+    // A link does not overwrite the viewer's remembered choice.
+    expect(localStorage.getItem(ARRIVALS_WINDOW_KEY)).toBeNull();
+    unmount();
+
+    // A window the tab does not offer is ignored in favour of the remembered one.
+    localStorage.setItem(ARRIVALS_WINDOW_KEY, "24h");
+    window.history.replaceState(null, "", "/dashboard?view=arrivals&since=3d");
+    view(loader, sourcesLoader);
+
+    expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(1);
+    expect(windowChip("24 h").getAttribute("aria-pressed")).toBe("true");
+    expect(window.location.search).toBe("?view=arrivals&since=24h");
   });
 });

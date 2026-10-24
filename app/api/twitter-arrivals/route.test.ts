@@ -100,6 +100,44 @@ describe("protected Twitter arrivals route", () => {
     });
   });
 
+  it("carries a re-post forward in the cursor, since the RPC orders rows by it", async () => {
+    const posts = [
+      {
+        arrival_key: "alice_shop:2",
+        tweet_created_at: "2026-10-20T12:00:00Z",
+        acquired_at: "2026-10-20T12:01:00Z",
+        last_boosted_at: null,
+        boost_count: 0,
+        via_retweet_of: null,
+      },
+      {
+        arrival_key: "alice_shop:3",
+        tweet_created_at: "2026-10-18T09:00:00Z",
+        acquired_at: "2026-10-18T09:01:00Z",
+        last_boosted_at: "2026-10-20T11:30:00Z",
+        boost_count: 2,
+        via_retweet_of: "dave_shop",
+      },
+    ];
+    mocks.rpc.mockResolvedValue({ data: posts, error: null });
+
+    const response = await GET(request("?limit=2"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      posts,
+      next_cursor: { before: "2026-10-20T11:30:00Z", before_key: "alice_shop:3" },
+    });
+
+    // A re-post older than the tweet changes nothing; an unreadable one fails closed.
+    mocks.rpc.mockResolvedValue({ data: [{ ...posts[0], last_boosted_at: "2026-10-19T00:00:00Z" }], error: null });
+    expect(await (await GET(request("?limit=1"))).json()).toEqual(expect.objectContaining({
+      next_cursor: { before: "2026-10-20T12:00:00Z", before_key: "alice_shop:2" },
+    }));
+    mocks.rpc.mockResolvedValue({ data: [{ ...posts[0], last_boosted_at: "yesterday" }], error: null });
+    expect((await GET(request("?limit=1"))).status).toBe(500);
+  });
+
   it("fails closed when a full RPC page cannot produce a stable cursor", async () => {
     mocks.rpc.mockResolvedValue({
       data: [{ arrival_key: "alice:1" }],
