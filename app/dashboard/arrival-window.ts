@@ -3,17 +3,26 @@
 // the last 48 hours by default and offers 24 hours, 7 days, and All. Nothing is
 // deleted: the posts are evidence, and All still shows every one of them.
 //
-// The posts RPC has no since filter, but it returns rows newest first by
-// observed time (tweet_created_at, else acquired_at), so the window is exact
-// when applied here: rows older than the cutoff are dropped, and once a page's
-// last row is older than the cutoff every row a later page could return is
-// older too, so paging stops. The account summary RPC does take p_since, and
-// the same cutoff goes there so each account's recent count is the window's.
+// The window's cutoff goes to both backend RPCs as p_since (inclusive), so the
+// posts RPC returns only rows observed inside the window and the account
+// summary counts the same rows. The feed still applies the cutoff to the rows
+// it receives: the RPC orders newest first by observed time (tweet_created_at,
+// else acquired_at, lifted to a later re-post), so dropping older rows is
+// exact, and once a page's last row is older than the cutoff every row a later
+// page could return is older too, so paging stops there as well.
+//
+// A finite window is loaded whole: the feed follows the cursor page after page
+// until the window is exhausted, so an account's section shows every post it
+// made in the window, not the ones that happened to land in the first page.
+// MAX_WINDOW_PAGES bounds one such run; past it the viewer continues by hand.
 import { readLocalStorage, writeLocalStorage } from "@/lib/local-storage";
 import { type ArrivalAccountPost, postObservedAt } from "./arrival-accounts";
 import { type ArrivalWindow, DEFAULT_ARRIVAL_WINDOW, parseWindowParam } from "./url-params";
 
 export const ARRIVALS_WINDOW_KEY = "arrivals.window";
+
+/** The most pages (of up to 100 posts) one load follows on its own before handing over to Load more. */
+export const MAX_WINDOW_PAGES = 30;
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -71,6 +80,19 @@ export function pageExhaustsWindow(
 ): boolean {
   if (cutoff === null || page.length === 0) return false;
   return !withinWindow(page[page.length - 1], cutoff);
+}
+
+/**
+ * True when a load should fetch the next page on its own: the window is
+ * finite, a page is left to fetch, and the run is still within the bound.
+ * All never pages on its own, because there is no end to reach.
+ */
+export function windowPagingContinues(
+  cutoff: number | null,
+  nextCursor: object | null,
+  pagesLoaded: number,
+): boolean {
+  return cutoff !== null && nextCursor !== null && pagesLoaded < MAX_WINDOW_PAGES;
 }
 
 /** The viewer's remembered window, or the default when none is stored or the stored one is not offered. */

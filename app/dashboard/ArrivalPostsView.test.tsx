@@ -8,6 +8,7 @@ import ArrivalPostsView, {
   ArrivalPostsRequestError,
   type ArrivalCursor,
   type ArrivalPost,
+  type ArrivalPostsLoader,
   type ArrivalPostsPage,
   type ArrivalSourcesLoader,
   parseArrivalPosts,
@@ -17,7 +18,7 @@ import {
   GROUP_BY_ACCOUNT_KEY,
   type ArrivalSource,
 } from "./arrival-accounts";
-import { ARRIVALS_WINDOW_KEY } from "./arrival-window";
+import { ARRIVALS_WINDOW_KEY, MAX_WINDOW_PAGES } from "./arrival-window";
 
 const POST: ArrivalPost = {
   arrival_key: "alice_shop:2112064092735521045",
@@ -30,6 +31,7 @@ const POST: ArrivalPost = {
   last_boosted_at: null,
   boost_count: 0,
   via_retweet_of: null,
+  tweet_text: null,
   unverified: true,
   media: [{
     source_image_index: 0,
@@ -48,6 +50,16 @@ const BOB_POST: ArrivalPost = {
   tweet_url: "https://x.com/bob_shop/status/2",
   tweet_created_at: "2026-10-20T09:00:00+09:00",
   acquired_at: "2026-10-20T09:01:00+09:00",
+};
+
+// A caption as X delivers it: line breaks, an entity escape, a literal tag the
+// shop typed, and a t.co short link to the shop's listing.
+const TEXT_POST: ArrivalPost = {
+  ...POST,
+  arrival_key: "alice_shop:text",
+  tweet_id: "text",
+  tweet_url: "https://x.com/alice_shop/status/text",
+  tweet_text: "【入荷情報】\nリザードンex SAR <b>入荷</b>\n\n詳細はこちら https://t.co/AbC123xyz #ポケカ",
 };
 
 const ALICE_SOURCE: ArrivalSource = {
@@ -73,7 +85,7 @@ function page(posts: ArrivalPost[], nextCursor: ArrivalCursor | null = null): Ar
 const noSources: ArrivalSourcesLoader = async () => [];
 
 function view(
-  loader: (buyerHandle: string, cursor: ArrivalCursor | null) => Promise<ArrivalPostsPage>,
+  loader: ArrivalPostsLoader,
   sourcesLoader: ArrivalSourcesLoader = noSources,
 ) {
   return render(
@@ -153,8 +165,58 @@ describe("ArrivalPostsView", () => {
     await waitFor(() => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(1);
     });
-    expect(loader).toHaveBeenLastCalledWith("bob", null);
+    // All sends no window start to the RPC.
+    expect(loader).toHaveBeenLastCalledWith("bob", null, null);
     expect(screen.getByText("Showing posts from")).toBeTruthy();
+  });
+
+  it("shows the original caption as plain text with its line breaks, linking only the t.co short links", async () => {
+    const loader = vi.fn(async () => page([TEXT_POST, BOB_POST]));
+    view(loader, async () => [ALICE_SOURCE, BOB_SOURCE]);
+
+    const cards = await screen.findAllByTestId("arrival-post-card");
+    const body = within(cards[0]).getByTestId("arrival-text-body");
+    expect(body.textContent).toBe(TEXT_POST.tweet_text);
+    expect(body.className).toContain("whitespace-pre-line");
+    expect(body.className).toContain("line-clamp-6");
+    expect(body.getAttribute("lang")).toBe("ja");
+    // The tag the shop typed is text, never markup.
+    expect(body.querySelector("b")).toBeNull();
+    const link = within(body).getByRole("link", { name: "https://t.co/AbC123xyz" });
+    expect(link.getAttribute("href")).toBe("https://t.co/AbC123xyz");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noreferrer noopener");
+    // Nothing is clamped away here, so there is no expand control; a post
+    // without a caption has no text block at all.
+    expect(within(cards[0]).queryByRole("button", { name: "Show full text" })).toBeNull();
+    expect(within(cards[1]).queryByTestId("arrival-text")).toBeNull();
+  });
+
+  it("clamps a caption that overflows six lines and expands it on request", async () => {
+    // jsdom lays nothing out, so the measurement the card makes is stubbed.
+    const scrollHeight = vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(240);
+    const clientHeight = vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(120);
+    try {
+      view(vi.fn(async () => page([TEXT_POST])), async () => [ALICE_SOURCE]);
+
+      const [card] = await screen.findAllByTestId("arrival-post-card");
+      const toggle = within(card).getByRole("button", { name: "Show full text" });
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(within(card).getByTestId("arrival-text-body").className).toContain("line-clamp-6");
+
+      fireEvent.click(toggle);
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(toggle.textContent).toBe("Show less");
+      expect(within(card).getByTestId("arrival-text-body").className).not.toContain("line-clamp-6");
+      expect(within(card).getByTestId("arrival-text-body").textContent).toBe(TEXT_POST.tweet_text);
+
+      fireEvent.click(toggle);
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(within(card).getByTestId("arrival-text-body").className).toContain("line-clamp-6");
+    } finally {
+      scrollHeight.mockRestore();
+      clientHeight.mockRestore();
+    }
   });
 
   it("renders a retryable error and recovers without stale rows", async () => {
@@ -200,15 +262,23 @@ describe("ArrivalPostsView", () => {
     expect(() => parseArrivalPosts([{ ...POST, boost_count: -1 }])).toThrow("Invalid arrival count: boost_count");
     expect(() => parseArrivalPosts([{ ...POST, boost_count: 1.5 }])).toThrow("Invalid arrival count: boost_count");
     expect(() => parseArrivalPosts([{ ...POST, via_retweet_of: "" }])).toThrow("Invalid arrival field: via_retweet_of");
+    expect(() => parseArrivalPosts([{ ...POST, tweet_text: 7 }])).toThrow("Invalid arrival field: tweet_text");
+    expect(() => parseArrivalPosts([{ ...POST, tweet_text: ["a"] }])).toThrow("Invalid arrival field: tweet_text");
   });
 
-  it("reads the re-post fields when the backend sends them and defaults them when it does not", () => {
+  it("reads the re-post fields and the caption when the backend sends them and defaults them when it does not", () => {
     const legacy: Record<string, unknown> = { ...POST };
     delete legacy.last_boosted_at;
     delete legacy.boost_count;
     delete legacy.via_retweet_of;
+    delete legacy.tweet_text;
     expect(parseArrivalPosts([legacy])).toEqual([POST]);
-    expect(parseArrivalPosts([{ ...POST, last_boosted_at: null, boost_count: null, via_retweet_of: null }])).toEqual([POST]);
+    expect(parseArrivalPosts([{ ...POST, last_boosted_at: null, boost_count: null, via_retweet_of: null, tweet_text: null }])).toEqual([POST]);
+    // A caption keeps its line breaks, loses X's entity escapes and the
+    // surrounding whitespace, and a blank one is no caption.
+    expect(parseArrivalPosts([{ ...POST, tweet_text: "入荷 &amp; 再入荷\n&lt;限定&gt;\n\n" }])[0].tweet_text).toBe("入荷 & 再入荷\n<限定>");
+    expect(parseArrivalPosts([{ ...POST, tweet_text: "   \n" }])[0].tweet_text).toBeNull();
+    expect(parseArrivalPosts([{ ...POST, tweet_text: "" }])[0].tweet_text).toBeNull();
     expect(parseArrivalPosts([{
       ...POST,
       last_boosted_at: "2026-10-23T01:00:00Z",
@@ -246,20 +316,26 @@ describe("ArrivalPostsView", () => {
     view(loader, async () => [ALICE_SOURCE]);
 
     expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(100);
-    expect(screen.getAllByTestId("arrival-account-group")).toHaveLength(1);
+    const [group] = screen.getAllByTestId("arrival-account-group");
+    // All has no end to reach, so it never pages on its own, and the header
+    // counts what is loaded so far.
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(group.textContent).toContain("100 loaded");
     fireEvent.click(screen.getByRole("button", { name: "Load more posts" }));
     await waitFor(() => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(105);
     });
     expect(screen.getAllByTestId("arrival-account-group")).toHaveLength(1);
-    expect(loader).toHaveBeenLastCalledWith("", cursor);
+    expect(loader).toHaveBeenLastCalledWith("", cursor, null);
+    // The last page came back short, so these are all the posts there are.
+    expect(screen.getAllByTestId("arrival-account-group")[0].textContent).toContain("105 posts");
 
     fireEvent.click(accountList().getByRole("button", { name: /@alice_shop/ }));
     await waitFor(() => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(1);
     });
     expect(screen.queryByRole("button", { name: "Load more posts" })).toBeNull();
-    expect(loader).toHaveBeenLastCalledWith("alice", null);
+    expect(loader).toHaveBeenLastCalledWith("alice", null, null);
   });
 
   it("keeps loaded rows and the cursor through visible session recovery", async () => {
@@ -286,7 +362,7 @@ describe("ArrivalPostsView", () => {
     await waitFor(() => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(2);
     });
-    expect(loader).toHaveBeenLastCalledWith("", cursor);
+    expect(loader).toHaveBeenLastCalledWith("", cursor, null);
   });
 
   it("lists accounts newest first with the handle, the label when curated, and both counts", async () => {
@@ -345,7 +421,7 @@ describe("ArrivalPostsView", () => {
     await waitFor(() => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(2);
     });
-    expect(loader).toHaveBeenLastCalledWith("alice", null);
+    expect(loader).toHaveBeenLastCalledWith("alice", null, null);
     expect(accountList().getByRole("button", { name: /@bob_shop/ })).toBeTruthy();
     expect(accountList().getByRole("button", { name: /@alice_shop/ }).getAttribute("aria-pressed")).toBe("true");
   });
@@ -356,7 +432,7 @@ describe("ArrivalPostsView", () => {
     view(loader, async () => [ALICE_SOURCE, BOB_SOURCE]);
 
     await screen.findByText("No arrival posts found");
-    expect(loader).toHaveBeenNthCalledWith(1, "alice", null);
+    expect(loader).toHaveBeenNthCalledWith(1, "alice", null, null);
     await waitFor(() => {
       expect(accountList().getByRole("button", { name: /@alice_shop/ }).getAttribute("aria-pressed")).toBe("true");
     });
@@ -365,7 +441,7 @@ describe("ArrivalPostsView", () => {
 
     fireEvent.click(accountList().getByRole("button", { name: /@bob_shop/ }));
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("bob", null);
+      expect(loader).toHaveBeenLastCalledWith("bob", null, null);
     });
     // The remembered All window rides along as ?since=all; the shop keeps its place.
     expect(window.location.search).toBe("?view=arrivals&shop=bob&since=all");
@@ -374,7 +450,7 @@ describe("ArrivalPostsView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Show all accounts" }));
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("", null);
+      expect(loader).toHaveBeenLastCalledWith("", null, null);
     });
     expect(window.location.search).toBe("?view=arrivals&since=all");
     expect(screen.getByRole("button", { name: "Group by account" }).getAttribute("aria-pressed")).toBe("true");
@@ -386,7 +462,7 @@ describe("ArrivalPostsView", () => {
     view(loader);
 
     expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(1);
-    expect(loader).toHaveBeenLastCalledWith("", null);
+    expect(loader).toHaveBeenLastCalledWith("", null, null);
     expect(window.location.search).toBe("?view=arrivals&since=all");
   });
 
@@ -407,11 +483,21 @@ describe("ArrivalPostsView", () => {
     const aliceHeader = within(groups[0]).getByRole("button", { name: /@alice_shop/ });
     const bobHeader = within(groups[1]).getByRole("button", { name: /@bob_shop/ });
     expect(aliceHeader.textContent).toContain("Alice");
-    expect(aliceHeader.textContent).toContain("2 loaded");
+    // The one page was the last, so the headers count every post there is.
+    expect(aliceHeader.textContent).toContain("2 posts");
+    expect(bobHeader.textContent).toContain("1 post");
     expect(aliceHeader.textContent).toContain("Oct 20, 2026, 10:15 AM");
     expect(within(groups[0]).getAllByTestId("arrival-post-card")).toHaveLength(2);
     expect(within(groups[1]).getAllByTestId("arrival-post-card")).toHaveLength(1);
     expect(bobHeader.getAttribute("aria-expanded")).toBe("true");
+    // Each account is its own bounded scroll panel, shorter on a phone, with
+    // the header pinned while its posts scroll underneath.
+    for (const group of groups) {
+      expect(group.className).toContain("overflow-y-auto");
+      expect(group.className).toContain("max-h-[60dvh]");
+      expect(group.className).toContain("md:max-h-[70dvh]");
+      expect(group.querySelector("h2")?.className).toContain("sticky top-0");
+    }
 
     fireEvent.click(bobHeader);
     expect(bobHeader.getAttribute("aria-expanded")).toBe("false");
@@ -538,7 +624,7 @@ describe("ArrivalPostsView time window", () => {
 
   it("shows the last 48 hours by default, drops older rows, stops paging past the cutoff, and sends the cutoff to the account summary", async () => {
     const cursor: ArrivalCursor = { before: oldCarol.tweet_created_at!, before_key: oldCarol.arrival_key };
-    const loader = vi.fn(async () => page([recentAlice, yesterdayBob, oldCarol], cursor));
+    const loader = vi.fn<ArrivalPostsLoader>(async () => page([recentAlice, yesterdayBob, oldCarol], cursor));
     const sourcesLoader = vi.fn<ArrivalSourcesLoader>(everyone);
     view(loader, sourcesLoader);
 
@@ -556,6 +642,9 @@ describe("ArrivalPostsView time window", () => {
     expect(carol.textContent).toContain("5 posts");
     // The page ended past the cutoff, so nothing newer is left to page to.
     expect(screen.queryByRole("button", { name: "Load more posts" })).toBeNull();
+    expect(loader).toHaveBeenCalledTimes(1);
+    // The same cutoff went to the posts RPC and to the account summary.
+    expectSinceNear(loader.mock.calls[0][2], 48);
     expectSinceNear(sourcesLoader.mock.calls[0][0], 48);
 
     fireEvent.click(windowChip("24 h"));
@@ -573,7 +662,7 @@ describe("ArrivalPostsView time window", () => {
     });
   });
 
-  it("keeps Load more while a page ends inside the window and drops it once a page crosses the cutoff", async () => {
+  it("follows the cursor on its own while pages end inside the window and stops once one crosses the cutoff", async () => {
     const secondAlice: ArrivalPost = {
       ...recentAlice,
       arrival_key: "alice_shop:second",
@@ -583,19 +672,81 @@ describe("ArrivalPostsView time window", () => {
     };
     const firstCursor: ArrivalCursor = { before: secondAlice.tweet_created_at!, before_key: secondAlice.arrival_key };
     const secondCursor: ArrivalCursor = { before: oldCarol.tweet_created_at!, before_key: oldCarol.arrival_key };
-    const loader = vi.fn(async (_buyerHandle: string, requested: ArrivalCursor | null) => (
-      requested ? page([yesterdayBob, oldCarol], secondCursor) : page([recentAlice, secondAlice], firstCursor)
+    let releaseSecond!: () => void;
+    const second = new Promise<ArrivalPostsPage>((resolve) => {
+      releaseSecond = () => resolve(page([yesterdayBob, oldCarol], secondCursor));
+    });
+    const loader = vi.fn((_buyerHandle: string, requested: ArrivalCursor | null) => (
+      requested ? second : Promise.resolve(page([recentAlice, secondAlice], firstCursor))
     ));
     view(loader, everyone);
 
+    // The first page shows at once; the rest of the window streams in behind
+    // a visible status, with no click.
     expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "Load more posts" }));
+    expect(screen.getByTestId("arrival-window-loading").textContent).toContain("Loading every post in the window");
+    expect(screen.getByRole("button", { name: "Loading more posts" })).toBeTruthy();
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(loader).toHaveBeenLastCalledWith("", firstCursor, expect.any(String));
+    expect(screen.getAllByTestId("arrival-account-group")[0].textContent).toContain("2 loaded");
+
+    await act(async () => releaseSecond());
     await waitFor(() => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(3);
     });
-    expect(loader).toHaveBeenLastCalledWith("", firstCursor);
+    // That page crossed the cutoff, so the window is exhausted: no more
+    // paging, no status, and the headers count the posts in the window.
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId("arrival-window-loading")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Load(ing)? more posts/ })).toBeNull();
+    expect(screen.queryByTestId("arrival-window-bound")).toBeNull();
+    const groups = screen.getAllByTestId("arrival-account-group");
+    expect(groups).toHaveLength(2);
+    expect(groups[0].textContent).toContain("2 posts");
+    expect(groups[1].textContent).toContain("1 post");
+    expect(screen.getByText("3 posts loaded")).toBeTruthy();
+  });
+
+  it("pauses at the page bound with Load more, which continues until the window is exhausted", async () => {
+    // Every page holds one post inside the window and points at the next, for
+    // more pages than one run follows; the page after the bound is the last.
+    const postAt = (index: number): ArrivalPost => ({
+      ...recentAlice,
+      arrival_key: `alice_shop:page-${index}`,
+      tweet_id: `page-${index}`,
+      tweet_created_at: hoursAgo(1 + index / 1000),
+      acquired_at: hoursAgo(1 + index / 1000),
+    });
+    const cursorAt = (index: number): ArrivalCursor => ({
+      before: postAt(index).tweet_created_at!,
+      before_key: postAt(index).arrival_key,
+    });
+    const loader = vi.fn<ArrivalPostsLoader>(async (_buyerHandle, requested) => {
+      const index = requested ? Number(requested.before_key.split("-")[1]) + 1 : 0;
+      return page([postAt(index)], index === MAX_WINDOW_PAGES ? null : cursorAt(index));
+    });
+    view(loader, everyone);
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(MAX_WINDOW_PAGES);
+    });
+    expect(loader).toHaveBeenCalledTimes(MAX_WINDOW_PAGES);
+    expect(loader).toHaveBeenLastCalledWith("", cursorAt(MAX_WINDOW_PAGES - 2), expect.any(String));
+    expectSinceNear(loader.mock.calls[0][2], 48);
+    await waitFor(() => {
+      expect(screen.queryByTestId("arrival-window-loading")).toBeNull();
+    });
+    expect(screen.getByTestId("arrival-window-bound").textContent).toContain("more posts than are loaded");
+    expect(screen.getAllByTestId("arrival-account-group")[0].textContent).toContain(`${MAX_WINDOW_PAGES} loaded`);
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more posts" }));
+    await waitFor(() => {
+      expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(MAX_WINDOW_PAGES + 1);
+    });
+    expect(loader).toHaveBeenCalledTimes(MAX_WINDOW_PAGES + 1);
     expect(screen.queryByRole("button", { name: "Load more posts" })).toBeNull();
-    expect(screen.getAllByTestId("arrival-account-group")).toHaveLength(2);
+    expect(screen.queryByTestId("arrival-window-bound")).toBeNull();
+    expect(screen.getAllByTestId("arrival-account-group")[0].textContent).toContain(`${MAX_WINDOW_PAGES + 1} posts`);
   });
 
   it("names the window in the empty state and offers Show all when the selection has older posts", async () => {

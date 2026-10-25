@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -41,12 +41,14 @@ import {
   writeCollapsedAccounts,
   writeGroupByAccount,
 } from "./arrival-accounts";
+import { decodeTweetText, tweetTextSegments } from "./arrival-text";
 import {
   cutoffISO,
   pageExhaustsWindow,
   postsWithinWindow,
   readArrivalWindow,
   windowCutoff,
+  windowPagingContinues,
   writeArrivalWindow,
 } from "./arrival-window";
 import {
@@ -86,6 +88,12 @@ export type ArrivalPost = {
   last_boosted_at: string | null;
   boost_count: number;
   via_retweet_of: string | null;
+  /**
+   * The post's original caption, as the shop wrote it (migration 000605).
+   * Older backends send no column and posts captured before the caption was
+   * kept send null; both read as "nothing to show". Entity escapes are decoded.
+   */
+  tweet_text: string | null;
   unverified: true;
   media: ArrivalMedia[];
 };
@@ -100,9 +108,14 @@ export type ArrivalPostsPage = {
   nextCursor: ArrivalCursor | null;
 };
 
+/**
+ * Loads one page of posts. `since` is the window's start (RFC 3339, inclusive)
+ * for the RPC's `p_since`, or null for All.
+ */
 export type ArrivalPostsLoader = (
   buyerHandle: string,
   cursor: ArrivalCursor | null,
+  since: string | null,
 ) => Promise<ArrivalPostsPage>;
 
 /**
@@ -157,6 +170,14 @@ function optionalHandle(value: unknown, field: string): string | null {
   return value == null ? null : requiredString(value, field);
 }
 
+// The caption is optional on a row: absent, null, or blank means nothing to show.
+function optionalText(value: unknown, field: string): string | null {
+  if (value == null) return null;
+  if (typeof value !== "string") throw new Error(`Invalid arrival field: ${field}`);
+  const text = decodeTweetText(value).trim();
+  return text === "" ? null : text;
+}
+
 function countOrZero(value: unknown, field: string): number {
   if (value == null) return 0;
   const count = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
@@ -194,6 +215,7 @@ export function parseArrivalPosts(value: unknown): ArrivalPost[] {
       last_boosted_at: optionalTimestamp(row.last_boosted_at, `last_boosted_at: ${rowIndex}`),
       boost_count: countOrZero(row.boost_count, `boost_count: ${rowIndex}`),
       via_retweet_of: optionalHandle(row.via_retweet_of, `via_retweet_of: ${rowIndex}`),
+      tweet_text: optionalText(row.tweet_text, `tweet_text: ${rowIndex}`),
       unverified: true,
       media: row.media.map((rawMedia, mediaIndex) => {
         if (rawMedia == null || typeof rawMedia !== "object" || Array.isArray(rawMedia)) {
@@ -240,13 +262,14 @@ function requestError(status: number, body: unknown): ArrivalPostsRequestError {
   return new ArrivalPostsRequestError(status, message);
 }
 
-export const loadArrivalPosts: ArrivalPostsLoader = async (buyerHandle, cursor) => {
+export const loadArrivalPosts: ArrivalPostsLoader = async (buyerHandle, cursor, since) => {
   const query = new URLSearchParams({ limit: "100" });
   if (buyerHandle) query.set("buyer_handle", buyerHandle);
   if (cursor) {
     query.set("before", cursor.before);
     query.set("before_key", cursor.before_key);
   }
+  if (since) query.set("since", since);
   const response = await fetch(`/api/twitter-arrivals?${query}`, {
     cache: "no-store",
     headers: { accept: "application/json" },
@@ -562,6 +585,67 @@ function ArrivalAccountPanel({
   );
 }
 
+// The post's caption as the shop wrote it: plain text with its line breaks,
+// clamped to a few lines until the viewer asks for all of it. Whether the clamp
+// actually hides anything is measured, not guessed, because the same 140
+// Japanese characters fill three lines on a wide card and nine on a narrow one.
+function ArrivalText({ text }: { text: string }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const body = useRef<HTMLParagraphElement>(null);
+
+  useLayoutEffect(() => {
+    const element = body.current;
+    if (!element || expanded) return;
+    const measure = () => setOverflows(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [expanded, text]);
+
+  return (
+    <div className="min-w-0 space-y-1" data-testid="arrival-text">
+      <p
+        ref={body}
+        lang="ja"
+        className={cn("min-w-0 break-words whitespace-pre-line text-sm", !expanded && "line-clamp-6")}
+        data-testid="arrival-text-body"
+      >
+        {tweetTextSegments(text).map((segment, index) => (
+          segment.kind === "link" ? (
+            <a
+              key={index}
+              href={segment.value}
+              target="_blank"
+              rel="noreferrer noopener"
+              className={cn("break-all text-primary underline underline-offset-2", FOCUS_RING)}
+            >
+              {segment.value}
+            </a>
+          ) : (
+            <Fragment key={index}>{segment.value}</Fragment>
+          )
+        ))}
+      </p>
+      {(overflows || expanded) && (
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          className="h-auto min-h-11 px-0 sm:min-h-0"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded ? t("arrivals.textShowLess") : t("arrivals.textShowMore")}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function ArrivalPostCard({
   post,
   dateTime,
@@ -615,6 +699,7 @@ function ArrivalPostCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
+        {post.tweet_text !== null && <ArrivalText text={post.tweet_text} />}
         <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3">
           {post.media.map((media) => (
             <a
@@ -744,9 +829,12 @@ export default function ArrivalPostsView({
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  // `cutoff` is the oldest observed time the window shows (null for All).
-  // Pages arrive newest first, so once one ends past the cutoff, every row a
-  // later page could return is older too, and paging stops there.
+  // `cutoff` is the oldest observed time the window shows (null for All); it
+  // goes to the RPC as p_since. A finite window is loaded whole: the first page
+  // shows as soon as it arrives and the rest stream in behind a visible loading
+  // state, page after page, until the window is exhausted (the RPC returns a
+  // short page, or a page ends past the cutoff) or the run reaches
+  // MAX_WINDOW_PAGES, where Load more takes over. All pages by hand only.
   const load = useCallback(async (
     buyerHandle: string,
     cursor: ArrivalCursor | null,
@@ -754,6 +842,7 @@ export default function ArrivalPostsView({
     cutoff: number | null,
   ) => {
     const generation = ++requestGeneration.current;
+    const current = () => requestGeneration.current === generation;
     if (append) {
       setLoadingMore(true);
       setLoadMoreError(null);
@@ -764,36 +853,50 @@ export default function ArrivalPostsView({
       setPosts([]);
       setNextCursor(null);
     }
+    const since = cutoffISO(cutoff);
+    let first = !append;
+    let next = cursor;
+    let pages = 0;
     try {
-      const page = await loader(buyerHandle, cursor);
-      if (requestGeneration.current !== generation) return;
-      setPosts((current) => {
-        if (!append) return page.posts;
-        const known = new Set(current.map((post) => post.arrival_key));
-        return [
-          ...current,
-          ...page.posts.filter((post) => {
-            if (known.has(post.arrival_key)) return false;
-            known.add(post.arrival_key);
-            return true;
-          }),
-        ];
-      });
-      setSeen((current) => {
-        const next = new Map(current);
-        for (const post of page.posts) next.set(post.arrival_key, seenPost(post));
-        return next;
-      });
-      setNextCursor(pageExhaustsWindow(page.posts, cutoff) ? null : page.nextCursor);
+      do {
+        const page = await loader(buyerHandle, next, since);
+        if (!current()) return;
+        pages += 1;
+        const replace = first;
+        setPosts((known) => {
+          if (replace) return page.posts;
+          const keys = new Set(known.map((post) => post.arrival_key));
+          return [
+            ...known,
+            ...page.posts.filter((post) => {
+              if (keys.has(post.arrival_key)) return false;
+              keys.add(post.arrival_key);
+              return true;
+            }),
+          ];
+        });
+        setSeen((known) => {
+          const merged = new Map(known);
+          for (const post of page.posts) merged.set(post.arrival_key, seenPost(post));
+          return merged;
+        });
+        next = pageExhaustsWindow(page.posts, cutoff) ? null : page.nextCursor;
+        setNextCursor(next);
+        if (first) {
+          first = false;
+          setLoading(false);
+        }
+        if (windowPagingContinues(cutoff, next, pages)) setLoadingMore(true);
+      } while (windowPagingContinues(cutoff, next, pages));
     } catch (reason) {
-      if (requestGeneration.current !== generation) return;
+      if (!current()) return;
       const failure = asError(reason);
-      if (append) setLoadMoreError(failure);
-      else setError(failure);
+      if (first) setError(failure);
+      else setLoadMoreError(failure);
     } finally {
-      if (requestGeneration.current === generation) {
-        if (append) setLoadingMore(false);
-        else setLoading(false);
+      if (current()) {
+        setLoading(false);
+        setLoadingMore(false);
       }
     }
   }, [loader]);
@@ -848,10 +951,17 @@ export default function ArrivalPostsView({
     ? accounts.find((account) => account.buyer_handle === selected) ?? null
     : null;
 
-  // The window applies here: the posts RPC has no since filter, but it orders
-  // newest first, so dropping the rows past the cutoff is exact.
+  // The RPC already applies the window as p_since; the same cutoff applies here
+  // too, so a backend without it (or a row on the boundary) cannot show a post
+  // the window excludes. The rows arrive newest first, so dropping those past
+  // the cutoff is exact.
   const visible = useMemo(() => postsWithinWindow(posts, cutoff), [posts, cutoff]);
   const hidden = posts.length - visible.length;
+
+  // Once there is no page left, the loaded posts are every post in the window
+  // (or, for All, every post there is), and the group headers count them as
+  // such; until then they say how many are loaded so far.
+  const windowComplete = nextCursor === null;
 
   // Grouping the visible rows also leaves out the accounts with nothing in the window.
   const groups = useMemo(
@@ -903,6 +1013,11 @@ export default function ArrivalPostsView({
     <ArrivalPostCard key={post.arrival_key} post={post} dateTime={dateTime} now={loadedAt} />
   ));
 
+  const groupCount = (count: number) => {
+    if (!windowComplete) return t("arrivals.groupPosts", { count });
+    return count === 1 ? t("arrivals.postCountOne") : t("arrivals.postCount", { count });
+  };
+
   return (
     <section className="mx-auto w-full max-w-7xl min-w-0 space-y-4" aria-labelledby="arrival-posts-title">
       <div className="space-y-1">
@@ -951,6 +1066,16 @@ export default function ArrivalPostsView({
                   {visible.length === 1
                     ? t("arrivals.loadedCountOne")
                     : t("arrivals.loadedCount", { count: visible.length })}
+                </span>
+              )}
+              {!loading && loadingMore && (
+                <span
+                  className="flex items-center gap-1.5 text-muted-foreground"
+                  role="status"
+                  data-testid="arrival-window-loading"
+                >
+                  <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                  {cutoff === null ? t("arrivals.loadingMore") : t("arrivals.loadingWindow")}
                 </span>
               )}
             </div>
@@ -1016,20 +1141,23 @@ export default function ArrivalPostsView({
               {groups.map((group) => {
                 const open = !collapsed.has(group.buyer_handle);
                 const headingId = `arrival-group-${encodeURIComponent(group.buyer_handle)}`;
+                // Each account is a panel that scrolls on its own, with its
+                // header pinned, so one prolific shop cannot push the others
+                // off the page. The ring is inset because the panel clips.
                 return (
                   <section
                     key={group.buyer_handle}
-                    className="min-w-0 rounded-xl border bg-card"
+                    className="min-w-0 max-h-[60dvh] overflow-x-hidden overflow-y-auto rounded-xl border bg-card md:max-h-[70dvh]"
                     aria-labelledby={headingId}
                     data-testid="arrival-account-group"
                   >
-                    <h2 id={headingId} className="m-0">
+                    <h2 id={headingId} className={cn("sticky top-0 z-10 m-0 bg-card", open && "border-b")}>
                       <button
                         type="button"
                         aria-expanded={open}
                         onClick={() => toggleCollapsed(group.buyer_handle)}
                         className={cn(
-                          "flex min-h-11 w-full min-w-0 items-center gap-2 rounded-xl px-3 py-2 text-left hover:bg-accent/50",
+                          "flex min-h-11 w-full min-w-0 items-center gap-2 rounded-xl px-3 py-2 text-left hover:bg-accent/50 focus-visible:ring-inset",
                           FOCUS_RING,
                         )}
                       >
@@ -1044,12 +1172,12 @@ export default function ArrivalPostsView({
                           className="min-w-0 flex-1"
                         />
                         <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                          {t("arrivals.groupPosts", { count: group.posts.length })} · {dateTime(group.latest_post_at)}
+                          {groupCount(group.posts.length)} · {dateTime(group.latest_post_at)}
                         </span>
                       </button>
                     </h2>
                     {open && (
-                      <div className="grid min-w-0 gap-4 border-t p-3 md:grid-cols-2" data-testid="arrival-post-list">
+                      <div className="grid min-w-0 gap-4 p-3 md:grid-cols-2" data-testid="arrival-post-list">
                         {cards(group.posts)}
                       </div>
                     )}
@@ -1071,6 +1199,11 @@ export default function ArrivalPostsView({
                   title={t("arrivals.moreErrorTitle")}
                   onRetry={() => void load(selected, nextCursor, true, cutoff)}
                 />
+              )}
+              {nextCursor && !loadMoreError && cutoff !== null && !loadingMore && (
+                <p className="text-sm text-muted-foreground" data-testid="arrival-window-bound">
+                  {t("arrivals.windowBoundNote")}
+                </p>
               )}
               {nextCursor && !loadMoreError && (
                 <Button

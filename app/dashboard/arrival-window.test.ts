@@ -3,12 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ArrivalAccountPost } from "./arrival-accounts";
 import {
   ARRIVALS_WINDOW_KEY,
+  MAX_WINDOW_PAGES,
   cutoffISO,
   pageExhaustsWindow,
   postsWithinWindow,
   readArrivalWindow,
   windowCutoff,
   windowMs,
+  windowPagingContinues,
   withinWindow,
   writeArrivalWindow,
 } from "./arrival-window";
@@ -92,6 +94,19 @@ describe("pageExhaustsWindow", () => {
   it("never stops for All or for an empty page", () => {
     expect(pageExhaustsWindow([post("a", at(900))], null)).toBe(false);
     expect(pageExhaustsWindow([], cutoff)).toBe(false);
+  });
+});
+
+describe("windowPagingContinues", () => {
+  const cutoff = NOW - 48 * HOUR;
+  const cursor = { before: at(1), before_key: "alice:1" };
+
+  it("follows the cursor of a finite window until the bound, and never for All or at the end", () => {
+    expect(windowPagingContinues(cutoff, cursor, 1)).toBe(true);
+    expect(windowPagingContinues(cutoff, cursor, MAX_WINDOW_PAGES - 1)).toBe(true);
+    expect(windowPagingContinues(cutoff, cursor, MAX_WINDOW_PAGES)).toBe(false);
+    expect(windowPagingContinues(cutoff, null, 1)).toBe(false);
+    expect(windowPagingContinues(null, cursor, 1)).toBe(false);
   });
 });
 
