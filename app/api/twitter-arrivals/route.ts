@@ -73,11 +73,19 @@ export async function GET(request: NextRequest) {
     return badRequest("limit must be an integer between 1 and 100");
   }
 
+  // The window's start, inclusive; the RPC compares it with the same observed
+  // time it orders by, so a windowed page is never fetched then dropped.
+  const rawSince = request.nextUrl.searchParams.get("since")?.trim() ?? "";
+  if (rawSince && (rawSince.length > 64 || Number.isNaN(Date.parse(rawSince)))) {
+    return badRequest("since must be an RFC 3339 timestamp");
+  }
+
   const { data, error } = await supabase.rpc("twitter_arrival_posts", {
     p_buyer_handle: rawBuyer || null,
     p_before: rawBefore || null,
     p_before_key: rawBeforeKey || null,
     p_limit: limit,
+    p_since: rawSince || null,
   });
   if (error) {
     const forbidden = error.code === "42501"

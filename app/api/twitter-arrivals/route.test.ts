@@ -47,6 +47,8 @@ describe("protected Twitter arrivals route", () => {
       "?before_key=alice%3A1",
       `?before=2026-10-20T12%3A00%3A00Z&before_key=${"a".repeat(513)}`,
       `?buyer_handle=${"a".repeat(101)}`,
+      "?since=yesterday",
+      `?since=2026-10-20T12%3A00%3A00Z${"0".repeat(60)}`,
     ]) {
       const response = await GET(request(query));
       expect(response.status, query).toBe(400);
@@ -69,8 +71,24 @@ describe("protected Twitter arrivals route", () => {
       p_before: "2026-10-20T12:00:00Z",
       p_before_key: "alice_shop:1",
       p_limit: 25,
+      p_since: null,
     });
     expect(await response.json()).toEqual({ posts, next_cursor: null });
+  });
+
+  it("passes the window start to the RPC as p_since", async () => {
+    mocks.rpc.mockResolvedValue({ data: [], error: null });
+
+    const response = await GET(request("?since=2026-10-18T12%3A00%3A00.000Z&limit=100"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("twitter_arrival_posts", {
+      p_buyer_handle: null,
+      p_before: null,
+      p_before_key: null,
+      p_limit: 100,
+      p_since: "2026-10-18T12:00:00.000Z",
+    });
   });
 
   it("returns the stable observed-time cursor when a page reaches its limit", async () => {
