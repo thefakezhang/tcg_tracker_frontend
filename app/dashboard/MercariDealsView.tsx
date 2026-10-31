@@ -310,7 +310,7 @@ export const recordMercariDealAction: MercariDealActor = async (externalItemId, 
   }
 };
 
-function previewURL(sourceURL: string): string {
+export function previewURL(sourceURL: string): string {
   if (sourceURL.startsWith("data:") || sourceURL.startsWith("/")) return sourceURL;
   return `/api/proxy-image?url=${encodeURIComponent(sourceURL)}`;
 }
@@ -323,7 +323,7 @@ function isUnknown(value: string | null): boolean {
   return value === null || value.trim() === "" || value === "UNKNOWN";
 }
 
-const SELLER_CONDITION_KEYS: Record<MercariSellerConditionID, TranslationKey> = {
+export const SELLER_CONDITION_KEYS: Record<MercariSellerConditionID, TranslationKey> = {
   "1": "mercari.sellerCondition.1",
   "2": "mercari.sellerCondition.2",
   "3": "mercari.sellerCondition.3",
@@ -357,7 +357,7 @@ const FRESHNESS_CLASSES: Record<MercariDeal["freshness_status"], string> = {
   stale: "border-red-500/50 bg-red-500/10 text-red-800 dark:text-red-200",
 };
 
-function LoadFailure({
+export function LoadFailure({
   error,
   title,
   onRetry,
