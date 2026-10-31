@@ -24,7 +24,7 @@ import ExpensesTab from "./trip/ExpensesTab";
 import EnglishCounterpartReviewView from "./EnglishCounterpartReviewView";
 import EnglishCatalogReviewView from "./EnglishCatalogReviewView";
 import ArrivalPostsView from "./ArrivalPostsView";
-import MercariDealsView from "./MercariDealsView";
+import MercariTab from "./MercariTab";
 import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNavigationContext";
 
 function RoutedMatchReviewView() {
@@ -69,7 +69,7 @@ export const VIEWS: ViewDef[] = [
   { sentinel: -12, slug: "health", group: "catalog.section", icon: Activity, sidebarKey: "sidebar.sourceHealth", titleKey: "health.title", render: () => <SourceHealthView key="source-health" /> },
   { sentinel: -13, slug: "events", group: "catalog.section", icon: CalendarDays, sidebarKey: "events.title", titleKey: "events.title", render: () => <EventsCalendarView key="events-calendar" /> },
   { sentinel: -21, slug: "arrivals", group: "catalog.section", icon: PackageOpen, sidebarKey: "arrivals.nav", titleKey: "arrivals.title", render: () => <ArrivalPostsView key="arrival-posts" /> },
-  { sentinel: -22, slug: "mercari", group: "catalog.section", icon: Store, sidebarKey: "mercari.nav", titleKey: "mercari.title", render: () => <MercariDealsView key="mercari-deals" /> },
+  { sentinel: -22, slug: "mercari", group: "catalog.section", icon: Store, sidebarKey: "mercari.nav", titleKey: "mercari.tabTitle", render: () => <MercariTab key="mercari" /> },
   // Lives with the curation surfaces: it governs what the image-curation
   // pipeline auto-promotes, so the operator looks for it next to the queues.
   { sentinel: -15, slug: "auto-accept", group: "curation.title", icon: ShieldCheck, sidebarKey: "autoAccept.title", titleKey: "autoAccept.title", render: () => <ImageAutoAcceptView key="image-autoaccept" /> },

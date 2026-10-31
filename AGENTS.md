@@ -131,13 +131,18 @@ app/
     proxy-image/route.ts      # Same-origin proxy for external card images (PDF export needs canvas-safe images)
     twitter-arrivals/route.ts # Administrator-only arrival posts (RPC twitter_arrival_posts): buyer_handle filter + composite cursor + since window start (p_since)
     twitter-arrivals/sources/route.ts # Per-account arrival summary (RPC twitter_arrival_sources); 501 while the RPC is absent so the tab derives the list itself
+    mercari-deals/route.ts    # Operator-only Verified feed: mercari_published_deals_v, newest first, composite cursor (mercari_deals_tab.md)
+    mercari-deals/action/route.ts # Dismiss / recheck through RPC record_mercari_deal_item_action
+    mercari-leads/route.ts    # Operator-only Leads feed: mercari_leads_v, one required lane, best-multiple or newest keyset on the table's indexes (mercari_leads_tab.md)
+    mercari-leads/leads-query.ts # Request bounds, column list and keyset cursor for the leads route
+    mercari-leads/action/route.ts # Dismiss (reason required) / photo-check request through RPC record_mercari_lead_action
   dashboard/
     layout.tsx            # Auth guard, renders DashboardShell
     page.tsx              # Main-pane router, first match wins: views-registry sentinel -> TripDashboard (positive trip id) -> BuyListView -> SealedBrowser (pokemon_sealed) -> CardBrowser
     DashboardShell.tsx    # Context providers + sidebar + header
     views.tsx             # Single source of truth for top-level views (sentinel -> slug/group/icon/label/component)
-    url-state.ts          # Pure codec: view-selection contexts <-> /dashboard query string (?view=, ?view=arrivals&shop=&since=, ?trip=&tab=, ?buylist=, ?game=)
-    url-params.ts         # Leaf query params a view owns (?tab=, ?shop=, ?since=): readUrlParam / writeUrlParam (replaceState) and the shop and window validators; import-free so a view can use it without the views registry cycle
+    url-state.ts          # Pure codec: view-selection contexts <-> /dashboard query string (?view=, ?view=arrivals&shop=&since=, ?view=mercari&feed=&lane=&sort=, ?trip=&tab=, ?buylist=, ?game=)
+    url-params.ts         # Leaf query params a view owns (?tab=, ?shop=, ?since=, ?feed=, ?lane=, ?sort=): readUrlParam / writeUrlParam (replaceState) and their validators; import-free so a view can use it without the views registry cycle
     UrlStateSync.tsx      # Applies the URL on first paint / popstate, pushes history on context change, carries a leaf param while its selection stays
     AppSidebar.tsx        # Navigation, game picker, buy lists, user settings menu
     AccountMenuContent.tsx # Sidebar account dropdown: language, display currency, sign out
@@ -189,6 +194,9 @@ app/
     LotPickerContext.tsx  # Open (draft) acquisition lots, so browse surfaces can add cards straight into a lot
     MarketEvidenceCallout.tsx # Compact and detail presentation of Collectr/TCGPlayer market evidence
     MatchReviewView.tsx   # Match review queue for pending external-identifier candidates
+    MercariTab.tsx        # The `mercari` slug: Leads | Verified switch (?feed=verified), Leads the default
+    MercariLeadsView.tsx  # Leads feed: one lane at a time, age and photo-check badges, value evidence and multiple, fail-closed row parser
+    MercariDealsView.tsx  # Verified feed: photo-checked deal publication with exit, economics and reason codes
     MtgAliasesTab.tsx     # MTG text-variance alias manager (mtg_card_aliases)
     MtgCardIndex.tsx      # MTG catalog tab of the Card Index
     MtgPrintingBadges.tsx # EN/JP language and foil badges beside an MTG card's name (table, tile, detail)
@@ -696,7 +704,7 @@ The board renders the secondary line under the p50 and downgrades a bad p50 to w
 - Match rate is durable confirmed-link coverage against durable confirmed links plus the still-pending candidate queue, not matcher accuracy.
 - The same view reads the newest immutable `calibration_runs` row and surfaces its sample count, band coverage, bias, and representative-price recommendation.
   A zero-overlap run is explicitly a watch state and never presents a fabricated percentile.
-- Dashboard navigation is sentinel-based in memory (`activeTripId`: 0 = trips overview, negatives = standalone views, positives = a trip; plus `activeBuylistId`, `activeGame`) and mirrored to the URL by `UrlStateSync` (`url-state.ts` is the pure codec): `/dashboard?view=<slug>` (slug from `views.tsx`), `?trip=<id>&tab=<tab>`, `?buylist=<id>`, `?game=mtg|pokemon_sealed`; no params = Pokémon browse. Leaf params a view owns (`?tab=`, the Arrivals `?shop=` and `?since=`) go through `url-params.ts` with `replaceState`, and `UrlStateSync` keeps them only while their selection is unchanged.
+- Dashboard navigation is sentinel-based in memory (`activeTripId`: 0 = trips overview, negatives = standalone views, positives = a trip; plus `activeBuylistId`, `activeGame`) and mirrored to the URL by `UrlStateSync` (`url-state.ts` is the pure codec): `/dashboard?view=<slug>` (slug from `views.tsx`), `?trip=<id>&tab=<tab>`, `?buylist=<id>`, `?game=mtg|pokemon_sealed`; no params = Pokémon browse. Leaf params a view owns (`?tab=`, the Arrivals `?shop=` and `?since=`, the Mercari `?feed=`, `?lane=` and `?sort=`) go through `url-params.ts` with `replaceState`, and `UrlStateSync` keeps them only while their selection is unchanged.
   The URL wins on first paint (deep links, reload, bookmarks - `page.tsx` renders nothing until it has been applied so a deep link never flashes the browse view), every context change pushes a history entry so back/forward move between views, and leaf state such as the trip tab is written with `writeUrlParam` (replaceState) and dropped when its owner changes.
   Give every new top-level view a `slug`; give any new leaf sub-state that a user would want to return to a `readUrlParam` / `writeUrlParam` pair.
 `ReviewQueueNavigationContext` carries a one-shot `{ game, source }` target to `RoutedMatchReviewView`; the route captures and consumes it so a later ordinary sidebar visit starts unfiltered.
@@ -940,6 +948,8 @@ The authoritative schema is `docs/schema.md` in the backend repository; this tab
 | `trip_deal_watchlist_v` (view) | trip-scoped watchlist with each observed card's arbitrage figures |
 | `card_browser_source_options_v` (view) | source and side combinations that currently have summary evidence |
 | `sales_ledger_v` (view) | resolved sale rows (identity, name, proceeds, expenses, profit) behind all sales history; `variant_label` is the composed Pokemon variant label |
+| `mercari_published_deals_v` (view) | the Verified Mercari feed: cloud publication of photo-checked deal rows (backend 000596), operator-only |
+| `mercari_leads_v` (view) | the Leads Mercari feed: title-first leads with lane, value, basis, sample, multiple, age, photo-check state and latest lead action (backend 000616), operator-only |
 
 Sealed enums: `sealed_condition_enum` (shrink/no_shrink/standard), `sealed_edition_enum` (1ed/unlimited/standard).
 
@@ -989,7 +999,10 @@ Bake its data in at build time rather than adding anon grants.
   Before the 2026-08-18 unification the app had four USD formats, three JPY copies, six inline ROI formulas and dates rendered three ways.
 - **API routes require a session and validate their inputs**: the middleware only guards `/dashboard`, so every `app/api/*` route must check `supabase.auth.getUser()` itself. `/api/proxy-image` does, and only proxies `http(s)` to public hosts (`lib/proxy-image-policy.ts`, tested) - it was an anonymous open proxy before the 2026-08-18 audit. Browser-side database access rules live in the backend repo's `docs/security_model.md` (anon holds no privileges in `public` since migration 000290; new RPCs must be granted to `authenticated` explicitly).
 - **The Arrivals tab stays post-level and administrator-only**: `/api/twitter-arrivals` passes the caller session to backend RPC `twitter_arrival_posts` (migration 000580), which checks the administrator mapping, and `/api/twitter-arrivals/sources` does the same with `twitter_arrival_sources` for the per-account panel (answering 501 while that RPC is absent, so the tab derives the list from loaded posts). Posts are collected hourly during shop hours, 11:00-20:00 JST. The response must stay explicitly unverified and must not carry item identity, price, grade, or condition. The X handle is the primary identity (most enrolled shops have no `source-labels` entry); the selected shop and the time window live in `?view=arrivals&shop=<buyer_handle>&since=<24h|48h|7d|all>` (default 48 h, kept out of the URL). Nothing is deleted when a post ages out: the window's cutoff goes to both RPCs as `p_since` (and is re-applied client-side to the newest-first pages), and a finite window is loaded whole, page after page up to a 30-page bound, so an account's section shows every post it made in the window inside its own bounded scroll panel. A re-post (optional row fields `last_boosted_at`, `boost_count`, `via_retweet_of`) lifts a row's time to its latest boost through `lib/arrival-observed-at.ts`, which the window, the grouping, and the route's cursor all share. The post's original caption (optional row field `tweet_text`, migration 000605) is shown as plain text, never HTML; see `docs/twitter_arrival_posts.md`.
-- **The Mercari tab is operator-only and reads one backend view**: `/api/mercari-deals` checks `source_run_is_operator()` through the caller session and then reads `mercari_published_deals_v` (backend migration 000596, `security_invoker`), the cloud publication of the acquisition host's deal rows; the operational `mercari_deals_v` is empty on cloud by design, so never point the tab back at it. Identity, holder, and grade are the pipeline's proposal and the seller chose the condition; the tab says so and never presents a listing as a completed sale. Operator actions go through `/api/mercari-deals/action` to backend RPC `record_mercari_deal_item_action`; see `docs/mercari_deals_tab.md`.
+- **The Mercari tab is operator-only and holds two feeds, each reading one backend view**: `MercariTab` switches between Leads (the default) and Verified, and both routes check `source_run_is_operator()` through the caller session before reading.
+  Verified is `/api/mercari-deals` over `mercari_published_deals_v` (backend migration 000596, `security_invoker`), the cloud publication of the acquisition host's deal rows; the operational `mercari_deals_v` is empty on cloud by design, so never point the tab back at it. Its actions go through `/api/mercari-deals/action` to `record_mercari_deal_item_action`; see `docs/mercari_deals_tab.md`.
+  Leads is `/api/mercari-leads` over `mercari_leads_v` (backend 000616): the lane is required so lanes never mix, both sorts are keysets on the table's `(lane, multiple DESC NULLS LAST, external_item_id)` and `(lane, first_seen_at DESC, external_item_id)` indexes, and listings no longer on sale, photo-rejected and dismissed leads are hidden by default. A PSA lead is only ever valued at its exact grade, and the row parser fails closed on a row that breaks a lane rule; `value_basis = 'ebay_rule_v0'` is labelled provisional. Its actions go through `/api/mercari-leads/action` to `record_mercari_lead_action`; see `docs/mercari_leads_tab.md`.
+  Identity, holder, and grade are the pipeline's proposal (for a lead, read from the title alone) and the seller chose the condition; both feeds say so and never present a listing as a completed sale.
 - **No `window.alert` / `window.confirm` for errors**: action failures render inline as `<p role="alert" className="text-xs text-destructive">` next to the control that failed (lot panel `lotError`, receipt uploaders `uploadError`, dialogs' `error`), cleared at the start of the next attempt.
   Browser alerts block the tab, are unstyled, and vanish without a trace; the last ones were removed 2026-08-18.
 - **Icons**: Import from `lucide-react`. Don't add other icon libraries.

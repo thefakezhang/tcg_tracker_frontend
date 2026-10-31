@@ -1,26 +1,37 @@
 import { describe, expect, it } from "vitest";
 import { buildDashboardSearch, parseDashboardSearch } from "./url-state";
-import { parseShopParam, parseWindowParam } from "./url-params";
+import {
+  parseMercariFeedParam,
+  parseMercariLaneParam,
+  parseMercariSortParam,
+  parseShopParam,
+  parseWindowParam,
+} from "./url-params";
 import { MATCH_REVIEW_SENTINEL } from "./ReviewQueueNavigationContext";
 
 const ARRIVALS = -21;
+const MERCARI = -22;
 
 describe("dashboard URL codec", () => {
   it("round-trips every state shape", () => {
     const cases = [
-      { game: "pokemon", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null },
-      { game: "mtg", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null },
-      { game: "pokemon_sealed", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null },
-      { game: "pokemon", activeTripId: -7, activeBuylistId: null, tab: null, shop: null, since: null }, // customers
-      { game: "pokemon", activeTripId: 0, activeBuylistId: null, tab: null, shop: null, since: null }, // trips overview
-      { game: "pokemon", activeTripId: MATCH_REVIEW_SENTINEL, activeBuylistId: null, tab: null, shop: null, since: null },
-      { game: "mtg", activeTripId: 4, activeBuylistId: null, tab: "sales", shop: null, since: null },
-      { game: "pokemon", activeTripId: 4, activeBuylistId: null, tab: null, shop: null, since: null },
-      { game: "pokemon", activeTripId: null, activeBuylistId: 2, tab: null, shop: null, since: null },
-      { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null },
-      { game: "mtg", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: null },
-      { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: "7d" },
-      { game: "mtg", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: "all" },
+      { game: "pokemon", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null },
+      { game: "mtg", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null },
+      { game: "pokemon_sealed", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null },
+      { game: "pokemon", activeTripId: -7, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null }, // customers
+      { game: "pokemon", activeTripId: 0, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null }, // trips overview
+      { game: "pokemon", activeTripId: MATCH_REVIEW_SENTINEL, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null },
+      { game: "mtg", activeTripId: 4, activeBuylistId: null, tab: "sales", shop: null, since: null, feed: null, lane: null, sort: null },
+      { game: "pokemon", activeTripId: 4, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null },
+      { game: "pokemon", activeTripId: null, activeBuylistId: 2, tab: null, shop: null, since: null, feed: null, lane: null, sort: null },
+      { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null },
+      { game: "mtg", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: null, feed: null, lane: null, sort: null },
+      { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: "7d", feed: null, lane: null, sort: null },
+      { game: "mtg", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: "all", feed: null, lane: null, sort: null },
+      { game: "pokemon", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null },
+      { game: "pokemon", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, feed: "verified", lane: null, sort: null },
+      { game: "mtg", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: "psa", sort: "newest" },
+      { game: "pokemon", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, feed: "leads", lane: "unpriced", sort: "multiple" },
     ] as const;
     for (const c of cases) {
       const search = buildDashboardSearch(c);
@@ -28,12 +39,12 @@ describe("dashboard URL codec", () => {
     }
   });
   it("uses human-readable slugs, not sentinel numbers", () => {
-    expect(buildDashboardSearch({ game: "pokemon", activeTripId: -7, activeBuylistId: null, tab: null, shop: null, since: null })).toBe("?view=customers");
-    expect(buildDashboardSearch({ game: "mtg", activeTripId: 4, activeBuylistId: null, tab: "sales", shop: null, since: null })).toBe("?game=mtg&trip=4&tab=sales");
-    expect(buildDashboardSearch({ game: "pokemon", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null })).toBe("");
+    expect(buildDashboardSearch({ game: "pokemon", activeTripId: -7, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null })).toBe("?view=customers");
+    expect(buildDashboardSearch({ game: "mtg", activeTripId: 4, activeBuylistId: null, tab: "sales", shop: null, since: null, feed: null, lane: null, sort: null })).toBe("?game=mtg&trip=4&tab=sales");
+    expect(buildDashboardSearch({ game: "pokemon", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null })).toBe("");
   });
   it("falls back to browse on unknown or malformed params", () => {
-    const browse = { game: "pokemon", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null };
+    const browse = { game: "pokemon", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null };
     expect(parseDashboardSearch("?view=nope")).toEqual(browse);
     expect(parseDashboardSearch("?trip=abc")).toEqual(browse);
     expect(parseDashboardSearch("?trip=-3")).toEqual(browse);
@@ -44,19 +55,19 @@ describe("dashboard URL codec", () => {
     expect(parseDashboardSearch("?view=sales&trip=4&buylist=2").activeTripId).toBe(-2);
   });
   it("carries the arrivals shop only with the arrivals view", () => {
-    expect(buildDashboardSearch({ game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: null })).toBe("?view=arrivals&shop=alice");
-    expect(parseDashboardSearch("?view=arrivals&shop=alice")).toEqual({ game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: null });
+    expect(buildDashboardSearch({ game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: null, feed: null, lane: null, sort: null })).toBe("?view=arrivals&shop=alice");
+    expect(parseDashboardSearch("?view=arrivals&shop=alice")).toEqual({ game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: null, feed: null, lane: null, sort: null });
     // A shop on another view, or with no view, is noise.
     expect(parseDashboardSearch("?view=customers&shop=alice").shop).toBeNull();
     expect(parseDashboardSearch("?shop=alice").shop).toBeNull();
-    expect(buildDashboardSearch({ game: "pokemon", activeTripId: -7, activeBuylistId: null, tab: null, shop: "alice", since: null })).toBe("?view=customers");
+    expect(buildDashboardSearch({ game: "pokemon", activeTripId: -7, activeBuylistId: null, tab: null, shop: "alice", since: null, feed: null, lane: null, sort: null })).toBe("?view=customers");
     // The same bound the API route enforces on buyer_handle.
     expect(parseDashboardSearch(`?view=arrivals&shop=${"a".repeat(101)}`).shop).toBeNull();
     expect(parseDashboardSearch("?view=arrivals&shop=%00alice").shop).toBeNull();
     expect(parseDashboardSearch("?view=arrivals&shop=").shop).toBeNull();
   });
   it("carries the arrivals time window only with the arrivals view", () => {
-    const arrivals = { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null } as const;
+    const arrivals = { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null } as const;
     expect(buildDashboardSearch({ ...arrivals, since: "24h" })).toBe("?view=arrivals&since=24h");
     expect(buildDashboardSearch({ ...arrivals, shop: "alice", since: "all" })).toBe("?view=arrivals&shop=alice&since=all");
     expect(parseDashboardSearch("?view=arrivals&since=7d")).toEqual({ ...arrivals, since: "7d" });
@@ -69,6 +80,34 @@ describe("dashboard URL codec", () => {
     expect(buildDashboardSearch({ ...arrivals, activeTripId: -7, since: "24h" })).toBe("?view=customers");
     expect(parseDashboardSearch("?view=arrivals&since=3d").since).toBeNull();
     expect(parseDashboardSearch("?view=arrivals&since=").since).toBeNull();
+  });
+  it("carries the Mercari feed, lane and sort only with the Mercari view", () => {
+    const mercari = { game: "pokemon", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null } as const;
+    expect(buildDashboardSearch(mercari)).toBe("?view=mercari");
+    expect(buildDashboardSearch({ ...mercari, feed: "verified" })).toBe("?view=mercari&feed=verified");
+    expect(buildDashboardSearch({ ...mercari, lane: "vintage_raw", sort: "newest" })).toBe("?view=mercari&lane=vintage_raw&sort=newest");
+    expect(parseDashboardSearch("?view=mercari&lane=psa")).toEqual({ ...mercari, lane: "psa" });
+    // Mercari params on another view, or values the tab does not offer, are noise.
+    expect(parseDashboardSearch("?view=arrivals&lane=psa&feed=verified&sort=newest")).toMatchObject({ feed: null, lane: null, sort: null });
+    expect(buildDashboardSearch({ ...mercari, activeTripId: ARRIVALS, lane: "psa", feed: "verified" })).toBe("?view=arrivals");
+    expect(parseDashboardSearch("?view=mercari&lane=graded&feed=all&sort=price")).toEqual(mercari);
+    // The arrivals params are noise on the Mercari view.
+    expect(parseDashboardSearch("?view=mercari&shop=alice&since=7d")).toEqual(mercari);
+  });
+  it("accepts only the Mercari feeds, lanes and sorts the tab offers", () => {
+    expect(parseMercariFeedParam(" verified ")).toBe("verified");
+    expect(parseMercariFeedParam("leads")).toBe("leads");
+    expect(parseMercariFeedParam("Verified")).toBeNull();
+    for (const lane of ["modern_raw", "vintage_raw", "psa", "unpriced"] as const) {
+      expect(parseMercariLaneParam(lane)).toBe(lane);
+    }
+    expect(parseMercariLaneParam("raw")).toBeNull();
+    expect(parseMercariLaneParam("")).toBeNull();
+    expect(parseMercariLaneParam(null)).toBeNull();
+    expect(parseMercariSortParam("multiple")).toBe("multiple");
+    expect(parseMercariSortParam("newest")).toBe("newest");
+    expect(parseMercariSortParam("oldest")).toBeNull();
+    expect(parseMercariSortParam(undefined)).toBeNull();
   });
   it("validates a shop handle the way the route does", () => {
     expect(parseShopParam(" alice ")).toBe("alice");

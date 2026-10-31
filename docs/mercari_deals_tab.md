@@ -1,8 +1,12 @@
-# Mercari deals (Mercari tab)
+# Mercari deals (Mercari tab, Verified)
 
 ## Purpose
 
-The Mercari tab lists the active Mercari JP listings that the Mercari pipeline has identified to a catalog card, newest first, so an operator can look at them the way the Arrivals tab shows shop posts: the listing, and the data for why it is worth a look.
+The Mercari tab holds two feeds behind a `Leads | Verified` switch.
+Leads, the default, is the title-first lead publication and has its own document, [Mercari leads](mercari_leads_tab.md).
+This document is the Verified feed.
+
+The Verified feed lists the active Mercari JP listings that the Mercari pipeline has identified to a catalog card, newest first, so an operator can look at them the way the Arrivals tab shows shop posts: the listing, and the data for why it is worth a look.
 Each card shows the catalog identity the pipeline proposed, the holder (raw, or PSA with the grade read from the label), the seller's own six-value condition, the ask in JPY and USD, the pipeline's conservative exit and net economics when they exist, how old the observation is, and the reasons the listing was projected.
 Every card is explicitly a proposal, not a verified fact, and a listing may already be gone.
 
@@ -24,7 +28,8 @@ Backend tracking: tcg_tracker issue #2061, part of the Mercari sequence on #948.
 
 ## Architecture
 
-The dashboard view `MercariDealsView` (slug `mercari`, sidebar group Catalog) loads `/api/mercari-deals` with a private no-store request.
+The dashboard view `MercariDealsView` loads `/api/mercari-deals` with a private no-store request.
+It renders under the Verified side of `MercariTab`, which is what the `mercari` slug (sidebar group Catalog) renders; `?view=mercari&feed=verified` opens it directly.
 The route requires the Supabase user session, asks the backend predicate `source_run_is_operator()` and answers 403 when it is false, then reads the backend view `mercari_published_deals_v` under that caller session.
 That view sits on the cloud publication of the acquisition host's deal rows (backend migration `000596`, `cmd/util/publish-mercari-deals`), because the Mercari pipeline writes only to the acquisition host's local catalog and the operational view `mercari_deals_v` is therefore empty on cloud; see the backend `docs/mercari_published_deals.md`.
 The view is `security_invoker`, so row-level security on the publication applies and only an active source-run operator sees rows; the explicit predicate call exists so a non-operator gets a clear refusal rather than an empty page.
@@ -42,7 +47,7 @@ Backend contract: `docs/mercari_source_discovery.md` in the backend repo, sectio
 
 ## Operator journey
 
-Open Mercari from the dashboard navigation.
+Open Mercari from the dashboard navigation and select Verified.
 The default request returns up to 100 newest listings across both holders and both evidence lanes, hiding dismissed listings; Load more listings appends the next cursor page.
 Narrow to PSA graded only, strict offers only, or include dismissed listings, then select Show listings; a new filter resets the cursor.
 Each card shows the ask with its USD conversion at the stored rate, the seller condition in Japanese with an English gloss, the catalog condition the pipeline mapped it to, the conservative exit and its basis, and the net after fees with ROI when the backend could compute them.

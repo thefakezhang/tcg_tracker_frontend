@@ -1,5 +1,6 @@
 // Leaf query params: sub-state a single view owns inside /dashboard's query
-// string (a trip's ?tab=, the Arrivals ?shop= and ?since=). The view reads its param on
+// string (a trip's ?tab=, the Arrivals ?shop= and ?since=, the Mercari ?feed=,
+// ?lane= and ?sort=). The view reads its param on
 // mount and writes it in place, with no history entry; UrlStateSync decides
 // whether it survives a view-selection change. This module has no imports so
 // a view can use it without pulling in the views registry.
@@ -47,4 +48,51 @@ export const DEFAULT_ARRIVAL_WINDOW: ArrivalWindow = "48h";
 export function parseWindowParam(value: string | null | undefined): ArrivalWindow | null {
   const trimmed = value?.trim() ?? "";
   return (ARRIVAL_WINDOWS as readonly string[]).includes(trimmed) ? (trimmed as ArrivalWindow) : null;
+}
+
+/** The Mercari view's feed leaf param: `?feed=verified` shows the verified deals; leads, the default, stays out of the URL. */
+export const MERCARI_FEED_PARAM = "feed";
+
+export const MERCARI_FEEDS = ["leads", "verified"] as const;
+export type MercariFeed = (typeof MERCARI_FEEDS)[number];
+
+/** The feed a viewer gets before choosing one. */
+export const DEFAULT_MERCARI_FEED: MercariFeed = "leads";
+
+/** The validated `?feed=` value, or null when absent or not a feed the tab offers. */
+export function parseMercariFeedParam(value: string | null | undefined): MercariFeed | null {
+  const trimmed = value?.trim() ?? "";
+  return (MERCARI_FEEDS as readonly string[]).includes(trimmed) ? (trimmed as MercariFeed) : null;
+}
+
+/** The Mercari leads feed's lane leaf param: one lane at a time, so lanes never mix. */
+export const MERCARI_LANE_PARAM = "lane";
+
+/** The lead lanes, in the order the tab offers them; the same vocabulary as mercari_leads_v.lane. */
+export const MERCARI_LEAD_LANES = ["modern_raw", "vintage_raw", "psa", "unpriced"] as const;
+export type MercariLeadLane = (typeof MERCARI_LEAD_LANES)[number];
+
+/** The lane a viewer gets before choosing one; the view keeps it out of the URL. */
+export const DEFAULT_MERCARI_LANE: MercariLeadLane = "modern_raw";
+
+/** The validated `?lane=` value, or null when absent or not a lane. */
+export function parseMercariLaneParam(value: string | null | undefined): MercariLeadLane | null {
+  const trimmed = value?.trim() ?? "";
+  return (MERCARI_LEAD_LANES as readonly string[]).includes(trimmed) ? (trimmed as MercariLeadLane) : null;
+}
+
+/** The Mercari leads feed's sort leaf param. */
+export const MERCARI_SORT_PARAM = "sort";
+
+/** "multiple" is best multiple first; "newest" is the newest first-seen listing first. */
+export const MERCARI_LEAD_SORTS = ["multiple", "newest"] as const;
+export type MercariLeadSort = (typeof MERCARI_LEAD_SORTS)[number];
+
+/** The sort a viewer gets before choosing one; the view keeps it out of the URL. */
+export const DEFAULT_MERCARI_SORT: MercariLeadSort = "multiple";
+
+/** The validated `?sort=` value, or null when absent or not a sort the feed offers. */
+export function parseMercariSortParam(value: string | null | undefined): MercariLeadSort | null {
+  const trimmed = value?.trim() ?? "";
+  return (MERCARI_LEAD_SORTS as readonly string[]).includes(trimmed) ? (trimmed as MercariLeadSort) : null;
 }
