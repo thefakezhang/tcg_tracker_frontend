@@ -1,7 +1,7 @@
 // Shared shape of the Mercari leads read: the request the route accepts, the
-// columns the tab needs from the backend view mercari_leads_v, and the keyset
-// cursor over each sort. Kept out of route.ts because a Next.js route module
-// may export only HTTP handlers.
+// columns the tab needs from the backend view mercari_leads_v (migrations
+// 000616 and 000617), and the keyset cursor over each sort. Kept out of
+// route.ts because a Next.js route module may export only HTTP handlers.
 
 export const DEFAULT_LIMIT = 50;
 export const MAX_LIMIT = 100;
@@ -70,8 +70,6 @@ export const LEAD_COLUMNS = [
   "observed_age_hours",
   "holder_hint",
   "title_psa_grade",
-  "candidate_count",
-  "ambiguous",
   "card_resolution",
   "regional_name",
   "english_name",
@@ -109,6 +107,17 @@ export const LEAD_COLUMNS = [
   "latest_lead_action_at",
   "dismissed",
   "photo_check_requested",
+  // Appended to the view by backend 000617: the card is read from the title,
+  // so the label carries its edition and finish, the lead names how it was
+  // matched and whether the photo check can see that card, and a raw row says
+  // whether it is valued Near Mint or as damaged. Selecting them before
+  // 000617 is applied is a 400 from PostgREST, so this ships after the apply.
+  "edition",
+  "foil_treatment",
+  "match_tier",
+  "title_card_in_photo_scope",
+  "value_condition",
+  "nm_value_usd",
 ].join(", ");
 
 function isOneOf<T extends string>(values: readonly T[], value: string): value is T {
