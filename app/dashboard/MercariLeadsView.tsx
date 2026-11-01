@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { formatDate } from "@/lib/dates";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { formatJpy, formatUsd } from "@/lib/money";
+import { pokemonVariantLabel } from "@/lib/pokemon-variant";
 import {
   LoadFailure,
   SELLER_CONDITION_KEYS,
@@ -42,11 +43,14 @@ export type { MercariLeadLane, MercariLeadSort } from "./url-params";
 export type MercariPhotoState = "unchecked" | "confirmed" | "conflict" | "inconclusive" | "rejected";
 export type MercariLeadAction = "dismissed" | "photo_check_requested";
 export type MercariSourceStatus = "ON_SALE" | "TRADING" | "SOLD_OUT" | "UNKNOWN";
-export type MercariWithheldReason = "seller_condition_3_6" | "psa_grade_unread";
+export type MercariWithheldReason = "seller_condition_3_6" | "psa_grade_unread" | "psa_thin_comps";
+// How a raw row is valued: Near Mint, or, for a vintage card the seller rates
+// 3-6, as damaged at P25 of the same raw sales (backend 000617).
+export type MercariValueCondition = "nm" | "damaged_p25";
 
-// One row of the backend view mercari_leads_v (migration 000616), restricted
-// to the columns the feed shows. The parser below holds every row to the
-// lane rules the table's CHECKs enforce, so a row that breaks one fails
+// One row of the backend view mercari_leads_v (migrations 000616 and 000617),
+// restricted to the columns the feed shows. The parser below holds every row
+// to the lane rules the table's CHECKs enforce, so a row that breaks one fails
 // closed instead of rendering a value it should not carry.
 export type MercariLead = {
   external_item_id: string;
@@ -67,8 +71,6 @@ export type MercariLead = {
   // "holder_unknown", "psa_unknown", or "psa_<grade>".
   holder_hint: string;
   title_psa_grade: number | null;
-  candidate_count: number;
-  ambiguous: boolean;
   card_resolution: "uid" | "identity" | "unresolved";
   regional_name: string;
   english_name: string | null;
@@ -76,9 +78,19 @@ export type MercariLead = {
   set_name: string | null;
   card_number: string | null;
   misc_info: string | null;
+  // The typed variant axes, so a first edition or a mirror shows on the label.
+  edition: string | null;
+  foil_treatment: string | null;
   image_url: string | null;
+  // The shared matcher tier that read the card from the title.
+  match_tier: string;
+  // Whether the photo check compares this listing against the title's card at
+  // all; when it does not, no photo result can confirm the lead.
+  title_card_in_photo_scope: boolean;
   lane: MercariLeadLane;
   value_usd: number | null;
+  value_condition: MercariValueCondition | null;
+  nm_value_usd: number | null;
   value_psa_grade: number | null;
   value_basis: string;
   value_as_of: string | null;
@@ -167,7 +179,8 @@ const SELLER_CONDITIONS = new Set(["1", "2", "3", "4", "5", "6"]);
 const SOURCE_STATUSES = new Set(["ON_SALE", "TRADING", "SOLD_OUT", "UNKNOWN"]);
 const SHIPPING_PAYERS = new Set(["seller", "buyer", "unknown"]);
 const RESOLUTIONS = new Set(["uid", "identity", "unresolved"]);
-const WITHHELD_REASONS = new Set(["seller_condition_3_6", "psa_grade_unread"]);
+const WITHHELD_REASONS = new Set(["seller_condition_3_6", "psa_grade_unread", "psa_thin_comps"]);
+const VALUE_CONDITIONS = new Set(["nm", "damaged_p25"]);
 
 function invalid(what: string, index: number): Error {
   return new Error(`Invalid Mercari lead ${what}: ${index}`);
@@ -279,21 +292,48 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
     const multiple = optionalNumber(row.multiple, "multiple");
     const withheld = optionalString(row.multiple_withheld_reason, "multiple_withheld_reason");
     if (withheld !== null && !WITHHELD_REASONS.has(withheld)) throw invalid("withheld reason", index);
+    const valueCondition = optionalString(row.value_condition, "value_condition");
+    if (valueCondition !== null && !VALUE_CONDITIONS.has(valueCondition)) throw invalid("value condition", index);
+    const nmValue = optionalNumber(row.nm_value_usd, "nm_value_usd");
     const unpricedReason = optionalString(row.unpriced_reason, "unpriced_reason");
+    const sellerCondition = oneOf<MercariSellerConditionID>(SELLER_CONDITIONS, row.seller_condition_id, "seller condition", index);
+    const ratedThreeToSix = sellerCondition !== "1" && sellerCondition !== "2";
 
     // The value rules. A raw lane carries a raw value; a PSA lane carries a
     // value at exactly the title's grade, or none when the grade is unread; an
     // unpriced row carries none. Anything else would put a raw value on a slab
     // or a neighbouring grade's value on this one, so it never renders.
     if (lane === "modern_raw" || lane === "vintage_raw") {
-      if (holderHint !== "holder_unknown" || valueUsd === null || valueGrade !== 0) throw invalid("raw value", index);
+      if (holderHint !== "holder_unknown" || valueUsd === null || valueGrade !== 0
+        || valueCondition === null || nmValue === null
+        || (valueCondition === "nm" && nmValue !== valueUsd)
+        || (valueCondition === "damaged_p25" && valueUsd > nmValue)) {
+        throw invalid("raw value", index);
+      }
+      // The seller's condition, as the operator set it on 2026-11-01: a card
+      // rated 1-2 is valued Near Mint with a multiple; a vintage card rated 3-6
+      // is valued as damaged, also with a multiple; a modern card rated 3-6
+      // keeps its Near Mint value as evidence, with no multiple.
+      const allowed = !ratedThreeToSix
+        ? valueCondition === "nm" && withheld === null
+        : lane === "vintage_raw"
+          ? valueCondition === "damaged_p25" && withheld === null
+          : valueCondition === "nm" && withheld === "seller_condition_3_6";
+      if (!allowed) throw invalid("seller condition", index);
     } else if (lane === "psa") {
+      if (valueCondition !== null || nmValue !== null) throw invalid("PSA value", index);
       if (holderHint === "psa_unknown") {
-        if (valueUsd !== null || valueGrade !== null || multiple !== null) throw invalid("PSA value", index);
-      } else if (titleGrade === null || valueUsd === null || valueGrade !== titleGrade) {
+        if (valueUsd !== null || valueGrade !== null || multiple !== null || withheld !== "psa_grade_unread") {
+          throw invalid("PSA value", index);
+        }
+      } else if (titleGrade === null || valueUsd === null || valueGrade !== titleGrade
+        || (withheld !== null && withheld !== "psa_thin_comps")) {
+        // A PSA value on fewer than three exact-grade sales is shown as
+        // evidence (psa_thin_comps); it is still that grade's value.
         throw invalid("PSA value", index);
       }
-    } else if (valueUsd !== null || valueGrade !== null || multiple !== null
+    } else if (valueUsd !== null || valueGrade !== null || multiple !== null || withheld !== null
+      || valueCondition !== null || nmValue !== null
       || holderHint === "psa_unknown" || unpricedReason === null || unpricedReason.trim() === "") {
       throw invalid("unpriced row", index);
     }
@@ -321,9 +361,6 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
     const shippingAdded = requiredInteger(row.shipping_added_jpy, "shipping_added_jpy");
     if (shippingAdded < 0 || (!buyerPays && shippingAdded !== 0)) throw invalid("shipping", index);
 
-    const candidateCount = requiredInteger(row.candidate_count, "candidate_count");
-    const ambiguous = requiredBoolean(row.ambiguous, "ambiguous");
-    if (candidateCount < 1 || ambiguous !== (candidateCount > 1)) throw invalid("candidates", index);
     const otherListings = requiredInteger(row.other_listings, "other_listings");
     if (otherListings < 0) throw invalid("other listings", index);
 
@@ -341,7 +378,7 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       shipping_payer: shippingPayer,
       buyer_pays_shipping: buyerPays,
       shipping_added_jpy: shippingAdded,
-      seller_condition_id: oneOf<MercariSellerConditionID>(SELLER_CONDITIONS, row.seller_condition_id, "seller condition", index),
+      seller_condition_id: sellerCondition,
       source_status: oneOf<MercariSourceStatus>(SOURCE_STATUSES, row.source_status, "source status", index),
       source_created_at: optionalTimestamp(row.source_created_at, "source_created_at"),
       first_seen_at: requiredTimestamp(row.first_seen_at, "first_seen_at"),
@@ -350,8 +387,6 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       observed_age_hours: requiredNumber(row.observed_age_hours, "observed_age_hours"),
       holder_hint: holderHint,
       title_psa_grade: titleGrade,
-      candidate_count: candidateCount,
-      ambiguous,
       card_resolution: oneOf<MercariLead["card_resolution"]>(RESOLUTIONS, row.card_resolution, "card resolution", index),
       regional_name: requiredString(row.regional_name, "regional_name"),
       english_name: optionalString(row.english_name, "english_name"),
@@ -359,9 +394,17 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       set_name: optionalString(row.set_name, "set_name"),
       card_number: optionalString(row.card_number, "card_number"),
       misc_info: optionalString(row.misc_info, "misc_info"),
+      edition: optionalString(row.edition, "edition"),
+      foil_treatment: optionalString(row.foil_treatment, "foil_treatment"),
       image_url: imageURL(row.image_url, "image_url"),
+      // A tier the matcher adds later is shown by its code, not refused: it
+      // says how the card was read, not what it is worth.
+      match_tier: requiredString(row.match_tier, "match_tier"),
+      title_card_in_photo_scope: requiredBoolean(row.title_card_in_photo_scope, "title_card_in_photo_scope"),
       lane,
       value_usd: valueUsd,
+      value_condition: valueCondition as MercariValueCondition | null,
+      nm_value_usd: nmValue,
       value_psa_grade: valueGrade,
       value_basis: requiredString(row.value_basis, "value_basis"),
       value_as_of: valueAsOf,
@@ -520,10 +563,33 @@ const VALUE_BASIS_KEYS: Record<string, TranslationKey> = {
   ebay_rule_v0: "mercariLeads.valueBasis.ebay_rule_v0",
 };
 
-const WITHHELD_KEYS: Record<MercariWithheldReason, TranslationKey> = {
+// psa_thin_comps names its sale count and grade, so it is worded in LeadCard.
+const WITHHELD_KEYS: Record<Exclude<MercariWithheldReason, "psa_thin_comps">, TranslationKey> = {
   seller_condition_3_6: "mercariLeads.withheld.seller_condition_3_6",
   psa_grade_unread: "mercariLeads.withheld.psa_grade_unread",
 };
+
+const MATCH_TIER_KEYS: Record<string, TranslationKey> = {
+  exact: "mercariLeads.matchTier.exact",
+  memory: "mercariLeads.matchTier.memory",
+  family_default: "mercariLeads.matchTier.family_default",
+  identity: "mercariLeads.matchTier.identity",
+  identity_standard: "mercariLeads.matchTier.identity_standard",
+  setless_number: "mercariLeads.matchTier.setless_number",
+  setless_variant: "mercariLeads.matchTier.setless_variant",
+  setless_name: "mercariLeads.matchTier.setless_name",
+  sql_family: "mercariLeads.matchTier.sql_family",
+};
+
+// A photo check compares a listing against its frontier's cards. When the
+// title's card is not among them, no photo result can confirm the lead, so an
+// unchecked lead must not read as one that is waiting for its check.
+function photoBadge(lead: MercariLead): { key: TranslationKey; className: string } {
+  if (!lead.title_card_in_photo_scope && lead.photo_check_state === "unchecked") {
+    return { key: "mercariLeads.photo.outOfScope", className: PHOTO_CLASSES.inconclusive };
+  }
+  return { key: PHOTO_KEYS[lead.photo_check_state], className: PHOTO_CLASSES[lead.photo_check_state] };
+}
 
 const UNPRICED_KEYS: Record<string, TranslationKey> = {
   no_raw_comps_180d: "mercariLeads.unpricedReason.no_raw_comps_180d",
@@ -572,8 +638,10 @@ function LeadActions({
   };
 
   const reasonId = `mercari-lead-dismiss-reason-${lead.external_item_id}`;
-  // A photo that already agrees with the title needs no second check.
-  const canRequestPhoto = !lead.photo_check_requested && lead.photo_check_state !== "confirmed";
+  // A photo that already agrees with the title needs no second check, and a
+  // check that cannot see the title's card cannot confirm it.
+  const canRequestPhoto = !lead.photo_check_requested && lead.photo_check_state !== "confirmed"
+    && lead.title_card_in_photo_scope;
   return (
     <div className="space-y-2">
       {dismissing ? (
@@ -721,11 +789,26 @@ function LeadCard({
     : unpricedReason;
   const basisKey = VALUE_BASIS_KEYS[lead.value_basis];
   const basis = basisKey ? t(basisKey) : t("mercariLeads.valueBasisOther", { basis: lead.value_basis });
+  const damaged = lead.value_condition === "damaged_p25";
   const valueHolder = lead.value_psa_grade !== null && lead.value_psa_grade > 0
     ? t("mercariLeads.valueAtGrade", { grade: lead.value_psa_grade })
-    : t("mercariLeads.valueRaw");
+    : damaged
+      ? t("mercariLeads.valueDamaged")
+      : t("mercariLeads.valueRaw");
+  const withheldText = lead.multiple_withheld_reason === null
+    ? null
+    : lead.multiple_withheld_reason === "psa_thin_comps"
+      ? t(lead.value_sample_count === 1 ? "mercariLeads.withheld.psa_thin_comps_one" : "mercariLeads.withheld.psa_thin_comps", {
+        count: lead.value_sample_count,
+        grade: lead.title_psa_grade ?? "",
+      })
+      : t(WITHHELD_KEYS[lead.multiple_withheld_reason]);
   const listedKey: TranslationKey = lead.source_created_at ? "mercariLeads.listedAgo" : "mercariLeads.firstSeenAgo";
   const setLabel = lead.set_name ? `${lead.set_name} (${lead.set_code})` : lead.set_code;
+  // Edition and finish come from the typed axes, never from misc_info alone.
+  const variant = pokemonVariantLabel(lead);
+  const tierKey = MATCH_TIER_KEYS[lead.match_tier];
+  const photo = photoBadge(lead);
   return (
     <Card className="min-w-0" data-testid="mercari-lead-card">
       <CardHeader className="space-y-2">
@@ -738,13 +821,10 @@ function LeadCard({
             <Clock className="size-3.5" aria-hidden="true" />
             {t(listedKey, { age: age(lead.listing_age_hours) })}
           </Badge>
-          <Badge variant="outline" className={PHOTO_CLASSES[lead.photo_check_state]} data-testid="mercari-lead-photo">
-            {t(PHOTO_KEYS[lead.photo_check_state])}
+          <Badge variant="outline" className={photo.className} data-testid="mercari-lead-photo">
+            {t(photo.key)}
           </Badge>
           <Badge variant="outline">{holderLabel}</Badge>
-          {lead.ambiguous && (
-            <Badge variant="outline">{t("mercariLeads.ambiguousBadge", { count: lead.candidate_count })}</Badge>
-          )}
           {lead.source_status !== "ON_SALE" && (
             <Badge variant="outline" className="border-red-500/50 bg-red-500/10 text-red-800 dark:text-red-200">
               {t(STATUS_KEYS[lead.source_status])}
@@ -780,10 +860,12 @@ function LeadCard({
               <span className={`text-2xl font-semibold tabular-nums ${lead.multiple >= 2 ? "text-emerald-700 dark:text-emerald-300" : ""}`}>
                 {multipleText(lead.multiple)}
               </span>
-              <span className="text-xs text-muted-foreground">{t("mercariLeads.multipleHint")}</span>
+              <span className="text-xs text-muted-foreground">
+                {t(damaged ? "mercariLeads.multipleHintDamaged" : "mercariLeads.multipleHint")}
+              </span>
             </div>
-          ) : lead.multiple_withheld_reason !== null ? (
-            <p className="text-sm">{t(WITHHELD_KEYS[lead.multiple_withheld_reason])}</p>
+          ) : withheldText !== null ? (
+            <p className="text-sm">{withheldText}</p>
           ) : (
             <p className="text-sm">
               <span className="text-muted-foreground">{t("mercariLeads.unpriced")}: </span>
@@ -819,11 +901,13 @@ function LeadCard({
                 <br />
                 {setLabel}
                 {isUnknown(lead.card_number) ? "" : ` ${lead.card_number}`}
-                {isUnknown(lead.misc_info) ? "" : ` · ${lead.misc_info}`}
+                {variant ? <>{" · "}<span className="whitespace-nowrap">{variant}</span></> : null}
               </dd>
-              {lead.ambiguous && (
-                <dd className="text-xs text-muted-foreground">{t("mercariLeads.ambiguous", { count: lead.candidate_count })}</dd>
-              )}
+              <dd className="text-xs text-muted-foreground" data-testid="mercari-lead-match">
+                {t("mercariLeads.matchedBy", {
+                  tier: tierKey ? t(tierKey) : lead.match_tier,
+                })}
+              </dd>
               {lead.card_resolution === "unresolved" && (
                 <dd className="text-xs text-muted-foreground">{t("mercariLeads.unresolved")}</dd>
               )}
@@ -857,6 +941,11 @@ function LeadCard({
                     {" · "}
                     {t("mercariLeads.valueLine", { basis, holder: valueHolder })}
                   </dd>
+                  {damaged && lead.nm_value_usd !== null && (
+                    <dd className="text-xs text-muted-foreground" data-testid="mercari-lead-nm-value">
+                      {t("mercariLeads.nmValue", { value: formatUsd(lead.nm_value_usd) })}
+                    </dd>
+                  )}
                   <dd className="text-xs text-muted-foreground" data-testid="mercari-lead-evidence">
                     {lead.value_window_days !== null
                       ? t("mercariLeads.valueEvidence", {
@@ -923,6 +1012,11 @@ function LeadCard({
               </p>
             </div>
           </div>
+        )}
+        {!lead.title_card_in_photo_scope && lead.photo_check_state !== "rejected" && (
+          <p className="text-xs text-muted-foreground" data-testid="mercari-lead-photo-scope">
+            {t("mercariLeads.photoOutOfScope")}
+          </p>
         )}
         {lead.photo_checked_at !== null && (
           <p className="text-xs text-muted-foreground">

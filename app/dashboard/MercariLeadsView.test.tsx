@@ -35,8 +35,6 @@ const RAW: MercariLead = {
   observed_age_hours: 70.2,
   holder_hint: "holder_unknown",
   title_psa_grade: null,
-  candidate_count: 1,
-  ambiguous: false,
   card_resolution: "uid",
   regional_name: "リザードンex",
   english_name: "Charizard ex",
@@ -44,9 +42,15 @@ const RAW: MercariLead = {
   set_name: "Pokemon Card 151",
   card_number: "006/165",
   misc_info: "UNKNOWN",
+  edition: "not_applicable",
+  foil_treatment: "normal",
   image_url: "https://images.example.test/charizard.png",
+  match_tier: "identity",
+  title_card_in_photo_scope: true,
   lane: "modern_raw",
   value_usd: 120,
+  value_condition: "nm",
+  nm_value_usd: 120,
   value_psa_grade: 0,
   value_basis: "ebay_rule_v0",
   value_as_of: "2026-10-28",
@@ -86,6 +90,8 @@ const PSA10: MercariLead = {
   title_psa_grade: 10,
   lane: "psa",
   value_usd: 480,
+  value_condition: null,
+  nm_value_usd: null,
   value_psa_grade: 10,
   value_sample_count: 7,
   value_window_days: 180,
@@ -113,6 +119,31 @@ const UNREAD_PSA: MercariLead = {
   multiple_withheld_reason: "psa_grade_unread",
 };
 
+// A vintage card the seller rates 3-6, priced as damaged at P25 of the same
+// raw sales, with its Near Mint value kept beside it (backend 000617).
+const DAMAGED_VINTAGE: MercariLead = {
+  ...RAW,
+  external_item_id: "m66666666666",
+  canonical_url: "https://jp.mercari.com/item/m66666666666",
+  sanitized_title: "リザードン 006/087 neo 1ED 傷あり",
+  set_code: "neo4",
+  set_name: "Neo Destiny",
+  card_number: "006/087",
+  edition: "first",
+  foil_treatment: "mirror",
+  match_tier: "exact",
+  lane: "vintage_raw",
+  seller_condition_id: "5",
+  ask_jpy: 4000,
+  landed_ask_usd: 26.4,
+  value_usd: 45,
+  value_condition: "damaged_p25",
+  nm_value_usd: 120,
+  selling_cost_usd: 8.6,
+  net_value_usd: 36.4,
+  multiple: 1.379,
+};
+
 const UNPRICED: MercariLead = {
   ...RAW,
   external_item_id: "ABCDEFGHIJKLMNOPQRSTUV",
@@ -121,6 +152,8 @@ const UNPRICED: MercariLead = {
   sanitized_title: "ピカチュウ プロモ まとめ",
   lane: "unpriced",
   value_usd: null,
+  value_condition: null,
+  nm_value_usd: null,
   value_psa_grade: null,
   value_as_of: null,
   value_sample_count: 2,
@@ -198,6 +231,11 @@ describe("MercariLeadsView", () => {
     expect(within(card).getByText("未使用に近い (close to unused)")).toBeTruthy();
     expect(card.textContent).toContain("Pokemon Card 151 (SV2a) 006/165");
     expect(card.textContent).not.toContain("UNKNOWN");
+    // A plain modern print has no edition or finish to name.
+    expect(card.textContent).not.toContain("Pokemon Card 151 (SV2a) 006/165 ·");
+    expect(within(card).getByTestId("mercari-lead-match").textContent).toBe("Title match: set and number");
+    expect(within(card).queryByTestId("mercari-lead-nm-value")).toBeNull();
+    expect(within(card).queryByTestId("mercari-lead-photo-scope")).toBeNull();
     expect(card.textContent).toContain("$120.00 · Provisional eBay value, from raw sales");
     expect(within(card).getByTestId("mercari-lead-evidence").textContent).toBe("12 sales in the last 60 days, newest Oct\u00a028,\u00a02026");
     expect(within(card).getByText("Net $98.10 after $21.90 of eBay fees and postage")).toBeTruthy();
@@ -310,7 +348,7 @@ describe("MercariLeadsView", () => {
     expect(card.textContent).not.toContain("$480.00");
   });
 
-  it("shows the value as evidence and why the multiple is withheld for a raw card rated 3 to 6", async () => {
+  it("shows a modern card rated 3 to 6 at its Near Mint value as evidence, with why the multiple is withheld", async () => {
     view(vi.fn(async () => page([{
       ...RAW,
       seller_condition_id: "4",
@@ -323,7 +361,8 @@ describe("MercariLeadsView", () => {
     expect(card.textContent).toContain("$120.00 · Provisional eBay value, from raw sales");
     expect(within(card).getByTestId("mercari-lead-evidence").textContent).toBe("12 sales in the last 60 days, newest Oct\u00a028,\u00a02026");
     const multiple = within(card).getByTestId("mercari-lead-multiple");
-    expect(multiple.textContent).toBe("No multiple: the seller rates this raw card 3 to 6, so its value is shown as evidence only.");
+    expect(multiple.textContent).toBe("No multiple: the seller rates this modern card 3 to 6, so its Near Mint value is shown as evidence only.");
+    expect(within(card).queryByTestId("mercari-lead-nm-value")).toBeNull();
   });
 
   it("gives each photo-check state its own badge and shows the photo's card on a conflict", async () => {
@@ -387,12 +426,82 @@ describe("MercariLeadsView", () => {
     expect(photoCard.textContent).toContain("a card that is not in the cloud catalog");
   });
 
-  it("says an ambiguous lead is one of several readings priced at the lowest", async () => {
-    view(vi.fn(async () => page([{ ...RAW, candidate_count: 3, ambiguous: true }])));
+  it("prices a vintage card rated 3 to 6 as damaged, with a multiple and its Near Mint value beside it", async () => {
+    view(vi.fn(async () => page([DAMAGED_VINTAGE])));
 
     const card = await onlyCard();
-    expect(within(card).getByText("1 of 3 cards")).toBeTruthy();
-    expect(within(card).getByText("The title fits 3 catalog cards. This is one of them, priced at the lowest of their values.")).toBeTruthy();
+    expect(within(card).getByText("傷や汚れあり (damage or dirt)")).toBeTruthy();
+    const multiple = within(card).getByTestId("mercari-lead-multiple");
+    expect(multiple.textContent).toContain("1.38x");
+    expect(multiple.textContent).toContain("net value over the landed ask, priced as damaged");
+    expect(card.textContent).toContain("$45.00 · Provisional eBay value, priced as damaged (bottom quarter of raw sales)");
+    expect(within(card).getByTestId("mercari-lead-nm-value").textContent).toBe("Near Mint $120.00");
+    expect(card.textContent).not.toContain("from raw sales");
+  });
+
+  it("labels the card with its edition and finish from the typed axes, and names the match tier", async () => {
+    view(vi.fn(async () => page([DAMAGED_VINTAGE, { ...RAW, match_tier: "a_future_tier" }])));
+
+    const [vintage, modern] = await screen.findAllByTestId("mercari-lead-card");
+    expect(vintage.textContent).toContain("Neo Destiny (neo4) 006/087 · ミラー,1ED");
+    expect(within(vintage).getByTestId("mercari-lead-match").textContent)
+      .toBe("Title match: name, set and number, printing named");
+    // A tier the matcher adds later is shown by its code rather than refused.
+    expect(within(modern).getByTestId("mercari-lead-match").textContent).toBe("Title match: a_future_tier");
+  });
+
+  it("shows a thin PSA value as evidence, at its grade, with the sale count", async () => {
+    view(vi.fn(async () => page([
+      { ...PSA10, value_sample_count: 2, multiple: null, multiple_withheld_reason: "psa_thin_comps" },
+      {
+        ...PSA10,
+        external_item_id: "m77777777777",
+        canonical_url: "https://jp.mercari.com/item/m77777777777",
+        holder_hint: "psa_9",
+        title_psa_grade: 9,
+        value_psa_grade: 9,
+        value_sample_count: 1,
+        multiple: null,
+        multiple_withheld_reason: "psa_thin_comps",
+      },
+    ])));
+
+    const [two, one] = await screen.findAllByTestId("mercari-lead-card");
+    expect(within(two).getByTestId("mercari-lead-multiple").textContent)
+      .toBe("Only 2 PSA 10 sales; shown as evidence, with no multiple.");
+    expect(two.textContent).toContain("$480.00 · Provisional eBay value, at PSA 10");
+    expect(within(two).getByTestId("mercari-lead-evidence").textContent).toBe("2 sales in the last 180 days, newest Oct\u00a028,\u00a02026");
+    expect(within(one).getByTestId("mercari-lead-multiple").textContent)
+      .toBe("Only 1 PSA 9 sale; shown as evidence, with no multiple.");
+    expect(one.textContent).toContain("at PSA 9");
+  });
+
+  it("says when the photo check cannot confirm the title's card, and offers no photo check", async () => {
+    view(vi.fn(async () => page([
+      { ...RAW, title_card_in_photo_scope: false },
+      {
+        ...RAW,
+        external_item_id: "m88888888888",
+        canonical_url: "https://jp.mercari.com/item/m88888888888",
+        title_card_in_photo_scope: false,
+        photo_check_state: "conflict",
+        photo_source_card_uid: "6f3c0a0e-7d8e-4f5e-9a0b-1c2d3e4f5a6b",
+        photo_checked_at: "2026-10-30T03:00:00+00:00",
+      },
+    ])));
+
+    const [unchecked, conflict] = await screen.findAllByTestId("mercari-lead-card");
+    const badge = within(unchecked).getByTestId("mercari-lead-photo");
+    expect(badge.textContent).toBe("Photo check can't confirm this card");
+    expect(badge.className).toContain("zinc");
+    expect(badge.className).not.toContain("amber");
+    expect(within(unchecked).getByTestId("mercari-lead-photo-scope").textContent)
+      .toBe("The photo check compares this listing with other cards, so it cannot confirm the card the title names yet.");
+    expect(within(unchecked).queryByRole("button", { name: "Request photo check" })).toBeNull();
+    expect(within(unchecked).getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    // A result the check did reach keeps its own badge, with the same caveat.
+    expect(within(conflict).getByTestId("mercari-lead-photo").textContent).toBe("Photo disagrees with title");
+    expect(within(conflict).getByTestId("mercari-lead-photo-scope")).toBeTruthy();
   });
 
   it("marks buyer-paid shipping and the shipping added to the landed ask", async () => {
@@ -504,7 +613,7 @@ describe("MercariLeadsView", () => {
 
 describe("parseMercariLeads", () => {
   it("accepts every lane's real shape and numeric strings", () => {
-    expect(parseMercariLeads([RAW, PSA10, UNREAD_PSA, UNPRICED])).toHaveLength(4);
+    expect(parseMercariLeads([RAW, PSA10, UNREAD_PSA, UNPRICED, DAMAGED_VINTAGE])).toHaveLength(5);
     expect(parseMercariLeads([{ ...RAW, ask_jpy: "6000", multiple: "2.477" }])[0]).toMatchObject({ ask_jpy: 6000, multiple: 2.477 });
   });
 
@@ -522,10 +631,59 @@ describe("parseMercariLeads", () => {
     expect(() => parseMercariLeads([{ ...RAW, value_usd: null }])).toThrow("Invalid Mercari lead raw value");
   });
 
+  it("accepts the 000617 shapes: damaged vintage with a multiple, modern 3-6 evidence, thin PSA evidence", () => {
+    const [damaged, modernEvidence, thinPsa] = parseMercariLeads([
+      DAMAGED_VINTAGE,
+      { ...RAW, seller_condition_id: "4", multiple: null, multiple_withheld_reason: "seller_condition_3_6" },
+      { ...PSA10, value_sample_count: 2, multiple: null, multiple_withheld_reason: "psa_thin_comps" },
+    ]);
+    expect(damaged).toMatchObject({ value_condition: "damaged_p25", value_usd: 45, nm_value_usd: 120, multiple: 1.379 });
+    expect(modernEvidence).toMatchObject({ value_condition: "nm", multiple: null, multiple_withheld_reason: "seller_condition_3_6" });
+    expect(thinPsa).toMatchObject({ value_usd: 480, value_psa_grade: 10, multiple_withheld_reason: "psa_thin_comps" });
+    // A damaged value may equal the Near Mint one when the window's P25 is its P50-P75 midpoint.
+    expect(parseMercariLeads([{ ...DAMAGED_VINTAGE, value_usd: 120 }])[0].value_usd).toBe(120);
+  });
+
+  it("still refuses a multiple on a raw card rated 3 to 6 unless it is vintage priced as damaged", () => {
+    // Modern codes 3-6 are evidence only, at the Near Mint value.
+    expect(() => parseMercariLeads([{ ...RAW, seller_condition_id: "4" }])).toThrow("Invalid Mercari lead seller condition");
+    expect(() => parseMercariLeads([{
+      ...RAW, seller_condition_id: "4", value_usd: 45, value_condition: "damaged_p25", nm_value_usd: 120,
+    }])).toThrow("Invalid Mercari lead seller condition");
+    // A vintage card rated 3-6 valued Near Mint must not carry a multiple.
+    expect(() => parseMercariLeads([{
+      ...DAMAGED_VINTAGE, value_usd: 120, value_condition: "nm", nm_value_usd: 120,
+    }])).toThrow("Invalid Mercari lead seller condition");
+    // Nor is a damaged vintage card evidence, nor a card rated 1-2 priced as damaged.
+    expect(() => parseMercariLeads([{
+      ...DAMAGED_VINTAGE, multiple: null, multiple_withheld_reason: "seller_condition_3_6",
+    }])).toThrow("Invalid Mercari lead seller condition");
+    expect(() => parseMercariLeads([{ ...DAMAGED_VINTAGE, seller_condition_id: "2" }])).toThrow("Invalid Mercari lead seller condition");
+    expect(() => parseMercariLeads([{ ...RAW, multiple: null, multiple_withheld_reason: "psa_thin_comps" }])).toThrow("Invalid Mercari lead seller condition");
+  });
+
+  it("fails closed on a raw value condition the CHECKs forbid", () => {
+    expect(() => parseMercariLeads([{ ...DAMAGED_VINTAGE, value_usd: 130 }])).toThrow("Invalid Mercari lead raw value");
+    expect(() => parseMercariLeads([{ ...RAW, nm_value_usd: 150 }])).toThrow("Invalid Mercari lead raw value");
+    expect(() => parseMercariLeads([{ ...RAW, value_condition: null }])).toThrow("Invalid Mercari lead raw value");
+    expect(() => parseMercariLeads([{ ...RAW, nm_value_usd: null }])).toThrow("Invalid Mercari lead raw value");
+    expect(() => parseMercariLeads([{ ...RAW, value_condition: "lp" }])).toThrow("Invalid Mercari lead value condition");
+  });
+
+  it("fails closed on a PSA row with a raw value condition or a misplaced thin-comps reason", () => {
+    expect(() => parseMercariLeads([{ ...PSA10, value_condition: "nm", nm_value_usd: 480 }])).toThrow("Invalid Mercari lead PSA value");
+    expect(() => parseMercariLeads([{ ...PSA10, nm_value_usd: 480 }])).toThrow("Invalid Mercari lead PSA value");
+    expect(() => parseMercariLeads([{ ...PSA10, multiple_withheld_reason: "psa_thin_comps" }])).toThrow("Invalid Mercari lead withheld reason");
+    expect(() => parseMercariLeads([{ ...PSA10, multiple: null, multiple_withheld_reason: "seller_condition_3_6" }])).toThrow("Invalid Mercari lead PSA value");
+    expect(() => parseMercariLeads([{ ...UNREAD_PSA, multiple_withheld_reason: "psa_thin_comps" }])).toThrow("Invalid Mercari lead PSA value");
+  });
+
   it("fails closed on an unpriced row with a value or no reason", () => {
     expect(() => parseMercariLeads([{ ...UNPRICED, value_usd: 10, value_psa_grade: 0 }])).toThrow("Invalid Mercari lead unpriced row");
     expect(() => parseMercariLeads([{ ...UNPRICED, unpriced_reason: " " }])).toThrow("Invalid Mercari lead unpriced row");
     expect(() => parseMercariLeads([{ ...UNPRICED, holder_hint: "psa_unknown" }])).toThrow("Invalid Mercari lead unpriced row");
+    expect(() => parseMercariLeads([{ ...UNPRICED, value_condition: "nm" }])).toThrow("Invalid Mercari lead unpriced row");
+    expect(() => parseMercariLeads([{ ...UNPRICED, multiple_withheld_reason: "psa_thin_comps" }])).toThrow("Invalid Mercari lead unpriced row");
   });
 
   it("fails closed on economics and identity the view should never produce", () => {
@@ -539,7 +697,8 @@ describe("parseMercariLeads", () => {
     expect(() => parseMercariLeads([{ ...RAW, lane: "graded" }])).toThrow("Invalid Mercari lead lane");
     expect(() => parseMercariLeads([{ ...RAW, buyer_pays_shipping: true }])).toThrow("Invalid Mercari lead shipping payer");
     expect(() => parseMercariLeads([{ ...RAW, shipping_added_jpy: 230 }])).toThrow("Invalid Mercari lead shipping");
-    expect(() => parseMercariLeads([{ ...RAW, ambiguous: true }])).toThrow("Invalid Mercari lead candidates");
+    expect(() => parseMercariLeads([{ ...RAW, title_card_in_photo_scope: null }])).toThrow("Invalid Mercari lead field: title_card_in_photo_scope");
+    expect(() => parseMercariLeads([{ ...RAW, match_tier: "" }])).toThrow("Invalid Mercari lead field: match_tier");
     expect(() => parseMercariLeads([{ ...RAW, seller_condition_id: "7" }])).toThrow("Invalid Mercari lead seller condition");
     expect(() => parseMercariLeads([{ ...RAW, photo_check_state: "maybe" }])).toThrow("Invalid Mercari lead photo state");
     expect(() => parseMercariLeads([{ ...RAW, ask_jpy: 0 }])).toThrow("Invalid Mercari lead ask");
