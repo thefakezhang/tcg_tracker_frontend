@@ -11,8 +11,11 @@ Since backend migration 000617 the card is what the shared Pokemon matcher reads
 A title with neither a printed number nor a set code, or one the matcher cannot settle on one card, is refused before it becomes a lead, so every lead names exactly one card.
 Before 000617 the card came from the photo check's comparison set, which bound name-only titles to same-named old-back cards; that is why the first dry run was not published.
 
-Tracking: tcg_tracker epic #2304, phase L1 (frontend).
-Backend contract: migrations `000616_mercari_title_leads` and `000617_mercari_lead_title_identity`, and `docs/mercari_title_leads.md` in the backend repo.
+Since 2026-11-02 every lead comes from the fresh lead scan (`source_kind = 'lead_scan'`), which publishes newly listed items every 30 minutes, and the cold crawl's rows (`cold_crawl`) are retired; the tab still renders both kinds.
+Since phase L4 a fresh lead is photo-checked against the card its title names, best leads first, and the tab says whether its check is queued and why.
+
+Tracking: tcg_tracker epic #2304, phases L1 and L4 (frontend), and tcg_tracker #2340.
+Backend contract: migrations `000616_mercari_title_leads`, `000617_mercari_lead_title_identity`, `000620_mercari_lead_scan_publication` and `000623_mercari_lead_photo_check_publication`, and `docs/mercari_title_leads.md` in the backend repo (section "Fresh-lead photo checks (phase L4)").
 
 ## The operator's rules behind the feed
 
@@ -33,6 +36,7 @@ Set by the operator on 2026-11-01 and enforced by the publisher and the table's 
 - Unpriced listings are visible with the reason, never dropped.
 - Leads that cannot be bought (no longer on sale, rejected by a photo check, dismissed) are hidden by default and one control away.
 - The operator can dismiss a lead with a reason or ask for a photo check.
+- A fresh lead says whether its photo check is queued and why, or why no check can confirm it, and a checked lead says when it was checked.
 
 ## Non-goals
 
@@ -87,7 +91,8 @@ The unpriced lane has no multiple at all, so the view always asks it for Newest 
 The two actions are `dismissed`, which needs a reason, and `photo_check_requested`.
 The route refuses a dismissal without a reason with a 400 before the RPC is called, and maps the RPC's own refusals: not an operator is 403, a listing that is not a published lead is 404, a CHECK violation is 409.
 Actions key on the listing, so they survive republication, and the view reads the latest one: a photo-check request after a dismissal brings the lead back, and the card updates the same way locally.
-In L1 a photo-check request is recorded only; phase L2 makes photo checks follow these requests.
+On a fresh lead a request leads to a real check: the next lead-scan publication (every 30 minutes, at :10 and :40) queues it first (band 1), and the next lead-check turn checks it, usually within about an hour.
+On a cold-crawl lead a request is recorded only, because only fresh leads are queued.
 
 ### Parsing fails closed
 
@@ -100,14 +105,16 @@ In L1 a photo-check request is recorded only; phase L2 makes photo checks follow
 - a multiple exists only with a positive net value, and a priced lane row without a multiple says why;
 - the listing URL is exactly the listing's own `jp.mercari.com` page, and the buyer-pays flag agrees with the shipping payer.
 
+- `source_kind` is `lead_scan` or `cold_crawl`, and nothing else passes;
+- `photo_check_priority` is NULL or an integer from 1 to 3, and, as 000623's queue CHECK holds, set only on an unchecked `lead_scan` row whose title card is in the photo scope, so a badge never says a check is on its way when none can come.
+
 The match tier is the one new field that does not fail closed: a tier the matcher adds later is shown by its code, because it says how the card was read, not what it is worth.
 
 ### What a lead card shows
 
 - The listing title, linked to the listing.
-- The listing's age as the first badge, toned fresh under 24 hours, aging under 72, and old after that, because the first leads come from a crawl several days old and many have sold; it is "Listed" when Mercari gave a creation time and "First seen" otherwise. The last observation time follows in JST.
-- The photo-check badge: amber "Not photo-checked", green "Photo-checked", red "Photo disagrees with title", grey "Photo inconclusive", and a struck-through "Rejected by the photo check" when that filter is chosen. On a conflict the card the photo check found is shown with its image, name, set, number and PSA grade.
-- When the title's card is not among the cards the photo check compares this listing with (`title_card_in_photo_scope` false), no photo result can confirm the lead. An unchecked lead then reads grey "Photo check can't confirm this card" rather than amber, which would imply a check on its way; every such lead carries a line saying why, and offers no "Request photo check".
+- The listing's age as the first badge, toned fresh under 24 hours, aging under 72, and old after that, because Mercari listings sell within days; it is "Listed" when Mercari gave a creation time and "First seen" otherwise. A cold-crawl lead carries a muted "Cold crawl" badge beside it; a fresh lead, now every lead, carries none, because a "New" badge on every card would say nothing. The last observation time follows in JST.
+- The photo-check badge, described below. On a conflict the card the photo check found is shown with its image, name, set, number and PSA grade.
 - The holder: Raw, PSA with the grade, or "PSA, grade not read".
 - The multiple of the landed ask (net value over landed ask), marked "priced as damaged" for a damaged vintage row, or the reason it is withheld: a modern card the seller rates 3 to 6 keeps its Near Mint value as evidence, a thin PSA value reads "Only N PSA G sales; shown as evidence", and a PSA title without a grade has no value to compare.
 - For an unpriced lead, the reason and, when the lead stands for its group, "+N other listings" still on sale for the same card, holder and seller condition.
@@ -115,6 +122,31 @@ The match tier is the one new field that does not fail closed: a tier the matche
 - The seller's condition, in Japanese with an English gloss.
 - The card: catalog image, name, set and number, then the variant label `pokemonVariantLabel` composes from `misc_info`, `edition` and `foil_treatment` (`1ED`, `ミラー`, as everywhere else in the app), a "Title match" line naming the matcher tier, and a note when the card is not in the cloud catalog.
 - The value with its basis, holder, sample count, window and newest-sale date, then the net after eBay fees and postage. A damaged vintage row reads "priced as damaged (bottom quarter of raw sales)" with "Near Mint $Y" beneath it. `value_basis = 'ebay_rule_v0'` reads "Provisional eBay value", never a final price; an unknown basis is shown by its code.
+
+### The photo-check badge
+
+A fresh lead is checked once, against the card its title names, and `title_card_in_photo_scope` on a fresh lead says whether a check can compare its photos with that card: it is false only when the card has no reference image.
+The publisher queues the checks in the operator's bands (`photo_check_priority`): 1 the operator requested it, 2 a lead with a multiple (by profit), 3 a PSA lead without a multiple.
+
+| row | badge | note beneath | "Request photo check" |
+|---|---|---|---|
+| fresh, unchecked, requested or in band 1 | blue "Photo check requested: within about an hour" | none | no, it is first in line |
+| fresh, unchecked, band 2 | blue "Photo check queued: best deal" | none | yes, to go first |
+| fresh, unchecked, band 3 | blue "Photo check queued: PSA lead" | none | yes, to go first |
+| fresh, unchecked, no band, title card in scope | amber "Not photo-checked" | "New listings are photo-checked best deals first. Request a check to put this one first." | yes |
+| fresh, title card not in scope | grey "Photo check can't confirm this card" | "The title's card has no reference image, so no photo check can confirm it." | no |
+| cold crawl, unchecked, title card not in scope | grey "Photo check can't confirm this card" | the frontier note: "The photo check compares this listing with other cards, so it cannot confirm the card the title names yet." | no |
+| cold crawl, unchecked, in scope | amber "Not photo-checked" | none | yes, unless already requested |
+| checked, either kind | green "Photo-checked", red "Photo disagrees with title", grey "Photo inconclusive", or struck-through "Rejected by the photo check" (shown only under that filter) | the scope note when the title card is not in scope | fresh: no, a fresh lead is checked once; cold crawl: yes unless confirmed or already requested |
+
+Two cases read the latest action rather than the band, because the band is the latest publication's and the action may be newer:
+
+- A request the latest publication has not read yet reads as band 1 at once, since the next publication queues it first; the card updates the same way locally when the operator presses the button.
+- A dismissed lead is never queued, so a band from before the dismissal is not shown; the lead reads "Not photo-checked" and offers a request, which brings it back.
+
+A checked lead says when: "Photo checked (JST): date (N h ago)".
+The age is the check's age when the view read the row (`observed_age_hours` plus the gap between `observed_at` and `photo_checked_at`), so it agrees with the other ages on the card and does not depend on the viewer's clock.
+On a fresh lead the request is the queued badge, so it is not named twice; a cold-crawl lead's request shows as a plain "Photo check requested" badge, with no promise of a check.
 
 The "1 of N cards" ambiguity note of the first version is gone: a lead now names one card, and the table holds `candidate_count = 1` by CHECK, so the tab no longer reads `candidate_count` or `ambiguous`.
 
@@ -136,6 +168,7 @@ Switch to Verified for the photo-checked deal publication.
 
 ## Known limits
 
-- The route selects the columns 000617 appends to `mercari_leads_v`, and PostgREST answers a select naming a missing column with a 400, so this version must ship after 000617 is applied; until then, and until the publisher has run, the route answers "Mercari leads are unavailable". It was built and tested against the migrations' column lists with fixtures.
-- A lead whose card the photo check cannot see stays unconfirmable until the recognition queue's comparison set covers title cards (phases L2 and L3).
+- The route selects the columns 000617 and 000623 append to `mercari_leads_v`, and PostgREST answers a select naming a missing column with a 400, so each version must ship after its migration is applied; until then, and until the publisher has run, the route answers "Mercari leads are unavailable". It was built and tested against the migrations' column lists with fixtures, and `route.test.ts` pins the selected columns to 000623's view.
+- A fresh lead whose title card has no reference image stays unconfirmable; a catalog image for the card is the fix, not a request.
+- "Within about an hour" is the backend's usual time for a requested check (the next publication at :10 or :40, then the next lead-check turn), not a promise; a busy recognizer or a stopped laptop delays it, and the result shows at the publication after the check.
 - Listing ages are computed by the view at read time, so a page left open does not age; Refresh reads them again.

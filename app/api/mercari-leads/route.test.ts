@@ -263,6 +263,49 @@ describe("protected Mercari leads route", () => {
   });
 });
 
+// mercari_leads_v's columns as backend migration 000623 defines them, in
+// order (the backend pins the same list in TestMercariLeadsViewColumns).
+// PostgREST answers a select naming a missing column with a 400, so the route
+// must never ask for anything outside it.
+const VIEW_COLUMNS_000623 = [
+  "platform", "external_item_id", "publication_id", "publication_published_at", "published_at",
+  "source_kind", "source_run_id", "source_item_type", "canonical_url", "sanitized_title", "ask_jpy",
+  "shipping_payer_id", "shipping_payer", "buyer_pays_shipping", "shipping_method_id", "shipping_added_jpy",
+  "seller_condition_id", "source_status", "source_created_at", "first_seen_at", "observed_at",
+  "listing_age_hours", "observed_age_hours", "freshness_status", "holder_hint", "title_psa_grade",
+  "frontier_key", "frontier_state", "scheduling_condition", "queue_status", "candidate_count", "ambiguous",
+  "source_candidate_uids", "resolved_candidate_uids", "source_card_uid", "current_card_uid", "card_uid",
+  "card_resolution", "card_id", "regional_name", "english_name", "set_code", "set_name", "set_release_date",
+  "card_number", "misc_info", "image_url", "lane", "value_usd", "value_psa_grade", "value_basis",
+  "value_as_of", "value_sample_count", "value_window_days", "unpriced_reason", "jpy_to_usd_rate",
+  "buyer_paid_shipping_jpy", "landed_ask_usd", "selling_cost_usd", "net_value_usd", "multiple",
+  "multiple_withheld_reason", "other_listings", "photo_check_state", "photo_source_card_uid",
+  "photo_card_uid", "photo_regional_name", "photo_english_name", "photo_set_code", "photo_card_number",
+  "photo_image_url", "photo_psa_grade", "photo_checked_at", "latest_lead_action",
+  "latest_lead_action_reason", "latest_lead_action_at", "dismissed", "photo_check_requested", "edition",
+  "foil_treatment", "match_tier", "title_card_in_photo_scope", "value_condition", "nm_value_usd",
+  "photo_check_priority",
+];
+
+describe("Mercari leads column list", () => {
+  it("selects only columns mercari_leads_v has, each once, including the source kind and the photo-check band", async () => {
+    const query = fakeQuery({ data: [], error: null });
+    mocks.getUser.mockResolvedValue({ data: { user: { id: "operator" } } });
+    mocks.rpc.mockResolvedValue({ data: true, error: null });
+    mocks.from.mockReturnValue(query);
+
+    await GET(request("?lane=modern_raw"));
+
+    const [method, [selected]] = query.calls[0];
+    expect(method).toBe("select");
+    const columns = String(selected).split(", ");
+    expect(columns).toContain("source_kind");
+    expect(columns).toContain("photo_check_priority");
+    expect(new Set(columns).size).toBe(columns.length);
+    expect(columns.filter((column) => !VIEW_COLUMNS_000623.includes(column))).toEqual([]);
+  });
+});
+
 describe("Mercari leads request and cursor", () => {
   it("defaults to best multiple, every photo state but rejected, and 50 rows", () => {
     expect(parseLeadsRequest(new URLSearchParams("lane=psa"))).toEqual({

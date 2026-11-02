@@ -16,7 +16,9 @@ import MercariLeadsView, {
 import MercariTab from "./MercariTab";
 import type { MercariDealsPage } from "./MercariDealsView";
 
-// A priced modern raw lead with a multiple, the shape most leads take.
+// A priced modern raw lead with a multiple from the fresh lead scan, the shape
+// most leads take. Its title card has a reference image, and no publication
+// has queued it for a photo check.
 const RAW: MercariLead = {
   external_item_id: "m12345678901",
   source_item_type: "mercari",
@@ -46,6 +48,7 @@ const RAW: MercariLead = {
   foil_treatment: "normal",
   image_url: "https://images.example.test/charizard.png",
   match_tier: "identity",
+  source_kind: "lead_scan",
   title_card_in_photo_scope: true,
   lane: "modern_raw",
   value_usd: 120,
@@ -64,6 +67,7 @@ const RAW: MercariLead = {
   multiple_withheld_reason: null,
   other_listings: 0,
   photo_check_state: "unchecked",
+  photo_check_priority: null,
   photo_source_card_uid: null,
   photo_card_uid: null,
   photo_regional_name: null,
@@ -164,6 +168,15 @@ const UNPRICED: MercariLead = {
   multiple: null,
   other_listings: 3,
 };
+
+// The same lead from the cold crawl, whose rows were retired on 2026-11-02.
+const COLD: MercariLead = { ...RAW, source_kind: "cold_crawl" };
+
+// A second listing id, for a page of two otherwise identical leads.
+const OTHER_ID = {
+  external_item_id: "m88888888888",
+  canonical_url: "https://jp.mercari.com/item/m88888888888",
+} as const;
 
 function page(leads: MercariLead[], nextCursor: MercariLeadCursor | null = null): MercariLeadsPage {
   return { leads, nextCursor };
@@ -408,7 +421,8 @@ describe("MercariLeadsView", () => {
     for (const index of [0, 1, 3]) {
       expect(within(cards[index]).queryByTestId("mercari-lead-photo-card")).toBeNull();
     }
-    expect(within(cards[1]).getByText("Photo checked (JST): Oct 30, 2026, 12:00 PM")).toBeTruthy();
+    // When the check ran, with its age at the moment the view read the row.
+    expect(within(cards[1]).getByText("Photo checked (JST): Oct 30, 2026, 12:00 PM (20 h ago)")).toBeTruthy();
     // A confirmed photo needs no second check.
     expect(within(cards[1]).queryByRole("button", { name: "Request photo check" })).toBeNull();
     expect(within(cards[0]).getByRole("button", { name: "Request photo check" })).toBeTruthy();
@@ -476,13 +490,33 @@ describe("MercariLeadsView", () => {
     expect(one.textContent).toContain("at PSA 9");
   });
 
-  it("says when the photo check cannot confirm the title's card, and offers no photo check", async () => {
+  it("says a fresh lead's title card has no reference image when no photo check can confirm it, and offers none", async () => {
     view(vi.fn(async () => page([
       { ...RAW, title_card_in_photo_scope: false },
+      { ...RAW, ...OTHER_ID, title_card_in_photo_scope: false, photo_check_requested: true, latest_lead_action: "photo_check_requested" },
+    ])));
+
+    const [unchecked, requested] = await screen.findAllByTestId("mercari-lead-card");
+    const badge = within(unchecked).getByTestId("mercari-lead-photo");
+    expect(badge.textContent).toBe("Photo check can't confirm this card");
+    expect(badge.className).toContain("zinc");
+    expect(badge.className).not.toContain("amber");
+    expect(within(unchecked).getByTestId("mercari-lead-photo-note").textContent)
+      .toBe("The title's card has no reference image, so no photo check can confirm it.");
+    expect(unchecked.textContent).not.toContain("compares this listing with other cards");
+    expect(within(unchecked).queryByRole("button", { name: "Request photo check" })).toBeNull();
+    expect(within(unchecked).getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    // An earlier request cannot be met, so it is not shown as a check on its way.
+    expect(within(requested).getByTestId("mercari-lead-photo").textContent).toBe("Photo check can't confirm this card");
+    expect(requested.textContent).not.toContain("Photo check requested");
+  });
+
+  it("keeps the frontier wording for a cold-crawl lead the photo check cannot confirm", async () => {
+    view(vi.fn(async () => page([
+      { ...COLD, title_card_in_photo_scope: false },
       {
-        ...RAW,
-        external_item_id: "m88888888888",
-        canonical_url: "https://jp.mercari.com/item/m88888888888",
+        ...COLD,
+        ...OTHER_ID,
         title_card_in_photo_scope: false,
         photo_check_state: "conflict",
         photo_source_card_uid: "6f3c0a0e-7d8e-4f5e-9a0b-1c2d3e4f5a6b",
@@ -491,17 +525,171 @@ describe("MercariLeadsView", () => {
     ])));
 
     const [unchecked, conflict] = await screen.findAllByTestId("mercari-lead-card");
-    const badge = within(unchecked).getByTestId("mercari-lead-photo");
-    expect(badge.textContent).toBe("Photo check can't confirm this card");
-    expect(badge.className).toContain("zinc");
-    expect(badge.className).not.toContain("amber");
-    expect(within(unchecked).getByTestId("mercari-lead-photo-scope").textContent)
+    expect(within(unchecked).getByTestId("mercari-lead-photo").textContent).toBe("Photo check can't confirm this card");
+    expect(within(unchecked).getByTestId("mercari-lead-photo-note").textContent)
       .toBe("The photo check compares this listing with other cards, so it cannot confirm the card the title names yet.");
     expect(within(unchecked).queryByRole("button", { name: "Request photo check" })).toBeNull();
-    expect(within(unchecked).getByRole("button", { name: "Dismiss" })).toBeTruthy();
     // A result the check did reach keeps its own badge, with the same caveat.
     expect(within(conflict).getByTestId("mercari-lead-photo").textContent).toBe("Photo disagrees with title");
-    expect(within(conflict).getByTestId("mercari-lead-photo-scope")).toBeTruthy();
+    expect(within(conflict).getByTestId("mercari-lead-photo-note").textContent)
+      .toContain("compares this listing with other cards");
+  });
+
+  it("says a fresh lead's photo check is queued, in blue, with the reason it was queued", async () => {
+    const id = (n: number) => ({
+      external_item_id: `m9999999999${n}`,
+      canonical_url: `https://jp.mercari.com/item/m9999999999${n}`,
+    });
+    view(vi.fn(async () => page([
+      { ...RAW, ...id(1), photo_check_priority: 1, photo_check_requested: true, latest_lead_action: "photo_check_requested" },
+      { ...RAW, ...id(2), photo_check_priority: 2 },
+      { ...PSA10, ...id(3), value_sample_count: 2, multiple: null, multiple_withheld_reason: "psa_thin_comps", photo_check_priority: 3 },
+      { ...RAW, ...id(4) },
+    ])));
+
+    const [requested, profit, psa, waiting] = await screen.findAllByTestId("mercari-lead-card");
+    const cases: Array<[HTMLElement, string]> = [
+      [requested, "Photo check requested: within about an hour"],
+      [profit, "Photo check queued: best deal"],
+      [psa, "Photo check queued: PSA lead"],
+    ];
+    for (const [card, label] of cases) {
+      const badge = within(card).getByTestId("mercari-lead-photo");
+      expect(badge.textContent).toBe(label);
+      expect(badge.className).toContain("sky");
+      expect(badge.className).not.toContain("amber");
+      expect(within(card).queryByTestId("mercari-lead-photo-note")).toBeNull();
+      // The request is the queued badge; it is not named twice.
+      expect(card.textContent?.match(/Photo check requested/g)?.length ?? 0).toBe(card === requested ? 1 : 0);
+    }
+    // A requested lead is already first in line; any other waiting lead can still ask to go first.
+    expect(within(requested).queryByRole("button", { name: "Request photo check" })).toBeNull();
+    expect(within(profit).getByRole("button", { name: "Request photo check" })).toBeTruthy();
+    expect(within(psa).getByRole("button", { name: "Request photo check" })).toBeTruthy();
+
+    const badge = within(waiting).getByTestId("mercari-lead-photo");
+    expect(badge.textContent).toBe("Not photo-checked");
+    expect(badge.className).toContain("amber");
+    expect(within(waiting).getByTestId("mercari-lead-photo-note").textContent)
+      .toBe("New listings are photo-checked best deals first. Request a check to put this one first.");
+    expect(within(waiting).getByRole("button", { name: "Request photo check" })).toBeTruthy();
+  });
+
+  it("puts a request the latest publication has not read first, and shows no band from before a dismissal", async () => {
+    view(vi.fn(async () => page([
+      { ...RAW, photo_check_priority: 2, photo_check_requested: true, latest_lead_action: "photo_check_requested" },
+      {
+        ...RAW,
+        ...OTHER_ID,
+        photo_check_priority: 1,
+        dismissed: true,
+        latest_lead_action: "dismissed",
+        latest_lead_action_reason: "proxy",
+      },
+    ])));
+
+    const [requested, dismissed] = await screen.findAllByTestId("mercari-lead-card");
+    expect(within(requested).getByTestId("mercari-lead-photo").textContent).toBe("Photo check requested: within about an hour");
+    expect(within(requested).queryByRole("button", { name: "Request photo check" })).toBeNull();
+    // The next publication does not queue a dismissed lead; a request brings it back first in line.
+    expect(within(dismissed).getByTestId("mercari-lead-photo").textContent).toBe("Not photo-checked");
+    expect(within(dismissed).getByRole("button", { name: "Request photo check" })).toBeTruthy();
+    expect(within(dismissed).queryByRole("button", { name: "Dismiss" })).toBeNull();
+  });
+
+  it("shows when a fresh lead was photo-checked and offers no second check", async () => {
+    const checked = (n: number, state: MercariLead["photo_check_state"], at: string): MercariLead => ({
+      ...RAW,
+      external_item_id: `m7777777777${n}`,
+      canonical_url: `https://jp.mercari.com/item/m7777777777${n}`,
+      photo_check_state: state,
+      photo_source_card_uid: state === "rejected" ? null : "6f3c0a0e-7d8e-4f5e-9a0b-1c2d3e4f5a6b",
+      photo_checked_at: at,
+      // A request that led to a check stays the latest action; a fresh lead
+      // is checked once either way, so neither kind offers a second check.
+      ...(n % 2 === 1 ? { photo_check_requested: true, latest_lead_action: "photo_check_requested" as const } : {}),
+    });
+    // The view read these rows at 2026-10-30T23:27Z (observed_at plus observed_age_hours).
+    view(vi.fn(async () => page([
+      checked(1, "confirmed", "2026-10-30T22:57:00+00:00"),
+      checked(2, "conflict", "2026-10-30T03:00:00+00:00"),
+      checked(3, "inconclusive", "2026-10-28T00:00:00+00:00"),
+      checked(4, "rejected", "2026-10-30T21:00:00+00:00"),
+    ])));
+
+    const cards = await screen.findAllByTestId("mercari-lead-card");
+    const expected: Array<[string, string, string]> = [
+      ["Photo-checked", "emerald", "Photo checked (JST): Oct 31, 2026, 7:57 AM (under 1 h ago)"],
+      ["Photo disagrees with title", "red", "Photo checked (JST): Oct 30, 2026, 12:00 PM (20 h ago)"],
+      ["Photo inconclusive", "zinc", "Photo checked (JST): Oct 28, 2026, 9:00 AM (2 d ago)"],
+      ["Rejected by the photo check", "line-through", "Photo checked (JST): Oct 31, 2026, 6:00 AM (2 h ago)"],
+    ];
+    cards.forEach((card, index) => {
+      const [label, tone, when] = expected[index];
+      const badge = within(card).getByTestId("mercari-lead-photo");
+      expect(badge.textContent).toBe(label);
+      expect(badge.className).toContain(tone);
+      expect(within(card).getByText(when)).toBeTruthy();
+      expect(within(card).queryByRole("button", { name: "Request photo check" })).toBeNull();
+      expect(card.textContent).not.toContain("Photo check requested");
+      expect(card.textContent).not.toContain("Photo check queued");
+      expect(within(card).queryByTestId("mercari-lead-photo-note")).toBeNull();
+    });
+  });
+
+  it("names a cold-crawl lead beside its age and keeps its photo-check request rule", async () => {
+    const cold = (n: number, fields: Partial<MercariLead>): MercariLead => ({
+      ...COLD,
+      external_item_id: `m6666666666${n}`,
+      canonical_url: `https://jp.mercari.com/item/m6666666666${n}`,
+      ...fields,
+    });
+    const checkedAt = { photo_source_card_uid: "6f3c0a0e-7d8e-4f5e-9a0b-1c2d3e4f5a6b", photo_checked_at: "2026-10-30T03:00:00+00:00" };
+    view(vi.fn(async () => page([
+      cold(1, {}),
+      cold(2, { photo_check_state: "conflict", ...checkedAt }),
+      cold(3, { photo_check_state: "confirmed", ...checkedAt }),
+      cold(4, { photo_check_requested: true, latest_lead_action: "photo_check_requested" }),
+      RAW,
+    ])));
+
+    const [unchecked, conflict, confirmed, requested, fresh] = await screen.findAllByTestId("mercari-lead-card");
+    expect(within(unchecked).getByTestId("mercari-lead-source").textContent).toBe("Cold crawl");
+    const badge = within(unchecked).getByTestId("mercari-lead-photo");
+    expect(badge.textContent).toBe("Not photo-checked");
+    expect(badge.className).toContain("amber");
+    // Only a fresh lead is queued best deals first.
+    expect(within(unchecked).queryByTestId("mercari-lead-photo-note")).toBeNull();
+    expect(within(unchecked).getByRole("button", { name: "Request photo check" })).toBeTruthy();
+    expect(within(conflict).getByRole("button", { name: "Request photo check" })).toBeTruthy();
+    expect(within(confirmed).queryByRole("button", { name: "Request photo check" })).toBeNull();
+    // A cold-crawl request is recorded only, so it carries no promise of a check.
+    expect(within(requested).getByText("Photo check requested")).toBeTruthy();
+    expect(within(requested).getByTestId("mercari-lead-photo").textContent).toBe("Not photo-checked");
+    expect(within(requested).queryByRole("button", { name: "Request photo check" })).toBeNull();
+    // A fresh lead is the norm and carries no source badge.
+    expect(within(fresh).queryByTestId("mercari-lead-source")).toBeNull();
+  });
+
+  it("words the photo-check badges and notes in Japanese", async () => {
+    localStorage.setItem("language", "ja");
+    view(vi.fn(async () => page([
+      { ...RAW, photo_check_priority: 2 },
+      { ...RAW, ...OTHER_ID },
+      { ...RAW, external_item_id: "m55555555555", canonical_url: "https://jp.mercari.com/item/m55555555555", title_card_in_photo_scope: false },
+      { ...COLD, external_item_id: "m44444444444", canonical_url: "https://jp.mercari.com/item/m44444444444" },
+    ])));
+
+    await waitFor(() => expect(screen.getAllByTestId("mercari-lead-photo")[0].textContent).toBe("写真確認待ち（高利益）"));
+    const [queued, waiting, noImage, cold] = screen.getAllByTestId("mercari-lead-card");
+    expect(within(waiting).getByTestId("mercari-lead-photo").textContent).toBe("写真未確認");
+    expect(within(waiting).getByTestId("mercari-lead-photo-note").textContent)
+      .toBe("新着の出品は利益の大きいものから写真確認します。依頼するとこの出品を先に確認します。");
+    expect(within(noImage).getByTestId("mercari-lead-photo-note").textContent)
+      .toBe("タイトルのカードに参照画像がないため、写真確認では確認できません。");
+    expect(within(cold).getByTestId("mercari-lead-source").textContent).toBe("旧クロール");
+    fireEvent.click(within(queued).getByRole("button", { name: "写真確認を依頼" }));
+    await waitFor(() => expect(within(queued).getByTestId("mercari-lead-photo").textContent).toBe("写真確認を依頼済み（1時間ほどで確認）"));
   });
 
   it("marks buyer-paid shipping and the shipping added to the landed ask", async () => {
@@ -585,15 +773,20 @@ describe("MercariLeadsView", () => {
       .mockResolvedValueOnce(undefined);
     view(vi.fn(async () => page([RAW])), actor);
 
-    await onlyCard();
+    const card = await onlyCard();
     fireEvent.click(screen.getByRole("button", { name: "Request photo check" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Lead not found");
-    expect(screen.queryByText("Photo check requested")).toBeNull();
+    expect(within(card).getByTestId("mercari-lead-photo").textContent).toBe("Not photo-checked");
 
     fireEvent.click(screen.getByRole("button", { name: "Request photo check" }));
-    expect(await screen.findByText("Photo check requested")).toBeTruthy();
+    // The next publication queues a request first, and the next check turn checks it.
+    await waitFor(() => expect(within(card).getByTestId("mercari-lead-photo").textContent)
+      .toBe("Photo check requested: within about an hour"));
+    expect(within(card).getByTestId("mercari-lead-photo").className).toContain("sky");
+    expect(within(card).queryByTestId("mercari-lead-photo-note")).toBeNull();
     expect(actor).toHaveBeenLastCalledWith("m12345678901", "photo_check_requested", "");
     expect(screen.queryByRole("button", { name: "Request photo check" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("appends unique pages through a cursor that can end inside the rows without a multiple", async () => {
@@ -684,6 +877,51 @@ describe("parseMercariLeads", () => {
     expect(() => parseMercariLeads([{ ...UNPRICED, holder_hint: "psa_unknown" }])).toThrow("Invalid Mercari lead unpriced row");
     expect(() => parseMercariLeads([{ ...UNPRICED, value_condition: "nm" }])).toThrow("Invalid Mercari lead unpriced row");
     expect(() => parseMercariLeads([{ ...UNPRICED, multiple_withheld_reason: "psa_thin_comps" }])).toThrow("Invalid Mercari lead unpriced row");
+  });
+
+  it("accepts both source kinds and a photo-check band on an unchecked fresh lead a check can see", () => {
+    const [cold, ...bands] = parseMercariLeads([
+      COLD,
+      { ...RAW, photo_check_priority: 1, photo_check_requested: true, latest_lead_action: "photo_check_requested" },
+      { ...RAW, photo_check_priority: 2 },
+      { ...PSA10, value_sample_count: 2, multiple: null, multiple_withheld_reason: "psa_thin_comps", photo_check_priority: 3 },
+    ]);
+    expect(cold).toMatchObject({ source_kind: "cold_crawl", photo_check_priority: null });
+    expect(bands.map((lead) => [lead.source_kind, lead.photo_check_priority])).toEqual([
+      ["lead_scan", 1],
+      ["lead_scan", 2],
+      ["lead_scan", 3],
+    ]);
+  });
+
+  it("fails closed on a source kind the view does not publish", () => {
+    for (const sourceKind of ["hot_head", "LEAD_SCAN", "", null, undefined, 1]) {
+      expect(() => parseMercariLeads([{ ...RAW, source_kind: sourceKind }]), String(sourceKind))
+        .toThrow("Invalid Mercari lead source kind");
+    }
+  });
+
+  it("fails closed on a photo-check band outside 1 to 3 or on a lead no check can be queued for", () => {
+    for (const priority of [0, 4, -1, 1.5]) {
+      expect(() => parseMercariLeads([{ ...RAW, photo_check_priority: priority }]), String(priority))
+        .toThrow(/Invalid Mercari lead (photo check priority|number: photo_check_priority)/);
+    }
+    for (const priority of ["high", true, {}]) {
+      expect(() => parseMercariLeads([{ ...RAW, photo_check_priority: priority }]), String(priority))
+        .toThrow("Invalid Mercari lead number: photo_check_priority");
+    }
+    // 000623's queue CHECK: only an unchecked lead_scan row whose title card a check can see.
+    expect(() => parseMercariLeads([{ ...COLD, photo_check_priority: 2 }])).toThrow("Invalid Mercari lead photo check priority");
+    expect(() => parseMercariLeads([{ ...RAW, title_card_in_photo_scope: false, photo_check_priority: 2 }]))
+      .toThrow("Invalid Mercari lead photo check priority");
+    for (const state of ["confirmed", "conflict", "inconclusive", "rejected"]) {
+      expect(() => parseMercariLeads([{
+        ...RAW,
+        photo_check_state: state,
+        photo_checked_at: "2026-10-30T03:00:00+00:00",
+        photo_check_priority: 1,
+      }]), state).toThrow("Invalid Mercari lead photo check priority");
+    }
   });
 
   it("fails closed on economics and identity the view should never produce", () => {

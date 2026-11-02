@@ -47,8 +47,15 @@ export type MercariWithheldReason = "seller_condition_3_6" | "psa_grade_unread" 
 // How a raw row is valued: Near Mint, or, for a vintage card the seller rates
 // 3-6, as damaged at P25 of the same raw sales (backend 000617).
 export type MercariValueCondition = "nm" | "damaged_p25";
+// Where a lead comes from: the fresh lead scan, or the cold crawl, whose rows
+// were retired on 2026-11-02 (backend 000620).
+export type MercariLeadSourceKind = "cold_crawl" | "lead_scan";
+// The band of a fresh lead waiting for its photo check (backend 000623): 1 the
+// operator asked, 2 a lead with a multiple (queued by profit), 3 a PSA lead
+// without one.
+export type MercariPhotoCheckPriority = 1 | 2 | 3;
 
-// One row of the backend view mercari_leads_v (migrations 000616 and 000617),
+// One row of the backend view mercari_leads_v (migrations 000616, 000617 and 000623),
 // restricted to the columns the feed shows. The parser below holds every row
 // to the lane rules the table's CHECKs enforce, so a row that breaks one fails
 // closed instead of rendering a value it should not carry.
@@ -84,8 +91,11 @@ export type MercariLead = {
   image_url: string | null;
   // The shared matcher tier that read the card from the title.
   match_tier: string;
-  // Whether the photo check compares this listing against the title's card at
-  // all; when it does not, no photo result can confirm the lead.
+  source_kind: MercariLeadSourceKind;
+  // Whether a photo check can compare this listing with the title's card; when
+  // it cannot, no photo result can confirm the lead. On a lead_scan row it is
+  // false only when the title's card has no reference image; on a cold_crawl
+  // row it means the recognition frontier did not include the title's card.
   title_card_in_photo_scope: boolean;
   lane: MercariLeadLane;
   value_usd: number | null;
@@ -104,6 +114,8 @@ export type MercariLead = {
   multiple_withheld_reason: MercariWithheldReason | null;
   other_listings: number;
   photo_check_state: MercariPhotoState;
+  // Set only on an unchecked lead_scan row whose title card a check can see.
+  photo_check_priority: MercariPhotoCheckPriority | null;
   photo_source_card_uid: string | null;
   photo_card_uid: string | null;
   photo_regional_name: string | null;
@@ -181,6 +193,7 @@ const SHIPPING_PAYERS = new Set(["seller", "buyer", "unknown"]);
 const RESOLUTIONS = new Set(["uid", "identity", "unresolved"]);
 const WITHHELD_REASONS = new Set(["seller_condition_3_6", "psa_grade_unread", "psa_thin_comps"]);
 const VALUE_CONDITIONS = new Set(["nm", "damaged_p25"]);
+const SOURCE_KINDS = new Set(["cold_crawl", "lead_scan"]);
 
 function invalid(what: string, index: number): Error {
   return new Error(`Invalid Mercari lead ${what}: ${index}`);
@@ -369,6 +382,18 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       throw invalid("action", index);
     }
 
+    // The photo-check queue, as 000623's CHECKs hold it: a band is 1 to 3, and
+    // only an unchecked lead_scan row whose title card a check can see is
+    // queued, so a badge never says a check is on its way when none can come.
+    const sourceKind = oneOf<MercariLeadSourceKind>(SOURCE_KINDS, row.source_kind, "source kind", index);
+    const photoState = oneOf<MercariPhotoState>(new Set(PHOTO_STATES), row.photo_check_state, "photo state", index);
+    const inPhotoScope = requiredBoolean(row.title_card_in_photo_scope, "title_card_in_photo_scope");
+    const priority = optionalInteger(row.photo_check_priority, "photo_check_priority");
+    if (priority !== null && (priority < 1 || priority > 3
+      || sourceKind !== "lead_scan" || photoState !== "unchecked" || !inPhotoScope)) {
+      throw invalid("photo check priority", index);
+    }
+
     return {
       external_item_id: externalItemId,
       source_item_type: sourceItemType,
@@ -400,7 +425,8 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       // A tier the matcher adds later is shown by its code, not refused: it
       // says how the card was read, not what it is worth.
       match_tier: requiredString(row.match_tier, "match_tier"),
-      title_card_in_photo_scope: requiredBoolean(row.title_card_in_photo_scope, "title_card_in_photo_scope"),
+      source_kind: sourceKind,
+      title_card_in_photo_scope: inPhotoScope,
       lane,
       value_usd: valueUsd,
       value_condition: valueCondition as MercariValueCondition | null,
@@ -417,7 +443,8 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       multiple,
       multiple_withheld_reason: withheld as MercariWithheldReason | null,
       other_listings: otherListings,
-      photo_check_state: oneOf<MercariPhotoState>(new Set(PHOTO_STATES), row.photo_check_state, "photo state", index),
+      photo_check_state: photoState,
+      photo_check_priority: priority as MercariPhotoCheckPriority | null,
       photo_source_card_uid: optionalString(row.photo_source_card_uid, "photo_source_card_uid"),
       photo_card_uid: optionalString(row.photo_card_uid, "photo_card_uid"),
       photo_regional_name: optionalString(row.photo_regional_name, "photo_regional_name"),
@@ -581,14 +608,76 @@ const MATCH_TIER_KEYS: Record<string, TranslationKey> = {
   sql_family: "mercariLeads.matchTier.sql_family",
 };
 
-// A photo check compares a listing against its frontier's cards. When the
-// title's card is not among them, no photo result can confirm the lead, so an
-// unchecked lead must not read as one that is waiting for its check.
-function photoBadge(lead: MercariLead): { key: TranslationKey; className: string } {
-  if (!lead.title_card_in_photo_scope && lead.photo_check_state === "unchecked") {
-    return { key: "mercariLeads.photo.outOfScope", className: PHOTO_CLASSES.inconclusive };
+// A fresh lead waiting for its photo check reads blue, not amber: the check is
+// on its way, and the band says why it was queued.
+const QUEUED_KEYS: Record<MercariPhotoCheckPriority, TranslationKey> = {
+  1: "mercariLeads.photo.queued.requested",
+  2: "mercariLeads.photo.queued.profit",
+  3: "mercariLeads.photo.queued.psa",
+};
+
+const QUEUED_CLASS = "border-sky-500/50 bg-sky-500/10 text-sky-800 dark:text-sky-200";
+
+const SOURCE_KIND_KEYS: Record<Exclude<MercariLeadSourceKind, "lead_scan">, TranslationKey> = {
+  cold_crawl: "mercariLeads.source.cold_crawl",
+};
+
+// The band a fresh lead waits in, as the next lead-scan publication (every 30
+// minutes) will queue it. A request that publication has not read yet goes
+// first, so it reads as band 1 at once; a dismissed lead is never queued, so a
+// band from before the dismissal is not shown. Only an unchecked lead_scan row
+// whose title card a check can see is ever queued.
+function queuedBand(lead: MercariLead): MercariPhotoCheckPriority | null {
+  if (lead.source_kind !== "lead_scan" || lead.photo_check_state !== "unchecked"
+    || !lead.title_card_in_photo_scope || lead.dismissed) {
+    return null;
   }
-  return { key: PHOTO_KEYS[lead.photo_check_state], className: PHOTO_CLASSES[lead.photo_check_state] };
+  return lead.photo_check_requested ? 1 : lead.photo_check_priority;
+}
+
+// A request leads to a check only when a check can compare the listing with the
+// title's card. A fresh lead is checked once, so it can ask only while it waits
+// and is not already first in line; a cold-crawl lead keeps its old rule, where
+// a photo that already agrees with the title needs no second check.
+function canRequestPhotoCheck(lead: MercariLead): boolean {
+  if (!lead.title_card_in_photo_scope) return false;
+  if (lead.source_kind === "lead_scan") {
+    return lead.photo_check_state === "unchecked" && queuedBand(lead) !== 1;
+  }
+  return !lead.photo_check_requested && lead.photo_check_state !== "confirmed";
+}
+
+// The photo-check badge and the note beneath it. When no check can compare the
+// listing with the title's card, an unchecked lead must not read as one waiting
+// for its check: on a fresh lead the card has no reference image, and on a
+// cold-crawl lead the recognition frontier did not include the card.
+function photoStatus(lead: MercariLead): { key: TranslationKey; className: string; note: TranslationKey | null } {
+  const state = lead.photo_check_state;
+  const scopeNote: TranslationKey | null = lead.title_card_in_photo_scope || state === "rejected"
+    ? null
+    : lead.source_kind === "lead_scan"
+      ? "mercariLeads.photoNote.noReferenceImage"
+      : "mercariLeads.photoNote.frontier";
+  if (state !== "unchecked") {
+    return { key: PHOTO_KEYS[state], className: PHOTO_CLASSES[state], note: scopeNote };
+  }
+  if (!lead.title_card_in_photo_scope) {
+    return { key: "mercariLeads.photo.outOfScope", className: PHOTO_CLASSES.inconclusive, note: scopeNote };
+  }
+  const band = queuedBand(lead);
+  if (band !== null) return { key: QUEUED_KEYS[band], className: QUEUED_CLASS, note: null };
+  return {
+    key: PHOTO_KEYS.unchecked,
+    className: PHOTO_CLASSES.unchecked,
+    note: lead.source_kind === "lead_scan" ? "mercariLeads.photoNote.notQueued" : null,
+  };
+}
+
+// The view computes every age at read time (observed_age_hours is now() less
+// observed_at), so an age derived from it agrees with the others on the card
+// and does not depend on the viewer's clock.
+function hoursAtRead(lead: MercariLead, timestamp: string): number {
+  return Math.max(0, lead.observed_age_hours + (Date.parse(lead.observed_at) - Date.parse(timestamp)) / 3_600_000);
 }
 
 const UNPRICED_KEYS: Record<string, TranslationKey> = {
@@ -599,8 +688,8 @@ const UNPRICED_KEYS: Record<string, TranslationKey> = {
 };
 
 // The listing's age decides whether a lead is still worth opening, because
-// the first leads come from a crawl several days old. Fresh under a day,
-// aging under three, old after that.
+// Mercari listings sell within days. Fresh under a day, aging under three, old
+// after that.
 function ageClass(hours: number): string {
   if (hours < 24) return "border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200";
   if (hours < 72) return "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-200";
@@ -638,10 +727,7 @@ function LeadActions({
   };
 
   const reasonId = `mercari-lead-dismiss-reason-${lead.external_item_id}`;
-  // A photo that already agrees with the title needs no second check, and a
-  // check that cannot see the title's card cannot confirm it.
-  const canRequestPhoto = !lead.photo_check_requested && lead.photo_check_state !== "confirmed"
-    && lead.title_card_in_photo_scope;
+  const canRequestPhoto = canRequestPhotoCheck(lead);
   return (
     <div className="space-y-2">
       {dismissing ? (
@@ -808,7 +894,7 @@ function LeadCard({
   // Edition and finish come from the typed axes, never from misc_info alone.
   const variant = pokemonVariantLabel(lead);
   const tierKey = MATCH_TIER_KEYS[lead.match_tier];
-  const photo = photoBadge(lead);
+  const photo = photoStatus(lead);
   return (
     <Card className="min-w-0" data-testid="mercari-lead-card">
       <CardHeader className="space-y-2">
@@ -821,6 +907,12 @@ function LeadCard({
             <Clock className="size-3.5" aria-hidden="true" />
             {t(listedKey, { age: age(lead.listing_age_hours) })}
           </Badge>
+          {/* Every lead is a fresh lead-scan row now, so only the exception is named. */}
+          {lead.source_kind !== "lead_scan" && (
+            <Badge variant="outline" className="text-muted-foreground" data-testid="mercari-lead-source">
+              {t(SOURCE_KIND_KEYS[lead.source_kind])}
+            </Badge>
+          )}
           <Badge variant="outline" className={photo.className} data-testid="mercari-lead-photo">
             {t(photo.key)}
           </Badge>
@@ -831,7 +923,8 @@ function LeadCard({
             </Badge>
           )}
           {lead.dismissed && <Badge variant="outline">{t("mercari.dismissed")}</Badge>}
-          {lead.photo_check_requested && (
+          {/* A fresh lead's request is its queued badge; a cold-crawl lead's is recorded only. */}
+          {lead.source_kind === "cold_crawl" && lead.photo_check_requested && (
             <Badge variant="outline">{t("mercariLeads.photoCheckRequested")}</Badge>
           )}
         </div>
@@ -1013,14 +1106,14 @@ function LeadCard({
             </div>
           </div>
         )}
-        {!lead.title_card_in_photo_scope && lead.photo_check_state !== "rejected" && (
-          <p className="text-xs text-muted-foreground" data-testid="mercari-lead-photo-scope">
-            {t("mercariLeads.photoOutOfScope")}
+        {photo.note !== null && (
+          <p className="text-xs text-muted-foreground" data-testid="mercari-lead-photo-note">
+            {t(photo.note)}
           </p>
         )}
         {lead.photo_checked_at !== null && (
-          <p className="text-xs text-muted-foreground">
-            {t("mercariLeads.photoChecked")}: {dateTime(lead.photo_checked_at)}
+          <p className="text-xs text-muted-foreground" data-testid="mercari-lead-photo-checked">
+            {t("mercariLeads.photoChecked")}: {dateTime(lead.photo_checked_at)} ({t("mercariLeads.observedAgo", { age: age(hoursAtRead(lead, lead.photo_checked_at)) })})
           </p>
         )}
         {lead.dismissed && lead.latest_lead_action_reason && (

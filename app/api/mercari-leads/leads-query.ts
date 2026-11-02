@@ -1,6 +1,6 @@
 // Shared shape of the Mercari leads read: the request the route accepts, the
 // columns the tab needs from the backend view mercari_leads_v (migrations
-// 000616 and 000617), and the keyset cursor over each sort. Kept out of
+// 000616, 000617 and 000623), and the keyset cursor over each sort. Kept out of
 // route.ts because a Next.js route module may export only HTTP handlers.
 
 export const DEFAULT_LIMIT = 50;
@@ -118,6 +118,13 @@ export const LEAD_COLUMNS = [
   "title_card_in_photo_scope",
   "value_condition",
   "nm_value_usd",
+  // The photo-check badges (#2304 L4): where the lead comes from, the fresh
+  // lead scan or the cold crawl retired on 2026-11-02 (in the view since
+  // 000616), and the band of a fresh lead waiting for its photo check, which
+  // backend 000623 appends. Like 000617's columns, selecting it before 000623
+  // is applied is a 400, so this ships after the apply.
+  "source_kind",
+  "photo_check_priority",
 ].join(", ");
 
 function isOneOf<T extends string>(values: readonly T[], value: string): value is T {
