@@ -24,11 +24,12 @@ Nothing is deleted, because the posts are evidence, but the tab shows a time win
 - Make the collection cadence explicit: the backend checks the shops hourly during shop hours, 11:00-20:00 JST.
 - Keep the source one click away, so the operator judges the post itself.
 - Keep working before the backend account summary is applied, by deriving the account list from the posts already loaded.
+- Let the operator choose which regions the hourly run reads (backend #2342): put a region in focus, in focus until a date for a trip, or out of it, and ask for any other region to be read once.
 
 ## Non-goals
 
 - No recognition of the items in a photo and no arbitrage decision.
-- No alerts, schedules, or per-account configuration from the frontend.
+- No alerts, schedules, or per-account configuration from the frontend; the region focus is the one run setting the tab changes, and only through the backend's administrator RPCs.
 - No account statistics beyond what the summary RPC returns and the posts loaded for the window; the frontend never counts posts across pages it has not loaded, and says so when it is counting loaded posts.
 - No deletion or archiving of arrival posts; All still shows every captured post.
 - No translation, parsing, or interpretation of the caption; it is shown as the shop wrote it, and only the `https://t.co/...` links X puts in it become links.
@@ -41,8 +42,29 @@ The dashboard view `ArrivalPostsView` (slug `arrivals`, sidebar group Catalog) l
 - `/api/twitter-arrivals/sources` returns the account summary: the caller's session goes to backend RPC `twitter_arrival_sources(p_since timestamptz default null)`, one row per account with `buyer_handle`, `twitter_handle`, `post_count`, `recent_count` (posts since `p_since`, default the last 24 hours) and `latest_post_at`.
   The route accepts an optional `since` timestamp for `p_since`; the view sends the window's cutoff, and All omits it so the backend default applies.
 
-Both routes require the Supabase user session, never read tables directly, never use a service key, and map the backend administrator refusal to 403.
-Backend contract and collection details: `docs/twitter_arrival_posts.md` in the backend repo.
+- `/api/twitter-arrivals/regions` is the region focus (backend #2342, migration 000622): GET passes the caller's session to `twitter_arrivals_focus_status()`, and POST takes one change, `{action: "set_focus", region, until}` (`until` a `YYYY-MM-DD` Tokyo date or null), `{action: "clear_focus", region}`, `{action: "reset_focus"}` or `{action: "request_read", region}`, calls `twitter_arrivals_set_focus`, `twitter_arrivals_clear_focus` (null region for the reset) or `twitter_arrivals_request_read`, and answers with the status after the change.
+
+All three routes require the Supabase user session, never read tables directly, never use a service key, and map the backend administrator refusal to 403.
+Backend contract and collection details: `docs/twitter_arrival_posts.md` and `docs/twitter_arrivals_region_lists.md` (focus regions) in the backend repo.
+
+### Regions
+
+The hourly backend run reads only the region X Lists of the focus, Tokyo and Kanto by default, and any other region once on request (backend #2342).
+`ArrivalRegionPanel` sits above the feed: a header with the hourly focus in one line ("Read hourly: Akihabara, Ikebukuro, ... (default focus)", and how many read-once requests are pending) and a Show regions toggle (`aria-expanded`), closed by default so the posts stay first.
+Open, it explains the cadence and lists every region the run has published, in roster order, two or three to a row on desktop and one on a phone, each with:
+
+- its status: In focus (default), In focus (set by the operator), In focus until a date, or Not in focus;
+- its shops, how many of its lists are readable, and when its lists were last read;
+- a pending read-once request ("Read once requested 20 minutes ago; the next run in shop hours reads it"), or when it was last read once;
+- its controls: Add focus, Focus until (a Tokyo date from today to a year ahead, a week ahead by default) or Change date, Keep in focus for a dated region, Remove, and for a region out of focus Read once.
+
+Read once is absent, not disabled, while the region has no readable list yet (the backend list rollout fills them), and says so; once asked, the button reads Read once pending and stays disabled until a run fulfils the request.
+While the operator's focus is set, Return to default focus clears it.
+Each change replaces the panel's state with the status the RPC returns; a refused change keeps the panel and shows the backend's reason on that region.
+Every control is a 44 px target at every width (`min-h-11 sm:min-h-11`, overriding the Button's compact desktop height).
+Region names are translated (`arrivals.regionName.<region>`); an unknown region key shows as itself.
+While the RPCs are absent the route answers 501 with `reason: "rpc-missing"`, and the panel says the controls appear once the backend migration is applied and that the run reads the default focus until then; before the first run after the migration it says the run has not published its regions yet.
+The data logic is `app/dashboard/arrival-regions.ts` (the status parser, the Tokyo date arithmetic, and the route client).
 
 ### Account identity
 
@@ -118,6 +140,8 @@ If a later request fails, the loaded posts and cursor remain visible.
 An expired session offers a sign-in link in a new tab and a Continue after signing in action that retries the same cursor.
 An administrator refusal explains the required role without a transient Retry action.
 Read the post's own caption on the card (Show full text when it is clamped), open an image to see the original media, or Open original post for the full context.
+Before a trip, open Show regions, choose Focus until on the destination and pick the last day; the hourly run reads that city from the next run in shop hours through that Tokyo date and then drops it.
+For a one-off look at a city, press Read once; the request shows as pending until the next run in shop hours reads it, and its posts arrive in the feed after that run.
 
 Source-post time and evidence-collection time are labeled separately in Japan Standard Time.
 Media use `object-fit: contain` inside bounded previews, through the authenticated image proxy.
@@ -131,5 +155,8 @@ The browser parser requires post identity, source identity, timestamps, source U
 It accepts the optional re-post fields when they are well formed (a parseable or null `last_boosted_at`, a non-negative integer `boost_count`, a non-empty or null `via_retweet_of`) and rejects a malformed one; the posts route likewise fails closed on an unreadable `last_boosted_at` in a cursor row.
 It accepts the optional caption `tweet_text` when it is a string or null (absent or blank reads as none) and rejects any other type.
 The sources parser requires both handles, non-negative integer counts and a parseable or null timestamp.
+The regions route accepts a region key (`^[a-z][a-z0-9_]{0,39}$`), one of the four actions, and for `set_focus` a `YYYY-MM-DD` date or null; anything else returns 400 before the RPC call, the backend's own refusals (`22023`: an unknown region, a date out of range, a region already in focus or with no readable list) return 400 with the backend's message, and the absent RPCs return 501.
+The regions parser requires a Tokyo date for `today`, a known focus source and focus kind, non-negative integer counts with readable lists no more than lists, `YYYY-MM-DD` or null dates, and a request id and time in a pending or fulfilled request.
 
+`app/api/twitter-arrivals/regions/route.test.ts`, `app/dashboard/arrival-regions.test.ts` and `app/dashboard/ArrivalRegionPanel.test.tsx` cover the region route's mapping and refusals, the status parser and the panel (statuses, last read, read once and its pending state, focus until with its date bounds, remove, keep, reset, refusals, the absent migration, the unpublished state, retry, Japanese, and the 44 px targets).
 `app/api/twitter-arrivals/route.test.ts`, `app/api/twitter-arrivals/sources/route.test.ts`, `app/dashboard/arrival-accounts.test.ts`, `app/dashboard/arrival-window.test.ts`, `app/dashboard/arrival-text.test.ts`, `app/dashboard/url-state.test.ts` and `app/dashboard/ArrivalPostsView.test.tsx` cover these boundaries and the loading, empty, retry, expired-session, forbidden, pagination, deduplication, account list, derived fallback, URL selection, grouping and time-window states (cutoff filtering, the stop-paging rule, paging the window to exhaustion with the page bound and its loading status, the window's empty state with Show all, URL and localStorage round trips), the per-account scroll panel, and the caption's plain-text rendering, entity decoding, t.co links and clamp toggle.

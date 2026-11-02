@@ -41,6 +41,8 @@ import {
   writeCollapsedAccounts,
   writeGroupByAccount,
 } from "./arrival-accounts";
+import ArrivalRegionPanel from "./ArrivalRegionPanel";
+import type { RegionActionSender, RegionStatusLoader } from "./arrival-regions";
 import { decodeTweetText, tweetTextSegments } from "./arrival-text";
 import {
   cutoffISO,
@@ -781,9 +783,14 @@ function readSelectedWindow(): ArrivalWindow {
 export default function ArrivalPostsView({
   loader = loadArrivalPosts,
   sourcesLoader = loadArrivalSources,
+  regionLoader,
+  regionSender,
 }: {
   loader?: ArrivalPostsLoader;
   sourcesLoader?: ArrivalSourcesLoader;
+  /** The focus regions' status and changes (backend #2342); defaults call the API route. */
+  regionLoader?: RegionStatusLoader;
+  regionSender?: RegionActionSender;
 }) {
   const { t, language } = useTranslation();
   // The selected shop is a leaf URL param (?shop=...) so one account's arrivals
@@ -1028,6 +1035,8 @@ export default function ArrivalPostsView({
           {t("arrivals.subtitle")}
         </p>
       </div>
+
+      <ArrivalRegionPanel loader={regionLoader} sender={regionSender} />
 
       <div className="grid min-w-0 gap-4 md:grid-cols-[16rem_minmax(0,1fr)] lg:grid-cols-[18rem_minmax(0,1fr)]">
         <ArrivalAccountPanel

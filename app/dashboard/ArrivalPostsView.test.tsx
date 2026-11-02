@@ -88,9 +88,11 @@ function view(
   loader: ArrivalPostsLoader,
   sourcesLoader: ArrivalSourcesLoader = noSources,
 ) {
+  // The region panel has its own tests (ArrivalRegionPanel.test.tsx); here it
+  // answers as before the backend migration and stays out of the way.
   return render(
     <LanguageProvider>
-      <ArrivalPostsView loader={loader} sourcesLoader={sourcesLoader} />
+      <ArrivalPostsView loader={loader} sourcesLoader={sourcesLoader} regionLoader={async () => null} />
     </LanguageProvider>,
   );
 }
