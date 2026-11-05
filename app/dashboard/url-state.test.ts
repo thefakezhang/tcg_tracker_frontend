@@ -11,6 +11,7 @@ import { MATCH_REVIEW_SENTINEL } from "./ReviewQueueNavigationContext";
 
 const ARRIVALS = -21;
 const MERCARI = -22;
+const BUYBACKS = -23;
 
 describe("dashboard URL codec", () => {
   it("round-trips every state shape", () => {
@@ -65,6 +66,18 @@ describe("dashboard URL codec", () => {
     expect(parseDashboardSearch(`?view=arrivals&shop=${"a".repeat(101)}`).shop).toBeNull();
     expect(parseDashboardSearch("?view=arrivals&shop=%00alice").shop).toBeNull();
     expect(parseDashboardSearch("?view=arrivals&shop=").shop).toBeNull();
+  });
+  it("carries the buybacks source as ?shop= only with the buybacks view", () => {
+    const buybacks = { game: "pokemon", activeTripId: BUYBACKS, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null } as const;
+    expect(buildDashboardSearch(buybacks)).toBe("?view=buybacks");
+    expect(buildDashboardSearch({ ...buybacks, shop: "pdg" })).toBe("?view=buybacks&shop=pdg");
+    expect(parseDashboardSearch("?view=buybacks&shop=pdg")).toEqual({ ...buybacks, shop: "pdg" });
+    // The arrivals window is not a buybacks param.
+    expect(parseDashboardSearch("?view=buybacks&shop=pdg&since=7d").since).toBeNull();
+    expect(buildDashboardSearch({ ...buybacks, shop: "pdg", since: "7d" })).toBe("?view=buybacks&shop=pdg");
+    // The same bound the buylist route enforces on the source.
+    expect(parseDashboardSearch(`?view=buybacks&shop=${"a".repeat(101)}`).shop).toBeNull();
+    expect(parseDashboardSearch("?view=buybacks&shop=%00pdg").shop).toBeNull();
   });
   it("carries the arrivals time window only with the arrivals view", () => {
     const arrivals = { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null, feed: null, lane: null, sort: null } as const;

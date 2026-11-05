@@ -1,6 +1,6 @@
 // Leaf query params: sub-state a single view owns inside /dashboard's query
-// string (a trip's ?tab=, the Arrivals ?shop= and ?since=, the Mercari ?feed=,
-// ?lane= and ?sort=). The view reads its param on
+// string (a trip's ?tab=, the Arrivals ?shop= and ?since=, the Buybacks
+// ?shop=, the Mercari ?feed=, ?lane= and ?sort=). The view reads its param on
 // mount and writes it in place, with no history entry; UrlStateSync decides
 // whether it survives a view-selection change. This module has no imports so
 // a view can use it without pulling in the views registry.
@@ -33,6 +33,12 @@ export function parseShopParam(value: string | null | undefined): string | null 
   const trimmed = value?.trim() ?? "";
   return SHOP_HANDLE.test(trimmed) ? trimmed : null;
 }
+
+/**
+ * The Buybacks view's leaf param: the selected source, the same buyer handle
+ * Arrivals selects with ?shop=, under the same bound as the buylist route.
+ */
+export const BUYBACKS_SHOP_PARAM = "shop";
 
 /** The Arrivals view's time window leaf param: how far back the feed and the account counts look. */
 export const ARRIVALS_WINDOW_PARAM = "since";
