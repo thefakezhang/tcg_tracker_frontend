@@ -28,7 +28,8 @@ export { readUrlParam, writeUrlParam } from "./url-params";
 //   - popstate re-applies the URL to the contexts.
 // Leaf params are owned by a view (replaceState): the trip tab by
 // TripDashboard, the arrivals shop and time window by ArrivalPostsView, the
-// Mercari feed by MercariTab and its lane and sort by MercariLeadsView. Each is
+// buybacks source by TwitterBuybacksView (also ?shop=), the Mercari feed by
+// MercariTab and its lane and sort by MercariLeadsView. Each is
 // carried over unchanged while its selection stays the same and dropped otherwise.
 const UrlHydratedContext = createContext(false);
 
