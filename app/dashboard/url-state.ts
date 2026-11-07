@@ -13,6 +13,7 @@
 //   /dashboard?view=buybacks&shop=pdg    the Buybacks view, one source's buylist
 //   /dashboard?view=mercari&lane=psa     the Mercari leads feed, PSA lane
 //   /dashboard?view=mercari&feed=verified the Mercari verified deals
+//   /dashboard?view=mercari&format=auction the Mercari leads feed, auctions
 //   /dashboard?trip=4&tab=sales          a trip and its tab
 //   /dashboard?buylist=2                 a buy list
 // UrlStateSync owns reading it on load / popstate and writing it on change.
@@ -23,12 +24,15 @@ import {
   type ArrivalWindow,
   BUYBACKS_SHOP_PARAM,
   MERCARI_FEED_PARAM,
+  MERCARI_FORMAT_PARAM,
   MERCARI_LANE_PARAM,
   MERCARI_SORT_PARAM,
   type MercariFeed,
+  type MercariLeadFormat,
   type MercariLeadLane,
   type MercariLeadSort,
   parseMercariFeedParam,
+  parseMercariFormatParam,
   parseMercariLaneParam,
   parseMercariSortParam,
   parseShopParam,
@@ -59,11 +63,13 @@ export interface DashboardUrlState {
   feed: MercariFeed | null;
   /** Mercari leads lane, only meaningful when the view is mercari. */
   lane: MercariLeadLane | null;
+  /** Mercari leads format (fixed price or auctions), only meaningful when the view is mercari; the default stays out of the URL. */
+  format: MercariLeadFormat | null;
   /** Mercari leads sort, only meaningful when the view is mercari. */
   sort: MercariLeadSort | null;
 }
 
-const NO_MERCARI = { feed: null, lane: null, sort: null } as const;
+const NO_MERCARI = { feed: null, lane: null, format: null, sort: null } as const;
 
 export function parseDashboardSearch(search: string): DashboardUrlState {
   const p = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
@@ -87,6 +93,7 @@ export function parseDashboardSearch(search: string): DashboardUrlState {
       since: arrivals ? parseWindowParam(p.get(ARRIVALS_WINDOW_PARAM)) : null,
       feed: mercari ? parseMercariFeedParam(p.get(MERCARI_FEED_PARAM)) : null,
       lane: mercari ? parseMercariLaneParam(p.get(MERCARI_LANE_PARAM)) : null,
+      format: mercari ? parseMercariFormatParam(p.get(MERCARI_FORMAT_PARAM)) : null,
       sort: mercari ? parseMercariSortParam(p.get(MERCARI_SORT_PARAM)) : null,
     };
   }
@@ -114,6 +121,7 @@ export function buildDashboardSearch(state: DashboardUrlState): string {
       if (view.slug === MERCARI_VIEW_SLUG) {
         if (state.feed) p.set(MERCARI_FEED_PARAM, state.feed);
         if (state.lane) p.set(MERCARI_LANE_PARAM, state.lane);
+        if (state.format) p.set(MERCARI_FORMAT_PARAM, state.format);
         if (state.sort) p.set(MERCARI_SORT_PARAM, state.sort);
       }
     } else if (state.activeTripId > 0) {

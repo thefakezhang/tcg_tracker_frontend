@@ -48,6 +48,7 @@ function row(id: string, fields: Record<string, unknown>) {
 
 const DEFAULT_HIDING: Call[] = [
   ["eq", ["source_status", "ON_SALE"]],
+  ["eq", ["auction_ended", false]],
   ["neq", ["photo_check_state", "rejected"]],
   ["eq", ["dismissed", false]],
 ];
@@ -141,6 +142,7 @@ describe("protected Mercari leads route", () => {
     expect(query.calls).toEqual([
       ["select", [LEAD_COLUMNS]],
       ["eq", ["lane", "vintage_raw"]],
+      ["eq", ["listing_format", "fixed_price"]],
       ["order", ["multiple", { ascending: false, nullsFirst: false }]],
       ["order", ["external_item_id", { ascending: true }]],
       ["limit", [50]],
@@ -161,6 +163,7 @@ describe("protected Mercari leads route", () => {
     expect(query.calls).toEqual([
       ["select", [LEAD_COLUMNS]],
       ["eq", ["lane", "unpriced"]],
+      ["eq", ["listing_format", "fixed_price"]],
       ["order", ["first_seen_at", { ascending: false }]],
       ["order", ["external_item_id", { ascending: true }]],
       ["limit", [50]],
@@ -177,6 +180,7 @@ describe("protected Mercari leads route", () => {
     expect(query.calls).toEqual([
       ["select", [LEAD_COLUMNS]],
       ["eq", ["lane", "psa"]],
+      ["eq", ["listing_format", "fixed_price"]],
       ["order", ["multiple", { ascending: false, nullsFirst: false }]],
       ["order", ["external_item_id", { ascending: true }]],
       ["limit", [10]],
@@ -186,8 +190,9 @@ describe("protected Mercari leads route", () => {
     const conflicts = fakeQuery({ data: [], error: null });
     mocks.from.mockReturnValue(conflicts);
     await GET(request("?lane=psa&photo=conflict"));
-    expect(conflicts.calls.slice(5)).toEqual([
+    expect(conflicts.calls.slice(6)).toEqual([
       ["eq", ["source_status", "ON_SALE"]],
+      ["eq", ["auction_ended", false]],
       ["eq", ["photo_check_state", "conflict"]],
       ["eq", ["dismissed", false]],
     ]);
@@ -245,6 +250,91 @@ describe("protected Mercari leads route", () => {
     });
   });
 
+  it("lists one lane's auctions ending soonest, never by multiple, with ended auctions hidden", async () => {
+    const query = fakeQuery({ data: [], error: null });
+    mocks.from.mockReturnValue(query);
+
+    const response = await GET(request("?lane=vintage_raw&format=auction"));
+
+    expect(response.status).toBe(200);
+    expect(query.calls).toEqual([
+      ["select", [LEAD_COLUMNS]],
+      ["eq", ["lane", "vintage_raw"]],
+      ["eq", ["listing_format", "auction"]],
+      ["order", ["auction_ends_at", { ascending: true, nullsFirst: false }]],
+      ["order", ["first_seen_at", { ascending: false }]],
+      ["order", ["external_item_id", { ascending: true }]],
+      ["limit", [50]],
+      ...DEFAULT_HIDING,
+    ]);
+
+    const newest = fakeQuery({ data: [], error: null });
+    mocks.from.mockReturnValue(newest);
+    await GET(request("?lane=psa&format=auction&sort=newest"));
+    expect(newest.calls.slice(1, 4)).toEqual([
+      ["eq", ["lane", "psa"]],
+      ["eq", ["listing_format", "auction"]],
+      ["order", ["first_seen_at", { ascending: false }]],
+    ]);
+  });
+
+  it("offers each format only its own sorts and cursor", async () => {
+    for (const query of [
+      "?lane=psa&format=auctions",
+      "?lane=psa&format=auction&sort=multiple",
+      "?lane=psa&sort=ending",
+      // An ending cursor needs a stated end or null, and the first sighting.
+      "?lane=psa&format=auction&after=2026-11-08T11:00:00%2B00:00&after_key=m12345678901",
+      "?lane=psa&format=auction&after=soon&after_key=m12345678901&after_seen=2026-11-07T10:00:00%2B00:00",
+      "?lane=psa&format=auction&after=null&after_key=m12345678901&after_seen=yesterday",
+      "?lane=psa&format=auction&after=null&after_key=m12345678901&after_seen=2026-11-07T10:00:00%2B00:00)",
+      "?lane=psa&sort=newest&after=2026-10-28T03:00:00%2B00:00&after_key=m12345678901&after_seen=2026-11-07T10:00:00%2B00:00",
+    ]) {
+      const response = await GET(request(query));
+      expect(response.status, query).toBe(400);
+    }
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
+
+  it("continues an ending-soonest page through the stated ends, then the auctions with none", async () => {
+    const rows = [
+      row("m11111111111", { auction_ends_at: "2026-11-08T11:00:00+00:00", first_seen_at: "2026-11-07T09:00:00+00:00" }),
+      row("m22222222222", { auction_ends_at: null, first_seen_at: "2026-11-07T08:00:00+00:00" }),
+    ];
+    const query = fakeQuery({ data: rows, error: null });
+    mocks.from.mockReturnValue(query);
+
+    const response = await GET(request(
+      "?lane=psa&format=auction&limit=2&after=2026-11-08T10%3A00%3A00%2B00%3A00&after_key=m00000000000"
+        + "&after_seen=2026-11-07T10%3A00%3A00%2B00%3A00",
+    ));
+
+    expect(response.status).toBe(200);
+    expect(query.calls.at(-1)).toEqual([
+      "or",
+      ["auction_ends_at.gt.2026-11-08T10:00:00+00:00,"
+        + "and(auction_ends_at.eq.2026-11-08T10:00:00+00:00,or(first_seen_at.lt.2026-11-07T10:00:00+00:00,"
+        + "and(first_seen_at.eq.2026-11-07T10:00:00+00:00,external_item_id.gt.m00000000000))),"
+        + "auction_ends_at.is.null"],
+    ]);
+    expect((await response.json()).next_cursor).toEqual({
+      after: null,
+      after_key: "m22222222222",
+      after_seen: "2026-11-07T08:00:00+00:00",
+    });
+
+    const tail = fakeQuery({ data: [], error: null });
+    mocks.from.mockReturnValue(tail);
+    await GET(request(
+      "?lane=psa&format=auction&after=null&after_key=m22222222222&after_seen=2026-11-07T08%3A00%3A00%2B00%3A00",
+    ));
+    expect(tail.calls.slice(-2)).toEqual([
+      ["is", ["auction_ends_at", null]],
+      ["or", ["first_seen_at.lt.2026-11-07T08:00:00+00:00,"
+        + "and(first_seen_at.eq.2026-11-07T08:00:00+00:00,external_item_id.gt.m22222222222)"]],
+    ]);
+  });
+
   it("reports a view error as unavailable without leaking it", async () => {
     mocks.from.mockReturnValue(fakeQuery({ data: null, error: { message: "relation mercari_leads_v does not exist" } }));
 
@@ -263,11 +353,11 @@ describe("protected Mercari leads route", () => {
   });
 });
 
-// mercari_leads_v's columns as backend migration 000623 defines them, in
+// mercari_leads_v's columns as backend migration 000633 defines them, in
 // order (the backend pins the same list in TestMercariLeadsViewColumns).
 // PostgREST answers a select naming a missing column with a 400, so the route
 // must never ask for anything outside it.
-const VIEW_COLUMNS_000623 = [
+const VIEW_COLUMNS_000633 = [
   "platform", "external_item_id", "publication_id", "publication_published_at", "published_at",
   "source_kind", "source_run_id", "source_item_type", "canonical_url", "sanitized_title", "ask_jpy",
   "shipping_payer_id", "shipping_payer", "buyer_pays_shipping", "shipping_method_id", "shipping_added_jpy",
@@ -284,7 +374,8 @@ const VIEW_COLUMNS_000623 = [
   "photo_image_url", "photo_psa_grade", "photo_checked_at", "latest_lead_action",
   "latest_lead_action_reason", "latest_lead_action_at", "dismissed", "photo_check_requested", "edition",
   "foil_treatment", "match_tier", "title_card_in_photo_scope", "value_condition", "nm_value_usd",
-  "photo_check_priority",
+  "photo_check_priority", "listing_format", "auction_bid_count", "auction_ends_at", "auction_last_seen_at",
+  "auction_max_bid_jpy", "auction_bid_within_max", "auction_ended",
 ];
 
 describe("Mercari leads column list", () => {
@@ -302,7 +393,9 @@ describe("Mercari leads column list", () => {
     expect(columns).toContain("source_kind");
     expect(columns).toContain("photo_check_priority");
     expect(new Set(columns).size).toBe(columns.length);
-    expect(columns.filter((column) => !VIEW_COLUMNS_000623.includes(column))).toEqual([]);
+    expect(columns).toContain("listing_format");
+    expect(columns).toContain("auction_max_bid_jpy");
+    expect(columns.filter((column) => !VIEW_COLUMNS_000633.includes(column))).toEqual([]);
   });
 });
 
@@ -312,6 +405,7 @@ describe("Mercari leads request and cursor", () => {
       ok: true,
       value: {
         lane: "psa",
+        format: "fixed_price",
         sort: "multiple",
         photo: null,
         includeDismissed: false,
@@ -341,5 +435,19 @@ describe("Mercari leads request and cursor", () => {
     expect(() => nextCursor([row("bad id", { multiple: 2 })], 1, "multiple")).toThrow("invalid cursor boundary");
     expect(() => nextCursor([row("m12345678901", { first_seen_at: "yesterday" })], 1, "newest")).toThrow("invalid cursor boundary");
     expect(() => nextCursor(["not a row"], 1, "newest")).toThrow("invalid row");
+    expect(nextCursor([row("m12345678901", {
+      auction_ends_at: "2026-11-08T11:00:00+00:00", first_seen_at: "2026-11-07T09:00:00+00:00",
+    })], 1, "ending")).toEqual({
+      after: "2026-11-08T11:00:00+00:00", after_key: "m12345678901", after_seen: "2026-11-07T09:00:00+00:00",
+    });
+    expect(() => nextCursor([row("m12345678901", { first_seen_at: "2026-11-07T09:00:00+00:00" })], 1, "ending"))
+      .toThrow("invalid cursor boundary");
+    expect(() => nextCursor([row("m12345678901", { auction_ends_at: "soon", first_seen_at: "2026-11-07T09:00:00+00:00" })], 1, "ending"))
+      .toThrow("invalid cursor boundary");
+  });
+
+  it("defaults an auction feed to ending soonest", () => {
+    const parsed = parseLeadsRequest(new URLSearchParams("lane=psa&format=auction"));
+    expect(parsed.ok && parsed.value.format === "auction" && parsed.value.sort === "ending").toBe(true);
   });
 });
