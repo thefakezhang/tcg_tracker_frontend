@@ -353,11 +353,11 @@ describe("protected Mercari leads route", () => {
   });
 });
 
-// mercari_leads_v's columns as backend migration 000633 defines them, in
+// mercari_leads_v's columns as backend migration 000634 defines them, in
 // order (the backend pins the same list in TestMercariLeadsViewColumns).
 // PostgREST answers a select naming a missing column with a 400, so the route
 // must never ask for anything outside it.
-const VIEW_COLUMNS_000633 = [
+const VIEW_COLUMNS_000634 = [
   "platform", "external_item_id", "publication_id", "publication_published_at", "published_at",
   "source_kind", "source_run_id", "source_item_type", "canonical_url", "sanitized_title", "ask_jpy",
   "shipping_payer_id", "shipping_payer", "buyer_pays_shipping", "shipping_method_id", "shipping_added_jpy",
@@ -375,7 +375,7 @@ const VIEW_COLUMNS_000633 = [
   "latest_lead_action_reason", "latest_lead_action_at", "dismissed", "photo_check_requested", "edition",
   "foil_treatment", "match_tier", "title_card_in_photo_scope", "value_condition", "nm_value_usd",
   "photo_check_priority", "listing_format", "auction_bid_count", "auction_ends_at", "auction_last_seen_at",
-  "auction_max_bid_jpy", "auction_bid_within_max", "auction_ended",
+  "auction_max_bid_jpy", "auction_bid_within_max", "auction_ended", "photo_checks_paused",
 ];
 
 describe("Mercari leads column list", () => {
@@ -395,7 +395,8 @@ describe("Mercari leads column list", () => {
     expect(new Set(columns).size).toBe(columns.length);
     expect(columns).toContain("listing_format");
     expect(columns).toContain("auction_max_bid_jpy");
-    expect(columns.filter((column) => !VIEW_COLUMNS_000633.includes(column))).toEqual([]);
+    expect(columns).toContain("photo_checks_paused");
+    expect(columns.filter((column) => !VIEW_COLUMNS_000634.includes(column))).toEqual([]);
   });
 });
 

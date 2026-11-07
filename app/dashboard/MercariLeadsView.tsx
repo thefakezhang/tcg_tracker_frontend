@@ -134,6 +134,10 @@ export type MercariLead = {
   latest_lead_action_at: string | null;
   dismissed: boolean;
   photo_check_requested: boolean;
+  // The row's publication ran while photo checks were paused on the
+  // acquisition host (backend 000634, #2437): nothing is queued, and a request
+  // waits until checks resume.
+  photo_checks_paused: boolean;
   // How the lead sells (backend 000633, #2436). An auction's ask_jpy is its
   // current bid and it never carries a multiple; its bid count and stated end
   // come from the newest lead scan that marked it as an auction
@@ -442,7 +446,11 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
     const photoState = oneOf<MercariPhotoState>(new Set(PHOTO_STATES), row.photo_check_state, "photo state", index);
     const inPhotoScope = requiredBoolean(row.title_card_in_photo_scope, "title_card_in_photo_scope");
     const priority = optionalInteger(row.photo_check_priority, "photo_check_priority");
-    if (priority !== null && (priority < 1 || priority > 3
+    // A publication that ran while photo checks were paused queues nothing
+    // (000634), so a band beside the pause is a row that breaks the rule.
+    const checksPaused = requiredBoolean(row.photo_checks_paused, "photo_checks_paused");
+    if (checksPaused && sourceKind !== "lead_scan") throw invalid("photo checks paused", index);
+    if (priority !== null && (priority < 1 || priority > 3 || checksPaused
       || sourceKind !== "lead_scan" || photoState !== "unchecked" || !inPhotoScope)) {
       throw invalid("photo check priority", index);
     }
@@ -512,6 +520,7 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       latest_lead_action_at: optionalTimestamp(row.latest_lead_action_at, "latest_lead_action_at"),
       dismissed: requiredBoolean(row.dismissed, "dismissed"),
       photo_check_requested: requiredBoolean(row.photo_check_requested, "photo_check_requested"),
+      photo_checks_paused: checksPaused,
       listing_format: format,
       auction_bid_count: bidCount,
       auction_ends_at: endsAt,
@@ -720,10 +729,12 @@ const SOURCE_KIND_KEYS: Record<Exclude<MercariLeadSourceKind, "lead_scan">, Tran
 // minutes) will queue it. A request that publication has not read yet goes
 // first, so it reads as band 1 at once; a dismissed lead is never queued, so a
 // band from before the dismissal is not shown. Only an unchecked lead_scan row
-// whose title card a check can see is ever queued.
+// whose title card a check can see is ever queued, and nothing is while photo
+// checks are paused (#2437): a check is not on its way then, whatever was asked.
 function queuedBand(lead: MercariLead): MercariPhotoCheckPriority | null {
   if (lead.source_kind !== "lead_scan" || lead.photo_check_state !== "unchecked"
-    || !lead.title_card_in_photo_scope || lead.dismissed || lead.listing_format === "auction") {
+    || !lead.title_card_in_photo_scope || lead.dismissed || lead.listing_format === "auction"
+    || lead.photo_checks_paused) {
     return null;
   }
   return lead.photo_check_requested ? 1 : lead.photo_check_priority;
@@ -737,6 +748,9 @@ function canRequestPhotoCheck(lead: MercariLead): boolean {
   // An auction is never photo-checked (backend #2436), so a request would wait
   // for a check that cannot come.
   if (!lead.title_card_in_photo_scope || lead.listing_format === "auction") return false;
+  // While photo checks are paused no check comes, so the button is not offered;
+  // the badge says the checks are paused instead (#2437).
+  if (lead.photo_checks_paused) return false;
   if (lead.source_kind === "lead_scan") {
     return lead.photo_check_state === "unchecked" && queuedBand(lead) !== 1;
   }
@@ -759,6 +773,15 @@ function photoStatus(lead: MercariLead): { key: TranslationKey; className: strin
   }
   if (!lead.title_card_in_photo_scope) {
     return { key: "mercariLeads.photo.outOfScope", className: PHOTO_CLASSES.inconclusive, note: scopeNote };
+  }
+  // Paused checks read grey, as no check is coming, never amber or blue; a
+  // request made before the pause is kept and goes first when they resume.
+  if (lead.photo_checks_paused && lead.listing_format !== "auction") {
+    return {
+      key: "mercariLeads.photo.paused",
+      className: PHOTO_CLASSES.inconclusive,
+      note: lead.photo_check_requested ? "mercariLeads.photoNote.pausedRequested" : "mercariLeads.photoNote.paused",
+    };
   }
   const band = queuedBand(lead);
   if (band !== null) return { key: QUEUED_KEYS[band], className: QUEUED_CLASS, note: null };
