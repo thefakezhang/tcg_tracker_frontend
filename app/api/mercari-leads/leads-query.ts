@@ -1,7 +1,7 @@
 // Shared shape of the Mercari leads read: the request the route accepts, the
 // columns the tab needs from the backend view mercari_leads_v (migrations
-// 000616, 000617 and 000623), and the keyset cursor over each sort. Kept out of
-// route.ts because a Next.js route module may export only HTTP handlers.
+// 000616, 000617, 000623 and 000633), and the keyset cursor over each sort. Kept
+// out of route.ts because a Next.js route module may export only HTTP handlers.
 
 export const DEFAULT_LIMIT = 50;
 export const MAX_LIMIT = 100;
@@ -27,21 +27,40 @@ export const NULL_MULTIPLE = "null";
 export const LEAD_LANES = ["modern_raw", "vintage_raw", "psa", "unpriced"] as const;
 export type LeadLane = (typeof LEAD_LANES)[number];
 
-export const LEAD_SORTS = ["multiple", "newest"] as const;
+export const LEAD_SORTS = ["multiple", "newest", "ending"] as const;
 export type LeadSort = (typeof LEAD_SORTS)[number];
+
+// How a lead sells (backend 000633). One format per request: an auction has no
+// multiple, so the two are never ranked against each other.
+export const LEAD_FORMATS = ["fixed_price", "auction"] as const;
+export type LeadFormat = (typeof LEAD_FORMATS)[number];
+
+// The sorts each format offers: an auction is ranked by its soonest stated end,
+// never by a multiple on a bid that rises.
+const FORMAT_SORTS: Record<LeadFormat, readonly LeadSort[]> = {
+  fixed_price: ["multiple", "newest"],
+  auction: ["ending", "newest"],
+};
+
+// The cursor spelling of an auction whose end no lead scan read; they sort
+// after every auction with a stated end.
+export const NULL_ENDS_AT = "null";
 
 export const PHOTO_STATES = ["unchecked", "confirmed", "conflict", "inconclusive", "rejected"] as const;
 export type PhotoState = (typeof PHOTO_STATES)[number];
 
 export type LeadCursor = {
   // The last row's sort key: its multiple (a decimal, or null) under "multiple",
-  // its first_seen_at under "newest".
+  // its first_seen_at under "newest", its auction_ends_at (or null) under
+  // "ending", where after_seen is its first_seen_at, the second key.
   after: string | null;
   after_key: string;
+  after_seen?: string;
 };
 
 export type LeadsRequest = {
   lane: LeadLane;
+  format: LeadFormat;
   sort: LeadSort;
   // null is every photo state except rejected, the default.
   photo: PhotoState | null;
@@ -125,6 +144,18 @@ export const LEAD_COLUMNS = [
   // is applied is a 400, so this ships after the apply.
   "source_kind",
   "photo_check_priority",
+  // Auctions (backend 000633, #2436): how the lead sells, an auction's bid
+  // count and stated end from its newest auction observation and when that was,
+  // the highest bid that still clears the bars, whether the current bid is
+  // still at or under it, and whether the stated end has passed. Selecting them
+  // before 000633 is applied is a 400, so this ships after the apply.
+  "listing_format",
+  "auction_bid_count",
+  "auction_ends_at",
+  "auction_last_seen_at",
+  "auction_max_bid_jpy",
+  "auction_bid_within_max",
+  "auction_ended",
 ].join(", ");
 
 function isOneOf<T extends string>(values: readonly T[], value: string): value is T {
@@ -152,8 +183,12 @@ export function parseLeadsRequest(params: URLSearchParams): { ok: true; value: L
   if (!isOneOf(LEAD_LANES, lane)) {
     return fail("lane is required and must be modern_raw, vintage_raw, psa or unpriced");
   }
-  const sort = params.get("sort")?.trim() || "multiple";
-  if (!isOneOf(LEAD_SORTS, sort)) return fail("sort must be multiple or newest");
+  const format = params.get("format")?.trim() || "fixed_price";
+  if (!isOneOf(LEAD_FORMATS, format)) return fail("format must be fixed_price or auction");
+  const sort = params.get("sort")?.trim() || FORMAT_SORTS[format][0];
+  if (!isOneOf(LEAD_SORTS, sort) || !FORMAT_SORTS[format].includes(sort)) {
+    return fail(format === "auction" ? "sort must be ending or newest for auctions" : "sort must be multiple or newest");
+  }
   const photo = params.get("photo")?.trim() ?? "";
   if (photo !== "" && !isOneOf(PHOTO_STATES, photo)) {
     return fail("photo must be unchecked, confirmed, conflict, inconclusive or rejected");
@@ -165,11 +200,19 @@ export function parseLeadsRequest(params: URLSearchParams): { ok: true; value: L
 
   const after = params.get("after")?.trim() ?? "";
   const afterKey = params.get("after_key")?.trim() ?? "";
+  const afterSeen = params.get("after_seen")?.trim() ?? "";
   if (Boolean(after) !== Boolean(afterKey)) return fail("after and after_key must be provided together");
   if (afterKey && !SAFE_ITEM_ID.test(afterKey)) return fail("after_key is invalid");
+  if (afterSeen && sort !== "ending") return fail("after_seen is only for sorting by ending");
   let cursor: LeadCursor | null = null;
   if (afterKey) {
-    if (sort === "newest") {
+    if (sort === "ending") {
+      if (after !== NULL_ENDS_AT && !validTimestamp(after)) {
+        return fail("after must be an RFC 3339 timestamp or null when sorting by ending");
+      }
+      if (!validTimestamp(afterSeen)) return fail("after_seen must be an RFC 3339 timestamp when sorting by ending");
+      cursor = { after: after === NULL_ENDS_AT ? null : after, after_key: afterKey, after_seen: afterSeen };
+    } else if (sort === "newest") {
       if (!validTimestamp(after)) return fail("after must be an RFC 3339 timestamp when sorting by newest");
       cursor = { after, after_key: afterKey };
     } else {
@@ -187,7 +230,7 @@ export function parseLeadsRequest(params: URLSearchParams): { ok: true; value: L
 
   return {
     ok: true,
-    value: { lane, sort, photo: photo === "" ? null : photo, includeDismissed, includeUnavailable, cursor, limit },
+    value: { lane, format, sort, photo: photo === "" ? null : photo, includeDismissed, includeUnavailable, cursor, limit },
   };
 }
 
@@ -216,6 +259,14 @@ export function nextCursor(rows: unknown[], limit: number, sort: LeadSort): Lead
       throw new Error("Mercari leads view returned an invalid cursor boundary");
     }
     return { after: row.first_seen_at, after_key: row.external_item_id };
+  }
+  if (sort === "ending") {
+    const endsAt = row.auction_ends_at;
+    if ((endsAt !== null && (typeof endsAt !== "string" || !validTimestamp(endsAt)))
+      || typeof row.first_seen_at !== "string" || !validTimestamp(row.first_seen_at)) {
+      throw new Error("Mercari leads view returned an invalid cursor boundary");
+    }
+    return { after: endsAt, after_key: row.external_item_id, after_seen: row.first_seen_at };
   }
   if (!("multiple" in row)) throw new Error("Mercari leads view returned an invalid cursor boundary");
   return { after: multipleText(row.multiple), after_key: row.external_item_id };

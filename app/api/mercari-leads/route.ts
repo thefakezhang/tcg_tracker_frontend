@@ -12,10 +12,13 @@ import { LEAD_COLUMNS, nextCursor, parseLeadsRequest } from "./leads-query";
 // asks that predicate first so a non-operator gets a clear 403 instead of an
 // empty page.
 //
-// One lane per request, so lanes never mix. Both sorts are keysets on the
-// table's indexes, (lane, multiple DESC NULLS LAST, external_item_id) and
-// (lane, first_seen_at DESC, external_item_id): the lane is an equality and
-// the order is exactly the index order.
+// One lane and one format per request, so lanes never mix and an auction is
+// never ranked against a fixed-price lead (backend 000633, #2436). Every sort is
+// a keyset: by multiple and by newest on the table's indexes (lane, multiple
+// DESC NULLS LAST, external_item_id) and (lane, first_seen_at DESC,
+// external_item_id), and an auction feed by its soonest stated end on (lane,
+// auction_ends_at, external_item_id), auctions whose end no scan read last and
+// newest first among them.
 
 function unavailable() {
   return NextResponse.json({ error: "Mercari leads are unavailable" }, { status: 500 });
@@ -34,7 +37,7 @@ export async function GET(request: NextRequest) {
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
-  const { lane, sort, photo, includeDismissed, includeUnavailable, cursor, limit } = parsed.value;
+  const { lane, format, sort, photo, includeDismissed, includeUnavailable, cursor, limit } = parsed.value;
 
   const { data: operator, error: operatorError } = await supabase.rpc("source_run_is_operator");
   if (operatorError) return unavailable();
@@ -45,21 +48,39 @@ export async function GET(request: NextRequest) {
   let query = supabase
     .from("mercari_leads_v")
     .select(LEAD_COLUMNS)
-    .eq("lane", lane);
-  query = sort === "multiple"
-    ? query.order("multiple", { ascending: false, nullsFirst: false })
-    : query.order("first_seen_at", { ascending: false });
+    .eq("lane", lane)
+    .eq("listing_format", format);
+  if (sort === "multiple") {
+    query = query.order("multiple", { ascending: false, nullsFirst: false });
+  } else if (sort === "ending") {
+    query = query
+      .order("auction_ends_at", { ascending: true, nullsFirst: false })
+      .order("first_seen_at", { ascending: false });
+  } else {
+    query = query.order("first_seen_at", { ascending: false });
+  }
   query = query.order("external_item_id", { ascending: true }).limit(limit);
 
-  // Hidden by default: a listing no longer on sale, a photo check that rejected
-  // it, and a lead the operator dismissed.
-  if (!includeUnavailable) query = query.eq("source_status", "ON_SALE");
+  // Hidden by default: a listing no longer on sale, an auction whose stated end
+  // has passed, a photo check that rejected it, and a lead the operator
+  // dismissed.
+  if (!includeUnavailable) query = query.eq("source_status", "ON_SALE").eq("auction_ended", false);
   query = photo ? query.eq("photo_check_state", photo) : query.neq("photo_check_state", "rejected");
   if (!includeDismissed) query = query.eq("dismissed", false);
 
   if (cursor) {
     const { after, after_key: afterKey } = cursor;
-    if (sort === "newest") {
+    if (sort === "ending") {
+      // After (ends, seen, key) in ascending ends, descending seen, ascending
+      // key, with unknown ends last; every value was validated by the parser.
+      const seen = cursor.after_seen;
+      const withinEnd = `first_seen_at.lt.${seen},and(first_seen_at.eq.${seen},external_item_id.gt.${afterKey})`;
+      query = after === null
+        ? query.is("auction_ends_at", null).or(withinEnd)
+        : query.or(
+          `auction_ends_at.gt.${after},and(auction_ends_at.eq.${after},or(${withinEnd})),auction_ends_at.is.null`,
+        );
+    } else if (sort === "newest") {
       query = query.or(
         `first_seen_at.lt.${after},and(first_seen_at.eq.${after},external_item_id.gt.${afterKey})`,
       );

@@ -137,7 +137,7 @@ app/
     twitter-buybacks/rpc-errors.ts # Shared RPC failure classification for the Buybacks routes (forbidden, rpc-missing)
     mercari-deals/route.ts    # Operator-only Verified feed: mercari_published_deals_v, newest first, composite cursor (mercari_deals_tab.md)
     mercari-deals/action/route.ts # Dismiss / recheck through RPC record_mercari_deal_item_action
-    mercari-leads/route.ts    # Operator-only Leads feed: mercari_leads_v, one required lane, best-multiple or newest keyset on the table's indexes (mercari_leads_tab.md)
+    mercari-leads/route.ts    # Operator-only Leads feed: mercari_leads_v, one required lane and one format, best-multiple, newest or (auctions) ending-soonest keyset on the table's indexes (mercari_leads_tab.md)
     mercari-leads/leads-query.ts # Request bounds, column list and keyset cursor for the leads route
     mercari-leads/action/route.ts # Dismiss (reason required) / photo-check request through RPC record_mercari_lead_action
   dashboard/
@@ -145,7 +145,7 @@ app/
     page.tsx              # Main-pane router, first match wins: views-registry sentinel -> TripDashboard (positive trip id) -> BuyListView -> SealedBrowser (pokemon_sealed) -> CardBrowser
     DashboardShell.tsx    # Context providers + sidebar + header
     views.tsx             # Single source of truth for top-level views (sentinel -> slug/group/icon/label/component)
-    url-state.ts          # Pure codec: view-selection contexts <-> /dashboard query string (?view=, ?view=arrivals&shop=&since=, ?view=buybacks&shop=, ?view=mercari&feed=&lane=&sort=, ?trip=&tab=, ?buylist=, ?game=)
+    url-state.ts          # Pure codec: view-selection contexts <-> /dashboard query string (?view=, ?view=arrivals&shop=&since=, ?view=buybacks&shop=, ?view=mercari&feed=&lane=&format=&sort=, ?trip=&tab=, ?buylist=, ?game=)
     url-params.ts         # Leaf query params a view owns (?tab=, ?shop=, ?since=, ?feed=, ?lane=, ?sort=): readUrlParam / writeUrlParam (replaceState) and their validators; import-free so a view can use it without the views registry cycle
     UrlStateSync.tsx      # Applies the URL on first paint / popstate, pushes history on context change, carries a leaf param while its selection stays
     AppSidebar.tsx        # Navigation, game picker, buy lists, user settings menu
@@ -202,7 +202,7 @@ app/
     MarketEvidenceCallout.tsx # Compact and detail presentation of Collectr/TCGPlayer market evidence
     MatchReviewView.tsx   # Match review queue for pending external-identifier candidates
     MercariTab.tsx        # The `mercari` slug: Leads | Verified switch (?feed=verified), Leads the default
-    MercariLeadsView.tsx  # Leads feed: one lane at a time, age and photo-check badges, value evidence and multiple, fail-closed row parser
+    MercariLeadsView.tsx  # Leads feed: one lane and format at a time, age and photo-check badges, value evidence and multiple, auctions with their maximum bid, fail-closed row parser
     MercariDealsView.tsx  # Verified feed: photo-checked deal publication with exit, economics and reason codes
     MtgAliasesTab.tsx     # MTG text-variance alias manager (mtg_card_aliases)
     MtgCardIndex.tsx      # MTG catalog tab of the Card Index
@@ -712,7 +712,7 @@ The board renders the secondary line under the p50 and downgrades a bad p50 to w
 - Match rate is durable confirmed-link coverage against durable confirmed links plus the still-pending candidate queue, not matcher accuracy.
 - The same view reads the newest immutable `calibration_runs` row and surfaces its sample count, band coverage, bias, and representative-price recommendation.
   A zero-overlap run is explicitly a watch state and never presents a fabricated percentile.
-- Dashboard navigation is sentinel-based in memory (`activeTripId`: 0 = trips overview, negatives = standalone views, positives = a trip; plus `activeBuylistId`, `activeGame`) and mirrored to the URL by `UrlStateSync` (`url-state.ts` is the pure codec): `/dashboard?view=<slug>` (slug from `views.tsx`), `?trip=<id>&tab=<tab>`, `?buylist=<id>`, `?game=mtg|pokemon_sealed`; no params = Pokémon browse. Leaf params a view owns (`?tab=`, the Arrivals `?shop=` and `?since=`, the Buybacks `?shop=`, the Mercari `?feed=`, `?lane=` and `?sort=`) go through `url-params.ts` with `replaceState`, and `UrlStateSync` keeps them only while their selection is unchanged.
+- Dashboard navigation is sentinel-based in memory (`activeTripId`: 0 = trips overview, negatives = standalone views, positives = a trip; plus `activeBuylistId`, `activeGame`) and mirrored to the URL by `UrlStateSync` (`url-state.ts` is the pure codec): `/dashboard?view=<slug>` (slug from `views.tsx`), `?trip=<id>&tab=<tab>`, `?buylist=<id>`, `?game=mtg|pokemon_sealed`; no params = Pokémon browse. Leaf params a view owns (`?tab=`, the Arrivals `?shop=` and `?since=`, the Buybacks `?shop=`, the Mercari `?feed=`, `?lane=`, `?format=` and `?sort=`) go through `url-params.ts` with `replaceState`, and `UrlStateSync` keeps them only while their selection is unchanged.
   The URL wins on first paint (deep links, reload, bookmarks - `page.tsx` renders nothing until it has been applied so a deep link never flashes the browse view), every context change pushes a history entry so back/forward move between views, and leaf state such as the trip tab is written with `writeUrlParam` (replaceState) and dropped when its owner changes.
   Give every new top-level view a `slug`; give any new leaf sub-state that a user would want to return to a `readUrlParam` / `writeUrlParam` pair.
 `ReviewQueueNavigationContext` carries a one-shot `{ game, source }` target to `RoutedMatchReviewView`; the route captures and consumes it so a later ordinary sidebar visit starts unfiltered.

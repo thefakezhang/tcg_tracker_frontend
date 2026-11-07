@@ -8,9 +8,11 @@ import {
   ARRIVALS_SHOP_PARAM,
   ARRIVALS_WINDOW_PARAM,
   MERCARI_FEED_PARAM,
+  MERCARI_FORMAT_PARAM,
   MERCARI_LANE_PARAM,
   MERCARI_SORT_PARAM,
   parseMercariFeedParam,
+  parseMercariFormatParam,
   parseMercariLaneParam,
   parseMercariSortParam,
   parseShopParam,
@@ -29,7 +31,7 @@ export { readUrlParam, writeUrlParam } from "./url-params";
 // Leaf params are owned by a view (replaceState): the trip tab by
 // TripDashboard, the arrivals shop and time window by ArrivalPostsView, the
 // buybacks source by TwitterBuybacksView (also ?shop=), the Mercari feed by
-// MercariTab and its lane and sort by MercariLeadsView. Each is
+// MercariTab and its lane, format and sort by MercariLeadsView. Each is
 // carried over unchanged while its selection stays the same and dropped otherwise.
 const UrlHydratedContext = createContext(false);
 
@@ -73,7 +75,7 @@ export default function UrlStateSync({ children }: { children: ReactNode }) {
     const current = new URLSearchParams(window.location.search);
     // A leaf param survives only while the selection it belongs to is unchanged
     // (a game switch, say): the trip tab while the trip stays, the arrivals
-    // shop and window and the Mercari feed, lane and sort while the view stays.
+    // shop and window and the Mercari feed, lane, format and sort while the view stays.
     const sameSelection = activeTripId != null && activeTripId === lastSelection.current;
     const isTrip = activeTripId != null && activeTripId > 0;
     const next = buildDashboardSearch({
@@ -83,6 +85,7 @@ export default function UrlStateSync({ children }: { children: ReactNode }) {
       since: sameSelection ? parseWindowParam(current.get(ARRIVALS_WINDOW_PARAM)) : null,
       feed: sameSelection ? parseMercariFeedParam(current.get(MERCARI_FEED_PARAM)) : null,
       lane: sameSelection ? parseMercariLaneParam(current.get(MERCARI_LANE_PARAM)) : null,
+      format: sameSelection ? parseMercariFormatParam(current.get(MERCARI_FORMAT_PARAM)) : null,
       sort: sameSelection ? parseMercariSortParam(current.get(MERCARI_SORT_PARAM)) : null,
     });
     lastSelection.current = activeTripId;

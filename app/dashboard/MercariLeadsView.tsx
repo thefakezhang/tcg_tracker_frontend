@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, Clock, EyeOff, ExternalLink, Info, LoaderCircle, RefreshCw } from "lucide-react";
+import { Camera, Clock, EyeOff, ExternalLink, Gavel, Info, LoaderCircle, RefreshCw } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,21 +25,25 @@ import {
   type MercariSellerConditionID,
 } from "./MercariDealsView";
 import {
+  DEFAULT_MERCARI_FORMAT,
   DEFAULT_MERCARI_LANE,
   DEFAULT_MERCARI_SORT,
+  MERCARI_FORMAT_PARAM,
   MERCARI_LANE_PARAM,
+  MERCARI_LEAD_FORMATS,
   MERCARI_LEAD_LANES,
-  MERCARI_LEAD_SORTS,
   MERCARI_SORT_PARAM,
+  parseMercariFormatParam,
   parseMercariLaneParam,
   parseMercariSortParam,
   readUrlParam,
   writeUrlParam,
+  type MercariLeadFormat,
   type MercariLeadLane,
   type MercariLeadSort,
 } from "./url-params";
 
-export type { MercariLeadLane, MercariLeadSort } from "./url-params";
+export type { MercariLeadFormat, MercariLeadLane, MercariLeadSort } from "./url-params";
 export type MercariPhotoState = "unchecked" | "confirmed" | "conflict" | "inconclusive" | "rejected";
 export type MercariLeadAction = "dismissed" | "photo_check_requested";
 export type MercariSourceStatus = "ON_SALE" | "TRADING" | "SOLD_OUT" | "UNKNOWN";
@@ -130,10 +134,24 @@ export type MercariLead = {
   latest_lead_action_at: string | null;
   dismissed: boolean;
   photo_check_requested: boolean;
+  // How the lead sells (backend 000633, #2436). An auction's ask_jpy is its
+  // current bid and it never carries a multiple; its bid count and stated end
+  // come from the newest lead scan that marked it as an auction
+  // (auction_last_seen_at), and are null when that scan did not read them.
+  // auction_max_bid_jpy is the highest bid that still clears 1.0x and $10 of
+  // profit, on a priced auction only.
+  listing_format: MercariLeadFormat;
+  auction_bid_count: number | null;
+  auction_ends_at: string | null;
+  auction_last_seen_at: string | null;
+  auction_max_bid_jpy: number | null;
+  auction_bid_within_max: boolean | null;
+  auction_ended: boolean;
 };
 
 export type MercariLeadFilters = {
   lane: MercariLeadLane;
+  format: MercariLeadFormat;
   sort: MercariLeadSort;
   // "" is every photo state except rejected.
   photo: "" | MercariPhotoState;
@@ -144,6 +162,8 @@ export type MercariLeadFilters = {
 export type MercariLeadCursor = {
   after: string | null;
   after_key: string;
+  // The second key of the auctions' "ending" sort: the last row's first sighting.
+  after_seen?: string;
 };
 
 export type MercariLeadsPage = {
@@ -164,6 +184,7 @@ export type MercariLeadActor = (
 
 export const DEFAULT_LEAD_FILTERS: MercariLeadFilters = {
   lane: DEFAULT_MERCARI_LANE,
+  format: DEFAULT_MERCARI_FORMAT,
   sort: DEFAULT_MERCARI_SORT,
   photo: "",
   includeDismissed: false,
@@ -194,6 +215,7 @@ const RESOLUTIONS = new Set(["uid", "identity", "unresolved"]);
 const WITHHELD_REASONS = new Set(["seller_condition_3_6", "psa_grade_unread", "psa_thin_comps"]);
 const VALUE_CONDITIONS = new Set(["nm", "damaged_p25"]);
 const SOURCE_KINDS = new Set(["cold_crawl", "lead_scan"]);
+const LISTING_FORMATS = new Set<string>(MERCARI_LEAD_FORMATS);
 
 function invalid(what: string, index: number): Error {
   return new Error(`Invalid Mercari lead ${what}: ${index}`);
@@ -353,7 +375,39 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
     if (valueUsd !== null && valueUsd <= 0) throw invalid("value", index);
     if ((valueUsd === null) !== (netValue === null)) throw invalid("net value", index);
     if (multiple !== null && (multiple < 0 || netValue === null || netValue <= 0)) throw invalid("multiple", index);
-    if (lane !== "unpriced" && (multiple === null) !== (withheld !== null)) throw invalid("withheld reason", index);
+    // How the lead sells, as 000633's CHECKs hold it: a fixed-price row carries
+    // no auction fact; an auction row carries no multiple, says when it was
+    // last seen as an auction (no later than its newest observation), and has
+    // a maximum bid exactly when it is priced, at or above its current bid.
+    const format = oneOf<MercariLeadFormat>(LISTING_FORMATS, row.listing_format, "listing format", index);
+    const auction = format === "auction";
+    const bidCount = optionalInteger(row.auction_bid_count, "auction_bid_count");
+    const endsAt = optionalTimestamp(row.auction_ends_at, "auction_ends_at");
+    const lastSeenAt = optionalTimestamp(row.auction_last_seen_at, "auction_last_seen_at");
+    const maxBid = optionalInteger(row.auction_max_bid_jpy, "auction_max_bid_jpy");
+    const withinMax = row.auction_bid_within_max == null ? null : requiredBoolean(row.auction_bid_within_max, "auction_bid_within_max");
+    const ended = requiredBoolean(row.auction_ended, "auction_ended");
+    if (!auction) {
+      if (bidCount !== null || endsAt !== null || lastSeenAt !== null || maxBid !== null || withinMax !== null || ended) {
+        throw invalid("fixed-price auction facts", index);
+      }
+      // A fixed-price lead has a multiple or says why it has none.
+      if (lane !== "unpriced" && (multiple === null) !== (withheld !== null)) throw invalid("withheld reason", index);
+    }
+
+    const ask = requiredNumber(row.ask_jpy, "ask_jpy");
+    if (auction) {
+      if (multiple !== null || lastSeenAt === null
+        || Date.parse(lastSeenAt) > Date.parse(requiredTimestamp(row.observed_at, "observed_at"))
+        || (bidCount !== null && bidCount < 0)
+        || (maxBid !== null && maxBid < 1)
+        || (valueUsd === null) !== (maxBid === null)
+        || (maxBid !== null && ask > maxBid)
+        || withinMax !== (maxBid === null ? null : ask <= maxBid)
+        || (ended && endsAt === null)) {
+        throw invalid("auction", index);
+      }
+    }
 
     const valueAsOf = optionalString(row.value_as_of, "value_as_of");
     if ((valueAsOf === null) !== (valueUsd === null) || (valueAsOf !== null && !DATE_ONLY.test(valueAsOf))) {
@@ -364,7 +418,6 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
     const sampleCount = requiredInteger(row.value_sample_count, "value_sample_count");
     if (sampleCount < 0) throw invalid("sample count", index);
 
-    const ask = requiredNumber(row.ask_jpy, "ask_jpy");
     if (ask <= 0) throw invalid("ask", index);
     const landed = requiredNumber(row.landed_ask_usd, "landed_ask_usd");
     if (landed <= 0) throw invalid("landed ask", index);
@@ -459,6 +512,13 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       latest_lead_action_at: optionalTimestamp(row.latest_lead_action_at, "latest_lead_action_at"),
       dismissed: requiredBoolean(row.dismissed, "dismissed"),
       photo_check_requested: requiredBoolean(row.photo_check_requested, "photo_check_requested"),
+      listing_format: format,
+      auction_bid_count: bidCount,
+      auction_ends_at: endsAt,
+      auction_last_seen_at: lastSeenAt,
+      auction_max_bid_jpy: maxBid,
+      auction_bid_within_max: withinMax,
+      auction_ended: ended,
     };
   });
 }
@@ -472,7 +532,8 @@ function parseCursor(value: unknown): MercariLeadCursor | null {
   const after = optionalString(raw.after, "next_cursor.after");
   const afterKey = requiredString(raw.after_key, "next_cursor.after_key");
   if (!SAFE_ITEM_ID.test(afterKey) || after === "") throw new Error("Invalid Mercari leads cursor");
-  return { after, after_key: afterKey };
+  if (raw.after_seen == null) return { after, after_key: afterKey };
+  return { after, after_key: afterKey, after_seen: requiredTimestamp(raw.after_seen, "next_cursor.after_seen") };
 }
 
 async function readBody(response: Response): Promise<unknown> {
@@ -486,14 +547,21 @@ function errorMessage(body: unknown, status: number): string {
 }
 
 export const loadMercariLeads: MercariLeadsLoader = async (filters, cursor) => {
-  const query = new URLSearchParams({ lane: filters.lane, sort: filters.sort, limit: String(PAGE_SIZE) });
+  const query = new URLSearchParams({
+    lane: filters.lane,
+    format: filters.format,
+    sort: filters.sort,
+    limit: String(PAGE_SIZE),
+  });
   if (filters.photo) query.set("photo", filters.photo);
   if (filters.includeDismissed) query.set("include_dismissed", "1");
   if (filters.includeUnavailable) query.set("include_unavailable", "1");
   if (cursor) {
-    // A best-multiple page can end inside the rows without a multiple.
+    // A best-multiple page can end inside the rows without a multiple, and an
+    // ending-soonest page inside the auctions whose end no scan read.
     query.set("after", cursor.after ?? "null");
     query.set("after_key", cursor.after_key);
+    if (cursor.after_seen) query.set("after_seen", cursor.after_seen);
   }
   const response = await fetch(`/api/mercari-leads?${query}`, {
     cache: "no-store",
@@ -538,9 +606,22 @@ function isUnknown(value: string | null): boolean {
   return value === null || value.trim() === "" || value === "UNKNOWN";
 }
 
-/** Unpriced leads carry no multiple, so "Best multiple" would only be id order there. */
+/** The sorts each format offers: an auction has no multiple, a fixed-price lead no end. */
+export function sortsFor(format: MercariLeadFormat): readonly MercariLeadSort[] {
+  return format === "auction" ? ["ending", "newest"] : ["multiple", "newest"];
+}
+
+/**
+ * The sort a feed actually uses. Unpriced fixed-price leads carry no multiple,
+ * so "Best multiple" would only be id order there. An auction is never ranked by
+ * a multiple on a bid that rises: its decision is due at its end, so a sort the
+ * auctions do not offer reads as ending soonest, and one the fixed-price feed
+ * does not offer reads as its default.
+ */
 export function effectiveSort(filters: MercariLeadFilters): MercariLeadSort {
-  return filters.lane === "unpriced" ? "newest" : filters.sort;
+  const offered = sortsFor(filters.format);
+  const sort = offered.includes(filters.sort) ? filters.sort : offered[0];
+  return filters.format === "fixed_price" && filters.lane === "unpriced" ? "newest" : sort;
 }
 
 const LANE_KEYS: Record<MercariLeadLane, TranslationKey> = {
@@ -560,6 +641,12 @@ const LANE_HINT_KEYS: Record<MercariLeadLane, TranslationKey> = {
 const SORT_KEYS: Record<MercariLeadSort, TranslationKey> = {
   multiple: "mercariLeads.sort.multiple",
   newest: "mercariLeads.sort.newest",
+  ending: "mercariLeads.sort.ending",
+};
+
+const FORMAT_KEYS: Record<MercariLeadFormat, TranslationKey> = {
+  fixed_price: "mercariLeads.format.fixed_price",
+  auction: "mercariLeads.format.auction",
 };
 
 const PHOTO_KEYS: Record<MercariPhotoState, TranslationKey> = {
@@ -606,6 +693,8 @@ const MATCH_TIER_KEYS: Record<string, TranslationKey> = {
   setless_variant: "mercariLeads.matchTier.setless_variant",
   setless_name: "mercariLeads.matchTier.setless_name",
   sql_family: "mercariLeads.matchTier.sql_family",
+  set_name: "mercariLeads.matchTier.set_name",
+  name_rarity: "mercariLeads.matchTier.name_rarity",
 };
 
 // A fresh lead waiting for its photo check reads blue, not amber: the check is
@@ -618,6 +707,11 @@ const QUEUED_KEYS: Record<MercariPhotoCheckPriority, TranslationKey> = {
 
 const QUEUED_CLASS = "border-sky-500/50 bg-sky-500/10 text-sky-800 dark:text-sky-200";
 
+// An auction reads violet, a colour no photo state or age uses, so it is never
+// taken for a deal's green; one whose stated end has passed reads as finished.
+const AUCTION_CLASS = "border-violet-500/50 bg-violet-500/10 text-violet-800 dark:text-violet-200";
+const AUCTION_ENDED_CLASS = "border-zinc-500/50 bg-transparent text-muted-foreground";
+
 const SOURCE_KIND_KEYS: Record<Exclude<MercariLeadSourceKind, "lead_scan">, TranslationKey> = {
   cold_crawl: "mercariLeads.source.cold_crawl",
 };
@@ -629,7 +723,7 @@ const SOURCE_KIND_KEYS: Record<Exclude<MercariLeadSourceKind, "lead_scan">, Tran
 // whose title card a check can see is ever queued.
 function queuedBand(lead: MercariLead): MercariPhotoCheckPriority | null {
   if (lead.source_kind !== "lead_scan" || lead.photo_check_state !== "unchecked"
-    || !lead.title_card_in_photo_scope || lead.dismissed) {
+    || !lead.title_card_in_photo_scope || lead.dismissed || lead.listing_format === "auction") {
     return null;
   }
   return lead.photo_check_requested ? 1 : lead.photo_check_priority;
@@ -640,7 +734,9 @@ function queuedBand(lead: MercariLead): MercariPhotoCheckPriority | null {
 // and is not already first in line; a cold-crawl lead keeps its old rule, where
 // a photo that already agrees with the title needs no second check.
 function canRequestPhotoCheck(lead: MercariLead): boolean {
-  if (!lead.title_card_in_photo_scope) return false;
+  // An auction is never photo-checked (backend #2436), so a request would wait
+  // for a check that cannot come.
+  if (!lead.title_card_in_photo_scope || lead.listing_format === "auction") return false;
   if (lead.source_kind === "lead_scan") {
     return lead.photo_check_state === "unchecked" && queuedBand(lead) !== 1;
   }
@@ -668,8 +764,11 @@ function photoStatus(lead: MercariLead): { key: TranslationKey; className: strin
   if (band !== null) return { key: QUEUED_KEYS[band], className: QUEUED_CLASS, note: null };
   return {
     key: PHOTO_KEYS.unchecked,
-    className: PHOTO_CLASSES.unchecked,
-    note: lead.source_kind === "lead_scan" ? "mercariLeads.photoNote.notQueued" : null,
+    // Amber means a check may still come; none comes for an auction.
+    className: lead.listing_format === "auction" ? PHOTO_CLASSES.inconclusive : PHOTO_CLASSES.unchecked,
+    note: lead.listing_format === "auction"
+      ? "mercariLeads.photoNote.auction"
+      : lead.source_kind === "lead_scan" ? "mercariLeads.photoNote.notQueued" : null,
   };
 }
 
@@ -678,6 +777,12 @@ function photoStatus(lead: MercariLead): { key: TranslationKey; className: strin
 // and does not depend on the viewer's clock.
 function hoursAtRead(lead: MercariLead, timestamp: string): number {
   return Math.max(0, lead.observed_age_hours + (Date.parse(lead.observed_at) - Date.parse(timestamp)) / 3_600_000);
+}
+
+// Hours from the read until a later time, such as an auction's stated end, on
+// the same clock; negative once it has passed.
+function hoursUntilAtRead(lead: MercariLead, timestamp: string): number {
+  return (Date.parse(timestamp) - Date.parse(lead.observed_at)) / 3_600_000 - lead.observed_age_hours;
 }
 
 const UNPRICED_KEYS: Record<string, TranslationKey> = {
@@ -895,10 +1000,39 @@ function LeadCard({
   const variant = pokemonVariantLabel(lead);
   const tierKey = MATCH_TIER_KEYS[lead.match_tier];
   const photo = photoStatus(lead);
+  // An auction (backend #2436): its shown price is the current bid, so the card
+  // leads with the highest bid that still clears the bars, then the bid, the
+  // bid count and the end, each said to be unknown when no scan read it. Hours
+  // to the end are taken at read time, as every age on the card is.
+  const auction = lead.listing_format === "auction";
+  const maxBid = lead.auction_max_bid_jpy;
+  const bidsText = lead.auction_bid_count === null
+    ? t("mercariLeads.auction.bidsUnknown")
+    : t(lead.auction_bid_count === 1 ? "mercariLeads.auction.bidsOne" : "mercariLeads.auction.bids", { count: lead.auction_bid_count });
+  const endText = lead.auction_ends_at === null
+    ? t("mercariLeads.auction.endUnknown")
+    : lead.auction_ended
+      ? t("mercariLeads.auction.ended", { date: dateTime(lead.auction_ends_at) })
+      : t("mercariLeads.auction.ends", {
+        date: dateTime(lead.auction_ends_at),
+        in: age(Math.max(0, hoursUntilAtRead(lead, lead.auction_ends_at))),
+      });
+  const markLost = auction && lead.auction_last_seen_at !== null
+    && Date.parse(lead.auction_last_seen_at) < Date.parse(lead.observed_at);
   return (
     <Card className="min-w-0" data-testid="mercari-lead-card">
       <CardHeader className="space-y-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {auction && (
+            <Badge
+              variant="outline"
+              className={`h-auto gap-1 px-2 py-0.5 text-sm font-semibold ${lead.auction_ended ? AUCTION_ENDED_CLASS : AUCTION_CLASS}`}
+              data-testid="mercari-lead-auction"
+            >
+              <Gavel className="size-3.5" aria-hidden="true" />
+              {t(lead.auction_ended ? "mercariLeads.auction.badgeEnded" : "mercariLeads.auction.badge")}
+            </Badge>
+          )}
           <Badge
             variant="outline"
             className={`h-auto gap-1 px-2 py-0.5 text-sm font-semibold ${ageClass(lead.listing_age_hours)}`}
@@ -948,7 +1082,45 @@ function LeadCard({
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="rounded-lg border bg-muted/30 px-3 py-2" data-testid="mercari-lead-multiple">
-          {lead.multiple !== null ? (
+          {auction ? (
+            <div className="space-y-1" data-testid="mercari-lead-auction-summary">
+              {maxBid !== null ? (
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="text-2xl font-semibold tabular-nums" data-testid="mercari-lead-max-bid">
+                    {formatJpy(maxBid)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{t("mercariLeads.auction.maxBidHint")}</span>
+                </div>
+              ) : lead.lane === "unpriced" ? (
+                <p className="text-sm">
+                  <span className="text-muted-foreground">{t("mercariLeads.unpriced")}: </span>
+                  {unpricedText}
+                </p>
+              ) : (
+                <p className="text-sm">{withheldText ?? t("mercariLeads.auction.noMaxBid")}</p>
+              )}
+              <p className="text-sm">
+                <span className="text-muted-foreground">{t("mercariLeads.auction.currentBid")}: </span>
+                <span className="font-medium tabular-nums">{formatJpy(lead.ask_jpy)}</span>
+                {maxBid !== null && (
+                  <span className="text-muted-foreground">
+                    {" · "}
+                    {maxBid > lead.ask_jpy
+                      ? t("mercariLeads.auction.headroom", { jpy: formatJpy(maxBid - lead.ask_jpy) })
+                      : t("mercariLeads.auction.atMax")}
+                  </span>
+                )}
+              </p>
+              {maxBid !== null && withheldText !== null && (
+                <p className="text-xs text-muted-foreground">{withheldText}</p>
+              )}
+              <p className="text-xs text-muted-foreground" data-testid="mercari-lead-auction-facts">
+                <span className="whitespace-nowrap">{bidsText}</span>
+                {" · "}
+                {endText}
+              </p>
+            </div>
+          ) : lead.multiple !== null ? (
             <div className="flex flex-wrap items-baseline gap-x-2">
               <span className={`text-2xl font-semibold tabular-nums ${lead.multiple >= 2 ? "text-emerald-700 dark:text-emerald-300" : ""}`}>
                 {multipleText(lead.multiple)}
@@ -968,7 +1140,10 @@ function LeadCard({
           {lead.lane === "unpriced" && lead.other_listings > 0 && (
             <p className="mt-1 text-sm">
               <span className="font-medium">{t("mercariLeads.otherListings", { count: lead.other_listings })}</span>
-              <span className="text-muted-foreground"> · {t("mercariLeads.otherListingsHint")}</span>
+              <span className="text-muted-foreground">
+                {" · "}
+                {t(auction ? "mercariLeads.auction.otherListingsHint" : "mercariLeads.otherListingsHint")}
+              </span>
             </p>
           )}
         </div>
@@ -1006,7 +1181,7 @@ function LeadCard({
               )}
             </div>
             <div className="flex flex-wrap gap-x-2">
-              <dt className="text-muted-foreground">{t("mercari.ask")}</dt>
+              <dt className="text-muted-foreground">{t(auction ? "mercariLeads.auction.currentBid" : "mercari.ask")}</dt>
               <dd className="font-medium">
                 {formatJpy(lead.ask_jpy)}
                 {lead.shipping_added_jpy > 0 ? ` ${t("mercariLeads.shippingAdded", { jpy: formatJpy(lead.shipping_added_jpy) })}` : ""}
@@ -1018,6 +1193,11 @@ function LeadCard({
                   <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-200">
                     {t("mercariLeads.buyerPaysShipping")}
                   </Badge>
+                </dd>
+              )}
+              {markLost && lead.auction_last_seen_at !== null && (
+                <dd className="basis-full text-xs text-muted-foreground" data-testid="mercari-lead-auction-mark-lost">
+                  {t("mercariLeads.auction.markLost", { age: age(hoursAtRead(lead, lead.auction_last_seen_at)) })}
                 </dd>
               )}
             </div>
@@ -1135,6 +1315,7 @@ function readFiltersFromUrl(base: MercariLeadFilters): MercariLeadFilters {
   return {
     ...base,
     lane: parseMercariLaneParam(readUrlParam(MERCARI_LANE_PARAM)) ?? DEFAULT_MERCARI_LANE,
+    format: parseMercariFormatParam(readUrlParam(MERCARI_FORMAT_PARAM)) ?? DEFAULT_MERCARI_FORMAT,
     sort: parseMercariSortParam(readUrlParam(MERCARI_SORT_PARAM)) ?? DEFAULT_MERCARI_SORT,
   };
 }
@@ -1162,8 +1343,10 @@ export default function MercariLeadsView({
 
   useEffect(() => {
     writeUrlParam(MERCARI_LANE_PARAM, filters.lane === DEFAULT_MERCARI_LANE ? null : filters.lane);
-    writeUrlParam(MERCARI_SORT_PARAM, filters.sort === DEFAULT_MERCARI_SORT ? null : filters.sort);
-  }, [filters.lane, filters.sort]);
+    writeUrlParam(MERCARI_FORMAT_PARAM, filters.format === DEFAULT_MERCARI_FORMAT ? null : filters.format);
+    // Each format's first sort is its default, so it stays out of the URL.
+    writeUrlParam(MERCARI_SORT_PARAM, filters.sort === sortsFor(filters.format)[0] ? null : filters.sort);
+  }, [filters.lane, filters.format, filters.sort]);
 
   useEffect(() => {
     const onPop = () => setFilters((current) => readFiltersFromUrl(current));
@@ -1253,6 +1436,14 @@ export default function MercariLeadsView({
 
       <div className="min-w-0 space-y-3 rounded-xl border bg-card p-3">
         <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-start lg:justify-between">
+          {/* Auctions are a feed of their own, never ranked against fixed-price leads. */}
+          <ChoiceGroup
+            label={t("mercariLeads.formatLabel")}
+            options={MERCARI_LEAD_FORMATS}
+            value={filters.format}
+            labelFor={(format) => t(FORMAT_KEYS[format])}
+            onChange={(format) => change({ format, sort: sortsFor(format)[0] })}
+          />
           <ChoiceGroup
             label={t("mercariLeads.laneLabel")}
             options={MERCARI_LEAD_LANES}
@@ -1262,17 +1453,22 @@ export default function MercariLeadsView({
           />
           <ChoiceGroup
             label={t("mercariLeads.sortLabel")}
-            options={MERCARI_LEAD_SORTS}
+            options={sortsFor(filters.format)}
             value={sort}
             labelFor={(option) => t(SORT_KEYS[option])}
-            disabled={(option) => filters.lane === "unpriced" && option === "multiple"}
+            disabled={(option) => filters.format === "fixed_price" && filters.lane === "unpriced" && option === "multiple"}
             onChange={(option) => change({ sort: option })}
           />
         </div>
         <p className="text-xs text-muted-foreground" data-testid="mercari-lane-hint">
           {t(LANE_HINT_KEYS[filters.lane])}
-          {filters.lane === "unpriced" ? ` ${t("mercariLeads.sortUnpricedNote")}` : ""}
+          {filters.format === "fixed_price" && filters.lane === "unpriced" ? ` ${t("mercariLeads.sortUnpricedNote")}` : ""}
         </p>
+        {filters.format === "auction" && (
+          <p className="text-xs text-muted-foreground" data-testid="mercari-format-hint">
+            {t("mercariLeads.formatHint.auction")}
+          </p>
+        )}
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
           <div className="min-w-0 space-y-1.5 sm:w-64">
             <Label htmlFor="mercari-lead-photo-filter">{t("mercariLeads.photoFilter")}</Label>

@@ -82,6 +82,13 @@ const RAW: MercariLead = {
   latest_lead_action_at: null,
   dismissed: false,
   photo_check_requested: false,
+  listing_format: "fixed_price",
+  auction_bid_count: null,
+  auction_ends_at: null,
+  auction_last_seen_at: null,
+  auction_max_bid_jpy: null,
+  auction_bid_within_max: null,
+  auction_ended: false,
 };
 
 const PSA10: MercariLead = {
@@ -169,6 +176,33 @@ const UNPRICED: MercariLead = {
   other_listings: 3,
 };
 
+// A vintage auction (backend 000633): the current bid is the ask, there is no
+// multiple, and the highest bid that still clears 1.0x and $10 is shown
+// instead. Read 2h after it was seen, ending 5h after that.
+const AUCTION: MercariLead = {
+  ...RAW,
+  external_item_id: "m84099025534",
+  canonical_url: "https://jp.mercari.com/item/m84099025534",
+  sanitized_title: "ポケモンカード 旧裏面 なみのりピカチュウ",
+  lane: "vintage_raw",
+  match_tier: "exact",
+  ask_jpy: 1900,
+  landed_ask_usd: 12.16,
+  value_usd: 180,
+  nm_value_usd: 180,
+  selling_cost_usd: 36.66,
+  net_value_usd: 143.34,
+  multiple: null,
+  observed_age_hours: 2,
+  listing_format: "auction",
+  auction_bid_count: 3,
+  auction_ends_at: "2026-10-28T08:15:00+00:00",
+  auction_last_seen_at: "2026-10-28T01:15:00+00:00",
+  auction_max_bid_jpy: 20837,
+  auction_bid_within_max: true,
+  auction_ended: false,
+};
+
 // The same lead from the cold crawl, whose rows were retired on 2026-11-02.
 const COLD: MercariLead = { ...RAW, source_kind: "cold_crawl" };
 
@@ -218,6 +252,7 @@ describe("MercariLeadsView", () => {
     expect(await screen.findByText("No leads in this lane")).toBeTruthy();
     expect(DEFAULT_LEAD_FILTERS).toEqual({
       lane: "modern_raw",
+      format: "fixed_price",
       sort: "multiple",
       photo: "",
       includeDismissed: false,
@@ -804,6 +839,119 @@ describe("MercariLeadsView", () => {
   });
 });
 
+describe("MercariLeadsView auctions", () => {
+  it("lists auctions apart, ending soonest, from the URL and back", async () => {
+    const loader = vi.fn(async () => page([]));
+    view(loader);
+    await screen.findByText("No leads in this lane");
+
+    fireEvent.click(screen.getByRole("button", { name: "Auctions" }));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(
+      { ...DEFAULT_LEAD_FILTERS, format: "auction", sort: "ending" },
+      null,
+    ));
+    expect(window.location.search).toBe("?format=auction");
+    // No multiple to sort by: the auction feed offers ending soonest and newest.
+    const sorts = within(screen.getByRole("group", { name: "Sort" }));
+    expect(sorts.queryByRole("button", { name: "Best multiple" })).toBeNull();
+    expect(sorts.getByRole("button", { name: "Ending soonest" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("mercari-format-hint").textContent).toContain("highest bid that still clears 1.0x and $10");
+
+    fireEvent.click(sorts.getByRole("button", { name: "Newest" }));
+    await waitFor(() => expect(window.location.search).toBe("?format=auction&sort=newest"));
+    fireEvent.click(screen.getByRole("button", { name: "Fixed price" }));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(DEFAULT_LEAD_FILTERS, null));
+    expect(window.location.search).toBe("");
+  });
+
+  it("reads the auction feed from the URL, and a fixed-price sort there as ending soonest", async () => {
+    window.history.replaceState(null, "", "/?format=auction&sort=multiple");
+    const loader = vi.fn(async () => page([]));
+    view(loader);
+    await waitFor(() => expect(loader).toHaveBeenCalledWith(
+      { ...DEFAULT_LEAD_FILTERS, format: "auction", sort: "ending" },
+      null,
+    ));
+  });
+
+  it("badges an auction and leads with its maximum bid, current bid, room, bids and end, with no multiple", async () => {
+    view(vi.fn(async () => page([AUCTION])));
+    const card = await onlyCard();
+    const scope = within(card);
+
+    expect(scope.getByTestId("mercari-lead-auction").textContent).toBe("Auction");
+    expect(scope.getByTestId("mercari-lead-max-bid").textContent).toBe("¥20,837");
+    const summary = scope.getByTestId("mercari-lead-auction-summary").textContent ?? "";
+    expect(summary).toContain("max bid: the highest that still clears 1.0x and $10 of profit");
+    expect(summary).toContain("Current bid: ¥1,900");
+    expect(summary).toContain("¥18,937 below the max");
+    expect(scope.getByTestId("mercari-lead-auction-facts").textContent).toMatch(/^3 bids · Ends .+ JST \(in 5\u00a0h\)$/);
+    expect(card.textContent).not.toMatch(/\d\.\d\dx/);
+    // The ask row names the bid, and no photo check is offered or promised.
+    expect(scope.getByText("Current bid")).toBeTruthy();
+    expect(scope.queryByRole("button", { name: "Request photo check" })).toBeNull();
+    expect(scope.getByTestId("mercari-lead-photo-note").textContent).toBe("Auctions are not photo-checked.");
+    expect(scope.queryByTestId("mercari-lead-auction-mark-lost")).toBeNull();
+  });
+
+  it("says when no scan read the bids or the end, and when the search stopped marking the auction", async () => {
+    view(vi.fn(async () => page([{
+      ...AUCTION,
+      auction_bid_count: null,
+      auction_ends_at: null,
+      auction_last_seen_at: "2026-10-27T23:15:00+00:00",
+      photo_check_requested: true,
+    }])));
+    const scope = within(await onlyCard());
+
+    expect(scope.getByTestId("mercari-lead-auction-facts").textContent).toBe("Bid count not read yet · End not read yet");
+    expect(scope.getByTestId("mercari-lead-auction-mark-lost").textContent)
+      .toBe("The latest search no longer marks this listing as an auction (last marked 4\u00a0h ago): it has probably ended, or the seller changed it to a fixed price.");
+    // A request made before the lead was an auction never reads as queued.
+    expect(scope.getByTestId("mercari-lead-photo").textContent).toBe("Not photo-checked");
+  });
+
+  it("shows an ended, unpriced and grade-unread auction in its own words", async () => {
+    view(vi.fn(async () => page([
+      { ...AUCTION, auction_ended: true, auction_ends_at: "2026-10-28T00:15:00+00:00" },
+      {
+        ...UNPRICED,
+        ...OTHER_ID,
+        source_item_type: "mercari",
+        listing_format: "auction",
+        auction_bid_count: 1,
+        auction_ends_at: null,
+        auction_last_seen_at: UNPRICED.observed_at,
+        auction_max_bid_jpy: null,
+        auction_bid_within_max: null,
+        auction_ended: false,
+      },
+    ])));
+    const [ended, unpriced] = await screen.findAllByTestId("mercari-lead-card");
+    expect(within(ended).getByTestId("mercari-lead-auction").textContent).toBe("Auction ended");
+    expect(within(ended).getByTestId("mercari-lead-auction-facts").textContent).toMatch(/^3 bids · Ended .+ JST$/);
+    const summary = within(unpriced).getByTestId("mercari-lead-auction-summary").textContent ?? "";
+    expect(summary).toContain("Unpriced: fewer than 3 raw eBay sales in the last 180 days");
+    expect(summary).toContain("Current bid: ¥6,000");
+    expect(summary).not.toContain("below the max");
+    expect(within(unpriced).getByTestId("mercari-lead-auction-facts").textContent).toBe("1 bid · End not read yet");
+    // It stands for the other auctions of its stratum, never for a fixed-price listing.
+    expect(unpriced.textContent).toContain("+3 other listings · this has the lowest current bid among the auctions");
+    expect(within(unpriced).getByTestId("mercari-lead-photo").className).toContain("zinc");
+  });
+
+  it("words an auction in Japanese", async () => {
+    localStorage.setItem("language", "ja");
+    view(vi.fn(async () => page([AUCTION])));
+    const scope = within(await onlyCard());
+    expect(scope.getByTestId("mercari-lead-auction").textContent).toBe("オークション");
+    const summary = scope.getByTestId("mercari-lead-auction-summary").textContent ?? "";
+    expect(summary).toContain("上限入札額：1.0倍と$10の利益をまだ満たす最高額");
+    expect(summary).toContain("現在の入札額: ¥1,900");
+    expect(scope.getByTestId("mercari-lead-auction-facts").textContent).toMatch(/^入札3件 · 終了 .+（日本時間、あと5時間）$/);
+  });
+});
+
 describe("parseMercariLeads", () => {
   it("accepts every lane's real shape and numeric strings", () => {
     expect(parseMercariLeads([RAW, PSA10, UNREAD_PSA, UNPRICED, DAMAGED_VINTAGE])).toHaveLength(5);
@@ -921,6 +1069,43 @@ describe("parseMercariLeads", () => {
         photo_checked_at: "2026-10-30T03:00:00+00:00",
         photo_check_priority: 1,
       }]), state).toThrow("Invalid Mercari lead photo check priority");
+    }
+  });
+
+  it("accepts an auction's shapes: priced under its maximum, at it, unpriced, grade unread, facts unknown", () => {
+    const unread = { ...UNREAD_PSA, listing_format: "auction", auction_last_seen_at: UNREAD_PSA.observed_at };
+    const parsed = parseMercariLeads([
+      AUCTION,
+      { ...AUCTION, ask_jpy: 20837, auction_bid_within_max: true },
+      { ...AUCTION, auction_bid_count: null, auction_ends_at: null },
+      unread,
+      { ...UNPRICED, listing_format: "auction", auction_last_seen_at: UNPRICED.observed_at },
+      // A modern card the seller rates 3-6 keeps its evidence reason as an auction.
+      { ...RAW, seller_condition_id: "4", multiple: null, multiple_withheld_reason: "seller_condition_3_6",
+        listing_format: "auction", auction_last_seen_at: RAW.observed_at, auction_max_bid_jpy: 9000, auction_bid_within_max: true },
+    ]);
+    expect(parsed.map((lead) => lead.listing_format)).toEqual(["auction", "auction", "auction", "auction", "auction", "auction"]);
+    expect(parsed[0].auction_max_bid_jpy).toBe(20837);
+  });
+
+  it("fails closed on an auction the CHECKs forbid, and on auction facts on a fixed-price lead", () => {
+    for (const bad of [
+      { ...AUCTION, multiple: 9.4 },
+      { ...AUCTION, ask_jpy: 20838 },
+      { ...AUCTION, auction_bid_within_max: false },
+      { ...AUCTION, auction_max_bid_jpy: null, auction_bid_within_max: null },
+      { ...AUCTION, auction_last_seen_at: null },
+      { ...AUCTION, auction_last_seen_at: "2026-10-28T02:00:00+00:00" },
+      { ...AUCTION, auction_bid_count: -1 },
+      { ...AUCTION, auction_ended: true, auction_ends_at: null },
+      { ...AUCTION, listing_format: "lottery" },
+      { ...RAW, auction_bid_count: 0 },
+      { ...RAW, auction_max_bid_jpy: 9000 },
+      { ...RAW, auction_ended: true },
+      // A fixed-price lead still has a multiple or says why it has none.
+      { ...RAW, multiple: null },
+    ]) {
+      expect(() => parseMercariLeads([bad]), JSON.stringify(bad)).toThrow();
     }
   });
 

@@ -90,9 +90,30 @@ export function parseMercariLaneParam(value: string | null | undefined): Mercari
 /** The Mercari leads feed's sort leaf param. */
 export const MERCARI_SORT_PARAM = "sort";
 
-/** "multiple" is best multiple first; "newest" is the newest first-seen listing first. */
-export const MERCARI_LEAD_SORTS = ["multiple", "newest"] as const;
+/**
+ * "multiple" is best multiple first and "newest" the newest first-seen listing
+ * first; "ending" is an auction's soonest stated end first. A fixed-price feed
+ * sorts by multiple or newest, an auction feed by ending or newest: an auction
+ * carries no multiple, because its shown price is a bid that rises.
+ */
+export const MERCARI_LEAD_SORTS = ["multiple", "newest", "ending"] as const;
 export type MercariLeadSort = (typeof MERCARI_LEAD_SORTS)[number];
+
+/** The Mercari leads feed's format leaf param: `?format=auction` lists the auctions; fixed price, the default, stays out of the URL. */
+export const MERCARI_FORMAT_PARAM = "format";
+
+/** How a lead sells; the same vocabulary as mercari_leads_v.listing_format (backend 000633). */
+export const MERCARI_LEAD_FORMATS = ["fixed_price", "auction"] as const;
+export type MercariLeadFormat = (typeof MERCARI_LEAD_FORMATS)[number];
+
+/** The format a viewer gets before choosing one; the view keeps it out of the URL. */
+export const DEFAULT_MERCARI_FORMAT: MercariLeadFormat = "fixed_price";
+
+/** The validated `?format=` value, or null when absent or not a format. */
+export function parseMercariFormatParam(value: string | null | undefined): MercariLeadFormat | null {
+  const trimmed = value?.trim() ?? "";
+  return (MERCARI_LEAD_FORMATS as readonly string[]).includes(trimmed) ? (trimmed as MercariLeadFormat) : null;
+}
 
 /** The sort a viewer gets before choosing one; the view keeps it out of the URL. */
 export const DEFAULT_MERCARI_SORT: MercariLeadSort = "multiple";
