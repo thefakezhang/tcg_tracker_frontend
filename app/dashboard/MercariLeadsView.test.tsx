@@ -82,6 +82,7 @@ const RAW: MercariLead = {
   latest_lead_action_at: null,
   dismissed: false,
   photo_check_requested: false,
+  photo_checks_paused: false,
   listing_format: "fixed_price",
   auction_bid_count: null,
   auction_ends_at: null,
@@ -632,6 +633,54 @@ describe("MercariLeadsView", () => {
     expect(within(dismissed).queryByRole("button", { name: "Dismiss" })).toBeNull();
   });
 
+  it("says photo checks are paused, never queued, and offers no request while they are off", async () => {
+    const id = (n: number) => ({
+      external_item_id: `m7777777777${n}`,
+      canonical_url: `https://jp.mercari.com/item/m7777777777${n}`,
+    });
+    // m84099025534 on 2026-11-07: checks were off, yet the lead read "Photo
+    // check queued: best deal". A paused publication carries no band (000634).
+    view(vi.fn(async () => page([
+      { ...RAW, ...id(1), photo_checks_paused: true },
+      { ...RAW, ...id(2), photo_checks_paused: true, photo_check_requested: true, latest_lead_action: "photo_check_requested" },
+      { ...RAW, ...id(3), photo_checks_paused: true, dismissed: true, latest_lead_action: "dismissed", latest_lead_action_reason: "proxy" },
+      {
+        ...RAW,
+        ...id(4),
+        photo_checks_paused: true,
+        photo_check_state: "confirmed",
+        photo_checked_at: "2026-10-30T03:00:00+00:00",
+      },
+    ])));
+
+    const [waiting, requested, dismissed, checked] = await screen.findAllByTestId("mercari-lead-card");
+    for (const card of [waiting, requested, dismissed]) {
+      const badge = within(card).getByTestId("mercari-lead-photo");
+      expect(badge.textContent).toBe("Photo checks paused");
+      expect(badge.className).not.toContain("sky");
+      expect(badge.className).not.toContain("amber");
+      expect(card.textContent).not.toMatch(/queued|within about an hour/);
+      expect(within(card).queryByRole("button", { name: "Request photo check" })).toBeNull();
+    }
+    expect(within(waiting).getByTestId("mercari-lead-photo-note").textContent)
+      .toBe("Photo checks are turned off for now, so no listing is checked until they resume.");
+    expect(within(requested).getByTestId("mercari-lead-photo-note").textContent)
+      .toBe("Photo checks are turned off for now. Your request is kept and goes first when they resume.");
+    // A result from before the pause is still the lead's result.
+    expect(within(checked).getByTestId("mercari-lead-photo").textContent).toBe("Photo-checked");
+  });
+
+  it("words paused photo checks in Japanese", async () => {
+    localStorage.setItem("language", "ja");
+    view(vi.fn(async () => page([{ ...RAW, photo_checks_paused: true }])));
+
+    const card = await onlyCard();
+    await waitFor(() => expect(within(card).getByTestId("mercari-lead-photo").textContent).toBe("写真確認は停止中"));
+    expect(within(card).getByTestId("mercari-lead-photo-note").textContent)
+      .toBe("写真確認は現在停止しているため、再開するまでどの出品も確認しません。");
+    expect(within(card).queryByRole("button", { name: "写真確認を依頼" })).toBeNull();
+  });
+
   it("shows when a fresh lead was photo-checked and offers no second check", async () => {
     const checked = (n: number, state: MercariLead["photo_check_state"], at: string): MercariLead => ({
       ...RAW,
@@ -1069,6 +1118,17 @@ describe("parseMercariLeads", () => {
         photo_checked_at: "2026-10-30T03:00:00+00:00",
         photo_check_priority: 1,
       }]), state).toThrow("Invalid Mercari lead photo check priority");
+    }
+  });
+
+  it("fails closed on a photo-check band beside paused photo checks, and on a pause outside the lead scan", () => {
+    expect(parseMercariLeads([{ ...RAW, photo_checks_paused: true }])[0]).toMatchObject({ photo_checks_paused: true, photo_check_priority: null });
+    expect(() => parseMercariLeads([{ ...RAW, photo_checks_paused: true, photo_check_priority: 2 }]))
+      .toThrow("Invalid Mercari lead photo check priority");
+    expect(() => parseMercariLeads([{ ...COLD, photo_checks_paused: true }])).toThrow("Invalid Mercari lead photo checks paused");
+    for (const paused of [null, undefined, "true", 1]) {
+      expect(() => parseMercariLeads([{ ...RAW, photo_checks_paused: paused }]), String(paused))
+        .toThrow("Invalid Mercari lead field: photo_checks_paused");
     }
   });
 

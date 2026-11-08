@@ -15,7 +15,7 @@ Since 2026-11-02 every lead comes from the fresh lead scan (`source_kind = 'lead
 Since phase L4 a fresh lead is photo-checked against the card its title names, best leads first, and the tab says whether its check is queued and why.
 
 Tracking: tcg_tracker epic #2304, phases L1 and L4 (frontend), and tcg_tracker #2340.
-Backend contract: migrations `000616_mercari_title_leads`, `000617_mercari_lead_title_identity`, `000620_mercari_lead_scan_publication` and `000623_mercari_lead_photo_check_publication`, and `docs/mercari_title_leads.md` in the backend repo (section "Fresh-lead photo checks (phase L4)").
+Backend contract: migrations `000616_mercari_title_leads`, `000617_mercari_lead_title_identity`, `000620_mercari_lead_scan_publication`, `000623_mercari_lead_photo_check_publication`, `000633_mercari_lead_auctions` and `000634_mercari_lead_photo_checks_paused`, and `docs/mercari_title_leads.md` in the backend repo (section "Fresh-lead photo checks (phase L4)").
 
 ## The operator's rules behind the feed
 
@@ -37,6 +37,7 @@ Set by the operator on 2026-11-01 and enforced by the publisher and the table's 
 - Leads that cannot be bought (no longer on sale, rejected by a photo check, dismissed) are hidden by default and one control away.
 - The operator can dismiss a lead with a reason or ask for a photo check.
 - A fresh lead says whether its photo check is queued and why, or why no check can confirm it, and a checked lead says when it was checked.
+- While photo checks are paused on the acquisition host, no lead says a check is queued and none offers to request one (#2437).
 - Auctions are a feed of their own, never ranked by a multiple: each is marked as an auction and leads with the highest bid that still clears 1.0x and $10 of profit, then its current bid, bid count and end (backend #2436, migration 000633).
 
 ## Non-goals
@@ -100,6 +101,7 @@ The two actions are `dismissed`, which needs a reason, and `photo_check_requeste
 The route refuses a dismissal without a reason with a 400 before the RPC is called, and maps the RPC's own refusals: not an operator is 403, a listing that is not a published lead is 404, a CHECK violation is 409.
 Actions key on the listing, so they survive republication, and the view reads the latest one: a photo-check request after a dismissal brings the lead back, and the card updates the same way locally.
 On a fresh lead a request leads to a real check: the next lead-scan publication (every 30 minutes, at :10 and :40) queues it first (band 1), and the next lead-check turn checks it, usually within about an hour.
+While photo checks are paused the button is not offered, because no check would come (#2437); a request made before the pause is kept and goes first when they resume.
 On a cold-crawl lead a request is recorded only, because only fresh leads are queued.
 
 ### Parsing fails closed
@@ -116,6 +118,7 @@ On a cold-crawl lead a request is recorded only, because only fresh leads are qu
 - `source_kind` is `lead_scan` or `cold_crawl`, and nothing else passes;
 - as 000633's CHECKs hold, a fixed-price row carries no auction fact (and still has a multiple or says why it has none), and an auction row has no multiple, a last auction sighting no later than its newest observation, a maximum bid exactly when it is priced and at or above its current bid, an `auction_bid_within_max` that agrees with them, and `auction_ended` only with a stated end;
 - `photo_check_priority` is NULL or an integer from 1 to 3, and, as 000623's queue CHECK holds, set only on an unchecked `lead_scan` row whose title card is in the photo scope, so a badge never says a check is on its way when none can come.
+- `photo_checks_paused` (000634) is a boolean, true only on a `lead_scan` row, and a row whose publication was paused carries no band, as 000634's CHECK holds for the publication's queue counts.
 
 The match tier is the one new field that does not fail closed: a tier the matcher adds later is shown by its code, because it says how the card was read, not what it is worth.
 
@@ -155,12 +158,14 @@ The publisher queues the checks in the operator's bands (`photo_check_priority`)
 | cold crawl, unchecked, title card not in scope | grey "Photo check can't confirm this card" | the frontier note: "The photo check compares this listing with other cards, so it cannot confirm the card the title names yet." | no |
 | cold crawl, unchecked, in scope | amber "Not photo-checked" | none | yes, unless already requested |
 | auction, unchecked | grey "Not photo-checked" | "Auctions are not photo-checked." | no |
+| fresh, unchecked, photo checks paused | grey "Photo checks paused" | "Photo checks are turned off for now, so no listing is checked until they resume.", or, when the operator asked before the pause, "Photo checks are turned off for now. Your request is kept and goes first when they resume." | no |
 | checked, either kind | green "Photo-checked", red "Photo disagrees with title", grey "Photo inconclusive", or struck-through "Rejected by the photo check" (shown only under that filter) | the scope note when the title card is not in scope | fresh: no, a fresh lead is checked once; cold crawl: yes unless confirmed or already requested |
 
 Two cases read the latest action rather than the band, because the band is the latest publication's and the action may be newer:
 
 - A request the latest publication has not read yet reads as band 1 at once, since the next publication queues it first; the card updates the same way locally when the operator presses the button.
 - A dismissed lead is never queued, so a band from before the dismissal is not shown; the lead reads "Not photo-checked" and offers a request, which brings it back.
+- While photo checks are paused (`photo_checks_paused`, #2437) nothing reads as queued, whatever was asked: the operator found "Photo check queued: best deal" on `m84099025534` on 2026-11-07, two days after checks were turned off. The backend stops queueing while the acquisition host's `lead-check-chain/checks-off` marker exists; the tab shows the pause instead, in grey, and offers no request. A result from before the pause is still shown.
 
 A checked lead says when: "Photo checked (JST): date (N h ago)".
 The age is the check's age when the view read the row (`observed_age_hours` plus the gap between `observed_at` and `photo_checked_at`), so it agrees with the other ages on the card and does not depend on the viewer's clock.

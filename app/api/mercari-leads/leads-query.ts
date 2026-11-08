@@ -156,6 +156,11 @@ export const LEAD_COLUMNS = [
   "auction_max_bid_jpy",
   "auction_bid_within_max",
   "auction_ended",
+  // Photo checks paused (backend 000634, #2437): the row's publication ran
+  // while the acquisition host's photo checks were off, so nothing is queued.
+  // Selecting it before 000634 is applied is a 400, so this ships after the
+  // apply.
+  "photo_checks_paused",
 ].join(", ");
 
 function isOneOf<T extends string>(values: readonly T[], value: string): value is T {
