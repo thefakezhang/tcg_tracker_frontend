@@ -159,13 +159,20 @@ The publisher queues the checks in the operator's bands (`photo_check_priority`)
 | cold crawl, unchecked, in scope | amber "Not photo-checked" | none | yes, unless already requested |
 | auction, unchecked | grey "Not photo-checked" | "Auctions are not photo-checked." | no |
 | fresh, unchecked, photo checks paused | grey "Photo checks paused" | "Photo checks are turned off for now, so no listing is checked until they resume.", or, when the operator asked before the pause, "Photo checks are turned off for now. Your request is kept and goes first when they resume." | no |
-| checked, either kind | green "Photo-checked", red "Photo disagrees with title", grey "Photo inconclusive", or struck-through "Rejected by the photo check" (shown only under that filter) | the scope note when the title card is not in scope | fresh: no, a fresh lead is checked once; cold crawl: yes unless confirmed or already requested |
+| fresh, checked by the lead photo checker | green "Photo matches", red "Photo shows a different card" (the card, or the title's card in a slab of another grade, shown beneath), or orange "Photo unclear" | on a match, "A photo shows the title card's art. It cannot tell a reprint, the edition or the holder apart."; when unclear, "The photos may show another printing than the title names. Check them before buying." | no, a fresh lead is checked once |
+| fresh, rejected (sold, page gone, not a single card) | struck-through "Rejected by the photo check" (shown only under that filter) | none | no |
+| cold crawl, checked | green "Photo-checked", red "Photo disagrees with title", grey "Photo inconclusive", or struck-through "Rejected by the photo check" (shown only under that filter) | the scope note when the title card is not in scope | yes unless confirmed or already requested |
 
 Two cases read the latest action rather than the band, because the band is the latest publication's and the action may be newer:
 
 - A request the latest publication has not read yet reads as band 1 at once, since the next publication queues it first; the card updates the same way locally when the operator presses the button.
 - A dismissed lead is never queued, so a band from before the dismissal is not shown; the lead reads "Not photo-checked" and offers a request, which brings it back.
 - While photo checks are paused (`photo_checks_paused`, #2437) nothing reads as queued, whatever was asked: the operator found "Photo check queued: best deal" on `m84099025534` on 2026-11-07, two days after checks were turned off. The backend stops queueing while the acquisition host's `lead-check-chain/checks-off` marker exists; the tab shows the pause instead, in grey, and offers no request. A result from before the pause is still shown.
+
+A fresh lead's check is the lead photo checker's (backend #2480, `docs/mercari_lead_photo_checker.md`): it asks only whether the listing's photos show the card the title names, and answers `confirmed`, `contradicted` or `undecided`, which the publisher maps to `confirmed`, `conflict` and `inconclusive`.
+It confirms the art, not the printing, so a match says what it cannot tell, and a same-art reprint leaves it unclear.
+"Photo unclear" reads orange, as a caution rather than a shrug: in the operator's review of 2026-11-08 the title was right on only 3 of the 10 galleries the checker could not decide, and on the other 7 the photos showed another printing (5) or a 30th Celebration reprint neither option named (2).
+A cold-crawl lead's check was the sealed recognizer's, and keeps its words.
 
 A checked lead says when: "Photo checked (JST): date (N h ago)".
 The age is the check's age when the view read the row (`observed_age_hours` plus the gap between `observed_at` and `photo_checked_at`), so it agrees with the other ages on the card and does not depend on the viewer's clock.

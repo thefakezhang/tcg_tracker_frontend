@@ -415,11 +415,12 @@ describe("MercariLeadsView", () => {
   });
 
   it("gives each photo-check state its own badge and shows the photo's card on a conflict", async () => {
+    // A fresh lead is judged by the lead photo checker (backend #2480).
     const states: Array<[MercariLead["photo_check_state"], string, string]> = [
       ["unchecked", "Not photo-checked", "amber"],
-      ["confirmed", "Photo-checked", "emerald"],
-      ["conflict", "Photo disagrees with title", "red"],
-      ["inconclusive", "Photo inconclusive", "zinc"],
+      ["confirmed", "Photo matches", "emerald"],
+      ["conflict", "Photo shows a different card", "red"],
+      ["inconclusive", "Photo unclear", "orange"],
     ];
     const leads = states.map(([state], index) => ({
       ...RAW,
@@ -667,7 +668,7 @@ describe("MercariLeadsView", () => {
     expect(within(requested).getByTestId("mercari-lead-photo-note").textContent)
       .toBe("Photo checks are turned off for now. Your request is kept and goes first when they resume.");
     // A result from before the pause is still the lead's result.
-    expect(within(checked).getByTestId("mercari-lead-photo").textContent).toBe("Photo-checked");
+    expect(within(checked).getByTestId("mercari-lead-photo").textContent).toBe("Photo matches");
   });
 
   it("words paused photo checks in Japanese", async () => {
@@ -702,14 +703,16 @@ describe("MercariLeadsView", () => {
     ])));
 
     const cards = await screen.findAllByTestId("mercari-lead-card");
-    const expected: Array<[string, string, string]> = [
-      ["Photo-checked", "emerald", "Photo checked (JST): Oct 31, 2026, 7:57 AM (under 1 h ago)"],
-      ["Photo disagrees with title", "red", "Photo checked (JST): Oct 30, 2026, 12:00 PM (20 h ago)"],
-      ["Photo inconclusive", "zinc", "Photo checked (JST): Oct 28, 2026, 9:00 AM (2 d ago)"],
-      ["Rejected by the photo check", "line-through", "Photo checked (JST): Oct 31, 2026, 6:00 AM (2 h ago)"],
+    const expected: Array<[string, string, string, string | null]> = [
+      ["Photo matches", "emerald", "Photo checked (JST): Oct 31, 2026, 7:57 AM (under 1 h ago)",
+        "A photo shows the title card's art. It cannot tell a reprint, the edition or the holder apart."],
+      ["Photo shows a different card", "red", "Photo checked (JST): Oct 30, 2026, 12:00 PM (20 h ago)", null],
+      ["Photo unclear", "orange", "Photo checked (JST): Oct 28, 2026, 9:00 AM (2 d ago)",
+        "The photos may show another printing than the title names. Check them before buying."],
+      ["Rejected by the photo check", "line-through", "Photo checked (JST): Oct 31, 2026, 6:00 AM (2 h ago)", null],
     ];
     cards.forEach((card, index) => {
-      const [label, tone, when] = expected[index];
+      const [label, tone, when, note] = expected[index];
       const badge = within(card).getByTestId("mercari-lead-photo");
       expect(badge.textContent).toBe(label);
       expect(badge.className).toContain(tone);
@@ -717,8 +720,70 @@ describe("MercariLeadsView", () => {
       expect(within(card).queryByRole("button", { name: "Request photo check" })).toBeNull();
       expect(card.textContent).not.toContain("Photo check requested");
       expect(card.textContent).not.toContain("Photo check queued");
-      expect(within(card).queryByTestId("mercari-lead-photo-note")).toBeNull();
+      if (note === null) {
+        expect(within(card).queryByTestId("mercari-lead-photo-note")).toBeNull();
+      } else {
+        expect(within(card).getByTestId("mercari-lead-photo-note").textContent).toBe(note);
+      }
     });
+  });
+
+  it("keeps the sealed recognizer's photo badges on a cold-crawl lead", async () => {
+    const states: Array<[MercariLead["photo_check_state"], string, string]> = [
+      ["confirmed", "Photo-checked", "emerald"],
+      ["conflict", "Photo disagrees with title", "red"],
+      ["inconclusive", "Photo inconclusive", "zinc"],
+    ];
+    view(vi.fn(async () => page(states.map(([state], index) => ({
+      ...COLD,
+      external_item_id: `m6666666666${index}`,
+      canonical_url: `https://jp.mercari.com/item/m6666666666${index}`,
+      photo_check_state: state,
+      photo_source_card_uid: "6f3c0a0e-7d8e-4f5e-9a0b-1c2d3e4f5a6b",
+      photo_checked_at: "2026-10-30T03:00:00+00:00",
+    })))));
+
+    const cards = await screen.findAllByTestId("mercari-lead-card");
+    states.forEach(([, label, tone], index) => {
+      const badge = within(cards[index]).getByTestId("mercari-lead-photo");
+      expect(badge.textContent).toBe(label);
+      expect(badge.className).toContain(tone);
+      expect(within(cards[index]).queryByTestId("mercari-lead-photo-note")).toBeNull();
+    });
+  });
+
+  it("names the other grade when a fresh lead's slab label contradicts the title", async () => {
+    view(vi.fn(async () => page([{
+      ...RAW,
+      holder_hint: "psa_10",
+      photo_check_state: "conflict",
+      photo_psa_grade: 9,
+      photo_checked_at: "2026-10-30T03:00:00+00:00",
+    }])));
+
+    const card = await onlyCard();
+    expect(within(card).getByTestId("mercari-lead-photo").textContent).toBe("Photo shows a different card");
+    expect(within(card).getByTestId("mercari-lead-photo-card").textContent)
+      .toContain("the title's card in a slab of another grade · PSA 9");
+  });
+
+  it("words the lead photo checker's badges and notes in Japanese", async () => {
+    localStorage.setItem("language", "ja");
+    const checked = { photo_source_card_uid: "6f3c0a0e-7d8e-4f5e-9a0b-1c2d3e4f5a6b", photo_checked_at: "2026-10-30T03:00:00+00:00" };
+    view(vi.fn(async () => page([
+      { ...RAW, ...checked, photo_check_state: "confirmed" },
+      { ...RAW, ...OTHER_ID, ...checked, photo_check_state: "conflict" },
+      { ...RAW, ...checked, external_item_id: "m55555555555", canonical_url: "https://jp.mercari.com/item/m55555555555", photo_check_state: "inconclusive" },
+    ])));
+
+    await waitFor(() => expect(screen.getAllByTestId("mercari-lead-photo")[0].textContent).toBe("写真が一致"));
+    const [confirmed, conflict, unclear] = screen.getAllByTestId("mercari-lead-card");
+    expect(within(confirmed).getByTestId("mercari-lead-photo-note").textContent)
+      .toBe("写真にタイトルのカードの絵柄があります。再録・版・ホルダーの違いは判別できません。");
+    expect(within(conflict).getByTestId("mercari-lead-photo").textContent).toBe("写真は別のカード");
+    expect(within(unclear).getByTestId("mercari-lead-photo").textContent).toBe("写真で判別できず");
+    expect(within(unclear).getByTestId("mercari-lead-photo-note").textContent)
+      .toBe("写真はタイトルとは別の版の可能性があります。購入前に写真を確認してください。");
   });
 
   it("names a cold-crawl lead beside its age and keeps its photo-check request rule", async () => {

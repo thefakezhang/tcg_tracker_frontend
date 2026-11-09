@@ -666,6 +666,31 @@ const PHOTO_KEYS: Record<MercariPhotoState, TranslationKey> = {
   rejected: "mercariLeads.photo.rejected",
 };
 
+// A fresh lead is judged by the lead photo checker (backend #2480), which
+// answers whether the photos show the title's card: they match, they show a
+// different card, or it cannot tell. It proves the art, not the printing.
+type MercariCheckerState = "confirmed" | "conflict" | "inconclusive";
+
+const CHECKER_KEYS: Record<MercariCheckerState, TranslationKey> = {
+  confirmed: "mercariLeads.photo.checker.confirmed",
+  conflict: "mercariLeads.photo.checker.conflict",
+  inconclusive: "mercariLeads.photo.checker.inconclusive",
+};
+
+// An unclear photo is a caution, not a shrug: the operator review of
+// 2026-11-08 found the title was right on only 3 of 10 such galleries, so it
+// reads orange, a colour no other photo state uses.
+const CHECKER_UNCLEAR_CLASS = "border-orange-500/60 bg-orange-500/10 text-orange-800 dark:text-orange-200";
+
+const CHECKER_NOTES: Partial<Record<MercariCheckerState, TranslationKey>> = {
+  confirmed: "mercariLeads.photoNote.checkerConfirmed",
+  inconclusive: "mercariLeads.photoNote.checkerUnclear",
+};
+
+function isCheckerState(state: MercariPhotoState): state is MercariCheckerState {
+  return state === "confirmed" || state === "conflict" || state === "inconclusive";
+}
+
 // Amber, green, red and grey, as the design fixes them; a rejected lead is
 // visible only when asked for and reads as finished, not as a warning.
 const PHOTO_CLASSES: Record<MercariPhotoState, string> = {
@@ -768,6 +793,13 @@ function photoStatus(lead: MercariLead): { key: TranslationKey; className: strin
     : lead.source_kind === "lead_scan"
       ? "mercariLeads.photoNote.noReferenceImage"
       : "mercariLeads.photoNote.frontier";
+  if (lead.source_kind === "lead_scan" && isCheckerState(state)) {
+    return {
+      key: CHECKER_KEYS[state],
+      className: state === "inconclusive" ? CHECKER_UNCLEAR_CLASS : PHOTO_CLASSES[state],
+      note: scopeNote ?? CHECKER_NOTES[state] ?? null,
+    };
+  }
   if (state !== "unchecked") {
     return { key: PHOTO_KEYS[state], className: PHOTO_CLASSES[state], note: scopeNote };
   }
@@ -1301,6 +1333,8 @@ function LeadCard({
                   </>
                 ) : lead.photo_source_card_uid !== null ? (
                   t("mercariLeads.photoCardUnresolved")
+                ) : lead.source_kind === "lead_scan" && lead.photo_psa_grade !== null ? (
+                  t("mercariLeads.photoCardOtherGrade")
                 ) : (
                   t("mercariLeads.photoCardNone")
                 )}
