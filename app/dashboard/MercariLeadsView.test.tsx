@@ -90,6 +90,15 @@ const RAW: MercariLead = {
   auction_max_bid_jpy: null,
   auction_bid_within_max: null,
   auction_ended: false,
+  current_card_uid: "c0000000-0000-4000-8000-000000000001",
+  value_age_days: 12,
+  value_refreshed_at: "2026-10-28T11:20:00+00:00",
+  screen_result: null,
+  screen_evidence_usd: null,
+  screen_evidence_source: null,
+  screen_evidence_as_of: null,
+  screen_multiplier: 2,
+  group: null,
 };
 
 const PSA10: MercariLead = {
@@ -123,6 +132,7 @@ const UNREAD_PSA: MercariLead = {
   value_usd: null,
   value_psa_grade: null,
   value_as_of: null,
+  value_age_days: null,
   value_sample_count: 0,
   value_window_days: null,
   selling_cost_usd: null,
@@ -168,6 +178,7 @@ const UNPRICED: MercariLead = {
   nm_value_usd: null,
   value_psa_grade: null,
   value_as_of: null,
+  value_age_days: null,
   value_sample_count: 2,
   value_window_days: null,
   unpriced_reason: "thin_raw_comps_180d",
@@ -220,10 +231,12 @@ function page(leads: MercariLead[], nextCursor: MercariLeadCursor | null = null)
 type Loader = (filters: MercariLeadFilters, cursor: MercariLeadCursor | null) => Promise<MercariLeadsPage>;
 type Actor = (id: string, action: "dismissed" | "photo_check_requested", reason: string) => Promise<void>;
 
-function view(loader: Loader, actor: Actor = async () => {}) {
+type GroupLoader = (lane: MercariLeadFilters["lane"], ids: readonly string[]) => Promise<MercariLead[]>;
+
+function view(loader: Loader, actor: Actor = async () => {}, groupLoader: GroupLoader = async () => []) {
   return render(
     <LanguageProvider>
-      <MercariLeadsView loader={loader} actor={actor} />
+      <MercariLeadsView loader={loader} actor={actor} groupLoader={groupLoader} />
     </LanguageProvider>,
   );
 }
@@ -258,6 +271,9 @@ describe("MercariLeadsView", () => {
       photo: "",
       includeDismissed: false,
       includeUnavailable: false,
+      includeEvidence: false,
+      includeScreened: false,
+      includeShops: false,
     });
     expect(loader).toHaveBeenCalledWith(DEFAULT_LEAD_FILTERS, null);
   });
@@ -1066,6 +1082,134 @@ describe("MercariLeadsView auctions", () => {
   });
 });
 
+
+describe("MercariLeadsView lighter feed", () => {
+  const GROUPED: MercariLead = {
+    ...RAW,
+    group: { rows: 3, listings: 3, askMin: 6000, askMax: 9000, memberIds: [RAW.external_item_id, "m44444444444", "m55555555555"] },
+  };
+  const MEMBER: MercariLead = {
+    ...RAW,
+    external_item_id: "m44444444444",
+    canonical_url: "https://jp.mercari.com/item/m44444444444",
+    sanitized_title: "リザードンex 006/165 傷あり",
+    ask_jpy: 9000,
+    multiple: 1.6,
+    seller_condition_id: "1",
+  };
+  const NEVER: MercariLead = {
+    ...UNPRICED,
+    external_item_id: "m66666666666",
+    canonical_url: "https://jp.mercari.com/item/m66666666666",
+    screen_result: "never_clears",
+    screen_evidence_usd: 4.5,
+    screen_evidence_source: "snkrdunk",
+    screen_evidence_as_of: "2026-10-27",
+  };
+
+  it("collapses copies of one card into one row and expands them on request", async () => {
+    const groupLoader = vi.fn(async () => [MEMBER]);
+    view(vi.fn(async () => page([GROUPED])), async () => {}, groupLoader);
+
+    const card = await onlyCard();
+    const more = within(card).getByRole("button", { name: "+2 more ¥6,000-¥9,000" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(more);
+    expect(groupLoader).toHaveBeenCalledWith("modern_raw", ["m44444444444", "m55555555555"]);
+    const members = await within(card).findAllByTestId("mercari-lead-group-member");
+    expect(members).toHaveLength(1);
+    expect(within(members[0]).getByRole("link", { name: "¥9,000" }).getAttribute("href")).toBe(MEMBER.canonical_url);
+    expect(members[0].textContent).toContain("1.60x");
+    fireEvent.click(within(card).getByRole("button", { name: "Hide the other copies" }));
+    expect(within(card).queryByTestId("mercari-lead-group-members")).toBeNull();
+  });
+
+  it("offers no expansion for a group of one", async () => {
+    view(vi.fn(async () => page([{ ...RAW, group: { rows: 1, listings: 1, askMin: 6000, askMax: 6000, memberIds: [RAW.external_item_id] } }])));
+
+    const card = await onlyCard();
+    expect(within(card).queryByTestId("mercari-lead-group")).toBeNull();
+  });
+
+  it("says when an expansion fails and retries it", async () => {
+    let fail = true;
+    const groupLoader = vi.fn(async () => {
+      if (fail) throw new Error("boom");
+      return [MEMBER];
+    });
+    view(vi.fn(async () => page([GROUPED])), async () => {}, groupLoader);
+
+    const card = await onlyCard();
+    fireEvent.click(within(card).getByRole("button", { name: "+2 more ¥6,000-¥9,000" }));
+    expect((await within(card).findByRole("alert")).textContent).toContain("The other copies could not be loaded: boom");
+    fail = false;
+    fireEvent.click(within(card).getByRole("button", { name: "Try again" }));
+    expect(await within(card).findAllByTestId("mercari-lead-group-member")).toHaveLength(1);
+  });
+
+  it("flags an unpriced row that can never be a deal with the price it weighed", async () => {
+    view(vi.fn(async () => page([NEVER])));
+
+    const card = await onlyCard();
+    expect(within(card).getByTestId("mercari-lead-screened").textContent).toBe("Can't be a deal");
+    expect(within(card).getByTestId("mercari-lead-screen-note").textContent).toBe(
+      "Even at 2x its best price on file ($4.50, SNKRDUNK, Oct\u00a027,\u00a02026), this listing could not clear 1.0x and $10 of profit at its ask.",
+    );
+  });
+
+  it("names an unscreened row's best price, a sale by its platform, and a row with none", async () => {
+    view(vi.fn(async () => page([
+      { ...NEVER, screen_result: "may_clear", screen_evidence_usd: 80, screen_evidence_source: "sold:ebay" },
+      { ...NEVER, ...OTHER_ID, screen_result: "no_evidence", screen_evidence_usd: null, screen_evidence_source: null, screen_evidence_as_of: null },
+    ])));
+
+    const notes = await screen.findAllByTestId("mercari-lead-screen-note");
+    expect(notes[0].textContent).toBe("Best price on file: $80.00 (eBay sale, Oct\u00a027,\u00a02026). It could clear the bars once it has an eBay value.");
+    expect(notes[1].textContent).toBe("No price on file from any source, so it could not be screened.");
+    expect(screen.queryByTestId("mercari-lead-screened")).toBeNull();
+  });
+
+  it("says how old a value is, and reads one with no sale in two weeks as stale", async () => {
+    view(vi.fn(async () => page([{ ...RAW, value_age_days: 1 }, { ...RAW, ...OTHER_ID, value_age_days: 21 }])));
+
+    const ages = await screen.findAllByTestId("mercari-lead-value-age");
+    expect(ages[0].textContent).toBe("value as of 1 day ago");
+    expect(ages[0].className).not.toContain("text-amber-800");
+    expect(ages[1].textContent).toBe("value as of 21 days ago: no newer sale");
+    expect(ages[1].className).toContain("text-amber-800");
+    expect(screen.getByTestId("mercari-values-computed").textContent).toContain("Values computed");
+  });
+
+  it("puts evidence-only rows, screened rows and Shops behind toggles that change the request", async () => {
+    const loader = vi.fn(async () => page([RAW]));
+    view(loader);
+    await onlyCard();
+
+    expect(screen.queryByLabelText("Show rows that can't be deals")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Show evidence-only rows (no multiple)"));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(expect.objectContaining({ includeEvidence: true }), null));
+    fireEvent.click(screen.getByLabelText("Show Mercari Shops listings"));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(expect.objectContaining({ includeShops: true }), null));
+
+    fireEvent.click(screen.getByRole("button", { name: "Unpriced" }));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(expect.objectContaining({ lane: "unpriced" }), null));
+    expect(screen.queryByLabelText("Show evidence-only rows (no multiple)")).toBeNull();
+    expect(screen.getByTestId("mercari-lane-hint").textContent).toContain(
+      "An unpriced row is hidden when, even valued at 2x its best price from any source",
+    );
+    fireEvent.click(screen.getByLabelText("Show rows that can't be deals"));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(expect.objectContaining({ includeScreened: true }), null));
+  });
+
+  it("words the grouped feed and the screen in Japanese", async () => {
+    localStorage.setItem("language", "ja");
+    view(vi.fn(async () => page([GROUPED, { ...NEVER, ...OTHER_ID }])));
+
+    expect(await screen.findByRole("button", { name: "ほか2件 ¥6,000-¥9,000" })).toBeTruthy();
+    expect(screen.getByTestId("mercari-lead-screened").textContent).toBe("取引にならない");
+  });
+});
+
 describe("parseMercariLeads", () => {
   it("accepts every lane's real shape and numeric strings", () => {
     expect(parseMercariLeads([RAW, PSA10, UNREAD_PSA, UNPRICED, DAMAGED_VINTAGE])).toHaveLength(5);
@@ -1154,6 +1298,40 @@ describe("parseMercariLeads", () => {
       ["lead_scan", 2],
       ["lead_scan", 3],
     ]);
+  });
+
+  it("holds the screen, the value age and a group to their 000638 shapes", () => {
+    const never = { ...UNPRICED, screen_result: "never_clears", screen_evidence_usd: 4.5, screen_evidence_source: "snkrdunk", screen_evidence_as_of: "2026-10-27" };
+    expect(parseMercariLeads([never])[0]).toMatchObject({ screen_result: "never_clears", screen_evidence_usd: 4.5 });
+    expect(parseMercariLeads([{ ...UNPRICED, screen_result: "no_evidence" }])[0].screen_result).toBe("no_evidence");
+    expect(() => parseMercariLeads([{ ...RAW, screen_result: "may_clear", screen_evidence_usd: 5, screen_evidence_source: "tcgplayer" }]))
+      .toThrow("Invalid Mercari lead screen");
+    expect(() => parseMercariLeads([{ ...never, screen_evidence_usd: null }])).toThrow("Invalid Mercari lead screen");
+    expect(() => parseMercariLeads([{ ...UNPRICED, screen_result: "no_evidence", screen_evidence_usd: 4.5 }]))
+      .toThrow("Invalid Mercari lead screen");
+    expect(() => parseMercariLeads([{ ...UNPRICED, screen_result: "hidden" }])).toThrow("Invalid Mercari lead screen");
+    expect(() => parseMercariLeads([{ ...never, screen_evidence_as_of: "yesterday" }])).toThrow("Invalid Mercari lead screen date");
+    expect(() => parseMercariLeads([{ ...RAW, value_age_days: null }])).toThrow("Invalid Mercari lead value age");
+    expect(() => parseMercariLeads([{ ...UNPRICED, value_age_days: 3 }])).toThrow("Invalid Mercari lead value age");
+
+    const grouped = {
+      ...RAW,
+      group_rows: 2, group_listings: 2, group_ask_min_jpy: 6000, group_ask_max_jpy: 9000,
+      group_member_ids: [RAW.external_item_id, "m44444444444"],
+    };
+    expect(parseMercariLeads([grouped])[0].group).toEqual({
+      rows: 2, listings: 2, askMin: 6000, askMax: 9000, memberIds: [RAW.external_item_id, "m44444444444"],
+    });
+    expect(parseMercariLeads([RAW])[0].group).toBeNull();
+    for (const broken of [
+      { ...grouped, group_member_ids: ["m44444444444", RAW.external_item_id] },
+      { ...grouped, group_rows: 3 },
+      { ...grouped, group_ask_min_jpy: 10000 },
+      { ...grouped, group_listings: 1 },
+      { ...grouped, group_member_ids: [RAW.external_item_id, "bad id"] },
+    ]) {
+      expect(() => parseMercariLeads([broken])).toThrow("Invalid Mercari lead group");
+    }
   });
 
   it("fails closed on a source kind the view does not publish", () => {

@@ -1,7 +1,9 @@
 // Shared shape of the Mercari leads read: the request the route accepts, the
 // columns the tab needs from the backend view mercari_leads_v (migrations
-// 000616, 000617, 000623 and 000633), and the keyset cursor over each sort. Kept
-// out of route.ts because a Next.js route module may export only HTTP handlers.
+// 000616, 000617, 000623, 000633, 000634 and 000638), the grouped feed's
+// arguments (mercari_lead_groups, 000638), and the keyset cursor over each
+// sort. Kept out of route.ts because a Next.js route module may export only
+// HTTP handlers.
 
 export const DEFAULT_LIMIT = 50;
 export const MAX_LIMIT = 100;
@@ -67,9 +69,22 @@ export type LeadsRequest = {
   includeDismissed: boolean;
   // Listings whose source_status is not ON_SALE are hidden unless asked for.
   includeUnavailable: boolean;
+  // Hidden by default since backend 000638 (#2517): rows without a multiple
+  // (evidence only), unpriced rows the screen says can never clear the bars,
+  // and Mercari Shops listings.
+  includeEvidence: boolean;
+  includeScreened: boolean;
+  includeShops: boolean;
   cursor: LeadCursor | null;
   limit: number;
+  // The members of one group to read in full, in this order (the tab expands
+  // a group with the ids the grouped feed returned); null reads the feed.
+  ids: string[] | null;
 };
+
+// At most this many group members are read in one expansion; a page of the
+// feed asks the view for at most MAX_LIMIT representatives.
+export const MAX_GROUP_IDS = MAX_LIMIT;
 
 export const LEAD_COLUMNS = [
   "external_item_id",
@@ -161,6 +176,18 @@ export const LEAD_COLUMNS = [
   // Selecting it before 000634 is applied is a 400, so this ships after the
   // apply.
   "photo_checks_paused",
+  // A lighter feed (backend 000638, #2517): the card a group is keyed on, how
+  // old the value's newest sale is and when the values were computed, and the
+  // never-a-deal screen of an unpriced row with its evidence. Selecting them
+  // before 000638 is applied is a 400, so this ships after the apply.
+  "current_card_uid",
+  "value_age_days",
+  "value_refreshed_at",
+  "screen_result",
+  "screen_evidence_usd",
+  "screen_evidence_source",
+  "screen_evidence_as_of",
+  "screen_multiplier",
 ].join(", ");
 
 function isOneOf<T extends string>(values: readonly T[], value: string): value is T {
@@ -202,6 +229,26 @@ export function parseLeadsRequest(params: URLSearchParams): { ok: true; value: L
   if (typeof includeDismissed === "string") return fail(includeDismissed);
   const includeUnavailable = flag(params, "include_unavailable");
   if (typeof includeUnavailable === "string") return fail(includeUnavailable);
+  const includeEvidence = flag(params, "include_evidence");
+  if (typeof includeEvidence === "string") return fail(includeEvidence);
+  const includeScreened = flag(params, "include_screened");
+  if (typeof includeScreened === "string") return fail(includeScreened);
+  const includeShops = flag(params, "include_shops");
+  if (typeof includeShops === "string") return fail(includeShops);
+
+  // A group's members: listing ids only, each spliced into a PostgREST "in"
+  // filter, so each must have its exact shape; never with a cursor.
+  const rawIds = params.get("ids")?.trim() ?? "";
+  let ids: string[] | null = null;
+  if (rawIds !== "") {
+    ids = rawIds.split(",");
+    if (ids.length > MAX_GROUP_IDS || ids.some((id) => !SAFE_ITEM_ID.test(id)) || new Set(ids).size !== ids.length) {
+      return fail(`ids must be 1 to ${MAX_GROUP_IDS} distinct listing ids`);
+    }
+    if (params.has("after") || params.has("after_key") || params.has("after_seen")) {
+      return fail("ids cannot be paged");
+    }
+  }
 
   const after = params.get("after")?.trim() ?? "";
   const afterKey = params.get("after_key")?.trim() ?? "";
@@ -235,8 +282,111 @@ export function parseLeadsRequest(params: URLSearchParams): { ok: true; value: L
 
   return {
     ok: true,
-    value: { lane, format, sort, photo: photo === "" ? null : photo, includeDismissed, includeUnavailable, cursor, limit },
+    value: {
+      lane,
+      format,
+      sort,
+      photo: photo === "" ? null : photo,
+      includeDismissed,
+      includeUnavailable,
+      includeEvidence,
+      includeScreened,
+      includeShops,
+      cursor,
+      limit,
+      ids,
+    },
   };
+}
+
+/**
+ * The arguments of the grouped feed, mercari_lead_groups (backend 000638): the
+ * same filters the ungrouped read applied, and the cursor as the function's
+ * typed boundary. Every value was validated by parseLeadsRequest.
+ */
+export function groupArgs(request: LeadsRequest): Record<string, unknown> {
+  const args: Record<string, unknown> = {
+    p_lane: request.lane,
+    p_format: request.format,
+    p_sort: request.sort,
+    p_photo: request.photo,
+    p_include_unavailable: request.includeUnavailable,
+    p_include_dismissed: request.includeDismissed,
+    p_include_evidence: request.includeEvidence,
+    p_include_screened: request.includeScreened,
+    p_include_shops: request.includeShops,
+    p_limit: request.limit,
+  };
+  const cursor = request.cursor;
+  if (cursor) {
+    args.p_after_key = cursor.after_key;
+    if (request.sort === "multiple") {
+      if (cursor.after === null) args.p_after_null = true;
+      else args.p_after_multiple = cursor.after;
+    } else if (request.sort === "newest") {
+      args.p_after_time = cursor.after;
+    } else {
+      if (cursor.after === null) args.p_after_null = true;
+      else args.p_after_time = cursor.after;
+      args.p_after_seen = cursor.after_seen;
+    }
+  }
+  return args;
+}
+
+// The group a representative stands for, as mercari_lead_groups returns it.
+export type LeadGroup = {
+  external_item_id: string;
+  group_rows: number;
+  group_listings: number;
+  group_ask_min_jpy: number;
+  group_ask_max_jpy: number;
+  group_member_ids: string[];
+  multiple: unknown;
+  first_seen_at: unknown;
+  auction_ends_at: unknown;
+};
+
+function positiveInteger(value: unknown): number {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isInteger(parsed) || parsed < 1) throw new Error("Mercari lead groups returned an invalid count");
+  return parsed;
+}
+
+/** Holds the grouped feed's rows to their shape; a broken row fails the page. */
+export function parseLeadGroups(value: unknown): LeadGroup[] {
+  if (!Array.isArray(value)) throw new Error("Mercari lead groups returned an invalid response");
+  return value.map((raw) => {
+    if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("Mercari lead groups returned an invalid row");
+    }
+    const row = raw as Record<string, unknown>;
+    const id = row.external_item_id;
+    const members = row.group_member_ids;
+    if (typeof id !== "string" || !SAFE_ITEM_ID.test(id) || !Array.isArray(members)
+      || members.some((member) => typeof member !== "string" || !SAFE_ITEM_ID.test(member))
+      || members[0] !== id) {
+      throw new Error("Mercari lead groups returned an invalid group");
+    }
+    const rows = positiveInteger(row.group_rows);
+    const listings = positiveInteger(row.group_listings);
+    const askMin = positiveInteger(row.group_ask_min_jpy);
+    const askMax = positiveInteger(row.group_ask_max_jpy);
+    if (members.length !== rows || listings < rows || askMin > askMax) {
+      throw new Error("Mercari lead groups returned an inconsistent group");
+    }
+    return {
+      external_item_id: id,
+      group_rows: rows,
+      group_listings: listings,
+      group_ask_min_jpy: askMin,
+      group_ask_max_jpy: askMax,
+      group_member_ids: members as string[],
+      multiple: row.multiple,
+      first_seen_at: row.first_seen_at,
+      auction_ends_at: row.auction_ends_at,
+    };
+  });
 }
 
 function multipleText(value: unknown): string | null {

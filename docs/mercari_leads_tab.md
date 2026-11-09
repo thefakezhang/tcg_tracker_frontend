@@ -14,8 +14,10 @@ Before 000617 the card came from the photo check's comparison set, which bound n
 Since 2026-11-02 every lead comes from the fresh lead scan (`source_kind = 'lead_scan'`), which publishes newly listed items every 30 minutes, and the cold crawl's rows (`cold_crawl`) are retired; the tab still renders both kinds.
 Since phase L4 a fresh lead is photo-checked against the card its title names, best leads first, and the tab says whether its check is queued and why.
 
-Tracking: tcg_tracker epic #2304, phases L1 and L4 (frontend), and tcg_tracker #2340.
-Backend contract: migrations `000616_mercari_title_leads`, `000617_mercari_lead_title_identity`, `000620_mercari_lead_scan_publication`, `000623_mercari_lead_photo_check_publication`, `000633_mercari_lead_auctions` and `000634_mercari_lead_photo_checks_paused`, and `docs/mercari_title_leads.md` in the backend repo (section "Fresh-lead photo checks (phase L4)").
+Since tcg_tracker #2517 the feed is lighter: copies of one card at one holder or grade are one row with "+N more ¥X-¥Y" to expand them, the default shows only rows with a multiple from C2C sellers, unpriced rows that could never clear the bars are flagged and hidden, and every value says how old its newest sale is.
+
+Tracking: tcg_tracker epic #2304, phases L1 and L4 (frontend), tcg_tracker #2340 and #2517.
+Backend contract: migrations `000616_mercari_title_leads`, `000617_mercari_lead_title_identity`, `000620_mercari_lead_scan_publication`, `000623_mercari_lead_photo_check_publication`, `000633_mercari_lead_auctions`, `000634_mercari_lead_photo_checks_paused` and `000638_mercari_lighter_leads`, and `docs/mercari_title_leads.md` in the backend repo (sections "Fresh-lead photo checks (phase L4)" and "A lighter feed (#2517)").
 
 ## The operator's rules behind the feed
 
@@ -33,7 +35,10 @@ Set by the operator on 2026-11-01 and enforced by the publisher and the table's 
 - The card label carries its edition and finish, because a first edition or a mirror changes a vintage card's value, and says how the title was matched.
 - A damaged price and a thin PSA value read as what they are, never as a Near Mint value or a market.
 - A PSA lead shows its grade and a value at exactly that grade; a raw value or a neighbouring grade's value never appears on it.
-- Unpriced listings are visible with the reason, never dropped.
+- Unpriced listings are visible with the reason, never dropped; one that could never clear the bars even at twice its best price on file is flagged "Can't be a deal" and hidden by default, one toggle away (backend #2517).
+- Copies of one card at one holder or grade are one row, the group's best under the sort, with "+N more ¥X-¥Y" to expand the others, so a page shows 50 cards rather than 50 copies of a few.
+- By default the feed shows rows with a multiple (an auction with a maximum bid) from C2C sellers; evidence-only rows and Mercari Shops listings are each one toggle away.
+- Every value says how old its newest sale is, amber past two weeks, and the page says when the values were computed (once a day).
 - Leads that cannot be bought (no longer on sale, rejected by a photo check, dismissed) are hidden by default and one control away.
 - The operator can dismiss a lead with a reason or ask for a photo check.
 - A fresh lead says whether its photo check is queued and why, or why no check can confirm it, and a checked lead says when it was checked.
@@ -46,6 +51,7 @@ Set by the operator on 2026-11-01 and enforced by the publisher and the table's 
 - No repricing on the client: every number is the publisher's, read from `mercari_leads_v`.
 - No condition inference: the seller's six-value condition is shown as the seller chose it.
 - No counts per lane or photo state; the publication row carries them and a later change can show them.
+- No re-pricing from the screen's evidence: it only hides a row that cannot be a deal, and never values one (the operator's rule of 2026-11-09).
 - No change to the Verified feed: `MercariDealsView` renders exactly as before, behind the switch.
 
 ## Architecture
@@ -60,8 +66,13 @@ The header title is "Mercari"; each feed has its own heading.
 ### Read route
 
 `MercariLeadsView` loads `/api/mercari-leads` with a private no-store request.
-The route requires the Supabase user session, asks `source_run_is_operator()` and answers 403 when it is false, then reads the backend view `mercari_leads_v` under that caller session.
-The view is `security_invoker` over tables whose row-level security admits only an active source-run operator, so the predicate call exists to turn an empty page into a clear refusal.
+The route requires the Supabase user session, asks `source_run_is_operator()` and answers 403 when it is false, then reads under that caller session.
+The backend objects are `security_invoker` over tables whose row-level security admits only an active source-run operator, so the predicate call exists to turn an empty page into a clear refusal.
+
+Since backend 000638 the route reads in two steps.
+The grouped feed, the backend function `mercari_lead_groups`, applies every filter below, groups the remaining rows by card and holder (`current_card_uid`, `holder_hint`), picks each group's best row under the sort, and keyset-pages on those representatives; it returns each group's row count, listing count, ask range, member ids and the representative's sort keys.
+The route then reads the representatives in full from `mercari_leads_v` (`.in` on at most `limit` ids, so the PostgREST row cap never binds), attaches the group fields, and builds the next cursor from the last group's keys, so a representative a publication retired between the two reads is missing from the page without skipping a group.
+With `ids` (a group's members, at most 100) it reads those rows in full in the order given, which is how the card expands a group.
 
 Every parameter is bounded in `leads-query.ts` before the database is asked anything:
 
@@ -73,11 +84,15 @@ Every parameter is bounded in `leads-query.ts` before the database is asked anyt
 | `photo` | one photo-check state | every state except `rejected` |
 | `include_unavailable` | `1` or `true` | only `source_status = 'ON_SALE'` and `auction_ended = false` |
 | `include_dismissed` | `1` or `true` | dismissed leads hidden |
+| `include_evidence` | `1` or `true` | only rows with a multiple (an auction with a maximum bid and no evidence reason) |
+| `include_screened` | `1` or `true` | unpriced rows the screen calls `never_clears` hidden |
+| `include_shops` | `1` or `true` | Mercari Shops listings (`source_item_type = 'beyond'`) hidden |
+| `ids` | 1 to 100 distinct listing ids, never with a cursor | the feed |
 | `after`, `after_key` | the keyset cursor, both or neither | first page |
 | `after_seen` | the ending sort's second key, required with its cursor and refused with any other | first page |
 | `limit` | 1 to 100 | 50 |
 
-Every request is one lane and one format (`listing_format = format`), and every sort is a keyset on the table's own indexes, with the lane as an equality:
+Every request is one lane and one format (`listing_format = format`), and every sort is a keyset on the representative of each group (before 000638, on the table's own indexes), with the lane as an equality:
 
 | sort | order | index |
 |---|---|---|
@@ -87,7 +102,7 @@ Every request is one lane and one format (`listing_format = format`), and every 
 
 Rows without a multiple (modern codes 3-6, thin PSA comps, a PSA title with no grade) sort last under Best multiple, so a page can end inside them.
 The cursor spells that boundary `after=null`, and the next page reads `multiple IS NULL AND external_item_id > after_key`; after a priced row it reads the smaller multiples, the tie on the id, and then every row without a multiple.
-The id and the cursor value are spliced into a PostgREST filter, so each is checked against its exact shape (`m` plus 9 to 11 digits or 20 to 32 alphanumerics; a `numeric(12,3)` decimal; an RFC 3339 timestamp) first.
+The id and the cursor value are checked against their exact shape (`m` plus 9 to 11 digits or 20 to 32 alphanumerics; a `numeric(12,3)` decimal; an RFC 3339 timestamp) before they reach the database; the grouped feed takes the cursor as typed arguments (`p_after_multiple`, `p_after_time`, `p_after_seen`, `p_after_key`, `p_after_null`), and the ids are spliced into a PostgREST `in` filter.
 The unpriced lane has no multiple at all, so the view always asks it for Newest and disables Best multiple there.
 
 An auction has no multiple either, because its shown price is a bid that rises, so the auction feed offers Ending soonest and Newest only.
@@ -133,7 +148,9 @@ The match tier is the one new field that does not fail closed: a tier the matche
 - The ask in JPY, any buyer-paid shipping added, the landed ask in USD, and a "Buyer pays shipping" marker.
 - The seller's condition, in Japanese with an English gloss.
 - The card: catalog image, name, set and number, then the variant label `pokemonVariantLabel` composes from `misc_info`, `edition` and `foil_treatment` (`1ED`, `ミラー`, as everywhere else in the app), a "Title match" line naming the matcher tier, and a note when the card is not in the cloud catalog.
-- The value with its basis, holder, sample count, window and newest-sale date, then the net after eBay fees and postage. A damaged vintage row reads "priced as damaged (bottom quarter of raw sales)" with "Near Mint $Y" beneath it. `value_basis = 'ebay_rule_v0'` reads "Provisional eBay value", never a final price; an unknown basis is shown by its code.
+- The value with its basis, holder, sample count, window and newest-sale date, how old that sale is ("value as of 3 days ago", amber with "no newer sale" past 14 days, because a value with no recent sale may have moved; backend `value_age_days`), then the net after eBay fees and postage.
+- On an unpriced row, the never-a-deal screen: a grey "Can't be a deal" badge and "Even at 2x its best price on file ($4.50, SNKRDUNK, date), this listing could not clear 1.0x and $10 of profit at its ask" (`never_clears`); the best price on file for a row that could clear (`may_clear`); or that nothing prices it (`no_evidence`). A sale is named by its platform ("eBay sale").
+- When the row stands for a group of more than one, a "+N more ¥X-¥Y" button over the group's ask range; it expands the best 50 other copies, each on one line with its ask (linked to the listing), multiple or reason, seller condition, age and photo badge, and the number of listings in all when unpriced rows stand for more. A damaged vintage row reads "priced as damaged (bottom quarter of raw sales)" with "Near Mint $Y" beneath it. `value_basis = 'ebay_rule_v0'` reads "Provisional eBay value", never a final price; an unknown basis is shown by its code.
 
 An auction card differs in these places:
 
@@ -186,13 +203,19 @@ The feed, lane, format and sort are leaf URL params owned by the view, written w
 The defaults (Leads, Modern raw, Fixed price, and the format's first sort: Best multiple or Ending soonest) stay out of the URL; a sort the format does not offer reads as its first.
 Photo state and the two include toggles are not in the URL, because they are momentary filters rather than places to return to.
 
+### Page notes
+
+Under the lane hint the page says what the defaults hide and that each is one toggle away; on the unpriced lane the hint adds the screen's rule at the publication's multiplier.
+Under the feed it says when the values were computed, from the row's `value_refreshed_at` (the daily refresh the latest publication read), aged on the view's clock like every other age.
+
 ## Operator journey
 
 Open Mercari from the dashboard navigation; it opens on Leads, Modern raw, Best multiple.
 Pick a lane; the page reloads with only that lane, and the lane hint under the chips says what it holds and how it is valued.
 Switch to Newest to see the most recently found listings first.
 Switch the format to Auctions to see the lane's auctions ending soonest, each with the most to bid for it.
-Narrow to one photo-check result, or show listings no longer on sale or dismissed leads, and the page reloads at once.
+Narrow to one photo-check result, or show listings no longer on sale, dismissed leads, evidence-only rows, Mercari Shops listings, or on the unpriced lane the rows that can't be deals, and the page reloads at once.
+Press "+N more" on a card to see the other copies of that card, and again to hide them.
 Open a lead's title to go to the listing; dismiss it with a reason, or request a photo check.
 Load more leads appends the next page; Refresh reloads the lane from the top.
 Switch to Verified for the photo-checked deal publication.
@@ -201,6 +224,9 @@ Switch to Verified for the photo-checked deal publication.
 
 - The route selects the columns 000617, 000623 and 000633 append to `mercari_leads_v`, and PostgREST answers a select naming a missing column with a 400, so each version must ship after its migration is applied; until then, and until the publisher has run, the route answers "Mercari leads are unavailable". It was built and tested against the migrations' column lists with fixtures, and `route.test.ts` pins the selected columns to 000633's view.
 - An auction's current bid is as of its newest observation, so a bid placed since can already be over the maximum shown; and auctions observed before the lead scan read bid counts and ends show both as not read yet.
+- The route calls `mercari_lead_groups` and selects 000638's columns, so this version ships after 000638 is applied; before it the route answers "Mercari leads are unavailable".
+- A group's expansion shows its best 50 other copies; a larger group says how many it holds.
+- The toggles are not in the URL, like the photo filter, because they are momentary filters.
 - A fresh lead whose title card has no reference image stays unconfirmable; a catalog image for the card is the fix, not a request.
 - "Within about an hour" is the backend's usual time for a requested check (the next publication at :10 or :40, then the next lead-check turn), not a promise; a busy recognizer or a stopped laptop delays it, and the result shows at the publication after the check.
 - Listing ages are computed by the view at read time, so a page left open does not age; Refresh reads them again.
