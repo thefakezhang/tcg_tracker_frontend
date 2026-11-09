@@ -11,7 +11,7 @@ type Call = [method: string, args: unknown[]];
 function fakeQuery(result: { data: unknown; error: unknown }) {
   const calls: Call[] = [];
   const query: Record<string, unknown> = { calls };
-  for (const method of ["select", "order", "limit", "eq", "neq", "is", "gt", "or"]) {
+  for (const method of ["select", "order", "limit", "eq", "neq", "is", "gt", "or", "in"]) {
     query[method] = (...args: unknown[]) => {
       calls.push([method, args]);
       return query;
@@ -46,12 +46,32 @@ function row(id: string, fields: Record<string, unknown>) {
   return { external_item_id: id, ...fields };
 }
 
-const DEFAULT_HIDING: Call[] = [
-  ["eq", ["source_status", "ON_SALE"]],
-  ["eq", ["auction_ended", false]],
-  ["neq", ["photo_check_state", "rejected"]],
-  ["eq", ["dismissed", false]],
-];
+// One row of mercari_lead_groups (backend 000638): a group of one by default.
+function group(id: string, fields: Record<string, unknown> = {}) {
+  return {
+    external_item_id: id,
+    group_rows: 1,
+    group_listings: 1,
+    group_ask_min_jpy: 1000,
+    group_ask_max_jpy: 1000,
+    group_member_ids: [id],
+    multiple: null,
+    first_seen_at: "2026-10-28T06:00:00+00:00",
+    auction_ends_at: null,
+    ...fields,
+  };
+}
+
+// The operator check passes, the grouped feed answers groups, and the view
+// answers rows (or an error).
+function serve(groups: unknown[], rows: unknown[] | null, error: unknown = null) {
+  mocks.rpc.mockImplementation(async (name: string) => (
+    name === "source_run_is_operator" ? { data: true, error: null } : { data: groups, error: null }
+  ));
+  const query = fakeQuery({ data: rows, error });
+  mocks.from.mockReturnValue(query);
+  return query;
+}
 
 describe("protected Mercari leads route", () => {
   beforeEach(() => {
@@ -130,152 +150,163 @@ describe("protected Mercari leads route", () => {
     expect(mocks.from).not.toHaveBeenCalled();
   });
 
-  it("reads one lane by best multiple on the multiple index, hides unavailable, rejected and dismissed leads, and disables caching", async () => {
-    const query = fakeQuery({ data: [row("m12345678901", { multiple: 2.5 })], error: null });
-    mocks.from.mockReturnValue(query);
+  it("reads one lane's grouped feed, then its representatives in full, in the feed's order, without caching", async () => {
+    const query = serve(
+      [
+        group("m11111111111", { group_rows: 2, group_listings: 2, group_ask_max_jpy: 1500, group_member_ids: ["m11111111111", "m33333333333"], multiple: 4.328 }),
+        group("m22222222222", { multiple: 2.1 }),
+      ],
+      [row("m22222222222", { multiple: 2.1 }), row("m11111111111", { multiple: 4.328 })],
+    );
 
     const response = await GET(request("?lane=vintage_raw"));
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(mocks.rpc).toHaveBeenCalledWith("mercari_lead_groups", {
+      p_lane: "vintage_raw",
+      p_format: "fixed_price",
+      p_sort: "multiple",
+      p_photo: null,
+      p_include_unavailable: false,
+      p_include_dismissed: false,
+      p_include_evidence: false,
+      p_include_screened: false,
+      p_include_shops: false,
+      p_limit: 50,
+    });
     expect(mocks.from).toHaveBeenCalledWith("mercari_leads_v");
     expect(query.calls).toEqual([
       ["select", [LEAD_COLUMNS]],
       ["eq", ["lane", "vintage_raw"]],
-      ["eq", ["listing_format", "fixed_price"]],
-      ["order", ["multiple", { ascending: false, nullsFirst: false }]],
-      ["order", ["external_item_id", { ascending: true }]],
-      ["limit", [50]],
-      ...DEFAULT_HIDING,
+      ["in", ["external_item_id", ["m11111111111", "m22222222222"]]],
     ]);
     const body = await response.json();
-    expect(body.leads).toHaveLength(1);
+    expect(body.leads.map((lead: { external_item_id: string }) => lead.external_item_id)).toEqual(["m11111111111", "m22222222222"]);
+    expect(body.leads[0]).toMatchObject({
+      group_rows: 2,
+      group_listings: 2,
+      group_ask_min_jpy: 1000,
+      group_ask_max_jpy: 1500,
+      group_member_ids: ["m11111111111", "m33333333333"],
+    });
     expect(body.next_cursor).toBeNull();
   });
 
-  it("reads the newest first on the first-seen index", async () => {
-    const query = fakeQuery({ data: [], error: null });
-    mocks.from.mockReturnValue(query);
+  it("passes every filter and toggle to the grouped feed", async () => {
+    serve([], []);
 
-    const response = await GET(request("?lane=unpriced&sort=newest"));
-
-    expect(response.status).toBe(200);
-    expect(query.calls).toEqual([
-      ["select", [LEAD_COLUMNS]],
-      ["eq", ["lane", "unpriced"]],
-      ["eq", ["listing_format", "fixed_price"]],
-      ["order", ["first_seen_at", { ascending: false }]],
-      ["order", ["external_item_id", { ascending: true }]],
-      ["limit", [50]],
-      ...DEFAULT_HIDING,
-    ]);
-  });
-
-  it("filters to one photo state and lifts each hidden-by-default rule only when asked", async () => {
-    const query = fakeQuery({ data: [], error: null });
-    mocks.from.mockReturnValue(query);
-
-    await GET(request("?lane=psa&photo=rejected&include_dismissed=1&include_unavailable=true&limit=10"));
-
-    expect(query.calls).toEqual([
-      ["select", [LEAD_COLUMNS]],
-      ["eq", ["lane", "psa"]],
-      ["eq", ["listing_format", "fixed_price"]],
-      ["order", ["multiple", { ascending: false, nullsFirst: false }]],
-      ["order", ["external_item_id", { ascending: true }]],
-      ["limit", [10]],
-      ["eq", ["photo_check_state", "rejected"]],
-    ]);
-
-    const conflicts = fakeQuery({ data: [], error: null });
-    mocks.from.mockReturnValue(conflicts);
-    await GET(request("?lane=psa&photo=conflict"));
-    expect(conflicts.calls.slice(6)).toEqual([
-      ["eq", ["source_status", "ON_SALE"]],
-      ["eq", ["auction_ended", false]],
-      ["eq", ["photo_check_state", "conflict"]],
-      ["eq", ["dismissed", false]],
-    ]);
-  });
-
-  it("continues a best-multiple page after a priced row, keeping the rows without a multiple last", async () => {
-    const rows = [row("m11111111111", { multiple: 3.25 }), row("m22222222222", { multiple: 2.1 })];
-    const query = fakeQuery({ data: rows, error: null });
-    mocks.from.mockReturnValue(query);
-
-    const response = await GET(request("?lane=modern_raw&limit=2&after=4.5&after_key=m00000000000"));
-
-    expect(response.status).toBe(200);
-    expect(query.calls.at(-1)).toEqual([
-      "or",
-      ["multiple.lt.4.5,and(multiple.eq.4.5,external_item_id.gt.m00000000000),multiple.is.null"],
-    ]);
-    expect((await response.json()).next_cursor).toEqual({ after: "2.1", after_key: "m22222222222" });
-  });
-
-  it("continues a best-multiple page inside the rows without a multiple", async () => {
-    const rows = [row("m11111111111", { multiple: null }), row("m22222222222", { multiple: null })];
-    const query = fakeQuery({ data: rows, error: null });
-    mocks.from.mockReturnValue(query);
-
-    const response = await GET(request("?lane=psa&limit=2&after=null&after_key=m00000000000"));
-
-    expect(query.calls.slice(-2)).toEqual([
-      ["is", ["multiple", null]],
-      ["gt", ["external_item_id", "m00000000000"]],
-    ]);
-    expect((await response.json()).next_cursor).toEqual({ after: null, after_key: "m22222222222" });
-  });
-
-  it("continues a newest page by first-seen time and id", async () => {
-    const rows = [
-      row("m11111111111", { first_seen_at: "2026-10-28T06:00:00+00:00" }),
-      row("ABCDEFGHIJKLMNOPQRSTUV", { first_seen_at: "2026-10-28T05:00:00.123456+00:00" }),
-    ];
-    const query = fakeQuery({ data: rows, error: null });
-    mocks.from.mockReturnValue(query);
-
-    const response = await GET(request(
-      "?lane=psa&sort=newest&limit=2&after=2026-10-28T07%3A00%3A00%2B00%3A00&after_key=m00000000000",
+    await GET(request(
+      "?lane=psa&photo=rejected&include_dismissed=1&include_unavailable=true&include_evidence=1"
+        + "&include_screened=true&include_shops=1&sort=newest&limit=10",
     ));
 
-    expect(query.calls.at(-1)).toEqual([
-      "or",
-      ["first_seen_at.lt.2026-10-28T07:00:00+00:00,"
-        + "and(first_seen_at.eq.2026-10-28T07:00:00+00:00,external_item_id.gt.m00000000000)"],
-    ]);
-    expect((await response.json()).next_cursor).toEqual({
-      after: "2026-10-28T05:00:00.123456+00:00",
-      after_key: "ABCDEFGHIJKLMNOPQRSTUV",
+    expect(mocks.rpc).toHaveBeenCalledWith("mercari_lead_groups", {
+      p_lane: "psa",
+      p_format: "fixed_price",
+      p_sort: "newest",
+      p_photo: "rejected",
+      p_include_unavailable: true,
+      p_include_dismissed: true,
+      p_include_evidence: true,
+      p_include_screened: true,
+      p_include_shops: true,
+      p_limit: 10,
+    });
+    // No group, so no representative to read.
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
+
+  it("hands each sort's cursor to the grouped feed as its typed boundary", async () => {
+    const cases: [string, Record<string, unknown>][] = [
+      ["?lane=modern_raw&after=4.5&after_key=m00000000000", { p_after_key: "m00000000000", p_after_multiple: "4.5" }],
+      ["?lane=psa&after=null&after_key=m00000000000", { p_after_key: "m00000000000", p_after_null: true }],
+      [
+        "?lane=psa&sort=newest&after=2026-10-28T07%3A00%3A00%2B00%3A00&after_key=m00000000000",
+        { p_after_key: "m00000000000", p_after_time: "2026-10-28T07:00:00+00:00" },
+      ],
+      [
+        "?lane=psa&format=auction&after=2026-11-08T10%3A00%3A00%2B00%3A00&after_key=m00000000000"
+          + "&after_seen=2026-11-07T10%3A00%3A00%2B00%3A00",
+        { p_after_key: "m00000000000", p_after_time: "2026-11-08T10:00:00+00:00", p_after_seen: "2026-11-07T10:00:00+00:00" },
+      ],
+      [
+        "?lane=psa&format=auction&after=null&after_key=m22222222222&after_seen=2026-11-07T08%3A00%3A00%2B00%3A00",
+        { p_after_key: "m22222222222", p_after_null: true, p_after_seen: "2026-11-07T08:00:00+00:00" },
+      ],
+    ];
+    for (const [query, boundary] of cases) {
+      mocks.rpc.mockClear();
+      serve([], []);
+      await GET(request(query));
+      const [, args] = mocks.rpc.mock.calls.find(([name]) => name === "mercari_lead_groups") ?? [];
+      expect(args, query).toMatchObject(boundary);
+      for (const key of ["p_after_multiple", "p_after_time", "p_after_seen", "p_after_null"]) {
+        if (!(key in boundary)) expect(args, `${query} ${key}`).not.toHaveProperty(key);
+      }
+    }
+  });
+
+  it("builds the next cursor from the last group, even when its row left the view between the reads", async () => {
+    serve(
+      [group("m11111111111", { multiple: 3.25 }), group("m22222222222", { multiple: 2.1 })],
+      [row("m11111111111", { multiple: 3.25 })],
+    );
+
+    const response = await GET(request("?lane=modern_raw&limit=2"));
+
+    const body = await response.json();
+    expect(body.leads).toHaveLength(1);
+    expect(body.next_cursor).toEqual({ after: "2.1", after_key: "m22222222222" });
+
+    serve(
+      [
+        group("m11111111111", { auction_ends_at: "2026-11-08T11:00:00+00:00", first_seen_at: "2026-11-07T09:00:00+00:00" }),
+        group("m22222222222", { auction_ends_at: null, first_seen_at: "2026-11-07T08:00:00+00:00" }),
+      ],
+      [],
+    );
+    const auctions = await GET(request("?lane=psa&format=auction&limit=2"));
+    expect((await auctions.json()).next_cursor).toEqual({
+      after: null,
+      after_key: "m22222222222",
+      after_seen: "2026-11-07T08:00:00+00:00",
     });
   });
 
-  it("lists one lane's auctions ending soonest, never by multiple, with ended auctions hidden", async () => {
-    const query = fakeQuery({ data: [], error: null });
-    mocks.from.mockReturnValue(query);
+  it("reads a group's members in full, in the order asked, for an expansion", async () => {
+    const query = serve([], [row("m33333333333", {}), row("m11111111111", {})]);
 
-    const response = await GET(request("?lane=vintage_raw&format=auction"));
+    const response = await GET(request("?lane=vintage_raw&ids=m11111111111,m22222222222,m33333333333"));
 
     expect(response.status).toBe(200);
+    expect(mocks.rpc).not.toHaveBeenCalledWith("mercari_lead_groups", expect.anything());
     expect(query.calls).toEqual([
       ["select", [LEAD_COLUMNS]],
       ["eq", ["lane", "vintage_raw"]],
-      ["eq", ["listing_format", "auction"]],
-      ["order", ["auction_ends_at", { ascending: true, nullsFirst: false }]],
-      ["order", ["first_seen_at", { ascending: false }]],
-      ["order", ["external_item_id", { ascending: true }]],
-      ["limit", [50]],
-      ...DEFAULT_HIDING,
+      ["in", ["external_item_id", ["m11111111111", "m22222222222", "m33333333333"]]],
     ]);
+    const body = await response.json();
+    expect(body.leads.map((lead: { external_item_id: string }) => lead.external_item_id)).toEqual(["m11111111111", "m33333333333"]);
+    expect(body.next_cursor).toBeNull();
+  });
 
-    const newest = fakeQuery({ data: [], error: null });
-    mocks.from.mockReturnValue(newest);
-    await GET(request("?lane=psa&format=auction&sort=newest"));
-    expect(newest.calls.slice(1, 4)).toEqual([
-      ["eq", ["lane", "psa"]],
-      ["eq", ["listing_format", "auction"]],
-      ["order", ["first_seen_at", { ascending: false }]],
-    ]);
+  it("bounds a group's members before reading them", async () => {
+    const many = Array.from({ length: 101 }, (_, index) => `m${String(10000000000 + index)}`).join(",");
+    for (const query of [
+      `?lane=psa&ids=${many}`,
+      "?lane=psa&ids=m11111111111,bad",
+      "?lane=psa&ids=m11111111111,m11111111111",
+      "?lane=psa&ids=m11111111111&after=2.5&after_key=m22222222222",
+      "?ids=m11111111111",
+      "?lane=psa&include_evidence=yes",
+      "?lane=psa&include_screened=2",
+      "?lane=psa&include_shops=no",
+    ]) {
+      const response = await GET(request(query));
+      expect(response.status, query).toBe(400);
+    }
+    expect(mocks.from).not.toHaveBeenCalled();
   });
 
   it("offers each format only its own sorts and cursor", async () => {
@@ -296,56 +327,34 @@ describe("protected Mercari leads route", () => {
     expect(mocks.from).not.toHaveBeenCalled();
   });
 
-  it("continues an ending-soonest page through the stated ends, then the auctions with none", async () => {
-    const rows = [
-      row("m11111111111", { auction_ends_at: "2026-11-08T11:00:00+00:00", first_seen_at: "2026-11-07T09:00:00+00:00" }),
-      row("m22222222222", { auction_ends_at: null, first_seen_at: "2026-11-07T08:00:00+00:00" }),
-    ];
-    const query = fakeQuery({ data: rows, error: null });
-    mocks.from.mockReturnValue(query);
-
-    const response = await GET(request(
-      "?lane=psa&format=auction&limit=2&after=2026-11-08T10%3A00%3A00%2B00%3A00&after_key=m00000000000"
-        + "&after_seen=2026-11-07T10%3A00%3A00%2B00%3A00",
+  it("reports a grouped-feed, view or shape error as unavailable without leaking it", async () => {
+    mocks.rpc.mockImplementation(async (name: string) => (
+      name === "source_run_is_operator"
+        ? { data: true, error: null }
+        : { data: null, error: { message: "function mercari_lead_groups does not exist" } }
     ));
-
-    expect(response.status).toBe(200);
-    expect(query.calls.at(-1)).toEqual([
-      "or",
-      ["auction_ends_at.gt.2026-11-08T10:00:00+00:00,"
-        + "and(auction_ends_at.eq.2026-11-08T10:00:00+00:00,or(first_seen_at.lt.2026-11-07T10:00:00+00:00,"
-        + "and(first_seen_at.eq.2026-11-07T10:00:00+00:00,external_item_id.gt.m00000000000))),"
-        + "auction_ends_at.is.null"],
-    ]);
-    expect((await response.json()).next_cursor).toEqual({
-      after: null,
-      after_key: "m22222222222",
-      after_seen: "2026-11-07T08:00:00+00:00",
-    });
-
-    const tail = fakeQuery({ data: [], error: null });
-    mocks.from.mockReturnValue(tail);
-    await GET(request(
-      "?lane=psa&format=auction&after=null&after_key=m22222222222&after_seen=2026-11-07T08%3A00%3A00%2B00%3A00",
-    ));
-    expect(tail.calls.slice(-2)).toEqual([
-      ["is", ["auction_ends_at", null]],
-      ["or", ["first_seen_at.lt.2026-11-07T08:00:00+00:00,"
-        + "and(first_seen_at.eq.2026-11-07T08:00:00+00:00,external_item_id.gt.m22222222222)"]],
-    ]);
-  });
-
-  it("reports a view error as unavailable without leaking it", async () => {
-    mocks.from.mockReturnValue(fakeQuery({ data: null, error: { message: "relation mercari_leads_v does not exist" } }));
-
-    const response = await GET(request("?lane=psa"));
-
+    let response = await GET(request("?lane=psa"));
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: "Mercari leads are unavailable" });
+
+    serve([group("m12345678901")], null, { message: "relation mercari_leads_v does not exist" });
+    response = await GET(request("?lane=psa"));
+    expect(response.status).toBe(500);
+
+    // A group whose members do not start with it, or whose counts disagree.
+    for (const broken of [
+      group("m12345678901", { group_member_ids: ["m22222222222"] }),
+      group("m12345678901", { group_rows: 2 }),
+      group("m12345678901", { group_ask_min_jpy: 2000 }),
+    ]) {
+      serve([broken], []);
+      response = await GET(request("?lane=psa"));
+      expect(response.status).toBe(500);
+    }
   });
 
   it("reports an unusable cursor boundary as unavailable instead of a broken cursor", async () => {
-    mocks.from.mockReturnValue(fakeQuery({ data: [row("m12345678901", { multiple: "lots" })], error: null }));
+    serve([group("m12345678901", { multiple: "lots" })], [row("m12345678901", {})]);
 
     const response = await GET(request("?lane=psa&limit=1"));
 
@@ -353,11 +362,11 @@ describe("protected Mercari leads route", () => {
   });
 });
 
-// mercari_leads_v's columns as backend migration 000634 defines them, in
+// mercari_leads_v's columns as backend migration 000638 defines them, in
 // order (the backend pins the same list in TestMercariLeadsViewColumns).
 // PostgREST answers a select naming a missing column with a 400, so the route
 // must never ask for anything outside it.
-const VIEW_COLUMNS_000634 = [
+const VIEW_COLUMNS_000638 = [
   "platform", "external_item_id", "publication_id", "publication_published_at", "published_at",
   "source_kind", "source_run_id", "source_item_type", "canonical_url", "sanitized_title", "ask_jpy",
   "shipping_payer_id", "shipping_payer", "buyer_pays_shipping", "shipping_method_id", "shipping_added_jpy",
@@ -376,14 +385,14 @@ const VIEW_COLUMNS_000634 = [
   "foil_treatment", "match_tier", "title_card_in_photo_scope", "value_condition", "nm_value_usd",
   "photo_check_priority", "listing_format", "auction_bid_count", "auction_ends_at", "auction_last_seen_at",
   "auction_max_bid_jpy", "auction_bid_within_max", "auction_ended", "photo_checks_paused",
+  "current_publication_id", "value_refreshed_at", "value_age_days", "screen_result", "screen_evidence_usd",
+  "screen_evidence_source", "screen_evidence_as_of", "screen_multiplier",
 ];
 
 describe("Mercari leads column list", () => {
   it("selects only columns mercari_leads_v has, each once, including the source kind and the photo-check band", async () => {
-    const query = fakeQuery({ data: [], error: null });
     mocks.getUser.mockResolvedValue({ data: { user: { id: "operator" } } });
-    mocks.rpc.mockResolvedValue({ data: true, error: null });
-    mocks.from.mockReturnValue(query);
+    const query = serve([group("m12345678901")], []);
 
     await GET(request("?lane=modern_raw"));
 
@@ -396,7 +405,9 @@ describe("Mercari leads column list", () => {
     expect(columns).toContain("listing_format");
     expect(columns).toContain("auction_max_bid_jpy");
     expect(columns).toContain("photo_checks_paused");
-    expect(columns.filter((column) => !VIEW_COLUMNS_000634.includes(column))).toEqual([]);
+    expect(columns).toContain("screen_result");
+    expect(columns).toContain("value_age_days");
+    expect(columns.filter((column) => !VIEW_COLUMNS_000638.includes(column))).toEqual([]);
   });
 });
 
@@ -411,8 +422,12 @@ describe("Mercari leads request and cursor", () => {
         photo: null,
         includeDismissed: false,
         includeUnavailable: false,
+        includeEvidence: false,
+        includeScreened: false,
+        includeShops: false,
         cursor: null,
         limit: 50,
+        ids: null,
       },
     });
   });

@@ -58,6 +58,23 @@ export type MercariLeadSourceKind = "cold_crawl" | "lead_scan";
 // operator asked, 2 a lead with a multiple (queued by profit), 3 a PSA lead
 // without one.
 export type MercariPhotoCheckPriority = 1 | 2 | 3;
+// The never-a-deal screen of an unpriced row (backend 000638, #2517): even at
+// screen_multiplier times its highest price on file it could not clear the
+// bars, it could, or nothing prices it.
+export type MercariScreenResult = "never_clears" | "may_clear" | "no_evidence";
+
+// The group a feed row stands for (backend mercari_lead_groups, 000638): the
+// visible copies of one card at one holder or grade, this row the best under
+// the sort and first among memberIds.
+export type MercariLeadGroup = {
+  rows: number;
+  // Every listing the group stands for, counting the ones each unpriced row
+  // represents (other_listings).
+  listings: number;
+  askMin: number;
+  askMax: number;
+  memberIds: string[];
+};
 
 // One row of the backend view mercari_leads_v (migrations 000616, 000617 and 000623),
 // restricted to the columns the feed shows. The parser below holds every row
@@ -151,6 +168,20 @@ export type MercariLead = {
   auction_max_bid_jpy: number | null;
   auction_bid_within_max: boolean | null;
   auction_ended: boolean;
+  // A lighter feed (backend 000638, #2517). The card a group is keyed on; how
+  // many days old the value's newest sale is, and when the values were
+  // computed (the daily refresh); and an unpriced row's screen with the
+  // evidence it weighed, at the latest publication's multiplier.
+  current_card_uid: string;
+  value_age_days: number | null;
+  value_refreshed_at: string | null;
+  screen_result: MercariScreenResult | null;
+  screen_evidence_usd: number | null;
+  screen_evidence_source: string | null;
+  screen_evidence_as_of: string | null;
+  screen_multiplier: number | null;
+  // The group a feed row stands for; null on a group member read in full.
+  group: MercariLeadGroup | null;
 };
 
 export type MercariLeadFilters = {
@@ -161,6 +192,10 @@ export type MercariLeadFilters = {
   photo: "" | MercariPhotoState;
   includeDismissed: boolean;
   includeUnavailable: boolean;
+  // Hidden by default since backend 000638 (#2517).
+  includeEvidence: boolean;
+  includeScreened: boolean;
+  includeShops: boolean;
 };
 
 export type MercariLeadCursor = {
@@ -180,6 +215,12 @@ export type MercariLeadsLoader = (
   cursor: MercariLeadCursor | null,
 ) => Promise<MercariLeadsPage>;
 
+// Reads a group's other members in full, in the order given.
+export type MercariLeadGroupLoader = (
+  lane: MercariLeadLane,
+  ids: readonly string[],
+) => Promise<MercariLead[]>;
+
 export type MercariLeadActor = (
   externalItemId: string,
   action: MercariLeadAction,
@@ -193,6 +234,9 @@ export const DEFAULT_LEAD_FILTERS: MercariLeadFilters = {
   photo: "",
   includeDismissed: false,
   includeUnavailable: false,
+  includeEvidence: false,
+  includeScreened: false,
+  includeShops: false,
 };
 
 export const PHOTO_STATES: readonly MercariPhotoState[] = ["unchecked", "confirmed", "conflict", "inconclusive", "rejected"];
@@ -219,6 +263,9 @@ const RESOLUTIONS = new Set(["uid", "identity", "unresolved"]);
 const WITHHELD_REASONS = new Set(["seller_condition_3_6", "psa_grade_unread", "psa_thin_comps"]);
 const VALUE_CONDITIONS = new Set(["nm", "damaged_p25"]);
 const SOURCE_KINDS = new Set(["cold_crawl", "lead_scan"]);
+const SCREEN_RESULTS = new Set(["never_clears", "may_clear", "no_evidence"]);
+// The most group members one expansion reads, best first.
+export const GROUP_EXPANSION_LIMIT = 50;
 const LISTING_FORMATS = new Set<string>(MERCARI_LEAD_FORMATS);
 
 function invalid(what: string, index: number): Error {
@@ -455,6 +502,26 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       throw invalid("photo check priority", index);
     }
 
+    // The value's age exists exactly when its newest sale's date does.
+    const valueAge = optionalInteger(row.value_age_days, "value_age_days");
+    if ((valueAge === null) !== (valueAsOf === null)) throw invalid("value age", index);
+    // The screen, as 000638's CHECK holds it: only an unpriced row is
+    // screened; a verdict names its evidence, and no evidence names none.
+    const screen = optionalString(row.screen_result, "screen_result");
+    if (screen !== null && !SCREEN_RESULTS.has(screen)) throw invalid("screen", index);
+    const screenUsd = optionalNumber(row.screen_evidence_usd, "screen_evidence_usd");
+    const screenSource = optionalString(row.screen_evidence_source, "screen_evidence_source");
+    const screenAsOf = optionalString(row.screen_evidence_as_of, "screen_evidence_as_of");
+    if (screenAsOf !== null && !DATE_ONLY.test(screenAsOf)) throw invalid("screen date", index);
+    const screenMultiplier = optionalNumber(row.screen_multiplier, "screen_multiplier");
+    const weighed = screen === "never_clears" || screen === "may_clear";
+    if ((screen !== null && lane !== "unpriced")
+      || (weighed && (screenUsd === null || screenUsd <= 0 || screenSource === null || screenSource.trim() === ""))
+      || (!weighed && (screenUsd !== null || screenSource !== null || screenAsOf !== null))
+      || (screenMultiplier !== null && screenMultiplier < 1)) {
+      throw invalid("screen", index);
+    }
+
     return {
       external_item_id: externalItemId,
       source_item_type: sourceItemType,
@@ -528,8 +595,34 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       auction_max_bid_jpy: maxBid,
       auction_bid_within_max: withinMax,
       auction_ended: ended,
+      current_card_uid: requiredString(row.current_card_uid, "current_card_uid"),
+      value_age_days: valueAge,
+      value_refreshed_at: optionalTimestamp(row.value_refreshed_at, "value_refreshed_at"),
+      screen_result: screen as MercariScreenResult | null,
+      screen_evidence_usd: screenUsd,
+      screen_evidence_source: screenSource,
+      screen_evidence_as_of: screenAsOf,
+      screen_multiplier: screenMultiplier,
+      group: parseGroup(row, externalItemId, index),
     };
   });
+}
+
+// The group fields the route attaches to a feed row; a group member read in
+// full carries none.
+function parseGroup(row: Record<string, unknown>, externalItemId: string, index: number): MercariLeadGroup | null {
+  if (row.group_rows === undefined) return null;
+  const rows = requiredInteger(row.group_rows, "group_rows");
+  const listings = requiredInteger(row.group_listings, "group_listings");
+  const askMin = requiredInteger(row.group_ask_min_jpy, "group_ask_min_jpy");
+  const askMax = requiredInteger(row.group_ask_max_jpy, "group_ask_max_jpy");
+  const members = row.group_member_ids;
+  if (!Array.isArray(members) || members.length !== rows || members[0] !== externalItemId
+    || members.some((member) => typeof member !== "string" || !SAFE_ITEM_ID.test(member))
+    || rows < 1 || listings < rows || askMin < 1 || askMin > askMax) {
+    throw invalid("group", index);
+  }
+  return { rows, listings, askMin, askMax, memberIds: members as string[] };
 }
 
 function parseCursor(value: unknown): MercariLeadCursor | null {
@@ -565,6 +658,9 @@ export const loadMercariLeads: MercariLeadsLoader = async (filters, cursor) => {
   if (filters.photo) query.set("photo", filters.photo);
   if (filters.includeDismissed) query.set("include_dismissed", "1");
   if (filters.includeUnavailable) query.set("include_unavailable", "1");
+  if (filters.includeEvidence) query.set("include_evidence", "1");
+  if (filters.includeScreened) query.set("include_screened", "1");
+  if (filters.includeShops) query.set("include_shops", "1");
   if (cursor) {
     // A best-multiple page can end inside the rows without a multiple, and an
     // ending-soonest page inside the auctions whose end no scan read.
@@ -587,6 +683,22 @@ export const loadMercariLeads: MercariLeadsLoader = async (filters, cursor) => {
     leads: parseMercariLeads(body.leads),
     nextCursor: parseCursor(body.next_cursor),
   };
+};
+
+export const loadMercariLeadGroup: MercariLeadGroupLoader = async (lane, ids) => {
+  const query = new URLSearchParams({ lane, ids: ids.join(",") });
+  const response = await fetch(`/api/mercari-leads?${query}`, {
+    cache: "no-store",
+    headers: { accept: "application/json" },
+  });
+  const body = await readBody(response);
+  if (!response.ok) {
+    throw new MercariLeadsRequestError(response.status, errorMessage(body, response.status));
+  }
+  if (body == null || typeof body !== "object" || !("leads" in body)) {
+    throw new Error("Invalid Mercari leads response");
+  }
+  return parseMercariLeads(body.leads);
 };
 
 export const recordMercariLeadAction: MercariLeadActor = async (externalItemId, action, reason) => {
@@ -856,6 +968,39 @@ function ageClass(hours: number): string {
   return "border-red-500/50 bg-red-500/10 text-red-800 dark:text-red-200";
 }
 
+// A value's newest sale more than two weeks old reads amber: the value may
+// have moved since, and only a newer sale says where to (#2516, #2517).
+const STALE_VALUE_DAYS = 14;
+const STALE_VALUE_CLASS = "text-amber-800 dark:text-amber-200";
+
+// The screen's evidence sources, named as the rest of the app names them; a
+// sale is named by its platform, and an unknown source by its code.
+const SCREEN_SOURCE_NAMES: Record<string, string> = {
+  tcgplayer: "TCGplayer",
+  snkrdunk: "SNKRDUNK",
+  "130point": "130point",
+  cardrush: "Cardrush",
+  hareruya2: "Hareruya 2",
+  fukufuku: "Fukufuku",
+  shinsoku: "Shinsoku",
+};
+
+const SALE_PLATFORM_NAMES: Record<string, string> = {
+  ebay: "eBay",
+  fanatics: "Fanatics",
+  pwcc: "PWCC",
+  "goldin.co": "Goldin",
+  "cardhobby.com": "CardHobby",
+};
+
+// A never-a-deal row reads grey and struck, like a finished lead, so it is
+// never taken for one that could still pay.
+const SCREENED_CLASS = "border-zinc-500/50 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300";
+
+function askRange(group: MercariLeadGroup): string {
+  return group.askMin === group.askMax ? formatJpy(group.askMin) : `${formatJpy(group.askMin)}-${formatJpy(group.askMax)}`;
+}
+
 function LeadActions({
   lead,
   actor,
@@ -983,16 +1128,133 @@ function ChoiceGroup<T extends string>({
   );
 }
 
+// The other copies of a group, read when the operator expands it: the best
+// GROUP_EXPANSION_LIMIT by the feed's sort, each on one compact line with what
+// sets it apart (its ask, multiple or reason, condition, age and photo state).
+function GroupMembers({
+  lead,
+  group,
+  loadGroup,
+}: {
+  lead: MercariLead;
+  group: MercariLeadGroup;
+  loadGroup: MercariLeadGroupLoader;
+}) {
+  const { t, language } = useTranslation();
+  const others = group.memberIds.slice(1);
+  const ids = others.slice(0, GROUP_EXPANSION_LIMIT);
+  const [members, setMembers] = useState<MercariLead[] | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
+  // The ids are compared as one key, so a new array with the same members
+  // does not read them again.
+  const idsKey = ids.join(",");
+  useEffect(() => {
+    let current = true;
+    setMembers(null);
+    setError(null);
+    loadGroup(lead.lane, idsKey.split(",")).then(
+      (loaded) => { if (current) setMembers(loaded); },
+      (reason) => { if (current) setError(asError(reason)); },
+    );
+    return () => { current = false; };
+  }, [loadGroup, lead.lane, idsKey, attempt]);
+
+  const multipleFormat = new Intl.NumberFormat(language === "ja" ? "ja-JP" : "en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const age = (hours: number) => {
+    if (hours < 1) return unbroken(t("mercariLeads.ageUnderHour"));
+    if (hours < 48) return unbroken(t("mercariLeads.ageHours", { hours: Math.floor(hours) }));
+    return unbroken(t("mercariLeads.ageDays", { days: Math.floor(hours / 24) }));
+  };
+  return (
+    <div className="mt-2 space-y-1.5" data-testid="mercari-lead-group-members">
+      <p className="text-xs font-medium text-muted-foreground">
+        {others.length > ids.length
+          ? t("mercariLeads.group.capped", { shown: ids.length, count: others.length })
+          : t("mercariLeads.group.title")}
+      </p>
+      {error ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-destructive" role="alert">
+          {t("mercariLeads.group.error")}: {error.message}
+          <Button type="button" variant="outline" className="h-11 sm:h-7" onClick={() => setAttempt((n) => n + 1)}>
+            {t("mercariLeads.group.retry")}
+          </Button>
+        </div>
+      ) : members === null ? (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
+          <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+          {t("mercariLeads.group.loading")}
+        </p>
+      ) : members.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{t("mercariLeads.group.gone")}</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {members.map((member) => {
+            const photo = photoStatus(member);
+            const summary = member.listing_format === "auction"
+              ? member.auction_max_bid_jpy !== null
+                ? t("mercariLeads.auction.maxBidShort", { jpy: formatJpy(member.auction_max_bid_jpy) })
+                : member.lane === "unpriced" ? t("mercariLeads.unpriced") : t("mercariLeads.auction.noMaxBid")
+              : member.multiple !== null
+                ? t("mercariLeads.multipleValue", { multiple: multipleFormat.format(member.multiple) })
+                : member.lane === "unpriced" ? t("mercariLeads.unpriced") : t("mercariLeads.evidenceOnly");
+            return (
+              <li
+                key={member.external_item_id}
+                className="min-w-0 rounded-md border px-2 py-1.5 text-sm"
+                data-testid="mercari-lead-group-member"
+              >
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  <a
+                    href={member.canonical_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex min-h-11 items-center gap-1 font-medium tabular-nums underline-offset-4 hover:underline sm:min-h-0"
+                  >
+                    {formatJpy(member.ask_jpy)}
+                    <ExternalLink className="size-3 text-muted-foreground" aria-hidden="true" />
+                  </a>
+                  <span className={`tabular-nums ${member.multiple !== null && member.multiple >= 2 ? "text-emerald-700 dark:text-emerald-300" : ""}`}>
+                    {summary}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{t(SELLER_CONDITION_KEYS[member.seller_condition_id])}</span>
+                  <Badge variant="outline" className={`h-auto px-1.5 py-0 text-xs ${ageClass(member.listing_age_hours)}`}>
+                    {age(member.listing_age_hours)}
+                  </Badge>
+                  <Badge variant="outline" className={`h-auto px-1.5 py-0 text-xs ${photo.className}`}>{t(photo.key)}</Badge>
+                  {member.screen_result === "never_clears" && (
+                    <Badge variant="outline" className={`h-auto px-1.5 py-0 text-xs ${SCREENED_CLASS}`}>
+                      {t("mercariLeads.screen.never_clears")}
+                    </Badge>
+                  )}
+                </div>
+                <p className="truncate text-xs text-muted-foreground" title={member.sanitized_title}>{member.sanitized_title}</p>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function LeadCard({
   lead,
   actor,
   onActed,
+  loadGroup,
 }: {
   lead: MercariLead;
   actor: MercariLeadActor;
   onActed: (action: MercariLeadAction, reason: string) => void;
+  loadGroup: MercariLeadGroupLoader;
 }) {
   const { t, language } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
 
   // Listings live in Japan, so times are pinned to JST like the Arrivals and
   // verified Mercari tabs rather than rendered in the viewer's local zone.
@@ -1074,6 +1336,38 @@ function LeadCard({
       });
   const markLost = auction && lead.auction_last_seen_at !== null
     && Date.parse(lead.auction_last_seen_at) < Date.parse(lead.observed_at);
+  // How old the value's newest sale is, so a value that has not moved in
+  // weeks reads as such (#2517).
+  const valueAge = lead.value_age_days === null
+    ? null
+    : lead.value_age_days <= 0
+      ? t("mercariLeads.valueAge.today")
+      : lead.value_age_days === 1
+        ? t("mercariLeads.valueAge.oneDay")
+        : t("mercariLeads.valueAge.days", { days: lead.value_age_days });
+  const staleValue = lead.value_age_days !== null && lead.value_age_days > STALE_VALUE_DAYS;
+  // The never-a-deal screen of an unpriced row and the price it weighed.
+  const screenSource = lead.screen_evidence_source === null
+    ? ""
+    : lead.screen_evidence_source.startsWith("sold:")
+      ? t("mercariLeads.screen.source.sold", {
+        platform: SALE_PLATFORM_NAMES[lead.screen_evidence_source.slice(5)] ?? lead.screen_evidence_source.slice(5),
+      })
+      : SCREEN_SOURCE_NAMES[lead.screen_evidence_source] ?? lead.screen_evidence_source;
+  const screenParams = {
+    multiplier: lead.screen_multiplier ?? 2,
+    evidence: lead.screen_evidence_usd === null ? "" : formatUsd(lead.screen_evidence_usd),
+    source: screenSource,
+    date: lead.screen_evidence_as_of === null ? t("mercari.unknownTime") : unbroken(formatDate(lead.screen_evidence_as_of, language)),
+  };
+  const screenNote = lead.screen_result === "never_clears"
+    ? t("mercariLeads.screen.neverClearsNote", screenParams)
+    : lead.screen_result === "may_clear"
+      ? t("mercariLeads.screen.mayClearNote", screenParams)
+      : lead.screen_result === "no_evidence"
+        ? t("mercariLeads.screen.noEvidenceNote")
+        : null;
+  const group = lead.group;
   return (
     <Card className="min-w-0" data-testid="mercari-lead-card">
       <CardHeader className="space-y-2">
@@ -1106,6 +1400,11 @@ function LeadCard({
             {t(photo.key)}
           </Badge>
           <Badge variant="outline">{holderLabel}</Badge>
+          {lead.screen_result === "never_clears" && (
+            <Badge variant="outline" className={SCREENED_CLASS} data-testid="mercari-lead-screened">
+              {t("mercariLeads.screen.never_clears")}
+            </Badge>
+          )}
           {lead.source_status !== "ON_SALE" && (
             <Badge variant="outline" className="border-red-500/50 bg-red-500/10 text-red-800 dark:text-red-200">
               {t(STATUS_KEYS[lead.source_status])}
@@ -1201,6 +1500,28 @@ function LeadCard({
               </span>
             </p>
           )}
+          {screenNote !== null && (
+            <p className="mt-1 text-xs text-muted-foreground" data-testid="mercari-lead-screen-note">{screenNote}</p>
+          )}
+          {group !== null && group.rows > 1 && (
+            <div className="mt-2" data-testid="mercari-lead-group">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-auto min-h-11 max-w-full whitespace-normal text-left sm:min-h-8"
+                aria-expanded={expanded}
+                onClick={() => setExpanded((open) => !open)}
+              >
+                {expanded
+                  ? t("mercariLeads.group.hide")
+                  : t("mercariLeads.group.more", { count: group.rows - 1, range: askRange(group) })}
+              </Button>
+              {group.listings > group.rows && (
+                <p className="mt-1 text-xs text-muted-foreground">{t("mercariLeads.group.listings", { count: group.listings })}</p>
+              )}
+              {expanded && <GroupMembers lead={lead} group={group} loadGroup={loadGroup} />}
+            </div>
+          )}
         </div>
         <div className="grid min-w-0 grid-cols-[5rem_1fr] gap-3 sm:grid-cols-[7rem_1fr]">
           <div className="flex aspect-[3/4] min-w-0 items-center justify-center overflow-hidden rounded-lg border bg-muted">
@@ -1286,6 +1607,14 @@ function LeadCard({
                         date: unbroken(formatDate(lead.value_as_of, language)),
                       })}
                   </dd>
+                  {valueAge !== null && (
+                    <dd
+                      className={`text-xs ${staleValue ? `font-medium ${STALE_VALUE_CLASS}` : "text-muted-foreground"}`}
+                      data-testid="mercari-lead-value-age"
+                    >
+                      {t(staleValue ? "mercariLeads.valueAge.stale" : "mercariLeads.valueAge.fresh", { age: valueAge })}
+                    </dd>
+                  )}
                   {lead.net_value_usd !== null && (
                     <dd className="text-xs text-muted-foreground">
                       {lead.selling_cost_usd !== null
@@ -1380,9 +1709,11 @@ function readFiltersFromUrl(base: MercariLeadFilters): MercariLeadFilters {
 export default function MercariLeadsView({
   loader = loadMercariLeads,
   actor = recordMercariLeadAction,
+  groupLoader = loadMercariLeadGroup,
 }: {
   loader?: MercariLeadsLoader;
   actor?: MercariLeadActor;
+  groupLoader?: MercariLeadGroupLoader;
 }) {
   const { t, language } = useTranslation();
   // Lane and sort are leaf URL params (?lane=, ?sort=) so one lane can be
@@ -1480,6 +1811,25 @@ export default function MercariLeadsView({
     )));
   }, []);
 
+  // When the values were computed: one daily refresh for the whole page, so
+  // it is said once, aged on the view's clock as every age is.
+  const computedFrom = leads.find((lead) => lead.value_refreshed_at !== null) ?? null;
+  const valuesComputedAt = computedFrom === null || computedFrom.value_refreshed_at === null
+    ? null
+    : {
+      date: new Intl.DateTimeFormat(language === "ja" ? "ja-JP" : "en-US", {
+        dateStyle: "medium",
+        timeStyle: "short",
+        timeZone: "Asia/Tokyo",
+      }).format(new Date(computedFrom.value_refreshed_at)),
+      age: (() => {
+        const hours = hoursAtRead(computedFrom, computedFrom.value_refreshed_at);
+        if (hours < 1) return t("mercariLeads.ageUnderHour");
+        if (hours < 48) return t("mercariLeads.ageHours", { hours: Math.floor(hours) });
+        return t("mercariLeads.ageDays", { days: Math.floor(hours / 24) });
+      })(),
+    };
+
   return (
     <section className="mx-auto w-full max-w-6xl min-w-0 space-y-4" aria-labelledby="mercari-leads-title">
       <div className="space-y-1">
@@ -1520,6 +1870,12 @@ export default function MercariLeadsView({
         <p className="text-xs text-muted-foreground" data-testid="mercari-lane-hint">
           {t(LANE_HINT_KEYS[filters.lane])}
           {filters.format === "fixed_price" && filters.lane === "unpriced" ? ` ${t("mercariLeads.sortUnpricedNote")}` : ""}
+          {filters.lane === "unpriced"
+            ? ` ${t("mercariLeads.screenHint", { multiplier: leads.find((lead) => lead.screen_multiplier !== null)?.screen_multiplier ?? 2 })}`
+            : ""}
+        </p>
+        <p className="text-xs text-muted-foreground" data-testid="mercari-defaults-hint">
+          {t("mercariLeads.defaultsHint")}
         </p>
         {filters.format === "auction" && (
           <p className="text-xs text-muted-foreground" data-testid="mercari-format-hint">
@@ -1559,6 +1915,39 @@ export default function MercariLeadsView({
             />
             {t("mercariLeads.includeDismissed")}
           </label>
+          {/* Each toggle shows only where it can change the page: evidence-only
+              rows exist in the priced lanes, screened rows in the unpriced one. */}
+          {filters.lane !== "unpriced" && (
+            <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-8">
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={filters.includeEvidence}
+                onChange={(event) => change({ includeEvidence: event.target.checked })}
+              />
+              {t("mercariLeads.includeEvidence")}
+            </label>
+          )}
+          {filters.lane === "unpriced" && (
+            <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-8">
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={filters.includeScreened}
+                onChange={(event) => change({ includeScreened: event.target.checked })}
+              />
+              {t("mercariLeads.includeScreened")}
+            </label>
+          )}
+          <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-8">
+            <input
+              type="checkbox"
+              className="size-4"
+              checked={filters.includeShops}
+              onChange={(event) => change({ includeShops: event.target.checked })}
+            />
+            {t("mercariLeads.includeShops")}
+          </label>
           <Button
             type="button"
             variant="outline"
@@ -1595,6 +1984,7 @@ export default function MercariLeadsView({
               key={lead.external_item_id}
               lead={lead}
               actor={actor}
+              loadGroup={groupLoader}
               onActed={(action, reason) => markActed(lead.external_item_id, action, reason)}
             />
           ))}
@@ -1623,6 +2013,11 @@ export default function MercariLeadsView({
               )}
               {loadingMore ? t("mercariLeads.loadingMore") : t("mercariLeads.loadMore")}
             </Button>
+          )}
+          {valuesComputedAt !== null && (
+            <p className="text-xs text-muted-foreground" data-testid="mercari-values-computed">
+              {t("mercariLeads.valuesComputed", { date: valuesComputedAt.date, age: valuesComputedAt.age })}
+            </p>
           )}
           <p className="flex items-start gap-1.5 text-xs text-muted-foreground" role="note">
             <Info className="mt-px size-4 shrink-0" aria-hidden="true" />
