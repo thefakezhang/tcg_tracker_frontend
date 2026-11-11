@@ -18,7 +18,15 @@ import {
   GROUP_BY_ACCOUNT_KEY,
   type ArrivalSource,
 } from "./arrival-accounts";
-import type { ArrivalRegion, ArrivalRegionStatus, RegionStatusLoader } from "./arrival-regions";
+import {
+  ArrivalRegionRequestError,
+  type ArrivalRegion,
+  type ArrivalRegionStatus,
+  type RegionAction,
+  type RegionActionSender,
+  type RegionStatusLoader,
+} from "./arrival-regions";
+import { POLL_INTERVAL_MS, POLL_LIMIT_MS } from "./arrival-feed-poll";
 import { ARRIVALS_WINDOW_KEY, MAX_WINDOW_PAGES } from "./arrival-window";
 
 const POST: ArrivalPost = {
@@ -91,12 +99,20 @@ function view(
   sourcesLoader: ArrivalSourcesLoader = noSources,
   // The region panel has its own tests (ArrivalRegionPanel.test.tsx); here it
   // answers as before the backend migration and stays out of the way, unless
-  // a test hands it a status to order the region chips by.
+  // a test hands it a status for the region filter.
   regionLoader: RegionStatusLoader = async () => null,
+  regionSender: RegionActionSender = async () => {
+    throw new Error("no region change expected");
+  },
 ) {
   return render(
     <LanguageProvider>
-      <ArrivalPostsView loader={loader} sourcesLoader={sourcesLoader} regionLoader={regionLoader} />
+      <ArrivalPostsView
+        loader={loader}
+        sourcesLoader={sourcesLoader}
+        regionLoader={regionLoader}
+        regionSender={regionSender}
+      />
     </LanguageProvider>,
   );
 }
@@ -172,7 +188,7 @@ describe("ArrivalPostsView", () => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(1);
     });
     // All sends no window start to the RPC.
-    expect(loader).toHaveBeenLastCalledWith("bob", null, null, null);
+    expect(loader).toHaveBeenLastCalledWith("bob", null, null, []);
     expect(screen.getByText("Showing posts from")).toBeTruthy();
   });
 
@@ -340,7 +356,7 @@ describe("ArrivalPostsView", () => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(105);
     });
     expect(screen.getAllByTestId("arrival-account-group")).toHaveLength(1);
-    expect(loader).toHaveBeenLastCalledWith("", cursor, null, null);
+    expect(loader).toHaveBeenLastCalledWith("", cursor, null, []);
     // The last page came back short, so these are all the posts there are.
     expect(screen.getAllByTestId("arrival-account-group")[0].textContent).toContain("105 posts");
 
@@ -349,7 +365,7 @@ describe("ArrivalPostsView", () => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(1);
     });
     expect(screen.queryByRole("button", { name: "Load more posts" })).toBeNull();
-    expect(loader).toHaveBeenLastCalledWith("alice", null, null, null);
+    expect(loader).toHaveBeenLastCalledWith("alice", null, null, []);
   });
 
   it("keeps loaded rows and the cursor through visible session recovery", async () => {
@@ -376,7 +392,7 @@ describe("ArrivalPostsView", () => {
     await waitFor(() => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(2);
     });
-    expect(loader).toHaveBeenLastCalledWith("", cursor, null, null);
+    expect(loader).toHaveBeenLastCalledWith("", cursor, null, []);
   });
 
   it("lists accounts newest first with the handle, the label when curated, and both counts", async () => {
@@ -435,7 +451,7 @@ describe("ArrivalPostsView", () => {
     await waitFor(() => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(2);
     });
-    expect(loader).toHaveBeenLastCalledWith("alice", null, null, null);
+    expect(loader).toHaveBeenLastCalledWith("alice", null, null, []);
     expect(accountList().getByRole("button", { name: /@bob_shop/ })).toBeTruthy();
     expect(accountList().getByRole("button", { name: /@alice_shop/ }).getAttribute("aria-pressed")).toBe("true");
   });
@@ -446,7 +462,7 @@ describe("ArrivalPostsView", () => {
     view(loader, async () => [ALICE_SOURCE, BOB_SOURCE]);
 
     await screen.findByText("No arrival posts found");
-    expect(loader).toHaveBeenNthCalledWith(1, "alice", null, null, null);
+    expect(loader).toHaveBeenNthCalledWith(1, "alice", null, null, []);
     await waitFor(() => {
       expect(accountList().getByRole("button", { name: /@alice_shop/ }).getAttribute("aria-pressed")).toBe("true");
     });
@@ -455,7 +471,7 @@ describe("ArrivalPostsView", () => {
 
     fireEvent.click(accountList().getByRole("button", { name: /@bob_shop/ }));
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("bob", null, null, null);
+      expect(loader).toHaveBeenLastCalledWith("bob", null, null, []);
     });
     // The remembered All window rides along as ?since=all; the shop keeps its place.
     expect(window.location.search).toBe("?view=arrivals&shop=bob&since=all");
@@ -464,7 +480,7 @@ describe("ArrivalPostsView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Show all accounts" }));
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("", null, null, null);
+      expect(loader).toHaveBeenLastCalledWith("", null, null, []);
     });
     expect(window.location.search).toBe("?view=arrivals&since=all");
     expect(screen.getByRole("button", { name: "Group by account" }).getAttribute("aria-pressed")).toBe("true");
@@ -476,7 +492,7 @@ describe("ArrivalPostsView", () => {
     view(loader);
 
     expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(1);
-    expect(loader).toHaveBeenLastCalledWith("", null, null, null);
+    expect(loader).toHaveBeenLastCalledWith("", null, null, []);
     expect(window.location.search).toBe("?view=arrivals&since=all");
   });
 
@@ -701,7 +717,7 @@ describe("ArrivalPostsView time window", () => {
     expect(screen.getByTestId("arrival-window-loading").textContent).toContain("Loading every post in the window");
     expect(screen.getByRole("button", { name: "Loading more posts" })).toBeTruthy();
     expect(loader).toHaveBeenCalledTimes(2);
-    expect(loader).toHaveBeenLastCalledWith("", firstCursor, expect.any(String), null);
+    expect(loader).toHaveBeenLastCalledWith("", firstCursor, expect.any(String), []);
     expect(screen.getAllByTestId("arrival-account-group")[0].textContent).toContain("2 loaded");
 
     await act(async () => releaseSecond());
@@ -745,7 +761,7 @@ describe("ArrivalPostsView time window", () => {
       expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(MAX_WINDOW_PAGES);
     });
     expect(loader).toHaveBeenCalledTimes(MAX_WINDOW_PAGES);
-    expect(loader).toHaveBeenLastCalledWith("", cursorAt(MAX_WINDOW_PAGES - 2), expect.any(String), null);
+    expect(loader).toHaveBeenLastCalledWith("", cursorAt(MAX_WINDOW_PAGES - 2), expect.any(String), []);
     expectSinceNear(loader.mock.calls[0][2], 48);
     await waitFor(() => {
       expect(screen.queryByTestId("arrival-window-loading")).toBeNull();
@@ -860,6 +876,113 @@ describe("ArrivalPostsView time window", () => {
   });
 });
 
+// Region fixtures: alice and erin are in Akihabara, bob in Fukuoka, carol in
+// Yokohama, and dave's shop is not mapped to a region yet.
+const ERIN_SOURCE: ArrivalSource = {
+  buyer_handle: "erin",
+  twitter_handle: "erin_shop",
+  post_count: 10,
+  recent_count: 4,
+  latest_post_at: "2026-10-19T12:00:00+09:00",
+};
+const CAROL_SOURCE: ArrivalSource = {
+  buyer_handle: "carol",
+  twitter_handle: "carol_shop",
+  post_count: 5,
+  recent_count: 2,
+  latest_post_at: "2026-10-18T12:00:00+09:00",
+};
+const DAVE_SOURCE: ArrivalSource = {
+  buyer_handle: "dave",
+  twitter_handle: "dave_shop",
+  post_count: 1,
+  recent_count: 1,
+  latest_post_at: "2026-10-17T12:00:00+09:00",
+};
+const REGIONAL_SOURCES: ArrivalSource[] = [
+  { ...ALICE_SOURCE, region: "akihabara" },
+  { ...BOB_SOURCE, region: "fukuoka" },
+  { ...CAROL_SOURCE, region: "yokohama" },
+  { ...DAVE_SOURCE, region: null },
+  { ...ERIN_SOURCE, region: "akihabara" },
+];
+const regional: ArrivalSourcesLoader = async () => REGIONAL_SOURCES;
+const legacy: ArrivalSourcesLoader = async () => [ALICE_SOURCE, BOB_SOURCE, CAROL_SOURCE, DAVE_SOURCE, ERIN_SOURCE];
+
+function rosterRegion(region: string, position: number, overrides: Partial<ArrivalRegion> = {}): ArrivalRegion {
+  return {
+    region,
+    position,
+    default_focus: false,
+    in_focus: false,
+    focus_kind: "off",
+    focus_until: null,
+    focus_set_by: null,
+    focus_set_at: null,
+    in_focus_last_run: false,
+    lists: 1,
+    readable_lists: 1,
+    shops: 10,
+    list_only_shops: 10,
+    last_read_at: null,
+    pending_request: null,
+    last_fulfilled: null,
+    ...overrides,
+  };
+}
+
+const HOURLY = { default_focus: true, in_focus: true, focus_kind: "default", in_focus_last_run: true } as const;
+
+function hoursAgoISO(hours: number): string {
+  return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+}
+
+// The roster, in its order: Akihabara and Yokohama are read hourly, Sapporo has
+// no readable list, Osaka has never been read, and Fukuoka was read once two
+// hours ago. Osaka and Sapporo have no shop with a post.
+function roster(overrides: Record<string, Partial<ArrivalRegion>> = {}): ArrivalRegionStatus {
+  return {
+    today: "2026-10-21",
+    focus_source: "default",
+    published_at: null,
+    regions: [
+      rosterRegion("akihabara", 0, { ...HOURLY, ...overrides.akihabara }),
+      rosterRegion("yokohama", 2, { ...HOURLY, ...overrides.yokohama }),
+      rosterRegion("sapporo", 6, { readable_lists: 0, ...overrides.sapporo }),
+      rosterRegion("osaka", 10, { ...overrides.osaka }),
+      rosterRegion("fukuoka", 13, {
+        last_fulfilled: { request_id: 3, fulfilled_at: hoursAgoISO(2), fulfilled_run_id: "run-3" },
+        ...overrides.fukuoka,
+      }),
+    ],
+  };
+}
+
+function pendingRequest(id: number, requestedAt = new Date().toISOString()) {
+  return { pending_request: { request_id: id, requested_at: requestedAt, requested_by: "op@example.test" } };
+}
+
+function regionTrigger() {
+  return screen.getByRole("button", { name: /^Filter by region: / });
+}
+
+function openRegionMenu() {
+  fireEvent.click(regionTrigger());
+  return screen.findByTestId("arrival-region-menu");
+}
+
+function regionRows() {
+  return screen.getAllByRole("menuitemcheckbox");
+}
+
+function regionRow(name: string) {
+  return screen.getByRole("menuitemcheckbox", { name: new RegExp(`^${name}`) });
+}
+
+function accountNames() {
+  return accountList().getAllByRole("button").map((button) => button.textContent);
+}
+
 describe("ArrivalPostsView region filter", () => {
   // Fixed-date fixtures again, so the viewer has chosen All; its recent counts
   // are the backend's 24-hour default.
@@ -867,299 +990,277 @@ describe("ArrivalPostsView region filter", () => {
     localStorage.setItem(ARRIVALS_WINDOW_KEY, "all");
   });
 
-  // alice and erin are in Akihabara, bob in Fukuoka, carol in Yokohama, and
-  // dave's shop is not mapped to a region yet.
-  const ERIN_SOURCE: ArrivalSource = {
-    buyer_handle: "erin",
-    twitter_handle: "erin_shop",
-    post_count: 10,
-    recent_count: 4,
-    latest_post_at: "2026-10-19T12:00:00+09:00",
-  };
-  const CAROL_SOURCE: ArrivalSource = {
-    buyer_handle: "carol",
-    twitter_handle: "carol_shop",
-    post_count: 5,
-    recent_count: 2,
-    latest_post_at: "2026-10-18T12:00:00+09:00",
-  };
-  const DAVE_SOURCE: ArrivalSource = {
-    buyer_handle: "dave",
-    twitter_handle: "dave_shop",
-    post_count: 1,
-    recent_count: 1,
-    latest_post_at: "2026-10-17T12:00:00+09:00",
-  };
-  const regional: ArrivalSourcesLoader = async () => [
-    { ...ALICE_SOURCE, region: "akihabara" },
-    { ...BOB_SOURCE, region: "fukuoka" },
-    { ...CAROL_SOURCE, region: "yokohama" },
-    { ...DAVE_SOURCE, region: null },
-    { ...ERIN_SOURCE, region: "akihabara" },
-  ];
-  const legacy: ArrivalSourcesLoader = async () => [ALICE_SOURCE, BOB_SOURCE, CAROL_SOURCE, DAVE_SOURCE, ERIN_SOURCE];
-
-  function rosterRegion(region: string, position: number): ArrivalRegion {
-    return {
-      region,
-      position,
-      default_focus: false,
-      in_focus: false,
-      focus_kind: "off",
-      focus_until: null,
-      focus_set_by: null,
-      focus_set_at: null,
-      in_focus_last_run: false,
-      lists: 1,
-      readable_lists: 1,
-      shops: 10,
-      list_only_shops: 10,
-      last_read_at: null,
-      pending_request: null,
-      last_fulfilled: null,
-    };
-  }
-  // The roster puts Yokohama before Fukuoka, which key order would not.
-  const roster: RegionStatusLoader = async (): Promise<ArrivalRegionStatus> => ({
-    today: "2026-10-21",
-    focus_source: "default",
-    published_at: null,
-    regions: [rosterRegion("akihabara", 0), rosterRegion("yokohama", 2), rosterRegion("fukuoka", 13)],
-  });
-
-  function regionFilter() {
-    return within(screen.getByRole("group", { name: "Filter by region" }));
-  }
-
-  function chipNames() {
-    return regionFilter().getAllByRole("button").map((chip) => chip.getAttribute("aria-label"));
-  }
-
-  function accountNames() {
-    return accountList().getAllByRole("button").map((button) => button.textContent);
-  }
-
   it("offers no region filter while the summary carries no regions, and never sends a region", async () => {
     const loader = vi.fn<ArrivalPostsLoader>(async () => page([POST, BOB_POST]));
-    const sourcesLoader = vi.fn<ArrivalSourcesLoader>(legacy);
-    view(loader, sourcesLoader);
+    view(loader, legacy, async () => roster());
 
     expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(2);
     await waitFor(() => {
       expect(accountList().getAllByRole("button")).toHaveLength(6);
     });
+    // The region panel has its status; the filter still waits for regions on the summary.
+    expect(await screen.findByText(/Read hourly: Akihabara/)).toBeTruthy();
     expect(screen.queryByTestId("arrival-region-filter")).toBeNull();
-    expect(loader.mock.calls.every((call) => call[3] === null)).toBe(true);
+    expect(loader.mock.calls.every((call) => call[3].length === 0)).toBe(true);
     cleanup();
 
     // The same while the summary RPC itself is absent.
     view(loader, async () => null);
     expect(await screen.findByTestId("arrival-accounts-fallback-note")).toBeTruthy();
     expect(screen.queryByTestId("arrival-region-filter")).toBeNull();
-    expect(loader.mock.calls.every((call) => call[3] === null)).toBe(true);
+    expect(loader.mock.calls.every((call) => call[3].length === 0)).toBe(true);
   });
 
-  it("drops a linked region once the summary shows the backend has no regions", async () => {
-    window.history.replaceState(null, "", "/dashboard?view=arrivals&region=fukuoka");
+  it("drops linked regions once the summary shows the backend has no regions", async () => {
+    window.history.replaceState(null, "", "/dashboard?view=arrivals&region=akihabara,fukuoka");
     const loader = vi.fn<ArrivalPostsLoader>(async () => page([POST]));
     view(loader, legacy);
 
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("", null, null, null);
+      expect(loader).toHaveBeenLastCalledWith("", null, null, []);
     });
     expect(await screen.findAllByTestId("arrival-post-card")).toHaveLength(1);
     expect(screen.queryByTestId("arrival-region-filter")).toBeNull();
     expect(window.location.search).toBe("?view=arrivals&since=all");
   });
 
-  it("offers one chip per region with an account, in key order until the region status loads, each counting its accounts", async () => {
-    view(vi.fn(async () => page([])), regional);
+  it("lists every region of the status in its order, with posts or not, each with its count and how the run reads it", async () => {
+    view(vi.fn(async () => page([])), regional, async () => roster());
 
     await waitFor(() => {
-      expect(chipNames()).toEqual([
-        "All regions, 10 in 24 h",
-        "Akihabara, 7 in 24 h",
-        "Fukuoka, 0 in 24 h",
-        "Yokohama and Kanagawa, 2 in 24 h",
-      ]);
+      expect(regionTrigger().textContent).toContain("All regions");
     });
-    const chips = regionFilter().getAllByRole("button");
-    // Every account counts towards All regions, the unmapped one too, exactly
-    // as the account list's first row sums them.
-    expect(chips[0].getAttribute("aria-pressed")).toBe("true");
-    expect(chips[0].textContent).toBe("All regions10");
-    expect(chips[0].getAttribute("title")).toBe("10 in 24 h · 65 posts");
-    expect(accountList().getAllByRole("button")[0].textContent).toContain("10 in 24 h");
-    expect(accountList().getAllByRole("button")[0].textContent).toContain("65 posts");
-    expect(chips[1].getAttribute("title")).toBe("7 in 24 h · 52 posts");
-    expect(chips[2].getAttribute("title")).toBe("0 in 24 h · 7 posts");
-    expect(chips.slice(1).every((chip) => chip.getAttribute("aria-pressed") === "false")).toBe(true);
-    // The window chips' shape: a 44 px target on a phone, compact from sm up.
-    for (const chip of chips) {
-      expect(chip.className).toContain("h-11");
-      expect(chip.className).toContain("sm:h-8");
-    }
-    // One row that scrolls sideways on a phone and wraps from sm up.
-    const group = screen.getByTestId("arrival-region-filter");
-    expect(group.className).toContain("overflow-x-auto");
-    expect(group.className).toContain("sm:flex-wrap");
+    await openRegionMenu();
+    await waitFor(() => {
+      expect(regionRows()).toHaveLength(5);
+    });
+    const rows = regionRows();
+    expect(rows.map((row) => row.getAttribute("data-region"))).toEqual(["akihabara", "yokohama", "sapporo", "osaka", "fukuoka"]);
+    const text = (row: HTMLElement) => row.textContent;
+    expect(text(rows[0])).toBe("Akihabara7Read hourly");
+    expect(text(rows[1])).toBe("Yokohama and Kanagawa2Read hourly");
+    expect(text(rows[2])).toBe("Sapporo0No readable list yet");
+    expect(text(rows[3])).toBe("Osaka0Not read yet");
+    expect(text(rows[4])).toBe("Fukuoka0Read 2 hours ago");
+    expect(rows.every((row) => row.getAttribute("aria-checked") === "false")).toBe(true);
+    const menu = screen.getByTestId("arrival-region-menu");
+    expect(menu.textContent).toContain("Regions, with posts in 24 h");
+    expect(menu.textContent).toContain("Selecting a region that is not read hourly asks for a read once.");
+    // Nothing selected, nothing to clear.
+    expect(within(menu).queryByRole("menuitem", { name: "Clear selection" })).toBeNull();
+    // Rows are 44 px on a phone, compact from sm up.
+    expect(rows[0].className).toContain("min-h-11");
+    expect(rows[0].className).toContain("sm:min-h-0");
   });
 
-  it("orders the chips the way the region panel lists the regions", async () => {
-    view(vi.fn(async () => page([])), regional, roster);
+  it("falls back to the summary's regions, without read states or reads, while the status is unavailable", async () => {
+    const sender = vi.fn<RegionActionSender>();
+    view(vi.fn(async () => page([])), regional, async () => null, sender);
 
     await waitFor(() => {
-      expect(chipNames()).toEqual([
-        "All regions, 10 in 24 h",
-        "Akihabara, 7 in 24 h",
-        "Yokohama and Kanagawa, 2 in 24 h",
-        "Fukuoka, 0 in 24 h",
-      ]);
+      expect(regionTrigger()).toBeTruthy();
     });
+    await openRegionMenu();
+    expect(regionRows().map((row) => row.getAttribute("data-region"))).toEqual(["akihabara", "fukuoka", "yokohama"]);
+    expect(screen.queryAllByTestId("arrival-region-state")).toHaveLength(0);
+    expect(screen.getByTestId("arrival-region-menu").textContent).not.toContain("asks for a read once");
+    fireEvent.click(regionRow("Fukuoka"));
+    await waitFor(() => {
+      expect(regionRow("Fukuoka").getAttribute("aria-checked")).toBe("true");
+    });
+    expect(sender).not.toHaveBeenCalled();
   });
 
-  it("filters the feed server-side by the chosen region, narrows the accounts to it, and writes ?region=", async () => {
-    const loader = vi.fn<ArrivalPostsLoader>(async (_buyerHandle, _cursor, _since, region) => page(
-      region === "fukuoka" ? [BOB_POST] : [POST, BOB_POST],
-    ));
-    view(loader, regional);
+  it("mixes and matches regions: the feed asks for them all, the accounts narrow to any of them, and the URL lists them", async () => {
+    const loader = vi.fn<ArrivalPostsLoader>(async () => page([]));
+    view(loader, regional, async () => roster());
 
     await waitFor(() => {
-      expect(regionFilter().getAllByRole("button")).toHaveLength(4);
+      expect(regionTrigger()).toBeTruthy();
     });
-    expect(loader).toHaveBeenLastCalledWith("", null, null, null);
-    fireEvent.click(regionFilter().getByRole("button", { name: /^Fukuoka/ }));
-
+    expect(loader).toHaveBeenLastCalledWith("", null, null, []);
+    await openRegionMenu();
+    fireEvent.click(regionRow("Akihabara"));
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("", null, null, "fukuoka");
-      expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(1);
+      expect(loader).toHaveBeenLastCalledWith("", null, null, ["akihabara"]);
     });
-    expect(window.location.search).toBe("?view=arrivals&since=all&region=fukuoka");
-    expect(regionFilter().getByRole("button", { name: /^Fukuoka/ }).getAttribute("aria-pressed")).toBe("true");
-    expect(regionFilter().getByRole("button", { name: /^All regions/ }).getAttribute("aria-pressed")).toBe("false");
+    // The menu stays open while toggling.
+    fireEvent.click(regionRow("Yokohama"));
+    await waitFor(() => {
+      expect(loader).toHaveBeenLastCalledWith("", null, null, ["akihabara", "yokohama"]);
+    });
+    expect(regionRow("Akihabara").getAttribute("aria-checked")).toBe("true");
+    expect(regionRow("Yokohama").getAttribute("aria-checked")).toBe("true");
+    expect(regionTrigger().textContent).toBe("Akihabara, Yokohama and Kanagawa");
+    expect(window.location.search).toBe("?view=arrivals&since=all&region=akihabara,yokohama");
     expect(accountNames()).toEqual([
-      expect.stringMatching(/^All accountsFukuoka/),
-      expect.stringContaining("@bob_shop"),
-    ]);
-    // The list's first row now sums the region's accounts, as its chip does.
-    expect(accountList().getAllByRole("button")[0].textContent).toContain("0 in 24 h");
-    expect(accountList().getAllByRole("button")[0].textContent).toContain("7 posts");
-    // The list's All row names the region on its second line, and the feed header in full.
-    expect(within(accountList().getAllByRole("button")[0]).getByText("Fukuoka").className).toContain("text-muted-foreground");
-    expect(screen.getByText("All accounts in Fukuoka")).toBeTruthy();
-
-    fireEvent.click(regionFilter().getByRole("button", { name: /^Akihabara/ }));
-    await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("", null, null, "akihabara");
-    });
-    expect(accountNames()).toEqual([
-      expect.stringMatching(/^All accountsAkihabara/),
+      expect.stringMatching(/^All accountsAkihabara, Yokohama and Kanagawa/),
       expect.stringContaining("@alice_shop"),
       expect.stringContaining("@erin_shop"),
+      expect.stringContaining("@carol_shop"),
     ]);
-    expect(window.location.search).toBe("?view=arrivals&since=all&region=akihabara");
+    // The All row sums the selection's accounts: 3 + 4 + 2 recent, 42 + 10 + 5 in total.
+    expect(accountNames()[0]).toContain("9 in 24 h");
+    expect(accountNames()[0]).toContain("57 posts");
+    expect(screen.getByText("All accounts in Akihabara, Yokohama and Kanagawa")).toBeTruthy();
 
-    fireEvent.click(regionFilter().getByRole("button", { name: /^All regions/ }));
+    fireEvent.click(regionRow("Sapporo"));
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("", null, null, null);
+      expect(regionTrigger().textContent).toBe("3 regions");
     });
-    expect(accountList().getAllByRole("button")).toHaveLength(6);
-    expect(accountNames()[0]).toMatch(/^All accounts\d/);
+    expect(loader).toHaveBeenLastCalledWith("", null, null, ["akihabara", "sapporo", "yokohama"]);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Clear selection" }));
+    await waitFor(() => {
+      expect(loader).toHaveBeenLastCalledWith("", null, null, []);
+    });
+    expect(regionTrigger().textContent).toBe("All regions");
     expect(window.location.search).toBe("?view=arrivals&since=all");
+    expect(accountList().getAllByRole("button")).toHaveLength(6);
   });
 
-  it("keeps a selected shop that is in the chosen region and drops one that is not, without asking for the mix", async () => {
+  it("keeps a selected shop while it is in one of the selected regions and drops it once it is not", async () => {
     window.history.replaceState(null, "", "/dashboard?view=arrivals&shop=alice");
     const loader = vi.fn<ArrivalPostsLoader>(async () => page([POST]));
-    view(loader, regional);
+    view(loader, regional, async () => roster());
 
     await waitFor(() => {
-      expect(regionFilter().getAllByRole("button")).toHaveLength(4);
+      expect(regionTrigger()).toBeTruthy();
     });
-    fireEvent.click(regionFilter().getByRole("button", { name: /^Akihabara/ }));
+    await openRegionMenu();
+    fireEvent.click(regionRow("Akihabara"));
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("alice", null, null, "akihabara");
+      expect(loader).toHaveBeenLastCalledWith("alice", null, null, ["akihabara"]);
     });
-    expect(accountList().getByRole("button", { name: /@alice_shop/ }).getAttribute("aria-pressed")).toBe("true");
-    expect(window.location.search).toBe("?view=arrivals&shop=alice&since=all&region=akihabara");
-
-    fireEvent.click(regionFilter().getByRole("button", { name: /^Fukuoka/ }));
+    fireEvent.click(regionRow("Yokohama"));
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("", null, null, "fukuoka");
+      expect(loader).toHaveBeenLastCalledWith("alice", null, null, ["akihabara", "yokohama"]);
     });
-    expect(loader.mock.calls.some((call) => call[0] === "alice" && call[3] === "fukuoka")).toBe(false);
-    expect(window.location.search).toBe("?view=arrivals&since=all&region=fukuoka");
-    expect(accountNames()[0]).toMatch(/^All accountsFukuoka/);
-
-    // All regions keeps whichever shop is chosen.
-    fireEvent.click(accountList().getByRole("button", { name: /@bob_shop/ }));
-    fireEvent.click(regionFilter().getByRole("button", { name: /^All regions/ }));
+    fireEvent.click(regionRow("Akihabara"));
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("bob", null, null, null);
+      expect(loader).toHaveBeenLastCalledWith("", null, null, ["yokohama"]);
     });
-    expect(window.location.search).toBe("?view=arrivals&since=all&shop=bob");
+    expect(loader.mock.calls.some((call) => call[0] === "alice" && call[3].join() === "yokohama")).toBe(false);
+    expect(window.location.search).toBe("?view=arrivals&since=all&region=yokohama");
   });
 
-  it("hydrates the region from ?region=, drops a linked shop outside it, and follows back and forward", async () => {
-    window.history.replaceState(null, "", "/dashboard?view=arrivals&region=fukuoka&shop=alice");
+  it("reads a list or an old single key from ?region=, drops malformed and unknown keys, and follows back and forward", async () => {
+    window.history.replaceState(null, "", "/dashboard?view=arrivals&region=fukuoka");
     const loader = vi.fn<ArrivalPostsLoader>(async () => page([]));
-    view(loader, regional);
+    const { unmount } = view(loader, regional, async () => roster());
 
-    // The link is applied at once, before the summary says where alice is.
-    expect(loader).toHaveBeenNthCalledWith(1, "alice", null, null, "fukuoka");
+    expect(loader).toHaveBeenNthCalledWith(1, "", null, null, ["fukuoka"]);
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("", null, null, "fukuoka");
+      expect(regionTrigger().textContent).toBe("Fukuoka");
     });
-    expect(window.location.search).toBe("?view=arrivals&region=fukuoka&since=all");
-    expect(regionFilter().getByRole("button", { name: /^Fukuoka/ }).getAttribute("aria-pressed")).toBe("true");
     expect(accountNames()).toEqual([
       expect.stringMatching(/^All accountsFukuoka/),
       expect.stringContaining("@bob_shop"),
     ]);
+    unmount();
+
+    loader.mockClear();
+    window.history.replaceState(null, "", "/dashboard?view=arrivals&region=yokohama,Bad,atlantis,akihabara,yokohama");
+    view(loader, regional, async () => roster());
+    // The malformed key is ignored at once; the unknown one goes when the status says so.
+    expect(loader).toHaveBeenNthCalledWith(1, "", null, null, ["akihabara", "atlantis", "yokohama"]);
+    await waitFor(() => {
+      expect(loader).toHaveBeenLastCalledWith("", null, null, ["akihabara", "yokohama"]);
+    });
+    expect(window.location.search).toBe("?view=arrivals&region=akihabara,yokohama&since=all");
 
     act(() => {
-      window.history.replaceState(null, "", "/dashboard?view=arrivals&since=all&region=yokohama");
+      window.history.replaceState(null, "", "/dashboard?view=arrivals&since=all&region=osaka");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("", null, null, "yokohama");
+      expect(loader).toHaveBeenLastCalledWith("", null, null, ["osaka"]);
     });
-    expect(regionFilter().getByRole("button", { name: /^Yokohama/ }).getAttribute("aria-pressed")).toBe("true");
-
+    expect(regionTrigger().textContent).toBe("Osaka");
     act(() => {
       window.history.replaceState(null, "", "/dashboard?view=arrivals&since=all");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
     await waitFor(() => {
-      expect(loader).toHaveBeenLastCalledWith("", null, null, null);
+      expect(loader).toHaveBeenLastCalledWith("", null, null, []);
     });
-    expect(regionFilter().getByRole("button", { name: /^All regions/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(regionTrigger().textContent).toBe("All regions");
   });
 
-  it("keeps a linked region the summary has no account in as the pressed chip, and ignores a malformed one", async () => {
-    window.history.replaceState(null, "", "/dashboard?view=arrivals&region=osaka");
-    const loader = vi.fn<ArrivalPostsLoader>(async () => page([]));
-    const { unmount } = view(loader, regional);
-
-    expect(loader).toHaveBeenNthCalledWith(1, "", null, null, "osaka");
-    await waitFor(() => {
-      expect(chipNames().at(-1)).toBe("Osaka, 0 in 24 h");
+  it("asks for a read once when a region not read hourly is selected, once only, and the panel shows it too", async () => {
+    const sender = vi.fn<RegionActionSender>(async (action: RegionAction) => {
+      expect(action).toEqual({ action: "request_read", region: "fukuoka" });
+      return roster({ fukuoka: pendingRequest(7) });
     });
-    expect(regionFilter().getByRole("button", { name: /^Osaka/ }).getAttribute("aria-pressed")).toBe("true");
-    expect(accountNames()).toEqual([expect.stringMatching(/^All accountsOsaka/)]);
-    unmount();
+    view(vi.fn(async () => page([])), regional, async () => roster(), sender);
 
-    loader.mockClear();
-    window.history.replaceState(null, "", "/dashboard?view=arrivals&region=Fuku-oka");
-    view(loader, regional);
-    expect(loader).toHaveBeenNthCalledWith(1, "", null, null, null);
     await waitFor(() => {
-      expect(regionFilter().getByRole("button", { name: /^All regions/ }).getAttribute("aria-pressed")).toBe("true");
+      expect(regionTrigger()).toBeTruthy();
     });
-    expect(window.location.search).toBe("?view=arrivals&since=all");
+    await openRegionMenu();
+    fireEvent.click(regionRow("Fukuoka"));
+    await waitFor(() => {
+      expect(sender).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(regionRow("Fukuoka").textContent).toBe("Fukuoka0Reading now…");
+    });
+    expect(screen.getByTestId("arrival-region-read").textContent).toBe("Reading Fukuoka…");
+    // The panel shares the status, so it shows the pending read as well.
+    expect(screen.getByTestId("arrival-regions-summary").textContent).toContain("1 read-once request pending");
+
+    // Deselecting cancels nothing, and selecting again asks for nothing more.
+    fireEvent.click(regionRow("Fukuoka"));
+    fireEvent.click(regionRow("Fukuoka"));
+    // Read hourly, no readable list: nothing to ask for.
+    fireEvent.click(regionRow("Akihabara"));
+    fireEvent.click(regionRow("Sapporo"));
+    await waitFor(() => {
+      expect(regionTrigger().textContent).toBe("3 regions");
+    });
+    expect(sender).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the chips and the narrowed list while the next summary loads", async () => {
+  it("asks nothing for a region whose read is already pending", async () => {
+    const sender = vi.fn<RegionActionSender>();
+    view(vi.fn(async () => page([])), regional, async () => roster({ osaka: pendingRequest(9) }), sender);
+
+    await waitFor(() => {
+      expect(regionTrigger()).toBeTruthy();
+    });
+    await openRegionMenu();
+    expect(regionRow("Osaka").textContent).toBe("Osaka0Reading now…");
+    fireEvent.click(regionRow("Osaka"));
+    await waitFor(() => {
+      expect(regionRow("Osaka").getAttribute("aria-checked")).toBe("true");
+    });
+    expect(screen.getByTestId("arrival-region-read").textContent).toBe("Reading Osaka…");
+    expect(sender).not.toHaveBeenCalled();
+  });
+
+  it("shows a refused read on the region and beside the feed header, and loads the status again", async () => {
+    const sender = vi.fn<RegionActionSender>(async () => {
+      throw new ArrivalRegionRequestError(400, "osaka has no readable list");
+    });
+    const regionLoader = vi.fn<RegionStatusLoader>(async () => roster());
+    view(vi.fn(async () => page([])), regional, regionLoader, sender);
+
+    await waitFor(() => {
+      expect(regionTrigger()).toBeTruthy();
+    });
+    await openRegionMenu();
+    fireEvent.click(regionRow("Osaka"));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("Osaka: the read was not requested: osaka has no readable list");
+    expect(regionRow("Osaka").textContent).toBe("Osaka0The read was not requested: osaka has no readable list");
+    await waitFor(() => {
+      expect(regionLoader).toHaveBeenCalledTimes(2);
+    });
+    expect(sender).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the filter and the narrowed list while the next summary loads", async () => {
+    window.history.replaceState(null, "", "/dashboard?view=arrivals&region=akihabara");
     let release!: () => void;
     const sourcesLoader = vi.fn<ArrivalSourcesLoader>()
       .mockImplementationOnce(regional)
@@ -1167,27 +1268,210 @@ describe("ArrivalPostsView region filter", () => {
         release = () => void regional(null).then(resolve);
       }));
     const loader = vi.fn<ArrivalPostsLoader>(async () => page([]));
-    view(loader, sourcesLoader);
+    view(loader, sourcesLoader, async () => roster());
 
-    await waitFor(() => {
-      expect(regionFilter().getAllByRole("button")).toHaveLength(4);
-    });
-    fireEvent.click(regionFilter().getByRole("button", { name: /^Akihabara/ }));
     await screen.findByText("No arrival posts found");
-    expect(loader).toHaveBeenLastCalledWith("", null, null, "akihabara");
+    await waitFor(() => {
+      expect(regionTrigger().textContent).toBe("Akihabara");
+    });
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => {
       expect(sourcesLoader).toHaveBeenCalledTimes(2);
     });
     expect(screen.getByText("Loading accounts")).toBeTruthy();
-    expect(regionFilter().getAllByRole("button")).toHaveLength(4);
-    expect(regionFilter().getByRole("button", { name: /^Akihabara/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(regionTrigger().textContent).toBe("Akihabara");
     expect(accountNames()[0]).toMatch(/^All accountsAkihabara/);
     expect(accountNames().some((name) => name?.includes("@bob_shop"))).toBe(false);
     await act(async () => release());
     await waitFor(() => {
       expect(screen.queryByText("Loading accounts")).toBeNull();
     });
-    expect(loader).toHaveBeenLastCalledWith("", null, null, "akihabara");
+    expect(loader).toHaveBeenLastCalledWith("", null, null, ["akihabara"]);
+  });
+});
+
+describe("ArrivalPostsView while a selected region is read", () => {
+  // 12:00 JST, inside shop hours. Only the poll's clock is faked (its
+  // setInterval and Date); everything else runs as usual.
+  const START = Date.parse("2026-11-11T03:00:00Z");
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: START });
+    localStorage.setItem(ARRIVALS_WINDOW_KEY, "all");
+    window.history.replaceState(null, "", "/dashboard?view=arrivals&region=fukuoka");
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  });
+
+  // Lets every resolved loader settle and React render it.
+  async function settle() {
+    await act(async () => {
+      for (let step = 0; step < 30; step += 1) await Promise.resolve();
+    });
+  }
+
+  async function advance(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+    await settle();
+  }
+
+  const at = (minutes: number) => new Date(START + minutes * 60 * 1000).toISOString();
+  const bobPost = (key: string, minutes: number): ArrivalPost => ({
+    ...BOB_POST,
+    arrival_key: `bob_shop:${key}`,
+    tweet_id: key,
+    tweet_url: `https://x.com/bob_shop/status/${key}`,
+    tweet_created_at: at(minutes),
+    acquired_at: at(minutes),
+    region: "fukuoka",
+  });
+  const FRANK_SOURCE: ArrivalSource = {
+    buyer_handle: "frank",
+    twitter_handle: "frank_shop",
+    post_count: 2,
+    recent_count: 2,
+    latest_post_at: at(1),
+    region: "fukuoka",
+  };
+
+  function pollingStatus() {
+    return vi.fn<RegionStatusLoader>(async () => roster({ fukuoka: pendingRequest(7, at(-1)) }));
+  }
+
+  it("refreshes the status, the summary and the newest posts every 20 seconds, merging new posts in above the loaded pages", async () => {
+    const first = bobPost("first", -30);
+    const older = bobPost("older", -90);
+    const fresh = bobPost("fresh", 0);
+    const cursor: ArrivalCursor = { before: first.tweet_created_at!, before_key: first.arrival_key };
+    let feed = [first];
+    const loader = vi.fn<ArrivalPostsLoader>(async (_buyer, requested) => (
+      requested ? page([older]) : page(feed, cursor)
+    ));
+    let summary = REGIONAL_SOURCES;
+    const sourcesLoader = vi.fn<ArrivalSourcesLoader>(async () => summary);
+    const regionLoader = pollingStatus();
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    view(loader, sourcesLoader, regionLoader);
+    await settle();
+
+    expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(1);
+    expect(screen.getByTestId("arrival-region-read").textContent).toBe("Reading Fukuoka…");
+    // The operator pages further back before anything new arrives.
+    fireEvent.click(screen.getByRole("button", { name: "Load more posts" }));
+    await settle();
+    expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(2);
+    const callsBefore = loader.mock.calls.length;
+
+    // A shop posts, and a new shop of the region appears in the summary.
+    feed = [fresh, first];
+    summary = [...REGIONAL_SOURCES, FRANK_SOURCE];
+    await advance(POLL_INTERVAL_MS - 1);
+    expect(loader).toHaveBeenCalledTimes(callsBefore);
+    await advance(1);
+
+    expect(regionLoader).toHaveBeenCalledTimes(2);
+    expect(sourcesLoader).toHaveBeenCalledTimes(2);
+    expect(loader).toHaveBeenCalledTimes(callsBefore + 1);
+    expect(loader).toHaveBeenLastCalledWith("", null, null, ["fukuoka"]);
+    // Merged in at the top; the page loaded by hand stays, and so does Load more's place.
+    expect(screen.getAllByTestId("arrival-post-card").map((card) => card.getAttribute("data-arrival-key"))).toEqual([
+      fresh.arrival_key,
+      first.arrival_key,
+      older.arrival_key,
+    ]);
+    expect(screen.queryByText("Loading arrival posts")).toBeNull();
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(accountList().getByRole("button", { name: /@frank_shop/ }).textContent).toContain("2 in 24 h");
+    scrollTo.mockRestore();
+  });
+
+  it("stops once the read is done and says when it was read", async () => {
+    const loader = vi.fn<ArrivalPostsLoader>(async () => page([bobPost("first", -30)]));
+    const regionLoader = pollingStatus();
+    view(loader, regional, regionLoader);
+    await settle();
+    expect(screen.getByTestId("arrival-region-read").textContent).toBe("Reading Fukuoka…");
+
+    regionLoader.mockImplementation(async () => roster({
+      fukuoka: { last_fulfilled: { request_id: 7, fulfilled_at: at(0), fulfilled_run_id: "run-7" } },
+    }));
+    await advance(POLL_INTERVAL_MS);
+    // That refresh still brought the summary and the posts after the status said the read was done.
+    expect(regionLoader).toHaveBeenCalledTimes(2);
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("arrival-region-read").textContent).toBe("Fukuoka read just now");
+
+    await advance(POLL_INTERVAL_MS * 6);
+    expect(regionLoader).toHaveBeenCalledTimes(2);
+    expect(loader).toHaveBeenCalledTimes(2);
+    // Nothing polls any more; the next render (a Refresh) says how long ago.
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await settle();
+    expect(screen.getByTestId("arrival-region-read").textContent).toBe("Fukuoka read 2 minutes ago");
+  });
+
+  it("stops when the region is deselected", async () => {
+    const loader = vi.fn<ArrivalPostsLoader>(async () => page([]));
+    const regionLoader = pollingStatus();
+    view(loader, regional, regionLoader);
+    await settle();
+    await advance(POLL_INTERVAL_MS);
+    expect(regionLoader).toHaveBeenCalledTimes(2);
+
+    act(() => {
+      window.history.replaceState(null, "", "/dashboard?view=arrivals&since=all");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await settle();
+    const loads = loader.mock.calls.length;
+    expect(loader).toHaveBeenLastCalledWith("", null, null, []);
+    await advance(POLL_INTERVAL_MS * 5);
+    expect(regionLoader).toHaveBeenCalledTimes(2);
+    expect(loader).toHaveBeenCalledTimes(loads);
+  });
+
+  it("stops after 30 minutes even while the read is still pending", async () => {
+    const loader = vi.fn<ArrivalPostsLoader>(async () => page([]));
+    const regionLoader = pollingStatus();
+    view(loader, regional, regionLoader);
+    await settle();
+
+    await advance(POLL_LIMIT_MS);
+    // One refresh per 20 seconds, up to (not including) the 30-minute mark.
+    const refreshes = POLL_LIMIT_MS / POLL_INTERVAL_MS - 1;
+    expect(regionLoader).toHaveBeenCalledTimes(1 + refreshes);
+    await advance(POLL_INTERVAL_MS * 10);
+    expect(regionLoader).toHaveBeenCalledTimes(1 + refreshes);
+    expect(screen.getByTestId("arrival-region-read").textContent).toBe("Reading Fukuoka…");
+  });
+
+  it("pauses while the tab is hidden and catches up when it shows again", async () => {
+    const loader = vi.fn<ArrivalPostsLoader>(async () => page([]));
+    const regionLoader = pollingStatus();
+    view(loader, regional, regionLoader);
+    await settle();
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await advance(POLL_INTERVAL_MS * 3);
+    expect(regionLoader).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await settle();
+    expect(regionLoader).toHaveBeenCalledTimes(2);
+    expect(loader).toHaveBeenCalledTimes(2);
+    await advance(POLL_INTERVAL_MS);
+    expect(regionLoader).toHaveBeenCalledTimes(3);
   });
 });

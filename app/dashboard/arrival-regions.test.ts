@@ -5,8 +5,11 @@ import {
   addTokyoDays,
   focusRegions,
   loadRegionStatus,
+  needsReadOnce,
   parseRegionStatus,
+  regionReadState,
   sendRegionAction,
+  withinShopHours,
 } from "./arrival-regions";
 
 const ROW = {
@@ -63,6 +66,39 @@ describe("parseRegionStatus", () => {
     ["a missing date", { today: null }],
   ])("refuses %s", (_name, change) => {
     expect(() => parseRegionStatus({ ...STATUS, ...change })).toThrow(/Invalid region status/);
+  });
+});
+
+describe("how the run reads a region", () => {
+  const region = parseRegionStatus({ today: "2026-11-02", focus_source: "default", published_at: null, regions: [ROW] }).regions[0];
+  const idle = { ...region, pending_request: null };
+  const at = (iso: string) => Date.parse(iso);
+
+  it("knows the shop hours, 11:00 through 20:00 Tokyo time", () => {
+    expect(withinShopHours(at("2026-11-02T01:59:00Z"))).toBe(false); // 10:59 JST
+    expect(withinShopHours(at("2026-11-02T02:00:00Z"))).toBe(true); // 11:00
+    expect(withinShopHours(at("2026-11-02T11:00:00Z"))).toBe(true); // 20:00
+    expect(withinShopHours(at("2026-11-02T11:01:00Z"))).toBe(false); // 20:01
+  });
+
+  it("reads hourly in focus, reading while a request is pending, queued only after five minutes outside shop hours", () => {
+    expect(regionReadState({ ...region, in_focus: true }, at("2026-11-02T05:00:00Z"))).toBe("hourly");
+    // Requested 04:59 UTC (13:59 JST): reading, in shop hours, however long it waits.
+    expect(regionReadState(region, at("2026-11-02T05:00:00Z"))).toBe("reading");
+    expect(regionReadState(region, at("2026-11-02T06:00:00Z"))).toBe("reading");
+    const late = { ...region, pending_request: { ...region.pending_request!, requested_at: "2026-11-02T13:00:00Z" } };
+    // 22:00 JST: reading for five minutes, then queued for the next run in shop hours.
+    expect(regionReadState(late, at("2026-11-02T13:05:00Z"))).toBe("reading");
+    expect(regionReadState(late, at("2026-11-02T13:05:01Z"))).toBe("queued");
+    expect(regionReadState(idle, at("2026-11-02T05:00:00Z"))).toBe("idle");
+    expect(regionReadState({ ...idle, readable_lists: 0 }, at("2026-11-02T05:00:00Z"))).toBe("nolist");
+  });
+
+  it("asks for a read only for a region not in focus, with nothing pending and a list to read", () => {
+    expect(needsReadOnce(idle)).toBe(true);
+    expect(needsReadOnce(region)).toBe(false);
+    expect(needsReadOnce({ ...idle, in_focus: true })).toBe(false);
+    expect(needsReadOnce({ ...idle, readable_lists: 0 })).toBe(false);
   });
 });
 

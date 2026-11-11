@@ -5,7 +5,7 @@ import {
   GROUP_BY_ACCOUNT_KEY,
   type ArrivalAccountPost,
   type ArrivalSource,
-  accountInRegion,
+  accountInRegions,
   accountLabel,
   deriveArrivalSources,
   groupPostsByAccount,
@@ -112,11 +112,13 @@ describe("region chips", () => {
     expect(sourcesCarryRegions([])).toBe(false);
   });
 
-  it("places an account in its summary region only", () => {
-    expect(accountInRegion(sources, "alice", "akihabara")).toBe(true);
-    expect(accountInRegion(sources, "alice", "fukuoka")).toBe(false);
-    expect(accountInRegion(sources, "dave", "akihabara")).toBe(false);
-    expect(accountInRegion(sources, "zed", "akihabara")).toBe(false);
+  it("places an account in the selection when its summary region is one of the selected", () => {
+    expect(accountInRegions(sources, "alice", new Set(["akihabara"]))).toBe(true);
+    expect(accountInRegions(sources, "alice", new Set(["fukuoka", "akihabara"]))).toBe(true);
+    expect(accountInRegions(sources, "alice", new Set(["fukuoka"]))).toBe(false);
+    expect(accountInRegions(sources, "alice", new Set())).toBe(false);
+    expect(accountInRegions(sources, "dave", new Set(["akihabara"]))).toBe(false);
+    expect(accountInRegions(sources, "zed", new Set(["akihabara"]))).toBe(false);
   });
 
   it("sums each region's accounts, leaves unmapped shops to All, and orders by key without a roster", () => {

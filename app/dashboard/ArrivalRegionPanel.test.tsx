@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import ArrivalRegionPanel from "./ArrivalRegionPanel";
 import { LanguageProvider } from "./LanguageContext";
+import { useArrivalRegionStatus } from "./use-arrival-region-status";
 import {
   ArrivalRegionRequestError,
   type ArrivalRegion,
@@ -46,14 +47,29 @@ function status(regions: ArrivalRegion[], focusSource: "default" | "operator" = 
   return { today: "2026-11-02", focus_source: focusSource, published_at: "2026-11-02T04:00:00Z", regions };
 }
 
+// The tab owns the status (useArrivalRegionStatus) and hands it to the panel,
+// as ArrivalPostsView does.
+function Harness({
+  loader,
+  sender,
+  now,
+}: {
+  loader: () => Promise<ArrivalRegionStatus | null>;
+  sender: (action: RegionAction) => Promise<ArrivalRegionStatus>;
+  now: number;
+}) {
+  const regions = useArrivalRegionStatus(loader, sender);
+  return <ArrivalRegionPanel regions={regions} now={() => now} />;
+}
+
 function panel(
   loader: () => Promise<ArrivalRegionStatus | null>,
   sender = vi.fn(async (_action: RegionAction) => status([AKIHABARA, SAPPORO, OSAKA])),
-  onStatus?: (status: ArrivalRegionStatus) => void,
+  now = NOW,
 ) {
   render(
     <LanguageProvider>
-      <ArrivalRegionPanel loader={loader} sender={sender} now={() => NOW} onStatus={onStatus} />
+      <Harness loader={loader} sender={sender} now={now} />
     </LanguageProvider>,
   );
   return sender;
@@ -116,32 +132,22 @@ describe("ArrivalRegionPanel", () => {
     const pending = await waitFor(() => row("osaka").getByRole("button", { name: "Read once pending" }));
     expect((pending as HTMLButtonElement).disabled).toBe(true);
     expect(row("osaka").getByTestId("arrival-region-pending").textContent).toBe(
-      "Read once requested 1 minute ago; the next run in shop hours reads it",
+      "Reading now; requested 1 minute ago",
     );
     expect(screen.getByTestId("arrival-regions-summary").textContent).toContain("1 read-once request pending");
   });
 
-  it("hands every status it shows to the feed's region filter, the loaded one and each change's", async () => {
-    const onStatus = vi.fn<(status: ArrivalRegionStatus) => void>();
-    const changed = status([AKIHABARA, { ...OSAKA, in_focus: true, focus_kind: "operator" }], "operator");
-    panel(async () => status([AKIHABARA, SAPPORO, OSAKA]), vi.fn(async () => changed), onStatus);
-
-    await waitFor(() => {
-      expect(onStatus).toHaveBeenCalledTimes(1);
-    });
-    expect(onStatus.mock.calls[0][0].regions.map((entry) => entry.region)).toEqual(["akihabara", "sapporo", "osaka"]);
+  it("says a request waiting more than five minutes outside shop hours is queued for the next run", async () => {
+    // 22:00 JST, ten minutes after the request.
+    const late = Date.parse("2026-11-02T13:00:00Z");
+    const waiting = {
+      ...OSAKA, pending_request: { request_id: 6, requested_at: "2026-11-02T12:50:00Z", requested_by: null },
+    };
+    panel(async () => status([AKIHABARA, waiting]), undefined, late);
     await openPanel();
-    fireEvent.click(row("osaka").getByRole("button", { name: "Add focus" }));
-    await waitFor(() => {
-      expect(onStatus).toHaveBeenLastCalledWith(changed);
-    });
-  });
-
-  it("hears nothing while the backend has no region controls", async () => {
-    const onStatus = vi.fn<(status: ArrivalRegionStatus) => void>();
-    panel(async () => null, undefined, onStatus);
-    expect(await screen.findByText(/Region controls appear once the backend migration is applied/)).toBeTruthy();
-    expect(onStatus).not.toHaveBeenCalled();
+    expect(row("osaka").getByTestId("arrival-region-pending").textContent).toBe(
+      "Requested 10 minutes ago; queued for the next run in shop hours, 11:00-20:00 JST",
+    );
   });
 
   it("shows when a region was last read once", async () => {

@@ -21,7 +21,7 @@ Nothing is deleted, because the posts are evidence, but the tab shows a time win
 - Show every post an account made in the window, not only the ones that fell in the first page, and keep one prolific shop from pushing the other accounts off the page.
 - Show the shop's own words: the post's original caption, as plain text.
 - Make one shop's arrivals linkable: `/dashboard?view=arrivals&shop=<buyer_handle>&since=<window>` restores the selection and the window.
-- Narrow the feed and the account list to one region (Tokyo neighbourhoods, Fukuoka, and any other region the run reads), linkable as `?region=<key>`, since the feed mixes cities once more than one region is in focus.
+- Narrow the feed and the account list to any mix of regions (Tokyo neighbourhoods, Fukuoka, and any other region the run reads), linkable as `?region=<key>,<key>`, since the feed mixes cities once more than one region is in focus; selecting a region the run does not read hourly asks for a read once, and the feed fills in shop by shop while that read runs.
 - Make the collection cadence explicit: the backend checks the shops hourly during shop hours, 11:00-20:00 JST.
 - Keep the source one click away, so the operator judges the post itself.
 - Keep working before the backend account summary is applied, by deriving the account list from the posts already loaded.
@@ -39,8 +39,8 @@ Nothing is deleted, because the posts are evidence, but the tab shows a time win
 
 The dashboard view `ArrivalPostsView` (slug `arrivals`, sidebar group Catalog) loads two private no-store endpoints.
 
-- `/api/twitter-arrivals` returns the posts: the caller's session goes to backend RPC `twitter_arrival_posts` (migration 000580, re-posts and `p_since` since 000603, `tweet_text` since 000605, `p_region` and the row's `region` with the region filter) with the optional `buyer_handle` filter, the composite cursor, the optional `since` window start for `p_since`, and the optional `region` key for `p_region`.
-  The route sends `p_region` only when a region is asked for, so every other request keeps working against a backend from before the region filter.
+- `/api/twitter-arrivals` returns the posts: the caller's session goes to backend RPC `twitter_arrival_posts` (migration 000580, re-posts and `p_since` since 000603, `tweet_text` since 000605, the row's `region` since 000640, `p_regions` since 000641) with the optional `buyer_handle` filter, the composite cursor, the optional `since` window start for `p_since`, and the optional region keys for `p_regions`.
+  The route takes `regions=a,b` (and the single `region=a` of older links) and sends them as one `p_regions` text array, only when a region is asked for, so every other request keeps working against a backend from before the region filter; it never sends `p_region`.
 - `/api/twitter-arrivals/sources` returns the account summary: the caller's session goes to backend RPC `twitter_arrival_sources(p_since timestamptz default null)`, one row per account with `buyer_handle`, `twitter_handle`, `post_count`, `recent_count` (posts since `p_since`, default the last 24 hours), `latest_post_at` and, with the region filter, `region` (the account's region key, or null while the shop is not mapped).
   The route accepts an optional `since` timestamp for `p_since`; the view sends the window's cutoff, and All omits it so the backend default applies.
 
@@ -57,7 +57,7 @@ Open, it explains the cadence and lists every region the run has published, in r
 
 - its status: In focus (default), In focus (set by the operator), In focus until a date, or Not in focus;
 - its shops, how many of its lists are readable, and when its lists were last read;
-- a pending read-once request ("Read once requested 20 minutes ago; the next run in shop hours reads it"), or when it was last read once;
+- a pending read-once request ("Reading now; requested 2 minutes ago", or, when it has waited more than five minutes outside shop hours, "queued for the next run in shop hours, 11:00-20:00 JST"), or when it was last read once;
 - its controls: Add focus, Focus until (a Tokyo date from today to a year ahead, a week ahead by default) or Change date, Keep in focus for a dated region, Remove, and for a region out of focus Read once.
 
 Read once is absent, not disabled, while the region has no readable list yet (the backend list rollout fills them), and says so; once asked, the button reads Read once pending and stays disabled until a run fulfils the request.
@@ -66,28 +66,47 @@ Each change replaces the panel's state with the status the RPC returns; a refuse
 Every control is a 44 px target at every width (`min-h-11 sm:min-h-11`, overriding the Button's compact desktop height).
 Region names are translated (`arrivals.regionName.<region>`); an unknown region key shows as itself.
 While the RPCs are absent the route answers 501 with `reason: "rpc-missing"`, and the panel says the controls appear once the backend migration is applied and that the run reads the default focus until then; before the first run after the migration it says the run has not published its regions yet.
-The data logic is `app/dashboard/arrival-regions.ts` (the status parser, the Tokyo date arithmetic, and the route client).
+The data logic is `app/dashboard/arrival-regions.ts` (the status parser, the Tokyo date arithmetic, a region's read state, and the route client).
+The tab loads the status once (`useArrivalRegionStatus` in `app/dashboard/use-arrival-region-status.ts`) and hands it to both the panel and the region filter, so a read asked for in either shows in both at once.
 
 ### Region filter
 
-A row of chips between the region panel and the feed narrows both the feed and the account list to one region.
-It offers All regions and then one chip per region that has at least one account in the account summary, in the region panel's order (the focus status's `position`, which the panel hands up through its `onStatus` callback, so the status is loaded once); regions the status does not list follow by key, and the chips fall back to key order while the status is not loaded.
-Chips are labelled the way the panel labels regions (`regionName`, `arrivals.regionName.<region>`).
-Each chip shows the posts its accounts made in the window, the sum of their `recent_count`, with the window and the total `post_count` in its tooltip and accessible name; All regions sums every account, shops without a region included, so it equals the account list's All row, and a selected region's chip equals that row once the list is narrowed to it.
-The chips share the window chips' shape (`secondary` when pressed, `outline` otherwise, `aria-pressed`, 44 px on a phone and compact from `sm` up); on a phone the row scrolls sideways instead of wrapping, so a long roster cannot push the feed down the screen.
+A dropdown between the region panel and the feed narrows both the feed and the account list to any mix of regions (`ArrivalRegionFilter.tsx`, built on the same `DropdownMenu` checkbox menu as the catalogs' `MultiSelectFilter`).
+Its trigger names the selection: All regions when none is chosen, the names of one or two, "3 regions" beyond that.
+The menu stays open while toggling, explains that selecting a region not read hourly asks for a read, and ends with Clear selection while anything is selected.
 
-Selecting a region requests `region=<key>` from the posts route, which passes it on as `p_region`, and reloads the feed from the first page; the window and paging are unchanged.
-The account list keeps only the region's accounts, its All row names the region on its second line, and the feed header reads "All accounts in Fukuoka".
-A selected shop outside the newly selected region is cleared in the same step, so the feed never asks for a shop and a region that exclude each other; All regions keeps the shop.
-A link naming both a region and a shop outside it drops the shop once the summary says where the shop is.
+It lists every region of the focus status, in its order (`position`), whether or not the region has posts, because a region just put in focus has none until its first read; a region the summary places a shop in that the status does not list follows, and a selected region nothing else lists comes last.
+Without a status (the regions RPC absent or failing, or not published yet) it falls back to the regions the account summary uses, by key, without read states.
+Each row shows the region's name (`regionName`), the posts its accounts made in the window (the sum of their `recent_count`, 0 when it has no account) and how the run reads it, from the status (`regionReadState` in `arrival-regions.ts`):
+
+- Read hourly: the region is in focus.
+- Reading now: a read-once request is pending; queued for the next run in shop hours, 11:00-20:00 JST, when it has waited more than five minutes outside those hours.
+- No readable list yet: the region has no list to read, so no read can be asked for.
+- Read 3 minutes ago (or Read just now): out of focus, read once before (`last_fulfilled`); Not read yet otherwise.
+
+Selecting regions requests `regions=<key>,<key>` from the posts route, which passes them on as `p_regions`, and reloads the feed from the first page; the window and paging are unchanged.
+The account list keeps only the accounts of any selected region, its All row names the selection on its second line, and the feed header reads "All accounts in Akihabara, Fukuoka".
+A selected shop outside every selected region is cleared in the same step, so the feed never asks for a shop and regions that exclude each other; Clear selection keeps the shop.
+A link naming regions and a shop outside them drops the shop once the summary says where the shop is.
+
+Selecting a region that is out of focus, has no read pending and has a readable list sends the region panel's Read once action (`{action: "request_read", region}`) through the shared status, once: a request in flight is remembered, and an accepted one comes back as pending in the status the RPC answers with, which the panel and the dropdown then both show.
+A selection never asks twice while a read is pending, never for a region read hourly or without a list, and never from a link (only an operator's selection asks); deselecting cancels nothing.
+A refused request shows on the region's row and beside the feed header, and the status is loaded again.
+
+While any selected region has a read pending, the feed refreshes quietly every 20 seconds (`app/dashboard/arrival-feed-poll.ts`): the status first, then the account summary (new accounts appear with their counts) and the newest posts.
+New posts are merged into the loaded ones newest first (`mergeFreshPosts`), never replacing them: pages loaded with Load more stay, and the refresh follows the cursor from the newest page until it reaches a post already loaded (at most 10 pages), so a burst leaves no gap.
+The reader's place is kept: the feed switches browser scroll anchoring off (`overflow-anchor: none`) and puts the first card in view back where it was (`captureScrollAnchor` / `restoreScrollAnchor`), correcting the page for account panels added above and an account panel's own scroll for posts added inside it; a reader at the very top simply sees the new posts.
+Polling stops when no selected region has a read pending (the request turns into `last_fulfilled`), when the region is deselected, and after 30 minutes regardless; it skips its ticks while the tab is hidden and catches up when it shows again.
+A full reload or Load more that starts meanwhile wins over a refresh, and a failed refresh changes nothing.
+Beside the feed header each selected region's read says what it is doing: "Reading Fukuoka…", queued, "Fukuoka read 2 minutes ago" once a read the tab followed is done, or why the request failed.
 
 The region comes from the summary: `parseArrivalSources` keeps a row's `region` only when the backend sends the key, and the filter shows only while some row of the latest loaded summary carries it.
-A backend from before the region filter sends no `region` key, so the chips are absent, no request carries a region, and a `?region=` link is dropped as soon as the summary loads (the derived fallback, when the summary RPC itself is absent, is treated the same way).
-The latest summary with regions is kept while the next one loads, so the chips and the narrowed list hold still through a window change or Refresh.
-A linked region with no account in the summary still shows as the pressed chip with a count of 0, as a linked shop does in the account list.
-The pure logic (`sourcesCarryRegions`, `accountInRegion`, `regionCounts`) is in `app/dashboard/arrival-accounts.ts`.
+A backend from before the region filter sends no `region` key, so the dropdown is absent, no request carries a region, and a `?region=` link is dropped as soon as the summary loads (the derived fallback, when the summary RPC itself is absent, is treated the same way).
+A linked key neither the status nor the summary knows is dropped once both have loaded.
+The latest summary with regions is kept while the next one loads, so the dropdown and the narrowed list hold still through a window change or Refresh.
+The pure logic is in `app/dashboard/arrival-region-filter.ts` (the rows, the canonical selection, unknown keys, the polling key) and `app/dashboard/arrival-accounts.ts` (`sourcesCarryRegions`, `accountInRegions`, `regionCounts`).
 
-Non-goals: the region filter does not change which regions the hourly run reads (that is the region panel), it offers one region at a time, and it never infers a region on the frontend; an account with no region key from the backend appears only under All regions.
+Non-goals: the region filter does not change which regions the hourly run reads (that is the region panel), it never cancels a read, and it never infers a region on the frontend; an account with no region key from the backend appears only under All regions.
 
 ### Account identity
 
@@ -106,7 +125,7 @@ Any other panel failure stays non-fatal: the posts feed renders and the panel sh
 The selected shop is a leaf query param, `?shop=<buyer_handle>`, owned by the view through `app/dashboard/url-params.ts` (`replaceState`, no history entry), exactly like a trip's `?tab=`.
 `app/dashboard/url-state.ts` reads it only when `view=arrivals` and validates it against the same bound the API route puts on `buyer_handle` (1-100 visible characters); `UrlStateSync` carries it (and `?since=` and `?region=`) across a game switch and drops them when the view changes.
 Selecting an account requests `buyer_handle=<shop>` server-side and resets the cursor; the view re-reads its params on `popstate`.
-The selected region is a leaf param the same way, `?region=<key>` (`ARRIVALS_REGION_PARAM` and `parseRegionParam` in `url-params.ts`), validated against the region key pattern the API route checks (`lib/arrival-region-key.ts`, `^[a-z][a-z0-9_]{0,39}$`); All regions stays out of the URL.
+The selected regions are a leaf param the same way, `?region=<key>,<key>` (`ARRIVALS_REGION_PARAM`, `parseRegionsParam` and `formatRegionsParam` in `url-params.ts`), sorted and each once, with the commas left readable (`searchString`); each key is checked against the region key pattern the API route checks (`lib/arrival-region-key.ts`, `^[a-z][a-z0-9_]{0,39}$`, at most 50), malformed ones are dropped, a single key from an older link still reads, and All regions stays out of the URL.
 
 ### Time window
 
@@ -159,21 +178,21 @@ Open Arrivals from the dashboard navigation.
 The feed shows the last 48 hours; pick 24 h, 7 days or All in the header to narrow or widen it, and the choice is remembered.
 The All view loads every post of the window grouped by account, the first page at once and the rest behind a loading status; each account is a scrolling panel, so scroll inside it for that shop's posts, collapse it to skip it, or turn Group by account off for one flat list.
 Select an account in the panel to see only its posts; the URL updates so the view can be shared or bookmarked, and Show all accounts returns to the full feed.
-Pick a region chip (Fukuoka, say) above the feed to see only that region's posts and accounts; All regions returns to every region.
+Open the region dropdown above the feed and tick any regions (Fukuoka and Akihabara, say) to see only their posts and accounts; a region not read hourly is read once as soon as it is ticked, and its posts fill in shop by shop while the row and the feed header say it is reading; Clear selection returns to every region.
 Load more posts appends the next composite-cursor page in All, or continues past the page bound in a window.
 If a later request fails, the loaded posts and cursor remain visible.
 An expired session offers a sign-in link in a new tab and a Continue after signing in action that retries the same cursor.
 An administrator refusal explains the required role without a transient Retry action.
 Read the post's own caption on the card (Show full text when it is clamped), open an image to see the original media, or Open original post for the full context.
 Before a trip, open Show regions, choose Focus until on the destination and pick the last day; the hourly run reads that city from the next run in shop hours through that Tokyo date and then drops it.
-For a one-off look at a city, press Read once; the request shows as pending until the next run in shop hours reads it, and its posts arrive in the feed after that run.
+For a one-off look at a city, press Read once (or tick it in the region dropdown); the request shows as pending (Reading now) until a run reads it, and its posts arrive in the feed as that run reads them.
 
 Source-post time and evidence-collection time are labeled separately in Japan Standard Time.
 Media use `object-fit: contain` inside bounded previews, through the authenticated image proxy.
 
 ## Input and response boundaries
 
-The posts route accepts an optional shop id up to 100 visible characters, a page limit from 1 through 100, an optional composite cursor whose timestamp and key must be supplied together, an optional `since` RFC 3339 timestamp for `p_since`, and an optional `region` key (`^[a-z][a-z0-9_]{0,39}$`) for `p_region`; malformed input returns 400 before the RPC call, and the backend's own refusal of an argument (`22023`) returns 400 with its message.
+The posts route accepts an optional shop id up to 100 visible characters, a page limit from 1 through 100, an optional composite cursor whose timestamp and key must be supplied together, an optional `since` RFC 3339 timestamp for `p_since`, and optional region keys (`regions=a,b` and the older single `region=a`, each `^[a-z][a-z0-9_]{0,39}$`, at most 50 after duplicates are removed) for `p_regions`; malformed input returns 400 before the RPC call, and the backend's own refusal of an argument (`22023`) returns 400 with its message.
 The sources route accepts an optional `since` RFC 3339 timestamp and returns 501 with `reason: "rpc-missing"` while the RPC is absent.
 Both return 401 without a session, map the backend administrator refusal to 403, and send `Cache-Control: private, no-store` on success.
 The browser parser requires post identity, source identity, timestamps, source URLs, at least one media item, SHA-256 digests, and `unverified: true`, and rejects the response if item identity, JPY price, price side, grade, or condition appears.
@@ -184,5 +203,6 @@ The sources parser requires both handles, non-negative integer counts and a pars
 The regions route accepts a region key (`^[a-z][a-z0-9_]{0,39}$`), one of the four actions, and for `set_focus` a `YYYY-MM-DD` date or null; anything else returns 400 before the RPC call, the backend's own refusals (`22023`: an unknown region, a date out of range, a region already in focus or with no readable list) return 400 with the backend's message, and the absent RPCs return 501.
 The regions parser requires a Tokyo date for `today`, a known focus source and focus kind, non-negative integer counts with readable lists no more than lists, `YYYY-MM-DD` or null dates, and a request id and time in a pending or fulfilled request.
 
-`app/api/twitter-arrivals/regions/route.test.ts`, `app/dashboard/arrival-regions.test.ts` and `app/dashboard/ArrivalRegionPanel.test.tsx` cover the region route's mapping and refusals, the status parser and the panel (statuses, last read, read once and its pending state, focus until with its date bounds, remove, keep, reset, refusals, the absent migration, the unpublished state, retry, Japanese, and the 44 px targets).
-`app/api/twitter-arrivals/route.test.ts`, `app/api/twitter-arrivals/sources/route.test.ts`, `app/dashboard/arrival-accounts.test.ts`, `app/dashboard/arrival-window.test.ts`, `app/dashboard/arrival-text.test.ts`, `app/dashboard/url-state.test.ts` and `app/dashboard/ArrivalPostsView.test.tsx` cover these boundaries and the loading, empty, retry, expired-session, forbidden, pagination, deduplication, account list, derived fallback, URL selection, grouping and time-window states (cutoff filtering, the stop-paging rule, paging the window to exhaustion with the page bound and its loading status, the window's empty state with Show all, URL and localStorage round trips), the per-account scroll panel, the caption's plain-text rendering, entity decoding, t.co links and clamp toggle, and the region filter (no chips and no region sent for a backend without regions, a stale `?region=` link dropped, chip order by key and by the panel's roster, chip counts against the account list, the server-side region request, the narrowed account list, clearing a shop outside the region, the `?region=` round trip and `popstate`, a linked region with no account, and the chips holding still while a summary reloads).
+`app/api/twitter-arrivals/regions/route.test.ts`, `app/dashboard/arrival-regions.test.ts` and `app/dashboard/ArrivalRegionPanel.test.tsx` cover the region route's mapping and refusals, the status parser, a region's read state (read hourly, reading, queued after five minutes outside shop hours, no list, idle), and the panel (statuses, last read, read once and its pending state, focus until with its date bounds, remove, keep, reset, refusals, the absent migration, the unpublished state, retry, Japanese, and the 44 px targets).
+`app/api/twitter-arrivals/route.test.ts`, `app/api/twitter-arrivals/sources/route.test.ts`, `app/dashboard/arrival-accounts.test.ts`, `app/dashboard/arrival-window.test.ts`, `app/dashboard/arrival-text.test.ts`, `app/dashboard/url-state.test.ts` and `app/dashboard/ArrivalPostsView.test.tsx` cover these boundaries and the loading, empty, retry, expired-session, forbidden, pagination, deduplication, account list, derived fallback, URL selection, grouping and time-window states (cutoff filtering, the stop-paging rule, paging the window to exhaustion with the page bound and its loading status, the window's empty state with Show all, URL and localStorage round trips), the per-account scroll panel, the caption's plain-text rendering, entity decoding, t.co links and clamp toggle, and the region filter (no dropdown and no region sent for a backend without regions, a stale `?region=` link dropped, every region of the status listed in its order with or without posts, the fallback to the summary's regions, counts and read states, mixing regions with `p_regions` and the narrowed account list, clearing a shop outside the selection, the `?region=` list round trip with an old single key, malformed and unknown keys, and `popstate`, the read-once request sent once and only for an unread region, a refused request, and the dropdown holding still while a summary reloads).
+`app/dashboard/arrival-region-filter.test.ts` covers the dropdown's rows, the canonical selection, unknown keys and the polling key; `app/dashboard/arrival-feed-poll.test.ts` covers the merge (new posts above, newest first, re-posts moving up, nothing dropped) and keeping the reader's place in the page and inside an account panel; and the view's fake-timer tests cover the polling itself (every 20 seconds while a selected read is pending, merging without losing loaded pages, new accounts appearing, stopping on fulfilment, on deselect and after 30 minutes, and pausing while the tab is hidden).

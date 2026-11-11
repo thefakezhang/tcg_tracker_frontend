@@ -4,7 +4,8 @@ import {
   parseMercariFeedParam,
   parseMercariLaneParam,
   parseMercariSortParam,
-  parseRegionParam,
+  formatRegionsParam,
+  parseRegionsParam,
   parseShopParam,
   parseWindowParam,
 } from "./url-params";
@@ -17,25 +18,26 @@ const BUYBACKS = -23;
 describe("dashboard URL codec", () => {
   it("round-trips every state shape", () => {
     const cases = [
-      { game: "pokemon", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null },
-      { game: "mtg", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null },
-      { game: "pokemon_sealed", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null },
-      { game: "pokemon", activeTripId: -7, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null }, // customers
-      { game: "pokemon", activeTripId: 0, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null }, // trips overview
-      { game: "pokemon", activeTripId: MATCH_REVIEW_SENTINEL, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null },
-      { game: "mtg", activeTripId: 4, activeBuylistId: null, tab: "sales", shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null },
-      { game: "pokemon", activeTripId: 4, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null },
-      { game: "pokemon", activeTripId: null, activeBuylistId: 2, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null },
-      { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null },
-      { game: "mtg", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: null, region: null, feed: null, lane: null, format: null, sort: null },
-      { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: "7d", region: null, feed: null, lane: null, format: null, sort: null },
-      { game: "mtg", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: "all", region: null, feed: null, lane: null, format: null, sort: null },
-      { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null, region: "fukuoka", feed: null, lane: null, format: null, sort: null },
-      { game: "mtg", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: "7d", region: "tokyo_other", feed: null, lane: null, format: null, sort: null },
-      { game: "pokemon", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null },
-      { game: "pokemon", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: "verified", lane: null, format: null, sort: null },
-      { game: "mtg", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: "psa", format: "auction", sort: "newest" },
-      { game: "pokemon", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: "leads", lane: "unpriced", format: null, sort: "multiple" },
+      { game: "pokemon", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null },
+      { game: "mtg", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null },
+      { game: "pokemon_sealed", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null },
+      { game: "pokemon", activeTripId: -7, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null }, // customers
+      { game: "pokemon", activeTripId: 0, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null }, // trips overview
+      { game: "pokemon", activeTripId: MATCH_REVIEW_SENTINEL, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null },
+      { game: "mtg", activeTripId: 4, activeBuylistId: null, tab: "sales", shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null },
+      { game: "pokemon", activeTripId: 4, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null },
+      { game: "pokemon", activeTripId: null, activeBuylistId: 2, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null },
+      { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null },
+      { game: "mtg", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: null, regions: [], feed: null, lane: null, format: null, sort: null },
+      { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: "7d", regions: [], feed: null, lane: null, format: null, sort: null },
+      { game: "mtg", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: "all", regions: [], feed: null, lane: null, format: null, sort: null },
+      { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null, regions: ["fukuoka"], feed: null, lane: null, format: null, sort: null },
+      { game: "mtg", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: "7d", regions: ["tokyo_other"], feed: null, lane: null, format: null, sort: null },
+      { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: "24h", regions: ["akihabara", "fukuoka", "nagoya"], feed: null, lane: null, format: null, sort: null },
+      { game: "pokemon", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null },
+      { game: "pokemon", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: "verified", lane: null, format: null, sort: null },
+      { game: "mtg", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: "psa", format: "auction", sort: "newest" },
+      { game: "pokemon", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: "leads", lane: "unpriced", format: null, sort: "multiple" },
     ] as const;
     for (const c of cases) {
       const search = buildDashboardSearch(c);
@@ -43,12 +45,12 @@ describe("dashboard URL codec", () => {
     }
   });
   it("uses human-readable slugs, not sentinel numbers", () => {
-    expect(buildDashboardSearch({ game: "pokemon", activeTripId: -7, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null })).toBe("?view=customers");
-    expect(buildDashboardSearch({ game: "mtg", activeTripId: 4, activeBuylistId: null, tab: "sales", shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null })).toBe("?game=mtg&trip=4&tab=sales");
-    expect(buildDashboardSearch({ game: "pokemon", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null })).toBe("");
+    expect(buildDashboardSearch({ game: "pokemon", activeTripId: -7, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null })).toBe("?view=customers");
+    expect(buildDashboardSearch({ game: "mtg", activeTripId: 4, activeBuylistId: null, tab: "sales", shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null })).toBe("?game=mtg&trip=4&tab=sales");
+    expect(buildDashboardSearch({ game: "pokemon", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null })).toBe("");
   });
   it("falls back to browse on unknown or malformed params", () => {
-    const browse = { game: "pokemon", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null };
+    const browse = { game: "pokemon", activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null };
     expect(parseDashboardSearch("?view=nope")).toEqual(browse);
     expect(parseDashboardSearch("?trip=abc")).toEqual(browse);
     expect(parseDashboardSearch("?trip=-3")).toEqual(browse);
@@ -59,19 +61,19 @@ describe("dashboard URL codec", () => {
     expect(parseDashboardSearch("?view=sales&trip=4&buylist=2").activeTripId).toBe(-2);
   });
   it("carries the arrivals shop only with the arrivals view", () => {
-    expect(buildDashboardSearch({ game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: null, region: null, feed: null, lane: null, format: null, sort: null })).toBe("?view=arrivals&shop=alice");
-    expect(parseDashboardSearch("?view=arrivals&shop=alice")).toEqual({ game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: null, region: null, feed: null, lane: null, format: null, sort: null });
+    expect(buildDashboardSearch({ game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: null, regions: [], feed: null, lane: null, format: null, sort: null })).toBe("?view=arrivals&shop=alice");
+    expect(parseDashboardSearch("?view=arrivals&shop=alice")).toEqual({ game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: "alice", since: null, regions: [], feed: null, lane: null, format: null, sort: null });
     // A shop on another view, or with no view, is noise.
     expect(parseDashboardSearch("?view=customers&shop=alice").shop).toBeNull();
     expect(parseDashboardSearch("?shop=alice").shop).toBeNull();
-    expect(buildDashboardSearch({ game: "pokemon", activeTripId: -7, activeBuylistId: null, tab: null, shop: "alice", since: null, region: null, feed: null, lane: null, format: null, sort: null })).toBe("?view=customers");
+    expect(buildDashboardSearch({ game: "pokemon", activeTripId: -7, activeBuylistId: null, tab: null, shop: "alice", since: null, regions: [], feed: null, lane: null, format: null, sort: null })).toBe("?view=customers");
     // The same bound the API route enforces on buyer_handle.
     expect(parseDashboardSearch(`?view=arrivals&shop=${"a".repeat(101)}`).shop).toBeNull();
     expect(parseDashboardSearch("?view=arrivals&shop=%00alice").shop).toBeNull();
     expect(parseDashboardSearch("?view=arrivals&shop=").shop).toBeNull();
   });
   it("carries the buybacks source as ?shop= only with the buybacks view", () => {
-    const buybacks = { game: "pokemon", activeTripId: BUYBACKS, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null } as const;
+    const buybacks = { game: "pokemon", activeTripId: BUYBACKS, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null } as const;
     expect(buildDashboardSearch(buybacks)).toBe("?view=buybacks");
     expect(buildDashboardSearch({ ...buybacks, shop: "pdg" })).toBe("?view=buybacks&shop=pdg");
     expect(parseDashboardSearch("?view=buybacks&shop=pdg")).toEqual({ ...buybacks, shop: "pdg" });
@@ -83,7 +85,7 @@ describe("dashboard URL codec", () => {
     expect(parseDashboardSearch("?view=buybacks&shop=%00pdg").shop).toBeNull();
   });
   it("carries the arrivals time window only with the arrivals view", () => {
-    const arrivals = { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null } as const;
+    const arrivals = { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null } as const;
     expect(buildDashboardSearch({ ...arrivals, since: "24h" })).toBe("?view=arrivals&since=24h");
     expect(buildDashboardSearch({ ...arrivals, shop: "alice", since: "all" })).toBe("?view=arrivals&shop=alice&since=all");
     expect(parseDashboardSearch("?view=arrivals&since=7d")).toEqual({ ...arrivals, since: "7d" });
@@ -97,38 +99,43 @@ describe("dashboard URL codec", () => {
     expect(parseDashboardSearch("?view=arrivals&since=3d").since).toBeNull();
     expect(parseDashboardSearch("?view=arrivals&since=").since).toBeNull();
   });
-  it("carries the arrivals region only with the arrivals view", () => {
-    const arrivals = { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null } as const;
-    expect(buildDashboardSearch({ ...arrivals, region: "fukuoka" })).toBe("?view=arrivals&region=fukuoka");
-    expect(buildDashboardSearch({ ...arrivals, shop: "alice", since: "24h", region: "akihabara" }))
-      .toBe("?view=arrivals&shop=alice&since=24h&region=akihabara");
-    expect(parseDashboardSearch("?view=arrivals&region=fukuoka")).toEqual({ ...arrivals, region: "fukuoka" });
+  it("carries the arrivals regions only with the arrivals view, as one readable comma-separated list", () => {
+    const arrivals = { game: "pokemon", activeTripId: ARRIVALS, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null } as const;
+    expect(buildDashboardSearch({ ...arrivals, regions: ["fukuoka"] })).toBe("?view=arrivals&region=fukuoka");
+    expect(buildDashboardSearch({ ...arrivals, regions: ["akihabara", "fukuoka"] })).toBe("?view=arrivals&region=akihabara,fukuoka");
+    expect(buildDashboardSearch({ ...arrivals, shop: "alice", since: "24h", regions: ["akihabara", "nagoya"] }))
+      .toBe("?view=arrivals&shop=alice&since=24h&region=akihabara,nagoya");
+    expect(parseDashboardSearch("?view=arrivals&region=akihabara,fukuoka")).toEqual({ ...arrivals, regions: ["akihabara", "fukuoka"] });
+    // The escaped comma a browser or a share sheet may produce reads the same.
+    expect(parseDashboardSearch("?view=arrivals&region=akihabara%2Cfukuoka").regions).toEqual(["akihabara", "fukuoka"]);
+    // A single key, as links from before the filter took several regions, still reads.
+    expect(parseDashboardSearch("?view=arrivals&region=fukuoka")).toEqual({ ...arrivals, regions: ["fukuoka"] });
     // All regions stays out of the URL.
     expect(buildDashboardSearch(arrivals)).toBe("?view=arrivals");
-    expect(parseDashboardSearch("?view=arrivals").region).toBeNull();
-    // A region on another view, or one the API route would refuse, is noise.
-    expect(parseDashboardSearch("?view=customers&region=fukuoka").region).toBeNull();
-    expect(parseDashboardSearch("?view=buybacks&shop=pdg&region=fukuoka").region).toBeNull();
-    expect(parseDashboardSearch("?region=fukuoka").region).toBeNull();
-    expect(buildDashboardSearch({ ...arrivals, activeTripId: -7, region: "fukuoka" })).toBe("?view=customers");
-    expect(buildDashboardSearch({ ...arrivals, activeTripId: MERCARI, region: "fukuoka" })).toBe("?view=mercari");
-    expect(parseDashboardSearch("?view=arrivals&region=Fukuoka").region).toBeNull();
-    expect(parseDashboardSearch("?view=arrivals&region=").region).toBeNull();
+    expect(parseDashboardSearch("?view=arrivals").regions).toEqual([]);
+    // Regions on another view are noise.
+    expect(parseDashboardSearch("?view=customers&region=fukuoka").regions).toEqual([]);
+    expect(parseDashboardSearch("?view=buybacks&shop=pdg&region=fukuoka").regions).toEqual([]);
+    expect(parseDashboardSearch("?region=fukuoka").regions).toEqual([]);
+    expect(buildDashboardSearch({ ...arrivals, activeTripId: -7, regions: ["fukuoka"] })).toBe("?view=customers");
+    expect(buildDashboardSearch({ ...arrivals, activeTripId: MERCARI, regions: ["fukuoka"] })).toBe("?view=mercari");
   });
-  it("validates a region key the way the API route does", () => {
-    expect(parseRegionParam("fukuoka")).toBe("fukuoka");
-    expect(parseRegionParam(" tokyo_other ")).toBe("tokyo_other");
-    expect(parseRegionParam(`a${"b".repeat(39)}`)).toBe(`a${"b".repeat(39)}`);
-    expect(parseRegionParam(`a${"b".repeat(40)}`)).toBeNull();
-    expect(parseRegionParam("1fukuoka")).toBeNull();
-    expect(parseRegionParam("fuku-oka")).toBeNull();
-    expect(parseRegionParam("Fukuoka")).toBeNull();
-    expect(parseRegionParam("")).toBeNull();
-    expect(parseRegionParam(null)).toBeNull();
-    expect(parseRegionParam(undefined)).toBeNull();
+  it("reads a region list the way the API route checks it: malformed keys dropped, each key once, sorted", () => {
+    expect(parseRegionsParam("fukuoka")).toEqual(["fukuoka"]);
+    expect(parseRegionsParam("fukuoka,akihabara")).toEqual(["akihabara", "fukuoka"]);
+    expect(parseRegionsParam(" tokyo_other , fukuoka ,tokyo_other")).toEqual(["fukuoka", "tokyo_other"]);
+    expect(parseRegionsParam("Fukuoka,fuku-oka,1abc,,akihabara,")).toEqual(["akihabara"]);
+    expect(parseRegionsParam(`a${"b".repeat(39)},a${"b".repeat(40)}`)).toEqual([`a${"b".repeat(39)}`]);
+    expect(parseRegionsParam(Array.from({ length: 60 }, (_, index) => `r${String(index).padStart(2, "0")}`).join(",")))
+      .toHaveLength(50);
+    expect(parseRegionsParam("")).toEqual([]);
+    expect(parseRegionsParam(null)).toEqual([]);
+    expect(parseRegionsParam(undefined)).toEqual([]);
+    expect(formatRegionsParam(["akihabara", "fukuoka"])).toBe("akihabara,fukuoka");
+    expect(formatRegionsParam([])).toBeNull();
   });
   it("carries the Mercari feed, lane and sort only with the Mercari view", () => {
-    const mercari = { game: "pokemon", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, region: null, feed: null, lane: null, format: null, sort: null } as const;
+    const mercari = { game: "pokemon", activeTripId: MERCARI, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], feed: null, lane: null, format: null, sort: null } as const;
     expect(buildDashboardSearch(mercari)).toBe("?view=mercari");
     expect(buildDashboardSearch({ ...mercari, feed: "verified" })).toBe("?view=mercari&feed=verified");
     expect(buildDashboardSearch({ ...mercari, lane: "vintage_raw", sort: "newest" })).toBe("?view=mercari&lane=vintage_raw&sort=newest");
@@ -143,7 +150,7 @@ describe("dashboard URL codec", () => {
     expect(buildDashboardSearch({ ...mercari, activeTripId: ARRIVALS, lane: "psa", feed: "verified" })).toBe("?view=arrivals");
     expect(parseDashboardSearch("?view=mercari&lane=graded&feed=all&sort=price")).toEqual(mercari);
     // The arrivals params are noise on the Mercari view.
-    expect(parseDashboardSearch("?view=mercari&shop=alice&since=7d&region=fukuoka")).toEqual(mercari);
+    expect(parseDashboardSearch("?view=mercari&shop=alice&since=7d&region=fukuoka,akihabara")).toEqual(mercari);
   });
   it("accepts only the Mercari feeds, lanes and sorts the tab offers", () => {
     expect(parseMercariFeedParam(" verified ")).toBe("verified");

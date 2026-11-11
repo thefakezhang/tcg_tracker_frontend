@@ -186,6 +186,40 @@ export function addTokyoDays(date: string, days: number): string {
 /** The latest "focus until" date the backend accepts: a year ahead. */
 export const FOCUS_UNTIL_MAX_DAYS = 366;
 
+/**
+ * How the run reads a region, as the region filter and the panel say it:
+ * "hourly" while it is in focus; "reading" while a read-once request is
+ * pending; "queued" when that request has waited more than five minutes
+ * outside shop hours, where the run that takes it is the next one in shop
+ * hours; "nolist" when it has no readable list, so a read cannot be asked for;
+ * and "idle" otherwise, where selecting it asks for a read.
+ */
+export type RegionReadState = "hourly" | "reading" | "queued" | "nolist" | "idle";
+
+/** How long a pending request may wait before, outside shop hours, it reads as queued. */
+export const QUEUED_AFTER_MS = 5 * 60 * 1000;
+
+/** True from 11:00 through 20:00 Asia/Tokyo, the hours the hourly run reads in. */
+export function withinShopHours(now: number): boolean {
+  const tokyo = new Date(now + 9 * 60 * 60 * 1000);
+  const minute = tokyo.getUTCHours() * 60 + tokyo.getUTCMinutes();
+  return minute >= 11 * 60 && minute <= 20 * 60;
+}
+
+export function regionReadState(region: ArrivalRegion, now: number): RegionReadState {
+  if (region.in_focus) return "hourly";
+  if (region.pending_request !== null) {
+    const waited = now - Date.parse(region.pending_request.requested_at);
+    return waited > QUEUED_AFTER_MS && !withinShopHours(now) ? "queued" : "reading";
+  }
+  return region.readable_lists > 0 ? "idle" : "nolist";
+}
+
+/** True when selecting the region should ask for a read once: not read hourly, nothing pending, a list to read. */
+export function needsReadOnce(region: ArrivalRegion): boolean {
+  return !region.in_focus && region.pending_request === null && region.readable_lists > 0;
+}
+
 /** The regions in focus, in order. */
 export function focusRegions(status: ArrivalRegionStatus): ArrivalRegion[] {
   return status.regions.filter((region) => region.in_focus);
