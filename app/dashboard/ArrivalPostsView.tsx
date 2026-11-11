@@ -9,6 +9,7 @@ import {
   ImageIcon,
   LayoutList,
   LoaderCircle,
+  MapPin,
   RefreshCw,
   Repeat2,
   Users,
@@ -24,12 +25,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { REGION_RE } from "@/lib/arrival-region-key";
 import { useTranslation } from "@/lib/i18n";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import {
   type ArrivalAccountPost,
+  type ArrivalRegionCount,
   type ArrivalSource,
+  accountInRegion,
   accountLabel,
   deriveArrivalSources,
   groupPostsByAccount,
@@ -37,12 +41,14 @@ import {
   parseArrivalSources,
   readCollapsedAccounts,
   readGroupByAccount,
+  regionCounts,
   sortArrivalSources,
+  sourcesCarryRegions,
   writeCollapsedAccounts,
   writeGroupByAccount,
 } from "./arrival-accounts";
-import ArrivalRegionPanel from "./ArrivalRegionPanel";
-import type { RegionActionSender, RegionStatusLoader } from "./arrival-regions";
+import ArrivalRegionPanel, { regionName } from "./ArrivalRegionPanel";
+import type { ArrivalRegionStatus, RegionActionSender, RegionStatusLoader } from "./arrival-regions";
 import { decodeTweetText, tweetTextSegments } from "./arrival-text";
 import {
   cutoffISO,
@@ -54,11 +60,13 @@ import {
   writeArrivalWindow,
 } from "./arrival-window";
 import {
+  ARRIVALS_REGION_PARAM,
   ARRIVALS_SHOP_PARAM,
   ARRIVALS_WINDOW_PARAM,
   ARRIVAL_WINDOWS,
   type ArrivalWindow,
   DEFAULT_ARRIVAL_WINDOW,
+  parseRegionParam,
   parseShopParam,
   parseWindowParam,
   readUrlParam,
@@ -96,6 +104,11 @@ export type ArrivalPost = {
    * kept send null; both read as "nothing to show". Entity escapes are decoded.
    */
   tweet_text: string | null;
+  /**
+   * The region key of the shop's region ("fukuoka"), or null while the shop
+   * is not mapped to one yet. Older backends send no column, which reads as null.
+   */
+  region: string | null;
   unverified: true;
   media: ArrivalMedia[];
 };
@@ -112,12 +125,14 @@ export type ArrivalPostsPage = {
 
 /**
  * Loads one page of posts. `since` is the window's start (RFC 3339, inclusive)
- * for the RPC's `p_since`, or null for All.
+ * for the RPC's `p_since`, or null for All; `region` is a region key for the
+ * RPC's `p_region`, or null for All regions, which sends no region at all.
  */
 export type ArrivalPostsLoader = (
   buyerHandle: string,
   cursor: ArrivalCursor | null,
   since: string | null,
+  region: string | null,
 ) => Promise<ArrivalPostsPage>;
 
 /**
@@ -180,6 +195,15 @@ function optionalText(value: unknown, field: string): string | null {
   return text === "" ? null : text;
 }
 
+// The region is optional on a row: absent or null means the shop has no region yet.
+function optionalRegion(value: unknown, field: string): string | null {
+  if (value == null) return null;
+  if (typeof value !== "string" || !REGION_RE.test(value)) {
+    throw new Error(`Invalid arrival field: ${field}`);
+  }
+  return value;
+}
+
 function countOrZero(value: unknown, field: string): number {
   if (value == null) return 0;
   const count = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
@@ -218,6 +242,7 @@ export function parseArrivalPosts(value: unknown): ArrivalPost[] {
       boost_count: countOrZero(row.boost_count, `boost_count: ${rowIndex}`),
       via_retweet_of: optionalHandle(row.via_retweet_of, `via_retweet_of: ${rowIndex}`),
       tweet_text: optionalText(row.tweet_text, `tweet_text: ${rowIndex}`),
+      region: optionalRegion(row.region, `region: ${rowIndex}`),
       unverified: true,
       media: row.media.map((rawMedia, mediaIndex) => {
         if (rawMedia == null || typeof rawMedia !== "object" || Array.isArray(rawMedia)) {
@@ -264,7 +289,7 @@ function requestError(status: number, body: unknown): ArrivalPostsRequestError {
   return new ArrivalPostsRequestError(status, message);
 }
 
-export const loadArrivalPosts: ArrivalPostsLoader = async (buyerHandle, cursor, since) => {
+export const loadArrivalPosts: ArrivalPostsLoader = async (buyerHandle, cursor, since, region) => {
   const query = new URLSearchParams({ limit: "100" });
   if (buyerHandle) query.set("buyer_handle", buyerHandle);
   if (cursor) {
@@ -272,6 +297,7 @@ export const loadArrivalPosts: ArrivalPostsLoader = async (buyerHandle, cursor, 
     query.set("before_key", cursor.before_key);
   }
   if (since) query.set("since", since);
+  if (region) query.set("region", region);
   const response = await fetch(`/api/twitter-arrivals?${query}`, {
     cache: "no-store",
     headers: { accept: "application/json" },
@@ -467,6 +493,7 @@ type SourcesState =
 
 function ArrivalAccountPanel({
   accounts,
+  regionLabel,
   selected,
   onSelect,
   state,
@@ -479,6 +506,8 @@ function ArrivalAccountPanel({
   recentWindow,
 }: {
   accounts: ArrivalSource[];
+  /** The selected region's name, the All row's second line while the list is narrowed to it. */
+  regionLabel: string | null;
   selected: string;
   onSelect: (buyerHandle: string) => void;
   state: SourcesState;
@@ -538,6 +567,7 @@ function ArrivalAccountPanel({
                 pressed={selected === ""}
                 onClick={() => onSelect("")}
                 primary={t("arrivals.allAccounts")}
+                secondary={regionLabel}
                 recent={totals.recent}
                 recentWindow={recentWindow}
                 total={totals.total}
@@ -771,8 +801,70 @@ function ArrivalWindowChips({
   );
 }
 
+// The region filter: All regions, then every region with an account in the
+// summary, in the region panel's order. Each chip counts its accounts' posts in
+// the window, the same sum the account list's first row shows once the chip
+// narrows the list to them. The row scrolls sideways on a phone instead of
+// wrapping, so a long roster cannot push the feed down the screen.
+function ArrivalRegionChips({
+  regions,
+  value,
+  total,
+  recentWindow,
+  onChange,
+}: {
+  regions: readonly ArrivalRegionCount[];
+  value: string;
+  /** Every account's counts, regions or not: All regions. */
+  total: { recent_count: number; post_count: number };
+  recentWindow: string;
+  onChange: (region: string) => void;
+}) {
+  const { t } = useTranslation();
+  const chip = (key: string, label: string, recent: number, posts: number) => {
+    const pressed = key === value;
+    const recentText = t("arrivals.recentCount", { count: recent, window: recentWindow });
+    const postsText = posts === 1 ? t("arrivals.postCountOne") : t("arrivals.postCount", { count: posts });
+    return (
+      <Button
+        key={key || "*"}
+        type="button"
+        variant={pressed ? "secondary" : "outline"}
+        className="h-11 gap-1.5 px-3 sm:h-8"
+        aria-pressed={pressed}
+        aria-label={t("arrivals.regionChip", { region: label, recent: recentText })}
+        title={`${recentText} · ${postsText}`}
+        onClick={() => onChange(key)}
+      >
+        {label}
+        <span className={cn("text-xs tabular-nums", recent > 0 ? "text-foreground" : "text-muted-foreground")}>
+          {recent}
+        </span>
+      </Button>
+    );
+  };
+  // The scrolling row's padding keeps the focus ring inside its clip; the
+  // negative margin keeps the chips on the page's edge.
+  return (
+    <div
+      role="group"
+      aria-label={t("arrivals.regionFilterLabel")}
+      className="-mx-1 flex min-w-0 items-center gap-1 overflow-x-auto p-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:p-0"
+      data-testid="arrival-region-filter"
+    >
+      <MapPin className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      {chip("", t("arrivals.allRegions"), total.recent_count, total.post_count)}
+      {regions.map((region) => chip(region.region, regionName(t, region.region), region.recent_count, region.post_count))}
+    </div>
+  );
+}
+
 function readSelectedShop(): string {
   return parseShopParam(readUrlParam(ARRIVALS_SHOP_PARAM)) ?? "";
+}
+
+function readSelectedRegion(): string {
+  return parseRegionParam(readUrlParam(ARRIVALS_REGION_PARAM)) ?? "";
 }
 
 /** The window a link names, else the viewer's remembered choice (default 48 h). */
@@ -796,6 +888,9 @@ export default function ArrivalPostsView({
   // The selected shop is a leaf URL param (?shop=...) so one account's arrivals
   // can be linked and bookmarked; UrlStateSync drops it when the view changes.
   const [selected, setSelected] = useState(readSelectedShop);
+  // The selected region is a leaf param too (?region=fukuoka); All regions,
+  // the empty string, stays out of the URL.
+  const [region, setRegion] = useState(readSelectedRegion);
   // The time window is a leaf param too (?since=24h|48h|7d|all); the default
   // stays out of the URL, and the viewer's choice is remembered in localStorage.
   const [since, setSince] = useState(readSelectedWindow);
@@ -812,6 +907,13 @@ export default function ArrivalPostsView({
   // list can be derived while the backend summary is unavailable.
   const [seen, setSeen] = useState<Map<string, ArrivalAccountPost>>(() => new Map());
   const [sourcesState, setSourcesState] = useState<SourcesState>({ status: "loading" });
+  // The latest account summary that carried regions. It stays while the next
+  // one loads, so the chips and the narrowed list hold still through a window
+  // change; a summary without regions (a backend from before the filter, or
+  // the derived fallback) sets it to null, which hides the filter.
+  const [regionSources, setRegionSources] = useState<ArrivalSource[] | null>(null);
+  // The focus status the region panel shows, for the chips' order.
+  const [regionStatus, setRegionStatus] = useState<ArrivalRegionStatus | null>(null);
   const [groupByAccount, setGroupByAccount] = useState(readGroupByAccount);
   const [collapsed, setCollapsed] = useState(readCollapsedAccounts);
   const [accountsOpen, setAccountsOpen] = useState(false);
@@ -828,8 +930,13 @@ export default function ArrivalPostsView({
   }, [since]);
 
   useEffect(() => {
+    writeUrlParam(ARRIVALS_REGION_PARAM, region || null);
+  }, [region]);
+
+  useEffect(() => {
     const onPop = () => {
       setSelected(readSelectedShop());
+      setRegion(readSelectedRegion());
       setSince(readSelectedWindow());
     };
     window.addEventListener("popstate", onPop);
@@ -844,6 +951,7 @@ export default function ArrivalPostsView({
   // MAX_WINDOW_PAGES, where Load more takes over. All pages by hand only.
   const load = useCallback(async (
     buyerHandle: string,
+    regionKey: string,
     cursor: ArrivalCursor | null,
     append: boolean,
     cutoff: number | null,
@@ -866,7 +974,7 @@ export default function ArrivalPostsView({
     let pages = 0;
     try {
       do {
-        const page = await loader(buyerHandle, next, since);
+        const page = await loader(buyerHandle, next, since, regionKey || null);
         if (!current()) return;
         pages += 1;
         const replace = first;
@@ -915,6 +1023,12 @@ export default function ArrivalPostsView({
       const sources = await sourcesLoader(sinceISO);
       if (sourcesGeneration.current !== generation) return;
       setSourcesState(sources === null ? { status: "fallback" } : { status: "ready", sources });
+      // The regions come with the summary. One without them hides the filter
+      // and drops a linked region, which that backend could not apply: the
+      // feed sends p_region only to a backend whose summary has regions.
+      const carries = sources !== null && sourcesCarryRegions(sources);
+      setRegionSources(carries ? sources : null);
+      if (!carries) setRegion("");
     } catch (reason) {
       if (sourcesGeneration.current !== generation) return;
       setSourcesState({ status: "error", error: asError(reason) });
@@ -926,8 +1040,17 @@ export default function ArrivalPostsView({
   // Both load effects key on `loadedAt`, not on `cutoff`: for All the cutoff is
   // null before and after a Refresh, and Refresh must still reload.
   useEffect(() => {
-    void load(selected, null, false, windowCutoff(since, loadedAt));
-  }, [selected, since, loadedAt, load]);
+    void load(selected, region, null, false, windowCutoff(since, loadedAt));
+  }, [selected, region, since, loadedAt, load]);
+
+  // A shop outside the selected region has no posts in the region's feed, so
+  // a link naming both, or a shop the summary has since moved, drops the shop.
+  useEffect(() => {
+    if (region && selected && regionSources !== null
+      && !accountInRegion(regionSources, selected, region)) {
+      setSelected("");
+    }
+  }, [region, selected, regionSources]);
 
   // The same cutoff goes to the summary RPC as p_since, so each account's
   // recent count is the window's; All leaves the backend default (24 hours).
@@ -935,10 +1058,23 @@ export default function ArrivalPostsView({
     void loadSources(cutoffISO(windowCutoff(since, loadedAt)));
   }, [since, loadedAt, loadSources]);
 
+  // Each account's region, by the latest summary that carried regions.
+  const regionOf = useMemo(
+    () => regionSources === null
+      ? null
+      : new Map(regionSources.map((source) => [source.buyer_handle, source.region ?? null])),
+    [regionSources],
+  );
+
   const accounts = useMemo(() => {
-    const list = sourcesState.status === "ready"
+    let list = sourcesState.status === "ready"
       ? sortArrivalSources(sourcesState.sources)
       : deriveArrivalSources(seen.values(), Date.now(), cutoff);
+    // A region narrows the list to its accounts, by the summary's mapping, so
+    // the list stays narrowed while a new summary loads.
+    if (region && regionOf !== null) {
+      list = list.filter((account) => regionOf.get(account.buyer_handle) === region);
+    }
     // A linked shop the summary does not list (a typo, or a brand-new account)
     // still shows as the selection, so the pressed state has somewhere to live.
     if (selected && !list.some((account) => account.buyer_handle === selected)) {
@@ -952,7 +1088,30 @@ export default function ArrivalPostsView({
       });
     }
     return list;
-  }, [sourcesState, seen, selected, cutoff]);
+  }, [sourcesState, seen, selected, cutoff, region, regionOf]);
+
+  // The chips; null hides the filter. A linked region the summary has no
+  // account in still shows as the selection, so the pressed state has
+  // somewhere to live, as a linked shop does in the account list.
+  const regionChips = useMemo(() => {
+    if (regionSources === null) return null;
+    const chips = regionCounts(regionSources, regionStatus?.regions.map((entry) => entry.region) ?? null);
+    if (region && !chips.some((chip) => chip.region === region)) {
+      chips.push({ region, accounts: 0, recent_count: 0, post_count: 0 });
+    }
+    return chips.length > 0 ? chips : null;
+  }, [regionSources, regionStatus, region]);
+
+  const regionTotal = useMemo(
+    () => (regionSources ?? []).reduce(
+      (sum, source) => ({
+        recent_count: sum.recent_count + source.recent_count,
+        post_count: sum.post_count + source.post_count,
+      }),
+      { recent_count: 0, post_count: 0 },
+    ),
+    [regionSources],
+  );
 
   const selectedAccount = selected
     ? accounts.find((account) => account.buyer_handle === selected) ?? null
@@ -979,6 +1138,14 @@ export default function ArrivalPostsView({
   const select = (buyerHandle: string) => {
     setSelected(buyerHandle);
     setAccountsOpen(false);
+  };
+
+  // The selected shop stays only while it is in the new region; All regions keeps it.
+  const selectRegion = (next: string) => {
+    setRegion(next);
+    if (next && selected && !(regionSources !== null && accountInRegion(regionSources, selected, next))) {
+      setSelected("");
+    }
   };
 
   // Moves the window's cutoff to now; both load effects above run from it.
@@ -1016,6 +1183,8 @@ export default function ArrivalPostsView({
   // The recent count's label: the window, or the backend's 24-hour default for All.
   const recentWindow = t(`arrivals.window.${since === "all" ? "24h" : since}`);
 
+  const regionLabel = region ? regionName(t, region) : null;
+
   const cards = (list: readonly ArrivalPost[]) => list.map((post) => (
     <ArrivalPostCard key={post.arrival_key} post={post} dateTime={dateTime} now={loadedAt} />
   ));
@@ -1036,11 +1205,22 @@ export default function ArrivalPostsView({
         </p>
       </div>
 
-      <ArrivalRegionPanel loader={regionLoader} sender={regionSender} />
+      <ArrivalRegionPanel loader={regionLoader} sender={regionSender} onStatus={setRegionStatus} />
+
+      {regionChips !== null && (
+        <ArrivalRegionChips
+          regions={regionChips}
+          value={region}
+          total={regionTotal}
+          recentWindow={recentWindow}
+          onChange={selectRegion}
+        />
+      )}
 
       <div className="grid min-w-0 gap-4 md:grid-cols-[16rem_minmax(0,1fr)] lg:grid-cols-[18rem_minmax(0,1fr)]">
         <ArrivalAccountPanel
           accounts={accounts}
+          regionLabel={regionLabel}
           selected={selected}
           onSelect={select}
           state={sourcesState}
@@ -1068,7 +1248,9 @@ export default function ArrivalPostsView({
                   </Button>
                 </>
               ) : (
-                <span className="font-medium">{t("arrivals.allAccounts")}</span>
+                <span className="font-medium">
+                  {regionLabel ? t("arrivals.allAccountsInRegion", { region: regionLabel }) : t("arrivals.allAccounts")}
+                </span>
               )}
               {!loading && !error && (
                 <span className="text-muted-foreground tabular-nums">
@@ -1124,7 +1306,7 @@ export default function ArrivalPostsView({
             <ArrivalLoadFailure
               error={error}
               title={t("arrivals.errorTitle")}
-              onRetry={() => void load(selected, null, false, cutoff)}
+              onRetry={() => void load(selected, region, null, false, cutoff)}
             />
           ) : visible.length === 0 ? (
             <div className="rounded-xl border border-dashed p-8 text-center" data-testid="arrival-empty">
@@ -1206,7 +1388,7 @@ export default function ArrivalPostsView({
                 <ArrivalLoadFailure
                   error={loadMoreError}
                   title={t("arrivals.moreErrorTitle")}
-                  onRetry={() => void load(selected, nextCursor, true, cutoff)}
+                  onRetry={() => void load(selected, region, nextCursor, true, cutoff)}
                 />
               )}
               {nextCursor && !loadMoreError && cutoff !== null && !loadingMore && (
@@ -1219,7 +1401,7 @@ export default function ArrivalPostsView({
                   className="h-11 w-full sm:w-auto"
                   variant="outline"
                   disabled={loadingMore}
-                  onClick={() => void load(selected, nextCursor, true, cutoff)}
+                  onClick={() => void load(selected, region, nextCursor, true, cutoff)}
                 >
                   {loadingMore ? (
                     <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />

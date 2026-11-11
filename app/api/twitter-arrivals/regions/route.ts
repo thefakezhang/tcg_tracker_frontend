@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 
+import { REGION_RE } from "@/lib/arrival-region-key";
 import { createClient } from "@/lib/supabase/server";
 
 // The Arrivals focus regions and read-once requests (backend #2342,
@@ -10,7 +11,6 @@ import { createClient } from "@/lib/supabase/server";
 // once, and answers with the status after the change.
 
 const UNAVAILABLE = "Region controls are unavailable";
-const REGION_RE = /^[a-z][a-z0-9_]{0,39}$/;
 const TOKYO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const NO_STORE = { "cache-control": "private, no-store" };
 

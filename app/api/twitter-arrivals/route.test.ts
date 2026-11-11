@@ -49,6 +49,11 @@ describe("protected Twitter arrivals route", () => {
       `?buyer_handle=${"a".repeat(101)}`,
       "?since=yesterday",
       `?since=2026-10-20T12%3A00%3A00Z${"0".repeat(60)}`,
+      "?region=Fukuoka",
+      "?region=1fukuoka",
+      "?region=fuku-oka",
+      "?region=fukuoka%00",
+      `?region=a${"b".repeat(40)}`,
     ]) {
       const response = await GET(request(query));
       expect(response.status, query).toBe(400);
@@ -89,6 +94,49 @@ describe("protected Twitter arrivals route", () => {
       p_limit: 100,
       p_since: "2026-10-18T12:00:00.000Z",
     });
+  });
+
+  it("passes a region to the RPC as p_region, and leaves the argument out when none is asked for", async () => {
+    mocks.rpc.mockResolvedValue({ data: [], error: null });
+
+    const response = await GET(request("?region=fukuoka&since=2026-10-18T12%3A00%3A00.000Z&limit=100"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("twitter_arrival_posts", {
+      p_buyer_handle: null,
+      p_before: null,
+      p_before_key: null,
+      p_limit: 100,
+      p_since: "2026-10-18T12:00:00.000Z",
+      p_region: "fukuoka",
+    });
+    // The longest key the pattern allows, and one with digits and underscores.
+    for (const region of [`a${"b".repeat(39)}`, "tokyo_other", "area51"]) {
+      mocks.rpc.mockClear();
+      expect((await GET(request(`?region=${region}`))).status, region).toBe(200);
+      expect(mocks.rpc.mock.calls[0][1]).toMatchObject({ p_region: region });
+    }
+
+    // A backend from before the region filter has no p_region, so a request
+    // without a region (or with a blank one) must not send the argument at all.
+    for (const query of ["", "?region=", "?region=%20%20", "?buyer_handle=alice&limit=10"]) {
+      mocks.rpc.mockClear();
+      expect((await GET(request(query))).status, query).toBe(200);
+      expect(mocks.rpc).toHaveBeenCalledTimes(1);
+      expect(Object.keys(mocks.rpc.mock.calls[0][1]), query).not.toContain("p_region");
+    }
+  });
+
+  it("answers the backend's refusal of a malformed region as a bad request", async () => {
+    mocks.rpc.mockResolvedValue({
+      data: null,
+      error: { code: "22023", message: "p_region must be a region key" },
+    });
+
+    const response = await GET(request("?region=fukuoka"));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "p_region must be a region key" });
   });
 
   it("returns the stable observed-time cursor when a page reaches its limit", async () => {

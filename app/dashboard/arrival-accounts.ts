@@ -1,9 +1,10 @@
 // Pure account-level logic for the Arrivals tab: the account summary rows the
 // backend RPC `twitter_arrival_sources` returns, the same summary derived from
 // posts already loaded (the fallback while that RPC is not applied yet), the
-// per-account grouping of the feed, and the per-viewer preferences that the
-// view remembers in localStorage.
+// region chips built from the summary, the per-account grouping of the feed,
+// and the per-viewer preferences that the view remembers in localStorage.
 import { arrivalObservedAt } from "@/lib/arrival-observed-at";
+import { REGION_RE } from "@/lib/arrival-region-key";
 import { readLocalStorage, writeLocalStorage } from "@/lib/local-storage";
 import { sourceLabel } from "@/lib/source-labels";
 
@@ -19,6 +20,20 @@ export type ArrivalSource = {
   post_count: number;
   recent_count: number;
   latest_post_at: string | null;
+  /**
+   * The account's region key ("fukuoka"), or null while the shop is not mapped
+   * to a region yet. Absent, not null, when the backend predates the region
+   * filter: the view tells the two apart to decide whether to offer it at all.
+   */
+  region?: string | null;
+};
+
+/** One region chip: a region with at least one account in the summary, and its accounts' counts summed. */
+export type ArrivalRegionCount = {
+  region: string;
+  accounts: number;
+  recent_count: number;
+  post_count: number;
 };
 
 /** The post fields the account logic needs; `ArrivalPost` satisfies it. */
@@ -67,13 +82,70 @@ export function parseArrivalSources(value: unknown): ArrivalSource[] {
     if (latest !== null && (typeof latest !== "string" || Number.isNaN(Date.parse(latest)))) {
       throw new Error(`Invalid arrival source timestamp: ${index}`);
     }
-    return {
+    const source: ArrivalSource = {
       buyer_handle: requiredString(row.buyer_handle, "buyer_handle"),
       twitter_handle: requiredString(row.twitter_handle, "twitter_handle"),
       post_count: requiredCount(row.post_count, "post_count"),
       recent_count: requiredCount(row.recent_count, "recent_count"),
       latest_post_at: latest,
     };
+    // The key is kept only when the backend sends it, so a summary from a
+    // backend without regions stays recognisable as one.
+    if ("region" in row) {
+      const region = row.region ?? null;
+      if (region !== null && (typeof region !== "string" || !REGION_RE.test(region))) {
+        throw new Error(`Invalid arrival source region: ${index}`);
+      }
+      source.region = region;
+    }
+    return source;
+  });
+}
+
+/** True when the summary comes from a backend with regions: some row carries the `region` key, even as null. */
+export function sourcesCarryRegions(sources: readonly ArrivalSource[]): boolean {
+  return sources.some((source) => source.region !== undefined);
+}
+
+/** Whether `buyerHandle` is listed in the summary under `region`; an unlisted account is in no region. */
+export function accountInRegion(
+  sources: readonly ArrivalSource[],
+  buyerHandle: string,
+  region: string,
+): boolean {
+  return sources.some((source) => source.buyer_handle === buyerHandle && source.region === region);
+}
+
+/**
+ * The region chips: every region with at least one account in the summary,
+ * with the counts of its accounts summed the way the account list's All row
+ * sums them, so a chip and the list it narrows to agree. Ordered by `roster`
+ * (the region keys in the focus status's display order) when the status is
+ * loaded, regions it does not list after it by key; by key when it is not.
+ * Accounts without a region count only towards All.
+ */
+export function regionCounts(
+  sources: readonly ArrivalSource[],
+  roster: readonly string[] | null = null,
+): ArrivalRegionCount[] {
+  const byRegion = new Map<string, ArrivalRegionCount>();
+  for (const source of sources) {
+    if (source.region == null) continue;
+    const current = byRegion.get(source.region)
+      ?? { region: source.region, accounts: 0, recent_count: 0, post_count: 0 };
+    current.accounts += 1;
+    current.recent_count += source.recent_count;
+    current.post_count += source.post_count;
+    byRegion.set(source.region, current);
+  }
+  const position = new Map((roster ?? []).map((region, index) => [region, index]));
+  const rank = (region: string) => position.get(region) ?? Number.POSITIVE_INFINITY;
+  // Compared, not subtracted: two unlisted regions both rank Infinity.
+  return [...byRegion.values()].sort((a, b) => {
+    const rankA = rank(a.region);
+    const rankB = rank(b.region);
+    if (rankA !== rankB) return rankA < rankB ? -1 : 1;
+    return a.region.localeCompare(b.region);
   });
 }
 

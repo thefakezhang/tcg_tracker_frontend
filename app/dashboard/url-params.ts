@@ -1,9 +1,11 @@
 // Leaf query params: sub-state a single view owns inside /dashboard's query
-// string (a trip's ?tab=, the Arrivals ?shop= and ?since=, the Buybacks
-// ?shop=, the Mercari ?feed=, ?lane= and ?sort=). The view reads its param on
-// mount and writes it in place, with no history entry; UrlStateSync decides
-// whether it survives a view-selection change. This module has no imports so
-// a view can use it without pulling in the views registry.
+// string (a trip's ?tab=, the Arrivals ?shop=, ?region= and ?since=, the
+// Buybacks ?shop=, the Mercari ?feed=, ?lane= and ?sort=). The view reads its
+// param on mount and writes it in place, with no history entry; UrlStateSync
+// decides whether it survives a view-selection change. This module imports
+// only the import-free region key pattern, so a view can use it without
+// pulling in the views registry.
+import { parseRegionKey } from "@/lib/arrival-region-key";
 
 /** Read one leaf query param (for components that own a sub-state, e.g. a trip tab). */
 export function readUrlParam(name: string): string | null {
@@ -32,6 +34,18 @@ const SHOP_HANDLE = /^[^\u0000-\u001f\u007f]{1,100}$/;
 export function parseShopParam(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return SHOP_HANDLE.test(trimmed) ? trimmed : null;
+}
+
+/** The Arrivals view's region leaf param: the selected region key (`?region=fukuoka`); All regions stays out of the URL. */
+export const ARRIVALS_REGION_PARAM = "region";
+
+/**
+ * The validated `?region=` value, or null when absent or malformed. The bound
+ * is the region key pattern the arrivals API route checks before p_region, so
+ * a malformed link is ignored here rather than rejected there.
+ */
+export function parseRegionParam(value: string | null | undefined): string | null {
+  return parseRegionKey(value);
 }
 
 /**

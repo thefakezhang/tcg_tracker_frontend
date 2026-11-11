@@ -57,6 +57,22 @@ describe("protected Twitter arrival sources route", () => {
     expect(await response.json()).toEqual({ sources });
   });
 
+  it("passes each account's region through as the RPC returns it, and rows without one unchanged", async () => {
+    const sources = [
+      { buyer_handle: "alice", twitter_handle: "alice_shop", post_count: 3, recent_count: 1, latest_post_at: null, region: "akihabara" },
+      { buyer_handle: "bob", twitter_handle: "bob_shop", post_count: 2, recent_count: 0, latest_post_at: null, region: null },
+    ];
+    mocks.rpc.mockResolvedValue({ data: sources, error: null });
+    expect(await (await GET(request())).json()).toEqual({ sources });
+
+    // A backend from before the region filter: no region key on any row.
+    const legacy = sources.map(({ region: _region, ...row }) => row);
+    mocks.rpc.mockResolvedValue({ data: legacy, error: null });
+    const body = await (await GET(request())).json() as { sources: Record<string, unknown>[] };
+    expect(body).toEqual({ sources: legacy });
+    expect(body.sources.some((row) => "region" in row)).toBe(false);
+  });
+
   it("forwards an explicit since window and answers an empty summary as an empty list", async () => {
     mocks.rpc.mockResolvedValue({ data: null, error: null });
 
