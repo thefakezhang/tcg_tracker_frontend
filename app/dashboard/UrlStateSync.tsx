@@ -16,7 +16,7 @@ import {
   parseMercariFormatParam,
   parseMercariLaneParam,
   parseMercariSortParam,
-  parseRegionParam,
+  parseRegionsParam,
   parseShopParam,
   parseWindowParam,
 } from "./url-params";
@@ -85,7 +85,7 @@ export default function UrlStateSync({ children }: { children: ReactNode }) {
       tab: sameSelection && isTrip ? current.get("tab") : null,
       shop: sameSelection ? parseShopParam(current.get(ARRIVALS_SHOP_PARAM)) : null,
       since: sameSelection ? parseWindowParam(current.get(ARRIVALS_WINDOW_PARAM)) : null,
-      region: sameSelection ? parseRegionParam(current.get(ARRIVALS_REGION_PARAM)) : null,
+      regions: sameSelection ? parseRegionsParam(current.get(ARRIVALS_REGION_PARAM)) : [],
       feed: sameSelection ? parseMercariFeedParam(current.get(MERCARI_FEED_PARAM)) : null,
       lane: sameSelection ? parseMercariLaneParam(current.get(MERCARI_LANE_PARAM)) : null,
       format: sameSelection ? parseMercariFormatParam(current.get(MERCARI_FORMAT_PARAM)) : null,

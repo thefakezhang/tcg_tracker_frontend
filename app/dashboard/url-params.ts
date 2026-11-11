@@ -5,7 +5,16 @@
 // decides whether it survives a view-selection change. This module imports
 // only the import-free region key pattern, so a view can use it without
 // pulling in the views registry.
-import { parseRegionKey } from "@/lib/arrival-region-key";
+import { parseRegionKeyList } from "@/lib/arrival-region-key";
+
+/**
+ * A query string from its params, with commas left readable: a list such as
+ * `?region=akihabara,fukuoka` stays a list a person can read and edit, and
+ * URLSearchParams reads a literal comma back exactly as it reads `%2C`.
+ */
+export function searchString(params: URLSearchParams): string {
+  return params.toString().replace(/%2C/g, ",");
+}
 
 /** Read one leaf query param (for components that own a sub-state, e.g. a trip tab). */
 export function readUrlParam(name: string): string | null {
@@ -18,7 +27,7 @@ export function writeUrlParam(name: string, value: string | null) {
   if (typeof window === "undefined") return;
   const p = new URLSearchParams(window.location.search);
   if (value == null || value === "") p.delete(name); else p.set(name, value);
-  const s = p.toString();
+  const s = searchString(p);
   const next = `${window.location.pathname}${s ? `?${s}` : ""}`;
   if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(null, "", next);
 }
@@ -36,16 +45,25 @@ export function parseShopParam(value: string | null | undefined): string | null 
   return SHOP_HANDLE.test(trimmed) ? trimmed : null;
 }
 
-/** The Arrivals view's region leaf param: the selected region key (`?region=fukuoka`); All regions stays out of the URL. */
+/**
+ * The Arrivals view's region leaf param: the selected region keys, comma
+ * separated (`?region=akihabara,fukuoka`); All regions stays out of the URL.
+ */
 export const ARRIVALS_REGION_PARAM = "region";
 
 /**
- * The validated `?region=` value, or null when absent or malformed. The bound
- * is the region key pattern the arrivals API route checks before p_region, so
- * a malformed link is ignored here rather than rejected there.
+ * The validated `?region=` keys, sorted and each once; empty when absent. A
+ * malformed key is dropped here rather than rejected by the API route, which
+ * checks the same pattern, and a single key (a link from before the filter
+ * took several regions) is a list of one.
  */
-export function parseRegionParam(value: string | null | undefined): string | null {
-  return parseRegionKey(value);
+export function parseRegionsParam(value: string | null | undefined): string[] {
+  return parseRegionKeyList(value);
+}
+
+/** The `?region=` value for a selection, or null for All regions. */
+export function formatRegionsParam(regions: readonly string[]): string | null {
+  return regions.length === 0 ? null : regions.join(",");
 }
 
 /**

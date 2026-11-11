@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 import { laterOf } from "@/lib/arrival-observed-at";
-import { REGION_RE } from "@/lib/arrival-region-key";
+import { MAX_REGION_KEYS, REGION_RE } from "@/lib/arrival-region-key";
 import { createClient } from "@/lib/supabase/server";
 
 const MAX_LIMIT = 100;
@@ -81,12 +81,25 @@ export async function GET(request: NextRequest) {
     return badRequest("since must be an RFC 3339 timestamp");
   }
 
-  // One region's posts (a key such as "fukuoka"). The argument is sent only
-  // when a region is asked for: a backend from before the region filter has no
-  // p_region, and every request without one must keep working against it.
-  const rawRegion = request.nextUrl.searchParams.get("region")?.trim() ?? "";
-  if (rawRegion && !REGION_RE.test(rawRegion)) {
-    return badRequest("region must be a region key");
+  // The posts of any of several regions: `regions=akihabara,fukuoka`, and the
+  // single `region=fukuoka` of links from before the filter took several,
+  // both sent as p_regions (never p_region). The argument is sent only when a
+  // region is asked for, so every request without one keeps working against a
+  // backend from before the region filter.
+  const regions = new Set<string>();
+  for (const name of ["regions", "region"]) {
+    const raw = request.nextUrl.searchParams.get(name)?.trim() ?? "";
+    if (!raw) continue;
+    for (const part of raw.split(",")) {
+      const key = part.trim();
+      if (!REGION_RE.test(key)) {
+        return badRequest(`${name} must be comma-separated region keys`);
+      }
+      regions.add(key);
+    }
+  }
+  if (regions.size > MAX_REGION_KEYS) {
+    return badRequest(`regions may name at most ${MAX_REGION_KEYS} regions`);
   }
 
   const { data, error } = await supabase.rpc("twitter_arrival_posts", {
@@ -95,7 +108,7 @@ export async function GET(request: NextRequest) {
     p_before_key: rawBeforeKey || null,
     p_limit: limit,
     p_since: rawSince || null,
-    ...(rawRegion ? { p_region: rawRegion } : {}),
+    ...(regions.size > 0 ? { p_regions: [...regions].sort() } : {}),
   });
   if (error) {
     const forbidden = error.code === "42501"
@@ -103,8 +116,8 @@ export async function GET(request: NextRequest) {
     if (forbidden) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    // The backend's refusal of an argument it understood (a malformed
-    // region); its message is written for the operator.
+    // The backend's refusal of an argument it understood (a malformed region
+    // or too many of them); its message is written for the operator.
     if (error.code === "22023") {
       return badRequest(error.message);
     }

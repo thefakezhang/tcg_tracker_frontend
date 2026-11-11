@@ -10,7 +10,7 @@
 //   /dashboard?view=customers            a standalone view, by ViewDef.slug
 //   /dashboard?view=arrivals&shop=alice  the Arrivals view, one shop's posts
 //   /dashboard?view=arrivals&since=7d    the Arrivals view, the last 7 days
-//   /dashboard?view=arrivals&region=fukuoka the Arrivals view, one region's posts
+//   /dashboard?view=arrivals&region=akihabara,fukuoka the Arrivals view, those regions' posts
 //   /dashboard?view=buybacks&shop=pdg    the Buybacks view, one source's buylist
 //   /dashboard?view=mercari&lane=psa     the Mercari leads feed, PSA lane
 //   /dashboard?view=mercari&feed=verified the Mercari verified deals
@@ -37,9 +37,11 @@ import {
   parseMercariFormatParam,
   parseMercariLaneParam,
   parseMercariSortParam,
-  parseRegionParam,
+  formatRegionsParam,
+  parseRegionsParam,
   parseShopParam,
   parseWindowParam,
+  searchString,
 } from "./url-params";
 import { viewBySentinel, viewBySlug } from "./views";
 
@@ -62,8 +64,8 @@ export interface DashboardUrlState {
   shop: string | null;
   /** Arrivals time window, only meaningful when the view is arrivals; the view keeps its default out of the URL. */
   since: ArrivalWindow | null;
-  /** Arrivals region key, only meaningful when the view is arrivals; All regions is null. */
-  region: string | null;
+  /** Arrivals region keys, sorted, only meaningful when the view is arrivals; All regions is empty. */
+  regions: readonly string[];
   /** Mercari feed (leads or verified), only meaningful when the view is mercari; the default stays out of the URL. */
   feed: MercariFeed | null;
   /** Mercari leads lane, only meaningful when the view is mercari. */
@@ -96,7 +98,7 @@ export function parseDashboardSearch(search: string): DashboardUrlState {
       shop: arrivals ? parseShopParam(p.get(ARRIVALS_SHOP_PARAM))
         : buybacks ? parseShopParam(p.get(BUYBACKS_SHOP_PARAM)) : null,
       since: arrivals ? parseWindowParam(p.get(ARRIVALS_WINDOW_PARAM)) : null,
-      region: arrivals ? parseRegionParam(p.get(ARRIVALS_REGION_PARAM)) : null,
+      regions: arrivals ? parseRegionsParam(p.get(ARRIVALS_REGION_PARAM)) : [],
       feed: mercari ? parseMercariFeedParam(p.get(MERCARI_FEED_PARAM)) : null,
       lane: mercari ? parseMercariLaneParam(p.get(MERCARI_LANE_PARAM)) : null,
       format: mercari ? parseMercariFormatParam(p.get(MERCARI_FORMAT_PARAM)) : null,
@@ -104,12 +106,12 @@ export function parseDashboardSearch(search: string): DashboardUrlState {
     };
   }
   if (Number.isInteger(trip) && trip > 0) {
-    return { game, activeTripId: trip, activeBuylistId: null, tab: tab && /^[a-z-]+$/.test(tab) ? tab : null, shop: null, since: null, region: null, ...NO_MERCARI };
+    return { game, activeTripId: trip, activeBuylistId: null, tab: tab && /^[a-z-]+$/.test(tab) ? tab : null, shop: null, since: null, regions: [], ...NO_MERCARI };
   }
   if (Number.isInteger(buylist) && buylist > 0) {
-    return { game, activeTripId: null, activeBuylistId: buylist, tab: null, shop: null, since: null, region: null, ...NO_MERCARI };
+    return { game, activeTripId: null, activeBuylistId: buylist, tab: null, shop: null, since: null, regions: [], ...NO_MERCARI };
   }
-  return { game, activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, region: null, ...NO_MERCARI };
+  return { game, activeTripId: null, activeBuylistId: null, tab: null, shop: null, since: null, regions: [], ...NO_MERCARI };
 }
 
 export function buildDashboardSearch(state: DashboardUrlState): string {
@@ -122,7 +124,8 @@ export function buildDashboardSearch(state: DashboardUrlState): string {
       if (view.slug === ARRIVALS_VIEW_SLUG) {
         if (state.shop) p.set(ARRIVALS_SHOP_PARAM, state.shop);
         if (state.since) p.set(ARRIVALS_WINDOW_PARAM, state.since);
-        if (state.region) p.set(ARRIVALS_REGION_PARAM, state.region);
+        const regions = formatRegionsParam(state.regions);
+        if (regions) p.set(ARRIVALS_REGION_PARAM, regions);
       }
       if (view.slug === BUYBACKS_VIEW_SLUG && state.shop) p.set(BUYBACKS_SHOP_PARAM, state.shop);
       if (view.slug === MERCARI_VIEW_SLUG) {
@@ -138,6 +141,6 @@ export function buildDashboardSearch(state: DashboardUrlState): string {
   } else if (state.activeBuylistId != null) {
     p.set("buylist", String(state.activeBuylistId));
   }
-  const s = p.toString();
+  const s = searchString(p);
   return s ? `?${s}` : "";
 }

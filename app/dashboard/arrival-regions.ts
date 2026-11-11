@@ -58,12 +58,30 @@ export type ArrivalRegion = {
   last_fulfilled: ReadOnceFulfilment | null;
 };
 
+/**
+ * What the source-run ledger answered when a read once was asked for
+ * (migration 000642): "queued" (a read job run was queued for it) and
+ * "already_running" (one is queued or running) mean the read job is reading
+ * the region; "remote_unsupported" (no host runs the job yet),
+ * "manual_unsupported", "unknown_job" and "error" (with its `sqlstate`) mean
+ * it is not, and the hourly run is the only reader. The read-once answer
+ * carries it; the status itself does not.
+ */
+export type ReadRun = {
+  verdict: string;
+  job: string | null;
+  mode: string | null;
+  sqlstate: string | null;
+};
+
 export type ArrivalRegionStatus = {
   /** Today in Asia/Tokyo, as the backend sees it. */
   today: string;
   focus_source: "operator" | "default";
   published_at: string | null;
   regions: ArrivalRegion[];
+  /** The ledger's answer to a read-once request; null on any other status, and before migration 000642. */
+  read_run: ReadRun | null;
 };
 
 export type RegionAction =
@@ -159,6 +177,16 @@ function parseRegion(value: unknown, index: number): ArrivalRegion {
   };
 }
 
+// Read leniently: the answer only says how a read is going, so a shape this
+// tab does not know reads as no answer rather than failing the status.
+function parseReadRun(value: unknown): ReadRun | null {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.verdict !== "string" || row.verdict === "") return null;
+  const optional = (field: unknown) => (typeof field === "string" ? field : null);
+  return { verdict: row.verdict, job: optional(row.job), mode: optional(row.mode), sqlstate: optional(row.sqlstate) };
+}
+
 /** The RPC's status, validated; regions in the roster's order. */
 export function parseRegionStatus(value: unknown): ArrivalRegionStatus {
   const body = record(value, "status");
@@ -173,6 +201,7 @@ export function parseRegionStatus(value: unknown): ArrivalRegionStatus {
     focus_source: body.focus_source,
     published_at: timestamp(body.published_at, "published_at"),
     regions,
+    read_run: parseReadRun(body.read_run),
   };
 }
 
@@ -185,6 +214,56 @@ export function addTokyoDays(date: string, days: number): string {
 
 /** The latest "focus until" date the backend accepts: a year ahead. */
 export const FOCUS_UNTIL_MAX_DAYS = 366;
+
+/**
+ * How the run reads a region, as the region filter and the panel say it:
+ * "hourly" while it is in focus; "reading" while a read-once request is
+ * pending (its posts are still arriving); "queued" when a pending request
+ * waits outside shop hours with no read job reading it, so the next hourly
+ * run in shop hours is the one that reads it; "nolist" when it has no
+ * readable list, so a read cannot be asked for; and "idle" otherwise, where
+ * selecting it asks for a read.
+ */
+export type RegionReadState = "hourly" | "reading" | "queued" | "nolist" | "idle";
+
+/** The ledger verdicts under which the read job is reading the region. */
+export const READ_JOB_VERDICTS: readonly string[] = ["queued", "already_running"];
+
+/** True when the last read-once answer says the read job is reading the region; no answer says it is not. */
+export function readJobReading(readRun: ReadRun | null | undefined): boolean {
+  return readRun != null && READ_JOB_VERDICTS.includes(readRun.verdict);
+}
+
+/** True from 11:00 through 20:00 Asia/Tokyo, the hours the hourly run reads in. */
+export function withinShopHours(now: number): boolean {
+  const tokyo = new Date(now + 9 * 60 * 60 * 1000);
+  const minute = tokyo.getUTCHours() * 60 + tokyo.getUTCMinutes();
+  return minute >= 11 * 60 && minute <= 20 * 60;
+}
+
+/**
+ * `readRun` is the newest answer to a read-once request for the region this
+ * session (null or absent when there is none, as before migration 000642).
+ * A pending request is being read whenever the read job has it, and in shop
+ * hours, when the hourly run reads it anyway; outside shop hours without the
+ * read job it waits for the next hourly run.
+ */
+export function regionReadState(
+  region: ArrivalRegion,
+  now: number,
+  readRun: ReadRun | null | undefined = null,
+): RegionReadState {
+  if (region.in_focus) return "hourly";
+  if (region.pending_request !== null) {
+    return readJobReading(readRun) || withinShopHours(now) ? "reading" : "queued";
+  }
+  return region.readable_lists > 0 ? "idle" : "nolist";
+}
+
+/** True when selecting the region should ask for a read once: not read hourly, nothing pending, a list to read. */
+export function needsReadOnce(region: ArrivalRegion): boolean {
+  return !region.in_focus && region.pending_request === null && region.readable_lists > 0;
+}
 
 /** The regions in focus, in order. */
 export function focusRegions(status: ArrivalRegionStatus): ArrivalRegion[] {

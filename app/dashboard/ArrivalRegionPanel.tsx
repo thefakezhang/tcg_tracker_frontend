@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { CalendarClock, ChevronDown, LoaderCircle, MapPin, RefreshCw } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -12,22 +12,14 @@ import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import {
   type ArrivalRegion,
-  type ArrivalRegionStatus,
   FOCUS_UNTIL_MAX_DAYS,
+  type ReadRun,
   type RegionAction,
-  type RegionActionSender,
-  type RegionStatusLoader,
   addTokyoDays,
   focusRegions,
-  loadRegionStatus,
-  sendRegionAction,
+  regionReadState,
 } from "./arrival-regions";
-
-type PanelState =
-  | { status: "loading" }
-  | { status: "ready"; data: ArrivalRegionStatus }
-  | { status: "unavailable" }
-  | { status: "error"; error: Error };
+import type { ArrivalRegionStatusController } from "./use-arrival-region-status";
 
 type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
@@ -55,6 +47,8 @@ const STATUS_CLASS: Record<ArrivalRegion["focus_kind"], string> = {
 
 function RegionRow({
   region,
+  readRun,
+  now,
   today,
   busy,
   editing,
@@ -65,6 +59,9 @@ function RegionRow({
   date,
 }: {
   region: ArrivalRegion;
+  /** The newest read-once answer for the region this session, if any. */
+  readRun: ReadRun | null | undefined;
+  now: number;
   today: string;
   busy: boolean;
   editing: boolean;
@@ -118,7 +115,9 @@ function RegionRow({
       </p>
       {pending ? (
         <p className="mt-1 text-xs text-sky-800 dark:text-sky-200" data-testid="arrival-region-pending">
-          {t("arrivals.regions.pending", { when: when(pending.requested_at) })}
+          {regionReadState(region, now, readRun) === "queued"
+            ? t("arrivals.regions.pendingQueued", { when: when(pending.requested_at) })
+            : t("arrivals.regions.pendingReading", { when: when(pending.requested_at) })}
         </p>
       ) : region.last_fulfilled ? (
         <p className="mt-1 text-xs text-muted-foreground" data-testid="arrival-region-fulfilled">
@@ -217,60 +216,29 @@ function RegionRow({
   );
 }
 
+// The status is the tab's (useArrivalRegionStatus), shared with the feed's
+// region filter, so a read the filter asks for shows here as pending at once.
 export default function ArrivalRegionPanel({
-  loader = loadRegionStatus,
-  sender = sendRegionAction,
+  regions,
   now = Date.now,
-  onStatus,
 }: {
-  loader?: RegionStatusLoader;
-  sender?: RegionActionSender;
+  regions: ArrivalRegionStatusController;
   now?: () => number;
-  /**
-   * Hears every status the panel shows, the loaded one and each change's, so
-   * the feed's region filter orders its chips the way this panel lists them
-   * without loading the status a second time.
-   */
-  onStatus?: (status: ArrivalRegionStatus) => void;
 }) {
   const { t, language } = useTranslation();
-  const [state, setState] = useState<PanelState>({ status: "loading" });
+  const { state } = regions;
   const [open, setOpen] = useState(false);
   // The region whose change is in flight ("" for the whole-focus reset).
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ region: string; message: string } | null>(null);
-  const generation = useRef(0);
   const locale = language === "ja" ? "ja-JP" : "en-US";
 
-  const load = useCallback(async () => {
-    const current = ++generation.current;
-    setState({ status: "loading" });
-    try {
-      const data = await loader();
-      if (generation.current !== current) return;
-      setState(data === null ? { status: "unavailable" } : { status: "ready", data });
-    } catch (reason) {
-      if (generation.current !== current) return;
-      setState({ status: "error", error: asError(reason) });
-    }
-  }, [loader]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useEffect(() => {
-    if (state.status === "ready") onStatus?.(state.data);
-  }, [state, onStatus]);
-
   const act = async (key: string, action: RegionAction) => {
-    generation.current += 1;
     setBusy(key);
     setFailure(null);
     try {
-      const data = await sender(action);
-      setState({ status: "ready", data });
+      await regions.send(action);
       setEditing(null);
     } catch (reason) {
       setFailure({ region: key, message: asError(reason).message });
@@ -338,7 +306,7 @@ export default function ArrivalRegionPanel({
           <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm" role="alert">
             <p className="font-medium">{t("arrivals.regions.errorTitle")}</p>
             <p className="mt-0.5 break-words text-xs text-muted-foreground">{state.error.message}</p>
-            <Button type="button" variant="outline" className={cn("mt-2", TARGET)} onClick={() => void load()}>
+            <Button type="button" variant="outline" className={cn("mt-2", TARGET)} onClick={() => void regions.reload()}>
               <RefreshCw aria-hidden="true" />
               {t("arrivals.retry")}
             </Button>
@@ -356,6 +324,8 @@ export default function ArrivalRegionPanel({
                 <RegionRow
                   key={region.region}
                   region={region}
+                  readRun={regions.readRuns.get(region.region)}
+                  now={now()}
                   today={state.data.today}
                   busy={busy === region.region}
                   editing={editing === region.region}

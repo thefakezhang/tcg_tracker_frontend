@@ -107,13 +107,14 @@ export function sourcesCarryRegions(sources: readonly ArrivalSource[]): boolean 
   return sources.some((source) => source.region !== undefined);
 }
 
-/** Whether `buyerHandle` is listed in the summary under `region`; an unlisted account is in no region. */
-export function accountInRegion(
+/** Whether `buyerHandle` is listed in the summary under one of `regions`; an unlisted account is in no region. */
+export function accountInRegions(
   sources: readonly ArrivalSource[],
   buyerHandle: string,
-  region: string,
+  regions: ReadonlySet<string>,
 ): boolean {
-  return sources.some((source) => source.buyer_handle === buyerHandle && source.region === region);
+  return sources.some((source) => source.buyer_handle === buyerHandle
+    && source.region != null && regions.has(source.region));
 }
 
 /**
