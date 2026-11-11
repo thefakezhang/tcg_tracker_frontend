@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 import { laterOf } from "@/lib/arrival-observed-at";
+import { REGION_RE } from "@/lib/arrival-region-key";
 import { createClient } from "@/lib/supabase/server";
 
 const MAX_LIMIT = 100;
@@ -80,20 +81,34 @@ export async function GET(request: NextRequest) {
     return badRequest("since must be an RFC 3339 timestamp");
   }
 
+  // One region's posts (a key such as "fukuoka"). The argument is sent only
+  // when a region is asked for: a backend from before the region filter has no
+  // p_region, and every request without one must keep working against it.
+  const rawRegion = request.nextUrl.searchParams.get("region")?.trim() ?? "";
+  if (rawRegion && !REGION_RE.test(rawRegion)) {
+    return badRequest("region must be a region key");
+  }
+
   const { data, error } = await supabase.rpc("twitter_arrival_posts", {
     p_buyer_handle: rawBuyer || null,
     p_before: rawBefore || null,
     p_before_key: rawBeforeKey || null,
     p_limit: limit,
     p_since: rawSince || null,
+    ...(rawRegion ? { p_region: rawRegion } : {}),
   });
   if (error) {
     const forbidden = error.code === "42501"
       || error.message.includes("requires an administrator");
-    return NextResponse.json(
-      { error: forbidden ? "Forbidden" : "Arrival posts are unavailable" },
-      { status: forbidden ? 403 : 500 },
-    );
+    if (forbidden) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    // The backend's refusal of an argument it understood (a malformed
+    // region); its message is written for the operator.
+    if (error.code === "22023") {
+      return badRequest(error.message);
+    }
+    return NextResponse.json({ error: "Arrival posts are unavailable" }, { status: 500 });
   }
 
   const posts = data ?? [];

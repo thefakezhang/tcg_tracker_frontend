@@ -4,6 +4,8 @@ import {
   COLLAPSED_ACCOUNTS_KEY,
   GROUP_BY_ACCOUNT_KEY,
   type ArrivalAccountPost,
+  type ArrivalSource,
+  accountInRegion,
   accountLabel,
   deriveArrivalSources,
   groupPostsByAccount,
@@ -12,7 +14,9 @@ import {
   postObservedAt,
   readCollapsedAccounts,
   readGroupByAccount,
+  regionCounts,
   sortArrivalSources,
+  sourcesCarryRegions,
   writeCollapsedAccounts,
   writeGroupByAccount,
 } from "./arrival-accounts";
@@ -63,6 +67,74 @@ describe("parseArrivalSources", () => {
     expect(() => parseArrivalSources([{ ...row, post_count: -1 }])).toThrow("post_count");
     expect(() => parseArrivalSources([{ ...row, recent_count: 1.5 }])).toThrow("recent_count");
     expect(() => parseArrivalSources([{ ...row, latest_post_at: "yesterday" }])).toThrow("timestamp");
+    expect(() => parseArrivalSources([{ ...row, region: "Fukuoka" }])).toThrow("region");
+    expect(() => parseArrivalSources([{ ...row, region: "fuku-oka" }])).toThrow("region");
+    expect(() => parseArrivalSources([{ ...row, region: "" }])).toThrow("region");
+    expect(() => parseArrivalSources([{ ...row, region: 7 }])).toThrow("region");
+  });
+
+  it("keeps each account's region, null for a shop not mapped yet, and no key at all from a backend without regions", () => {
+    const row = { buyer_handle: "alice", twitter_handle: "alice_shop", post_count: 1, recent_count: 0, latest_post_at: null };
+    const [mapped, unmapped] = parseArrivalSources([
+      { ...row, region: "fukuoka" },
+      { ...row, buyer_handle: "bob", region: null },
+    ]);
+    expect(mapped.region).toBe("fukuoka");
+    expect(unmapped.region).toBeNull();
+    expect("region" in unmapped).toBe(true);
+    const [legacy] = parseArrivalSources([row]);
+    expect("region" in legacy).toBe(false);
+    expect(legacy).toEqual({ ...row });
+  });
+});
+
+describe("region chips", () => {
+  const source = (buyer: string, region: string | null | undefined, recent: number, posts: number): ArrivalSource => ({
+    buyer_handle: buyer,
+    twitter_handle: `${buyer}_shop`,
+    post_count: posts,
+    recent_count: recent,
+    latest_post_at: null,
+    ...(region === undefined ? {} : { region }),
+  });
+  const sources = [
+    source("alice", "akihabara", 3, 42),
+    source("bob", "fukuoka", 0, 7),
+    source("carol", "yokohama", 2, 5),
+    source("dave", null, 1, 1),
+    source("erin", "akihabara", 4, 10),
+  ];
+
+  it("tells a summary with regions from one without, even when every shop is unmapped", () => {
+    expect(sourcesCarryRegions(sources)).toBe(true);
+    expect(sourcesCarryRegions([source("dave", null, 1, 1)])).toBe(true);
+    expect(sourcesCarryRegions([source("alice", undefined, 3, 42)])).toBe(false);
+    expect(sourcesCarryRegions([])).toBe(false);
+  });
+
+  it("places an account in its summary region only", () => {
+    expect(accountInRegion(sources, "alice", "akihabara")).toBe(true);
+    expect(accountInRegion(sources, "alice", "fukuoka")).toBe(false);
+    expect(accountInRegion(sources, "dave", "akihabara")).toBe(false);
+    expect(accountInRegion(sources, "zed", "akihabara")).toBe(false);
+  });
+
+  it("sums each region's accounts, leaves unmapped shops to All, and orders by key without a roster", () => {
+    expect(regionCounts(sources)).toEqual([
+      { region: "akihabara", accounts: 2, recent_count: 7, post_count: 52 },
+      { region: "fukuoka", accounts: 1, recent_count: 0, post_count: 7 },
+      { region: "yokohama", accounts: 1, recent_count: 2, post_count: 5 },
+    ]);
+    expect(regionCounts([source("dave", null, 1, 1)])).toEqual([]);
+    expect(regionCounts([])).toEqual([]);
+  });
+
+  it("follows the roster's order, with regions it does not list after it by key", () => {
+    const roster = ["akihabara", "ikebukuro", "yokohama", "nagoya", "fukuoka"];
+    expect(regionCounts(sources, roster).map((chip) => chip.region)).toEqual(["akihabara", "yokohama", "fukuoka"]);
+    const unlisted = [...sources, source("frank", "sendai", 1, 1), source("gina", "osaka", 1, 1)];
+    expect(regionCounts(unlisted, ["yokohama", "fukuoka"]).map((chip) => chip.region))
+      .toEqual(["yokohama", "fukuoka", "akihabara", "osaka", "sendai"]);
   });
 });
 

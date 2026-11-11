@@ -49,10 +49,11 @@ function status(regions: ArrivalRegion[], focusSource: "default" | "operator" = 
 function panel(
   loader: () => Promise<ArrivalRegionStatus | null>,
   sender = vi.fn(async (_action: RegionAction) => status([AKIHABARA, SAPPORO, OSAKA])),
+  onStatus?: (status: ArrivalRegionStatus) => void,
 ) {
   render(
     <LanguageProvider>
-      <ArrivalRegionPanel loader={loader} sender={sender} now={() => NOW} />
+      <ArrivalRegionPanel loader={loader} sender={sender} now={() => NOW} onStatus={onStatus} />
     </LanguageProvider>,
   );
   return sender;
@@ -118,6 +119,29 @@ describe("ArrivalRegionPanel", () => {
       "Read once requested 1 minute ago; the next run in shop hours reads it",
     );
     expect(screen.getByTestId("arrival-regions-summary").textContent).toContain("1 read-once request pending");
+  });
+
+  it("hands every status it shows to the feed's region filter, the loaded one and each change's", async () => {
+    const onStatus = vi.fn<(status: ArrivalRegionStatus) => void>();
+    const changed = status([AKIHABARA, { ...OSAKA, in_focus: true, focus_kind: "operator" }], "operator");
+    panel(async () => status([AKIHABARA, SAPPORO, OSAKA]), vi.fn(async () => changed), onStatus);
+
+    await waitFor(() => {
+      expect(onStatus).toHaveBeenCalledTimes(1);
+    });
+    expect(onStatus.mock.calls[0][0].regions.map((entry) => entry.region)).toEqual(["akihabara", "sapporo", "osaka"]);
+    await openPanel();
+    fireEvent.click(row("osaka").getByRole("button", { name: "Add focus" }));
+    await waitFor(() => {
+      expect(onStatus).toHaveBeenLastCalledWith(changed);
+    });
+  });
+
+  it("hears nothing while the backend has no region controls", async () => {
+    const onStatus = vi.fn<(status: ArrivalRegionStatus) => void>();
+    panel(async () => null, undefined, onStatus);
+    expect(await screen.findByText(/Region controls appear once the backend migration is applied/)).toBeTruthy();
+    expect(onStatus).not.toHaveBeenCalled();
   });
 
   it("shows when a region was last read once", async () => {

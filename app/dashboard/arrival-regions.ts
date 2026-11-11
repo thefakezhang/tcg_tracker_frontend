@@ -10,6 +10,7 @@
  * `/api/twitter-arrivals/regions`, which calls the administrator-only RPCs
  * with the caller's session, and every change answers with the new status.
  */
+import { REGION_RE } from "@/lib/arrival-region-key";
 
 /** A refused region request; ``status`` is the HTTP status the route answered. */
 export class ArrivalRegionRequestError extends Error {
@@ -75,7 +76,6 @@ export type RegionAction =
 export type RegionStatusLoader = () => Promise<ArrivalRegionStatus | null>;
 export type RegionActionSender = (action: RegionAction) => Promise<ArrivalRegionStatus>;
 
-export const REGION_RE = /^[a-z][a-z0-9_]{0,39}$/;
 export const TOKYO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FOCUS_KINDS: readonly FocusKind[] = ["default", "operator", "until", "off"];
 

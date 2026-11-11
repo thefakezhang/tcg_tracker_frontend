@@ -5,7 +5,10 @@ import { createClient } from "@/lib/supabase/server";
 // Per-account summary of the Twitter arrival posts, for the account panel of
 // the Arrivals tab. Same boundary as ../route.ts: the caller's session goes to
 // the administrator-only backend RPC, nothing is read directly, no service key
-// is involved, and the answer is never cached.
+// is involved, and the answer is never cached. The rows go to the browser as
+// the RPC returns them, including each account's `region` (a region key, or
+// null while the shop is not mapped); a backend from before the region filter
+// sends no `region`, and the browser hides the region chips for it.
 
 const UNAVAILABLE = "Arrival accounts are unavailable";
 

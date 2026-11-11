@@ -221,10 +221,17 @@ export default function ArrivalRegionPanel({
   loader = loadRegionStatus,
   sender = sendRegionAction,
   now = Date.now,
+  onStatus,
 }: {
   loader?: RegionStatusLoader;
   sender?: RegionActionSender;
   now?: () => number;
+  /**
+   * Hears every status the panel shows, the loaded one and each change's, so
+   * the feed's region filter orders its chips the way this panel lists them
+   * without loading the status a second time.
+   */
+  onStatus?: (status: ArrivalRegionStatus) => void;
 }) {
   const { t, language } = useTranslation();
   const [state, setState] = useState<PanelState>({ status: "loading" });
@@ -252,6 +259,10 @@ export default function ArrivalRegionPanel({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (state.status === "ready") onStatus?.(state.data);
+  }, [state, onStatus]);
 
   const act = async (key: string, action: RegionAction) => {
     generation.current += 1;

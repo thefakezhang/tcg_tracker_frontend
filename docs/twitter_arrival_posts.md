@@ -21,6 +21,7 @@ Nothing is deleted, because the posts are evidence, but the tab shows a time win
 - Show every post an account made in the window, not only the ones that fell in the first page, and keep one prolific shop from pushing the other accounts off the page.
 - Show the shop's own words: the post's original caption, as plain text.
 - Make one shop's arrivals linkable: `/dashboard?view=arrivals&shop=<buyer_handle>&since=<window>` restores the selection and the window.
+- Narrow the feed and the account list to one region (Tokyo neighbourhoods, Fukuoka, and any other region the run reads), linkable as `?region=<key>`, since the feed mixes cities once more than one region is in focus.
 - Make the collection cadence explicit: the backend checks the shops hourly during shop hours, 11:00-20:00 JST.
 - Keep the source one click away, so the operator judges the post itself.
 - Keep working before the backend account summary is applied, by deriving the account list from the posts already loaded.
@@ -38,8 +39,9 @@ Nothing is deleted, because the posts are evidence, but the tab shows a time win
 
 The dashboard view `ArrivalPostsView` (slug `arrivals`, sidebar group Catalog) loads two private no-store endpoints.
 
-- `/api/twitter-arrivals` returns the posts: the caller's session goes to backend RPC `twitter_arrival_posts` (migration 000580, re-posts and `p_since` since 000603, `tweet_text` since 000605) with the optional `buyer_handle` filter, the composite cursor, and the optional `since` window start for `p_since`.
-- `/api/twitter-arrivals/sources` returns the account summary: the caller's session goes to backend RPC `twitter_arrival_sources(p_since timestamptz default null)`, one row per account with `buyer_handle`, `twitter_handle`, `post_count`, `recent_count` (posts since `p_since`, default the last 24 hours) and `latest_post_at`.
+- `/api/twitter-arrivals` returns the posts: the caller's session goes to backend RPC `twitter_arrival_posts` (migration 000580, re-posts and `p_since` since 000603, `tweet_text` since 000605, `p_region` and the row's `region` with the region filter) with the optional `buyer_handle` filter, the composite cursor, the optional `since` window start for `p_since`, and the optional `region` key for `p_region`.
+  The route sends `p_region` only when a region is asked for, so every other request keeps working against a backend from before the region filter.
+- `/api/twitter-arrivals/sources` returns the account summary: the caller's session goes to backend RPC `twitter_arrival_sources(p_since timestamptz default null)`, one row per account with `buyer_handle`, `twitter_handle`, `post_count`, `recent_count` (posts since `p_since`, default the last 24 hours), `latest_post_at` and, with the region filter, `region` (the account's region key, or null while the shop is not mapped).
   The route accepts an optional `since` timestamp for `p_since`; the view sends the window's cutoff, and All omits it so the backend default applies.
 
 - `/api/twitter-arrivals/regions` is the region focus (backend #2342, migration 000622): GET passes the caller's session to `twitter_arrivals_focus_status()`, and POST takes one change, `{action: "set_focus", region, until}` (`until` a `YYYY-MM-DD` Tokyo date or null), `{action: "clear_focus", region}`, `{action: "reset_focus"}` or `{action: "request_read", region}`, calls `twitter_arrivals_set_focus`, `twitter_arrivals_clear_focus` (null region for the reset) or `twitter_arrivals_request_read`, and answers with the status after the change.
@@ -66,6 +68,27 @@ Region names are translated (`arrivals.regionName.<region>`); an unknown region 
 While the RPCs are absent the route answers 501 with `reason: "rpc-missing"`, and the panel says the controls appear once the backend migration is applied and that the run reads the default focus until then; before the first run after the migration it says the run has not published its regions yet.
 The data logic is `app/dashboard/arrival-regions.ts` (the status parser, the Tokyo date arithmetic, and the route client).
 
+### Region filter
+
+A row of chips between the region panel and the feed narrows both the feed and the account list to one region.
+It offers All regions and then one chip per region that has at least one account in the account summary, in the region panel's order (the focus status's `position`, which the panel hands up through its `onStatus` callback, so the status is loaded once); regions the status does not list follow by key, and the chips fall back to key order while the status is not loaded.
+Chips are labelled the way the panel labels regions (`regionName`, `arrivals.regionName.<region>`).
+Each chip shows the posts its accounts made in the window, the sum of their `recent_count`, with the window and the total `post_count` in its tooltip and accessible name; All regions sums every account, shops without a region included, so it equals the account list's All row, and a selected region's chip equals that row once the list is narrowed to it.
+The chips share the window chips' shape (`secondary` when pressed, `outline` otherwise, `aria-pressed`, 44 px on a phone and compact from `sm` up); on a phone the row scrolls sideways instead of wrapping, so a long roster cannot push the feed down the screen.
+
+Selecting a region requests `region=<key>` from the posts route, which passes it on as `p_region`, and reloads the feed from the first page; the window and paging are unchanged.
+The account list keeps only the region's accounts, its All row names the region on its second line, and the feed header reads "All accounts in Fukuoka".
+A selected shop outside the newly selected region is cleared in the same step, so the feed never asks for a shop and a region that exclude each other; All regions keeps the shop.
+A link naming both a region and a shop outside it drops the shop once the summary says where the shop is.
+
+The region comes from the summary: `parseArrivalSources` keeps a row's `region` only when the backend sends the key, and the filter shows only while some row of the latest loaded summary carries it.
+A backend from before the region filter sends no `region` key, so the chips are absent, no request carries a region, and a `?region=` link is dropped as soon as the summary loads (the derived fallback, when the summary RPC itself is absent, is treated the same way).
+The latest summary with regions is kept while the next one loads, so the chips and the narrowed list hold still through a window change or Refresh.
+A linked region with no account in the summary still shows as the pressed chip with a count of 0, as a linked shop does in the account list.
+The pure logic (`sourcesCarryRegions`, `accountInRegion`, `regionCounts`) is in `app/dashboard/arrival-accounts.ts`.
+
+Non-goals: the region filter does not change which regions the hourly run reads (that is the region panel), it offers one region at a time, and it never infers a region on the frontend; an account with no region key from the backend appears only under All regions.
+
 ### Account identity
 
 Most enrolled shops have no entry in `lib/source-labels.ts`, so `@twitter_handle` is the primary identity everywhere (panel, group headers, cards) and the curated label is a secondary line shown only when one exists (`accountLabel` in `app/dashboard/arrival-accounts.ts`).
@@ -81,8 +104,9 @@ Any other panel failure stays non-fatal: the posts feed renders and the panel sh
 ### Selection and URL state
 
 The selected shop is a leaf query param, `?shop=<buyer_handle>`, owned by the view through `app/dashboard/url-params.ts` (`replaceState`, no history entry), exactly like a trip's `?tab=`.
-`app/dashboard/url-state.ts` reads it only when `view=arrivals` and validates it against the same bound the API route puts on `buyer_handle` (1-100 visible characters); `UrlStateSync` carries it (and `?since=`) across a game switch and drops both when the view changes.
-Selecting an account requests `buyer_handle=<shop>` server-side and resets the cursor; the view re-reads both params on `popstate`.
+`app/dashboard/url-state.ts` reads it only when `view=arrivals` and validates it against the same bound the API route puts on `buyer_handle` (1-100 visible characters); `UrlStateSync` carries it (and `?since=` and `?region=`) across a game switch and drops them when the view changes.
+Selecting an account requests `buyer_handle=<shop>` server-side and resets the cursor; the view re-reads its params on `popstate`.
+The selected region is a leaf param the same way, `?region=<key>` (`ARRIVALS_REGION_PARAM` and `parseRegionParam` in `url-params.ts`), validated against the region key pattern the API route checks (`lib/arrival-region-key.ts`, `^[a-z][a-z0-9_]{0,39}$`); All regions stays out of the URL.
 
 ### Time window
 
@@ -135,6 +159,7 @@ Open Arrivals from the dashboard navigation.
 The feed shows the last 48 hours; pick 24 h, 7 days or All in the header to narrow or widen it, and the choice is remembered.
 The All view loads every post of the window grouped by account, the first page at once and the rest behind a loading status; each account is a scrolling panel, so scroll inside it for that shop's posts, collapse it to skip it, or turn Group by account off for one flat list.
 Select an account in the panel to see only its posts; the URL updates so the view can be shared or bookmarked, and Show all accounts returns to the full feed.
+Pick a region chip (Fukuoka, say) above the feed to see only that region's posts and accounts; All regions returns to every region.
 Load more posts appends the next composite-cursor page in All, or continues past the page bound in a window.
 If a later request fails, the loaded posts and cursor remain visible.
 An expired session offers a sign-in link in a new tab and a Continue after signing in action that retries the same cursor.
@@ -148,15 +173,16 @@ Media use `object-fit: contain` inside bounded previews, through the authenticat
 
 ## Input and response boundaries
 
-The posts route accepts an optional shop id up to 100 visible characters, a page limit from 1 through 100, an optional composite cursor whose timestamp and key must be supplied together, and an optional `since` RFC 3339 timestamp for `p_since`; malformed input returns 400 before the RPC call.
+The posts route accepts an optional shop id up to 100 visible characters, a page limit from 1 through 100, an optional composite cursor whose timestamp and key must be supplied together, an optional `since` RFC 3339 timestamp for `p_since`, and an optional `region` key (`^[a-z][a-z0-9_]{0,39}$`) for `p_region`; malformed input returns 400 before the RPC call, and the backend's own refusal of an argument (`22023`) returns 400 with its message.
 The sources route accepts an optional `since` RFC 3339 timestamp and returns 501 with `reason: "rpc-missing"` while the RPC is absent.
 Both return 401 without a session, map the backend administrator refusal to 403, and send `Cache-Control: private, no-store` on success.
 The browser parser requires post identity, source identity, timestamps, source URLs, at least one media item, SHA-256 digests, and `unverified: true`, and rejects the response if item identity, JPY price, price side, grade, or condition appears.
 It accepts the optional re-post fields when they are well formed (a parseable or null `last_boosted_at`, a non-negative integer `boost_count`, a non-empty or null `via_retweet_of`) and rejects a malformed one; the posts route likewise fails closed on an unreadable `last_boosted_at` in a cursor row.
 It accepts the optional caption `tweet_text` when it is a string or null (absent or blank reads as none) and rejects any other type.
-The sources parser requires both handles, non-negative integer counts and a parseable or null timestamp.
+It accepts the optional `region` when it is a region key or null (absent reads as null) and rejects anything else.
+The sources parser requires both handles, non-negative integer counts and a parseable or null timestamp, and accepts an optional `region` that is a region key or null, keeping the key absent when the backend sends none.
 The regions route accepts a region key (`^[a-z][a-z0-9_]{0,39}$`), one of the four actions, and for `set_focus` a `YYYY-MM-DD` date or null; anything else returns 400 before the RPC call, the backend's own refusals (`22023`: an unknown region, a date out of range, a region already in focus or with no readable list) return 400 with the backend's message, and the absent RPCs return 501.
 The regions parser requires a Tokyo date for `today`, a known focus source and focus kind, non-negative integer counts with readable lists no more than lists, `YYYY-MM-DD` or null dates, and a request id and time in a pending or fulfilled request.
 
 `app/api/twitter-arrivals/regions/route.test.ts`, `app/dashboard/arrival-regions.test.ts` and `app/dashboard/ArrivalRegionPanel.test.tsx` cover the region route's mapping and refusals, the status parser and the panel (statuses, last read, read once and its pending state, focus until with its date bounds, remove, keep, reset, refusals, the absent migration, the unpublished state, retry, Japanese, and the 44 px targets).
-`app/api/twitter-arrivals/route.test.ts`, `app/api/twitter-arrivals/sources/route.test.ts`, `app/dashboard/arrival-accounts.test.ts`, `app/dashboard/arrival-window.test.ts`, `app/dashboard/arrival-text.test.ts`, `app/dashboard/url-state.test.ts` and `app/dashboard/ArrivalPostsView.test.tsx` cover these boundaries and the loading, empty, retry, expired-session, forbidden, pagination, deduplication, account list, derived fallback, URL selection, grouping and time-window states (cutoff filtering, the stop-paging rule, paging the window to exhaustion with the page bound and its loading status, the window's empty state with Show all, URL and localStorage round trips), the per-account scroll panel, and the caption's plain-text rendering, entity decoding, t.co links and clamp toggle.
+`app/api/twitter-arrivals/route.test.ts`, `app/api/twitter-arrivals/sources/route.test.ts`, `app/dashboard/arrival-accounts.test.ts`, `app/dashboard/arrival-window.test.ts`, `app/dashboard/arrival-text.test.ts`, `app/dashboard/url-state.test.ts` and `app/dashboard/ArrivalPostsView.test.tsx` cover these boundaries and the loading, empty, retry, expired-session, forbidden, pagination, deduplication, account list, derived fallback, URL selection, grouping and time-window states (cutoff filtering, the stop-paging rule, paging the window to exhaustion with the page bound and its loading status, the window's empty state with Show all, URL and localStorage round trips), the per-account scroll panel, the caption's plain-text rendering, entity decoding, t.co links and clamp toggle, and the region filter (no chips and no region sent for a backend without regions, a stale `?region=` link dropped, chip order by key and by the panel's roster, chip counts against the account list, the server-side region request, the narrowed account list, clearing a shop outside the region, the `?region=` round trip and `popstate`, a linked region with no account, and the chips holding still while a summary reloads).
