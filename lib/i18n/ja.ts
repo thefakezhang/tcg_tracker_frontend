@@ -29,7 +29,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "health.title": "ソース健全性",
   "arrivals.nav": "入荷",
   "arrivals.title": "ポケモン入荷",
-  "arrivals.subtitle": "確認済み店舗の Twitter に投稿されたポケモン入荷（在庫写真）投稿です。営業時間（日本時間 11:00-20:00）中に 1 時間ごとに取得します。投稿は未検証で、在庫がすでにない場合もあるため、判断前に元の投稿を確認してください。",
+  "arrivals.subtitle": "確認済み店舗の Twitter に投稿されたポケモン入荷（在庫写真）投稿です。営業時間（日本時間 11:00-20:00）中に 1 時間ごとに取得します。毎時読まない地域は、選ぶとその場で読み込みます。投稿は未検証で、在庫がすでにない場合もあるため、判断前に元の投稿を確認してください。",
   "arrivals.accountsTitle": "アカウント",
   "arrivals.showAccounts": "アカウントを表示",
   "arrivals.hideAccounts": "アカウントを隠す",

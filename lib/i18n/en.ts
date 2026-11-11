@@ -27,7 +27,7 @@ const en = {
   "health.title": "Source health",
   "arrivals.nav": "Arrivals",
   "arrivals.title": "Pokemon arrivals",
-  "arrivals.subtitle": "Pokemon arrival (stock photo) posts from reviewed shops on Twitter, checked hourly during shop hours, 11:00-20:00 JST. Posts are unverified and stock may already be gone, so open the original post before acting.",
+  "arrivals.subtitle": "Pokemon arrival (stock photo) posts from reviewed shops on Twitter, checked hourly during shop hours, 11:00-20:00 JST. Regions not read hourly are read when you select them. Posts are unverified and stock may already be gone, so open the original post before acting.",
   "arrivals.accountsTitle": "Accounts",
   "arrivals.showAccounts": "Show accounts",
   "arrivals.hideAccounts": "Hide accounts",

@@ -81,17 +81,36 @@ describe("how the run reads a region", () => {
     expect(withinShopHours(at("2026-11-02T11:01:00Z"))).toBe(false); // 20:01
   });
 
-  it("reads hourly in focus, reading while a request is pending, queued only after five minutes outside shop hours", () => {
-    expect(regionReadState({ ...region, in_focus: true }, at("2026-11-02T05:00:00Z"))).toBe("hourly");
-    // Requested 04:59 UTC (13:59 JST): reading, in shop hours, however long it waits.
-    expect(regionReadState(region, at("2026-11-02T05:00:00Z"))).toBe("reading");
-    expect(regionReadState(region, at("2026-11-02T06:00:00Z"))).toBe("reading");
-    const late = { ...region, pending_request: { ...region.pending_request!, requested_at: "2026-11-02T13:00:00Z" } };
-    // 22:00 JST: reading for five minutes, then queued for the next run in shop hours.
-    expect(regionReadState(late, at("2026-11-02T13:05:00Z"))).toBe("reading");
-    expect(regionReadState(late, at("2026-11-02T13:05:01Z"))).toBe("queued");
-    expect(regionReadState(idle, at("2026-11-02T05:00:00Z"))).toBe("idle");
-    expect(regionReadState({ ...idle, readable_lists: 0 }, at("2026-11-02T05:00:00Z"))).toBe("nolist");
+  it("reads hourly in focus; a pending request is reading while the read job has it or in shop hours, else queued", () => {
+    const run = (verdict: string) => ({ verdict, job: "twitter-arrivals-read", mode: "remote", sqlstate: null });
+    const inHours = at("2026-11-02T05:00:00Z"); // 14:00 JST
+    const outside = at("2026-11-02T13:00:30Z"); // 22:00 JST, 30 seconds after a request
+    expect(regionReadState({ ...region, in_focus: true }, inHours, run("remote_unsupported"))).toBe("hourly");
+    // The read job has it: reading, in shop hours or not, from the first moment.
+    for (const verdict of ["queued", "already_running"]) {
+      expect(regionReadState(region, outside, run(verdict)), verdict).toBe("reading");
+      expect(regionReadState(region, inHours, run(verdict)), verdict).toBe("reading");
+    }
+    // No read job (or no answer yet, as before migration 000642): the hourly run
+    // reads it in shop hours, and outside them it waits for the next one, at once.
+    for (const readRun of [null, undefined, run("remote_unsupported"), run("manual_unsupported"), run("unknown_job"), run("error")]) {
+      expect(regionReadState(region, inHours, readRun), readRun?.verdict ?? String(readRun)).toBe("reading");
+      expect(regionReadState(region, outside, readRun), readRun?.verdict ?? String(readRun)).toBe("queued");
+    }
+    expect(regionReadState(idle, inHours)).toBe("idle");
+    expect(regionReadState({ ...idle, readable_lists: 0 }, inHours)).toBe("nolist");
+  });
+
+  it("reads the ledger's answer to a read-once request, and none from an older backend or a shape it does not know", () => {
+    const body = { today: "2026-11-02", focus_source: "default", published_at: null, regions: [ROW] };
+    expect(parseRegionStatus(body).read_run).toBeNull();
+    expect(parseRegionStatus({ ...body, read_run: { verdict: "queued", job: "twitter-arrivals-read", mode: "remote", run_id: 12 } }).read_run)
+      .toEqual({ verdict: "queued", job: "twitter-arrivals-read", mode: "remote", sqlstate: null });
+    expect(parseRegionStatus({ ...body, read_run: { verdict: "error", sqlstate: "P0001" } }).read_run)
+      .toEqual({ verdict: "error", job: null, mode: null, sqlstate: "P0001" });
+    for (const odd of ["queued", [], { verdict: 7 }, { verdict: "" }, {}]) {
+      expect(parseRegionStatus({ ...body, read_run: odd }).read_run).toBeNull();
+    }
   });
 
   it("asks for a read only for a region not in focus, with nothing pending and a list to read", () => {

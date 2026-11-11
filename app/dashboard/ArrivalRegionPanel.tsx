@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import {
   type ArrivalRegion,
   FOCUS_UNTIL_MAX_DAYS,
+  type ReadRun,
   type RegionAction,
   addTokyoDays,
   focusRegions,
@@ -46,6 +47,7 @@ const STATUS_CLASS: Record<ArrivalRegion["focus_kind"], string> = {
 
 function RegionRow({
   region,
+  readRun,
   now,
   today,
   busy,
@@ -57,6 +59,8 @@ function RegionRow({
   date,
 }: {
   region: ArrivalRegion;
+  /** The newest read-once answer for the region this session, if any. */
+  readRun: ReadRun | null | undefined;
   now: number;
   today: string;
   busy: boolean;
@@ -111,7 +115,7 @@ function RegionRow({
       </p>
       {pending ? (
         <p className="mt-1 text-xs text-sky-800 dark:text-sky-200" data-testid="arrival-region-pending">
-          {regionReadState(region, now) === "queued"
+          {regionReadState(region, now, readRun) === "queued"
             ? t("arrivals.regions.pendingQueued", { when: when(pending.requested_at) })
             : t("arrivals.regions.pendingReading", { when: when(pending.requested_at) })}
         </p>
@@ -320,6 +324,7 @@ export default function ArrivalRegionPanel({
                 <RegionRow
                   key={region.region}
                   region={region}
+                  readRun={regions.readRuns.get(region.region)}
                   now={now()}
                   today={state.data.today}
                   busy={busy === region.region}

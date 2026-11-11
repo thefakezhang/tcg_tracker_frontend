@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { LanguageProvider } from "./LanguageContext";
 import ArrivalPostsView, {
@@ -945,6 +945,7 @@ function roster(overrides: Record<string, Partial<ArrivalRegion>> = {}): Arrival
     today: "2026-10-21",
     focus_source: "default",
     published_at: null,
+    read_run: null,
     regions: [
       rosterRegion("akihabara", 0, { ...HOURLY, ...overrides.akihabara }),
       rosterRegion("yokohama", 2, { ...HOURLY, ...overrides.yokohama }),
@@ -1190,7 +1191,11 @@ describe("ArrivalPostsView region filter", () => {
   it("asks for a read once when a region not read hourly is selected, once only, and the panel shows it too", async () => {
     const sender = vi.fn<RegionActionSender>(async (action: RegionAction) => {
       expect(action).toEqual({ action: "request_read", region: "fukuoka" });
-      return roster({ fukuoka: pendingRequest(7) });
+      // The read job took it, so it reads as reading at any hour.
+      return {
+        ...roster({ fukuoka: pendingRequest(7) }),
+        read_run: { verdict: "queued", job: "twitter-arrivals-read", mode: "remote", sqlstate: null },
+      };
     });
     view(vi.fn(async () => page([])), regional, async () => roster(), sender);
 
@@ -1222,6 +1227,11 @@ describe("ArrivalPostsView region filter", () => {
   });
 
   it("asks nothing for a region whose read is already pending", async () => {
+    // 12:00 JST: with no answer from the read job yet, a pending read in shop hours is reading.
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-11-11T03:00:00Z") });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const sender = vi.fn<RegionActionSender>();
     view(vi.fn(async () => page([])), regional, async () => roster({ osaka: pendingRequest(9) }), sender);
 
@@ -1339,8 +1349,17 @@ describe("ArrivalPostsView while a selected region is read", () => {
     region: "fukuoka",
   };
 
+  const pendingStatus = () => roster({ fukuoka: pendingRequest(7, at(-1)) });
+  const readRun = (verdict: string) => ({ verdict, job: "twitter-arrivals-read", mode: "remote", sqlstate: null });
+
   function pollingStatus() {
-    return vi.fn<RegionStatusLoader>(async () => roster({ fukuoka: pendingRequest(7, at(-1)) }));
+    return vi.fn<RegionStatusLoader>(async () => pendingStatus());
+  }
+
+  // Answers a read-once request as the backend does while the request is
+  // pending: the same snapshot, with the ledger's verdict.
+  function pollingSender(verdict = "already_running") {
+    return vi.fn<RegionActionSender>(async () => ({ ...pendingStatus(), read_run: readRun(verdict) }));
   }
 
   it("refreshes the status, the summary and the newest posts every 20 seconds, merging new posts in above the loaded pages", async () => {
@@ -1356,7 +1375,7 @@ describe("ArrivalPostsView while a selected region is read", () => {
     const sourcesLoader = vi.fn<ArrivalSourcesLoader>(async () => summary);
     const regionLoader = pollingStatus();
     const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
-    view(loader, sourcesLoader, regionLoader);
+    view(loader, sourcesLoader, regionLoader, pollingSender());
     await settle();
 
     expect(screen.getAllByTestId("arrival-post-card")).toHaveLength(1);
@@ -1390,10 +1409,11 @@ describe("ArrivalPostsView while a selected region is read", () => {
     scrollTo.mockRestore();
   });
 
-  it("stops once the read is done and says when it was read", async () => {
+  it("stops once the read is done, never asks for it again, and says when it was read", async () => {
     const loader = vi.fn<ArrivalPostsLoader>(async () => page([bobPost("first", -30)]));
     const regionLoader = pollingStatus();
-    view(loader, regional, regionLoader);
+    const sender = pollingSender();
+    view(loader, regional, regionLoader, sender);
     await settle();
     expect(screen.getByTestId("arrival-region-read").textContent).toBe("Reading Fukuoka…");
 
@@ -1401,9 +1421,11 @@ describe("ArrivalPostsView while a selected region is read", () => {
       fukuoka: { last_fulfilled: { request_id: 7, fulfilled_at: at(0), fulfilled_run_id: "run-7" } },
     }));
     await advance(POLL_INTERVAL_MS);
-    // That refresh still brought the summary and the posts after the status said the read was done.
+    // That refresh still brought the summary and the posts after the status said the read was done,
+    // and did not ask for the read again: asking once it is done would record a new request.
     expect(regionLoader).toHaveBeenCalledTimes(2);
     expect(loader).toHaveBeenCalledTimes(2);
+    expect(sender).not.toHaveBeenCalled();
     expect(screen.getByTestId("arrival-region-read").textContent).toBe("Fukuoka read just now");
 
     await advance(POLL_INTERVAL_MS * 6);
@@ -1418,7 +1440,7 @@ describe("ArrivalPostsView while a selected region is read", () => {
   it("stops when the region is deselected", async () => {
     const loader = vi.fn<ArrivalPostsLoader>(async () => page([]));
     const regionLoader = pollingStatus();
-    view(loader, regional, regionLoader);
+    view(loader, regional, regionLoader, pollingSender());
     await settle();
     await advance(POLL_INTERVAL_MS);
     expect(regionLoader).toHaveBeenCalledTimes(2);
@@ -1438,7 +1460,7 @@ describe("ArrivalPostsView while a selected region is read", () => {
   it("stops after 30 minutes even while the read is still pending", async () => {
     const loader = vi.fn<ArrivalPostsLoader>(async () => page([]));
     const regionLoader = pollingStatus();
-    view(loader, regional, regionLoader);
+    view(loader, regional, regionLoader, pollingSender());
     await settle();
 
     await advance(POLL_LIMIT_MS);
@@ -1453,7 +1475,7 @@ describe("ArrivalPostsView while a selected region is read", () => {
   it("pauses while the tab is hidden and catches up when it shows again", async () => {
     const loader = vi.fn<ArrivalPostsLoader>(async () => page([]));
     const regionLoader = pollingStatus();
-    view(loader, regional, regionLoader);
+    view(loader, regional, regionLoader, pollingSender());
     await settle();
 
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
@@ -1473,5 +1495,92 @@ describe("ArrivalPostsView while a selected region is read", () => {
     expect(loader).toHaveBeenCalledTimes(2);
     await advance(POLL_INTERVAL_MS);
     expect(regionLoader).toHaveBeenCalledTimes(3);
+  });
+
+  it("asks again for a pending read on every tick, once the fresh status shows it still pending", async () => {
+    const log: string[] = [];
+    const regionLoader = vi.fn<RegionStatusLoader>(async () => {
+      log.push("status");
+      return pendingStatus();
+    });
+    const sender = vi.fn<RegionActionSender>(async (action) => {
+      log.push(`send ${action.action} ${"region" in action ? action.region : ""}`);
+      return { ...pendingStatus(), read_run: readRun("already_running") };
+    });
+    const loader = vi.fn<ArrivalPostsLoader>(async () => {
+      log.push("posts");
+      return page([]);
+    });
+    view(loader, regional, regionLoader, sender);
+    await settle();
+    expect(log.sort()).toEqual(["posts", "status"]);
+
+    await advance(POLL_INTERVAL_MS);
+    expect(log.slice(2)).toEqual(["status", "send request_read fukuoka", "posts"]);
+    await advance(POLL_INTERVAL_MS);
+    expect(log.slice(5)).toEqual(["status", "send request_read fukuoka", "posts"]);
+    expect(sender).toHaveBeenCalledTimes(2);
+    expect(sender).toHaveBeenLastCalledWith({ action: "request_read", region: "fukuoka" });
+  });
+
+  it("outside shop hours, says the read is queued until the read job has it, and reading while it does", async () => {
+    vi.setSystemTime(Date.parse("2026-11-11T13:00:00Z")); // 22:00 JST
+    const sender = pollingSender("already_running");
+    view(vi.fn<ArrivalPostsLoader>(async () => page([])), regional, pollingStatus(), sender);
+    await settle();
+    // A request from before the page loaded: no answer from the read job yet.
+    expect(screen.getByTestId("arrival-region-read").textContent)
+      .toBe("Fukuoka is queued for the next run in shop hours, 11:00-20:00 JST");
+
+    await advance(POLL_INTERVAL_MS);
+    expect(screen.getByTestId("arrival-region-read").textContent).toBe("Reading Fukuoka…");
+
+    // No host runs the read job (or it failed): only the hourly run will read it.
+    for (const verdict of ["remote_unsupported", "error"]) {
+      sender.mockImplementation(async () => ({ ...pendingStatus(), read_run: readRun(verdict) }));
+      await advance(POLL_INTERVAL_MS);
+      expect(screen.getByTestId("arrival-region-read").textContent, verdict)
+        .toBe("Fukuoka is queued for the next run in shop hours, 11:00-20:00 JST");
+    }
+    sender.mockImplementation(async () => ({ ...pendingStatus(), read_run: readRun("queued") }));
+    await advance(POLL_INTERVAL_MS);
+    expect(screen.getByTestId("arrival-region-read").textContent).toBe("Reading Fukuoka…");
+  });
+
+  it("in shop hours, says reading whatever the read job answers", async () => {
+    view(vi.fn<ArrivalPostsLoader>(async () => page([])), regional, pollingStatus(), pollingSender("remote_unsupported"));
+    await settle();
+    await advance(POLL_INTERVAL_MS);
+    expect(screen.getByTestId("arrival-region-read").textContent).toBe("Reading Fukuoka…");
+  });
+
+  it("stops asking again after a refused call, keeps polling the status, and asks again once the region is selected again", async () => {
+    const regionLoader = pollingStatus();
+    const sender = vi.fn<RegionActionSender>(async () => {
+      throw new ArrivalRegionRequestError(500, "Region controls are unavailable");
+    });
+    view(vi.fn<ArrivalPostsLoader>(async () => page([])), regional, regionLoader, sender);
+    await settle();
+
+    await advance(POLL_INTERVAL_MS);
+    expect(sender).toHaveBeenCalledTimes(1);
+    await advance(POLL_INTERVAL_MS * 2);
+    expect(sender).toHaveBeenCalledTimes(1);
+    expect(regionLoader).toHaveBeenCalledTimes(4);
+    // A refused call to keep a read going is not a refused read: the read is still pending.
+    expect(screen.getByTestId("arrival-region-read").textContent).toBe("Reading Fukuoka…");
+
+    sender.mockImplementation(async () => ({ ...pendingStatus(), read_run: readRun("already_running") }));
+    fireEvent.click(regionTrigger());
+    await screen.findByTestId("arrival-region-menu");
+    fireEvent.click(regionRow("Fukuoka"));
+    await settle();
+    fireEvent.click(regionRow("Fukuoka"));
+    await settle();
+    expect(regionRow("Fukuoka").getAttribute("aria-checked")).toBe("true");
+    // Selecting a region whose read is pending asks nothing at once; the next tick keeps it going.
+    expect(sender).toHaveBeenCalledTimes(1);
+    await advance(POLL_INTERVAL_MS);
+    expect(sender).toHaveBeenCalledTimes(2);
   });
 });

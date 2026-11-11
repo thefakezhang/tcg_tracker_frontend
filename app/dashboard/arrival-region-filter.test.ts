@@ -37,7 +37,7 @@ function entry(region: string, position: number, overrides: Partial<ArrivalRegio
 }
 
 function status(regions: ArrivalRegion[]): ArrivalRegionStatus {
-  return { today: "2026-11-11", focus_source: "default", published_at: null, regions };
+  return { today: "2026-11-11", focus_source: "default", published_at: null, regions, read_run: null };
 }
 
 const SOURCES = [

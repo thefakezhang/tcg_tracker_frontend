@@ -66,6 +66,7 @@ import {
   unknownRegions,
 } from "./arrival-region-filter";
 import {
+  type ArrivalRegionStatus,
   type RegionActionSender,
   type RegionStatusLoader,
   needsReadOnce,
@@ -892,6 +893,9 @@ export default function ArrivalPostsView({
   const [readFailures, setReadFailures] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [followedReads, setFollowedReads] = useState<ReadonlySet<string>>(() => new Set());
   const requestingRef = useRef(new Set<string>());
+  // Regions whose read the polling stopped asking for again after the RPC
+  // refused it; the next selection of the region clears it.
+  const resendStopped = useRef(new Set<string>());
   const [groupByAccount, setGroupByAccount] = useState(readGroupByAccount);
   const [collapsed, setCollapsed] = useState(readCollapsedAccounts);
   const [accountsOpen, setAccountsOpen] = useState(false);
@@ -1166,6 +1170,7 @@ export default function ArrivalPostsView({
   // needs one; deselecting cancels nothing.
   const toggleRegion = (region: string) => {
     const adding = !regions.includes(region);
+    if (adding) resendStopped.current.delete(region);
     const next = adding ? [...regions, region] : regions.filter((key) => key !== region);
     setRegions(next);
     if (next.length > 0 && selected
@@ -1177,23 +1182,48 @@ export default function ArrivalPostsView({
 
   const clearRegions = () => setRegions([]);
 
-  // While a selected region is being read once, the feed refreshes quietly:
-  // the status first, so the last refresh after the read ends still finds
-  // every post it brought, then the summary (new accounts and their counts)
-  // and the newest posts, merged in without touching the pages already
-  // loaded or the reader's place. A full load or Load more that starts
-  // meanwhile wins, and a failed refresh changes nothing.
+  // While a selected region is being read once, the feed refreshes quietly.
+  // First the status, so the last refresh after a read ends still finds every
+  // post it brought. Then it asks again for each read the fresh status still
+  // shows pending, which keeps the read going: the backend records no second
+  // request, and queues a new read job run only when none is queued or
+  // running (one that stopped short, on its photo budget or before an hourly
+  // run, resumes). Asking only after the status says the request is still
+  // pending matters: asking for a region whose read has just finished would
+  // record a new request and read it all over again. Then the summary (new
+  // accounts and their counts) and the newest posts, merged in without
+  // touching the pages already loaded or the reader's place. A full load or
+  // Load more that starts meanwhile wins, and a failed refresh changes nothing.
   const pollBusy = useRef(false);
   const pollTick = useRef<() => Promise<void>>(async () => {});
   pollTick.current = async () => {
     if (pollBusy.current) return;
     pollBusy.current = true;
     try {
-      await regionStatus.reload({ quiet: true });
+      const fresh = await regionStatus.reload({ quiet: true });
+      if (fresh !== null) await resendPendingReads(fresh);
       await Promise.all([refreshSources(), refreshFeed()]);
     } finally {
       pollBusy.current = false;
     }
+  };
+
+  // Every answer is normal, "already_running" and "remote_unsupported"
+  // included, and the hook keeps the newest per region; only a refused call
+  // stops the asking for that region, until it is selected again, while the
+  // status keeps being polled.
+  const resendPendingReads = async (status: ArrivalRegionStatus) => {
+    const pending = status.regions.filter((entry) => entry.pending_request !== null
+      && regions.includes(entry.region)
+      && !resendStopped.current.has(entry.region)
+      && !requestingRef.current.has(entry.region));
+    await Promise.all(pending.map(async ({ region }) => {
+      try {
+        await regionStatus.send({ action: "request_read", region });
+      } catch {
+        resendStopped.current.add(region);
+      }
+    }));
   };
 
   const refreshSources = async () => {
@@ -1327,7 +1357,7 @@ export default function ArrivalPostsView({
       const failure = readFailures.get(region);
       if (failure !== undefined) return [{ region, progress: { kind: "failed", message: failure } }];
       if (status === null) return [];
-      const state = regionReadState(status, now);
+      const state = regionReadState(status, now, regionStatus.readRuns.get(region));
       if (state === "reading" || state === "queued") return [{ region, progress: { kind: state } }];
       if (followedReads.has(region) && status.last_fulfilled !== null) {
         return [{ region, progress: { kind: "read", at: status.last_fulfilled.fulfilled_at } }];
@@ -1367,6 +1397,7 @@ export default function ArrivalPostsView({
             recentWindow={recentWindow}
             requesting={requestingReads}
             failures={readFailures}
+            readRuns={regionStatus.readRuns}
             now={now}
           />
         </div>

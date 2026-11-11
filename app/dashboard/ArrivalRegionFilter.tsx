@@ -25,7 +25,7 @@ import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import { regionName } from "./ArrivalRegionPanel";
 import type { RegionFilterOption } from "./arrival-region-filter";
-import { regionReadState } from "./arrival-regions";
+import { type ReadRun, regionReadState } from "./arrival-regions";
 
 type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
@@ -63,11 +63,13 @@ export type RegionReadProgress =
 
 function RowState({
   option,
+  readRun,
   requesting,
   failure,
   now,
 }: {
   option: RegionFilterOption;
+  readRun: ReadRun | null | undefined;
   requesting: boolean;
   failure: string | null;
   now: number;
@@ -83,7 +85,7 @@ function RowState({
   if (failure !== null) return line("text-destructive", t("arrivals.regionFilter.failed", { message: failure }));
   const status = option.status;
   if (status === null) return null;
-  switch (regionReadState(status, now)) {
+  switch (regionReadState(status, now, readRun)) {
     case "hourly":
       return line(HOURLY, t("arrivals.regionFilter.hourly"));
     case "reading":
@@ -112,6 +114,7 @@ export default function ArrivalRegionFilter({
   recentWindow,
   requesting,
   failures,
+  readRuns,
   now,
 }: {
   options: readonly RegionFilterOption[];
@@ -124,6 +127,8 @@ export default function ArrivalRegionFilter({
   requesting: ReadonlySet<string>;
   /** The refusal of each region's last read-once request this session. */
   failures: ReadonlyMap<string, string>;
+  /** The newest read-once answer per region, which says whether the read job is reading it. */
+  readRuns: ReadonlyMap<string, ReadRun | null>;
   now: number;
 }) {
   const { t } = useTranslation();
@@ -182,6 +187,7 @@ export default function ArrivalRegionFilter({
                 </span>
                 <RowState
                   option={option}
+                  readRun={readRuns.get(option.region)}
                   requesting={requesting.has(option.region)}
                   failure={failures.get(option.region) ?? null}
                   now={now}
