@@ -704,8 +704,15 @@ function BuylistPanel({
     [rows, filters, sort],
   );
 
-  // A new buylist or a new filter starts from the top again.
-  useEffect(() => setShown(BUYLIST_PAGE), [rows, filters, sort]);
+  // A new buylist or a new filter starts from the top again. This is adjusted
+  // while rendering, not in an effect: an effect ran after the list appeared,
+  // so a Show more pressed before it ran was undone (the flaky "renders a long
+  // buylist a page at a time" test).
+  const [shownFor, setShownFor] = useState({ rows, filters, sort });
+  if (shownFor.rows !== rows || shownFor.filters !== filters || shownFor.sort !== sort) {
+    setShownFor({ rows, filters, sort });
+    setShown(BUYLIST_PAGE);
+  }
 
   if (state.status === "loading" || state.status === "idle") {
     return (
