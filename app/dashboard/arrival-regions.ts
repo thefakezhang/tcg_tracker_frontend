@@ -64,8 +64,11 @@ export type ArrivalRegion = {
  * "already_running" (one is queued or running) mean the read job is reading
  * the region; "remote_unsupported" (no host runs the job yet),
  * "manual_unsupported", "unknown_job" and "error" (with its `sqlstate`) mean
- * it is not, and the hourly run is the only reader. The read-once answer
- * carries it; the status itself does not.
+ * it is not, and the hourly run is the only reader. Since migration 000643,
+ * "not_pending" answers a resume of a request that is already fulfilled, and
+ * "recently_fulfilled" a request for a region read in the last two minutes;
+ * neither recorded anything. The read-once answer carries it; the status
+ * itself does not.
  */
 export type ReadRun = {
   verdict: string;
@@ -88,7 +91,21 @@ export type RegionAction =
   | { action: "set_focus"; region: string; until: string | null }
   | { action: "clear_focus"; region: string }
   | { action: "reset_focus" }
-  | { action: "request_read"; region: string };
+  | { action: "request_read"; region: string }
+  /**
+   * Keeps a pending read-once request's read going, by the request's own id
+   * (migration 000643): the backend asks the ledger again only while that
+   * request is pending and never records a request, so a re-send that lands
+   * just after the read finished cannot start the region over.
+   */
+  | { action: "resume_read"; region: string; request_id: number };
+
+/** The actions whose answer carries the ledger's verdict for the region's read. */
+export type ReadAction = Extract<RegionAction, { action: "request_read" | "resume_read" }>;
+
+export function isReadAction(action: RegionAction): action is ReadAction {
+  return action.action === "request_read" || action.action === "resume_read";
+}
 
 /** Resolves null when the backend migration is not applied yet. */
 export type RegionStatusLoader = () => Promise<ArrivalRegionStatus | null>;

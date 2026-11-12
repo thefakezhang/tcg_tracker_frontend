@@ -4,6 +4,7 @@ import {
   ArrivalRegionRequestError,
   addTokyoDays,
   focusRegions,
+  isReadAction,
   loadRegionStatus,
   needsReadOnce,
   parseRegionStatus,
@@ -111,6 +112,18 @@ describe("how the run reads a region", () => {
     for (const odd of ["queued", [], { verdict: 7 }, { verdict: "" }, {}]) {
       expect(parseRegionStatus({ ...body, read_run: odd }).read_run).toBeNull();
     }
+    // Migration 000643's answers, which recorded nothing, read like any other.
+    for (const verdict of ["not_pending", "recently_fulfilled"]) {
+      expect(parseRegionStatus({ ...body, read_run: { verdict, job: "twitter-arrivals-read", request_id: 61 } }).read_run)
+        .toEqual({ verdict, job: "twitter-arrivals-read", mode: null, sqlstate: null });
+    }
+  });
+
+  it("knows which actions carry the ledger's answer for a region's read", () => {
+    expect(isReadAction({ action: "request_read", region: "osaka" })).toBe(true);
+    expect(isReadAction({ action: "resume_read", region: "osaka", request_id: 5 })).toBe(true);
+    expect(isReadAction({ action: "clear_focus", region: "osaka" })).toBe(false);
+    expect(isReadAction({ action: "reset_focus" })).toBe(false);
   });
 
   it("asks for a read only for a region not in focus, with nothing pending and a list to read", () => {
@@ -152,5 +165,16 @@ describe("the region route client", () => {
     const refused = sendRegionAction({ action: "request_read", region: "akihabara" });
     await expect(refused).rejects.toBeInstanceOf(ArrivalRegionRequestError);
     await expect(refused).rejects.toMatchObject({ status: 400, message: "region is in focus" });
+  });
+
+  it("posts a resume with its request id, and a missing resume_read is a 501 refusal", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: STATUS }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "x", reason: "rpc-missing" }), { status: 501 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await sendRegionAction({ action: "resume_read", region: "osaka", request_id: 5 });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ action: "resume_read", region: "osaka", request_id: 5 });
+    const missing = sendRegionAction({ action: "resume_read", region: "osaka", request_id: 5 });
+    await expect(missing).rejects.toMatchObject({ status: 501 });
   });
 });
