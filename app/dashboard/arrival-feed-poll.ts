@@ -3,8 +3,8 @@
 // pending the view refreshes the focus status, the account summary and the
 // first page of the feed every POLL_INTERVAL_MS, merges the new posts in
 // without disturbing what the operator has loaded or where they are reading,
-// and stops when no selected region is pending, after POLL_LIMIT_MS, or for as
-// long as the tab is hidden.
+// and stops when no selected region is pending or after POLL_LIMIT_MS. It keeps
+// going while the tab is hidden, so the posts are there when the operator looks.
 import { type ArrivalAccountPost, postObservedAt } from "./arrival-accounts";
 
 export const POLL_INTERVAL_MS = 20 * 1000;

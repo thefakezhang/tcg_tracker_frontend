@@ -1472,29 +1472,37 @@ describe("ArrivalPostsView while a selected region is read", () => {
     expect(screen.getByTestId("arrival-region-read").textContent).toBe("Reading Fukuoka…");
   });
 
-  it("pauses while the tab is hidden and catches up when it shows again", async () => {
-    const loader = vi.fn<ArrivalPostsLoader>(async () => page([]));
+  // 2026-11-12: the operator asked for Osaka and Nagoya and went back to other
+  // work with the page behind another window; a refresh that paused while
+  // hidden left the delivered posts off the page until Refresh was pressed.
+  it("keeps refreshing while the tab is hidden, and refreshes at once when it shows again", async () => {
+    const fresh = bobPost("fresh", 0);
+    let feed: ArrivalPost[] = [];
+    const loader = vi.fn<ArrivalPostsLoader>(async () => page(feed));
     const regionLoader = pollingStatus();
     view(loader, regional, regionLoader, pollingSender());
     await settle();
+    expect(screen.queryAllByTestId("arrival-post-card")).toHaveLength(0);
 
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     act(() => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
+    feed = [fresh];
     await advance(POLL_INTERVAL_MS * 3);
-    expect(regionLoader).toHaveBeenCalledTimes(1);
-    expect(loader).toHaveBeenCalledTimes(1);
+    expect(regionLoader).toHaveBeenCalledTimes(4);
+    expect(loader).toHaveBeenCalledTimes(4);
+    // Already on the page before the operator looks.
+    expect(screen.getAllByTestId("arrival-post-card").map((card) => card.getAttribute("data-arrival-key")))
+      .toEqual([fresh.arrival_key]);
 
+    await advance(POLL_INTERVAL_MS / 2);
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
     act(() => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await settle();
-    expect(regionLoader).toHaveBeenCalledTimes(2);
-    expect(loader).toHaveBeenCalledTimes(2);
-    await advance(POLL_INTERVAL_MS);
-    expect(regionLoader).toHaveBeenCalledTimes(3);
+    expect(regionLoader).toHaveBeenCalledTimes(5);
   });
 
   it("asks again for a pending read on every tick, once the fresh status shows it still pending", async () => {

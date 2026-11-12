@@ -1276,28 +1276,25 @@ export default function ArrivalPostsView({
   }, [posts]);
 
   // Polls while a selected region has a read pending: every POLL_INTERVAL_MS,
-  // skipping ticks while the tab is hidden (and catching up when it shows
-  // again), for at most POLL_LIMIT_MS per run. A new request starts a new run;
-  // the read ending, or its region being deselected, ends it.
+  // for at most POLL_LIMIT_MS per run, and also while the tab is hidden: the
+  // operator asks for a region and goes back to other work, and the posts must
+  // be there when they look again (2026-11-12: a read that ran while the page
+  // sat behind another window showed nothing until Refresh). Coming back to the
+  // tab refreshes at once instead of waiting for the next tick. A new request
+  // starts a new run; the read ending, or its region being deselected, ends it.
   const pollKey = pendingReadKey(focusStatus, regions);
   useEffect(() => {
     if (pollKey === "") return;
     const started = Date.now();
-    let missed = false;
     const tick = () => {
       if (Date.now() - started >= POLL_LIMIT_MS) {
         stop();
         return;
       }
-      if (document.visibilityState === "hidden") {
-        missed = true;
-        return;
-      }
-      missed = false;
       void pollTick.current();
     };
     const onVisibility = () => {
-      if (document.visibilityState === "visible" && missed) tick();
+      if (document.visibilityState === "visible") tick();
     };
     const timer = setInterval(tick, POLL_INTERVAL_MS);
     document.addEventListener("visibilitychange", onVisibility);
