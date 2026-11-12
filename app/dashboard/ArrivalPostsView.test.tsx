@@ -42,6 +42,7 @@ const POST: ArrivalPost = {
   via_retweet_of: null,
   tweet_text: null,
   region: null,
+  media_state: "acquired",
   unverified: true,
   media: [{
     source_image_index: 0,
@@ -288,6 +289,27 @@ describe("ArrivalPostsView", () => {
     expect(() => parseArrivalPosts([{ ...POST, tweet_text: ["a"] }])).toThrow("Invalid arrival field: tweet_text");
     expect(() => parseArrivalPosts([{ ...POST, region: "Fukuoka" }])).toThrow("Invalid arrival field: region");
     expect(() => parseArrivalPosts([{ ...POST, region: 7 }])).toThrow("Invalid arrival field: region");
+  });
+
+  it("reads the media state, acquired when an older backend sends none", () => {
+    expect(parseArrivalPosts([{ ...POST, media_state: "listed" }])[0].media_state).toBe("listed");
+    expect(parseArrivalPosts([{ ...POST, media_state: "acquired" }])[0].media_state).toBe("acquired");
+    const legacy: Record<string, unknown> = { ...POST };
+    delete legacy.media_state;
+    expect(parseArrivalPosts([legacy])[0].media_state).toBe("acquired");
+    expect(parseArrivalPosts([{ ...POST, media_state: null }])[0].media_state).toBe("acquired");
+    // A state this tab does not know only loses the hint; the post still shows.
+    expect(parseArrivalPosts([{ ...POST, media_state: "archived" }])[0].media_state).toBe("acquired");
+  });
+
+  it("marks a post shown before its photos were saved, and drops the mark once they are", async () => {
+    const listed: ArrivalPost = { ...POST, media_state: "listed" };
+    view(vi.fn(async () => page([listed, BOB_POST])));
+    const cards = await screen.findAllByTestId("arrival-post-card");
+    expect(within(cards[0]).getByTestId("arrival-listed").textContent).toBe("Photos not saved yet");
+    expect(within(cards[1]).queryByTestId("arrival-listed")).toBeNull();
+    // Its images still come from the source URLs, like any other post.
+    expect(within(cards[0]).getAllByRole("img")).toHaveLength(1);
   });
 
   it("reads the post's region, null for a shop not mapped yet", () => {
@@ -1505,7 +1527,7 @@ describe("ArrivalPostsView while a selected region is read", () => {
     expect(regionLoader).toHaveBeenCalledTimes(5);
   });
 
-  it("asks again for a pending read on every tick, once the fresh status shows it still pending", async () => {
+  it("asks again for a pending read on every tick, by its request id, once the fresh status shows it still pending", async () => {
     const log: string[] = [];
     const regionLoader = vi.fn<RegionStatusLoader>(async () => {
       log.push("status");
@@ -1524,11 +1546,46 @@ describe("ArrivalPostsView while a selected region is read", () => {
     expect(log.sort()).toEqual(["posts", "status"]);
 
     await advance(POLL_INTERVAL_MS);
-    expect(log.slice(2)).toEqual(["status", "send request_read fukuoka", "posts"]);
+    expect(log.slice(2)).toEqual(["status", "send resume_read fukuoka", "posts"]);
     await advance(POLL_INTERVAL_MS);
-    expect(log.slice(5)).toEqual(["status", "send request_read fukuoka", "posts"]);
+    expect(log.slice(5)).toEqual(["status", "send resume_read fukuoka", "posts"]);
     expect(sender).toHaveBeenCalledTimes(2);
-    expect(sender).toHaveBeenLastCalledWith({ action: "request_read", region: "fukuoka" });
+    // The pending request's own id: a re-send can never record a new request.
+    expect(sender).toHaveBeenLastCalledWith({ action: "resume_read", region: "fukuoka", request_id: 7 });
+    expect(sender.mock.calls.some(([action]) => action.action === "request_read")).toBe(false);
+  });
+
+  // 2026-11-12: requests 1 and 2 were fulfilled at 09:03:25.330 and a re-send
+  // one second later recorded requests 61 and 62. The tab now re-sends only by
+  // the pending request's id, and a request already answered gets no re-send.
+  it("re-sends nothing for a request already fulfilled, and resumes only the region still pending", async () => {
+    const regionLoader = vi.fn<RegionStatusLoader>(async () => roster({
+      fukuoka: { last_fulfilled: { request_id: 7, fulfilled_at: at(0), fulfilled_run_id: "run-7" } },
+      osaka: pendingRequest(8, at(-1)),
+    }));
+    const sender = pollingSender();
+    window.history.replaceState(null, "", "/dashboard?view=arrivals&region=fukuoka,osaka");
+    view(vi.fn<ArrivalPostsLoader>(async () => page([])), regional, regionLoader, sender);
+    await settle();
+    await advance(POLL_INTERVAL_MS);
+    expect(sender.mock.calls.map(([action]) => action)).toEqual([
+      { action: "resume_read", region: "osaka", request_id: 8 },
+    ]);
+  });
+
+  it("stops re-sending a region whose backend has no resume_read, without falling back to request_read", async () => {
+    const regionLoader = pollingStatus();
+    const sender = vi.fn<RegionActionSender>(async () => {
+      throw new ArrivalRegionRequestError(501, "Region controls are not available yet");
+    });
+    view(vi.fn<ArrivalPostsLoader>(async () => page([])), regional, regionLoader, sender);
+    await settle();
+    await advance(POLL_INTERVAL_MS);
+    await advance(POLL_INTERVAL_MS * 3);
+    expect(sender.mock.calls.map(([action]) => action.action)).toEqual(["resume_read"]);
+    // The read is still pending, and the status keeps being polled.
+    expect(regionLoader).toHaveBeenCalledTimes(5);
+    expect(screen.getByTestId("arrival-region-read").textContent).toBe("Reading Fukuoka…");
   });
 
   it("outside shop hours, says the read is queued until the read job has it, and reading while it does", async () => {

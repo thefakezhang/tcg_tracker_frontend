@@ -106,6 +106,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "arrivals.repostedTimes": "{count} 回再投稿、最新は{when}",
   "arrivals.repostedTime": "最終再投稿（日本時間）",
   "arrivals.viaRetweet": "@{handle} 経由",
+  "arrivals.photosNotSaved": "画像は未保存",
+  "arrivals.photosNotSavedDetail": "地域の読み込み中は店舗の画像リンクから表示しています。画像はその店舗の順番が来たときに保存されます。",
   "arrivals.unverified": "未検証の投稿",
   "arrivals.openSource": "元の投稿を開く",
   "arrivals.openMedia": "元画像 {number} を開く",

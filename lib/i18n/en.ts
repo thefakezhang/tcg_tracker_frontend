@@ -104,6 +104,8 @@ const en = {
   "arrivals.repostedTimes": "Re-posted {count} times, last {when}",
   "arrivals.repostedTime": "Last re-posted (JST)",
   "arrivals.viaRetweet": "via @{handle}",
+  "arrivals.photosNotSaved": "Photos not saved yet",
+  "arrivals.photosNotSavedDetail": "Shown from the shop's own image links while this region is read; the photos are saved when the shop's turn comes.",
   "arrivals.unverified": "Unverified post",
   "arrivals.openSource": "Open original post",
   "arrivals.openMedia": "Open original image {number}",

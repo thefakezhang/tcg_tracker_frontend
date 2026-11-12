@@ -59,6 +59,8 @@ describe("protected Twitter arrival regions route", () => {
     [{ action: "reset_focus" }, "twitter_arrivals_clear_focus", { p_region: null }],
     [{ action: "request_read", region: "osaka" },
       "twitter_arrivals_request_read", { p_region: "osaka" }],
+    [{ action: "resume_read", region: "osaka", request_id: 61 },
+      "twitter_arrivals_resume_read", { p_request_id: 61 }],
   ])("maps %o to its RPC", async (body, name, args) => {
     const response = await POST(post(body));
     expect(response.status).toBe(200);
@@ -72,6 +74,13 @@ describe("protected Twitter arrival regions route", () => {
     ["a region that is not a key", { action: "request_read", region: "Osaka; drop" }],
     ["a date that is not a Tokyo date", { action: "set_focus", region: "osaka", until: "tomorrow" }],
     ["a missing date", { action: "set_focus", region: "osaka" }],
+    ["a resume without its request id", { action: "resume_read", region: "osaka" }],
+    ["a resume of request 0", { action: "resume_read", region: "osaka", request_id: 0 }],
+    ["a resume of a negative id", { action: "resume_read", region: "osaka", request_id: -3 }],
+    ["a resume of a fractional id", { action: "resume_read", region: "osaka", request_id: 1.5 }],
+    ["a resume of a string id", { action: "resume_read", region: "osaka", request_id: "61" }],
+    ["a resume of an unsafe id", { action: "resume_read", region: "osaka", request_id: 2 ** 53 }],
+    ["a resume without a region key", { action: "resume_read", region: "Osaka", request_id: 61 }],
   ])("refuses %s before calling the database", async (_name, body) => {
     expect((await POST(post(body))).status).toBe(400);
     expect(mocks.rpc).not.toHaveBeenCalled();
@@ -99,6 +108,23 @@ describe("protected Twitter arrival regions route", () => {
     const refused = await POST(post({ action: "request_read", region: "sapporo" }));
     expect(refused.status).toBe(400);
     expect(await refused.json()).toEqual({ error: "region has no readable list yet" });
+
+    // A backend from before migration 000643 has no resume_read: 501, which
+    // the tab reads as "stop re-sending", never as a reason to request again.
+    mocks.rpc.mockResolvedValueOnce({
+      data: null,
+      error: { code: "PGRST202", message: "Could not find the function public.twitter_arrivals_resume_read" },
+    });
+    const noResume = await POST(post({ action: "resume_read", region: "osaka", request_id: 61 }));
+    expect(noResume.status).toBe(501);
+    expect(mocks.rpc).toHaveBeenLastCalledWith("twitter_arrivals_resume_read", { p_request_id: 61 });
+
+    mocks.rpc.mockResolvedValueOnce({
+      data: null, error: { code: "22023", message: "unknown read-once request" },
+    });
+    const unknown = await POST(post({ action: "resume_read", region: "osaka", request_id: 999 }));
+    expect(unknown.status).toBe(400);
+    expect(await unknown.json()).toEqual({ error: "unknown read-once request" });
 
     mocks.rpc.mockResolvedValueOnce({ data: null, error: { code: "57014", message: "canceling statement" } });
     const failed = await POST(post({ action: "request_read", region: "osaka" }));

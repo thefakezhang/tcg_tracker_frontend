@@ -13,6 +13,7 @@ import {
   type RegionAction,
   type RegionActionSender,
   type RegionStatusLoader,
+  isReadAction,
   loadRegionStatus,
   sendRegionAction,
 } from "./arrival-regions";
@@ -37,7 +38,8 @@ export type ArrivalRegionStatusController = {
   /**
    * The newest read-once answer per region this session (`read_run`; null
    * when the backend gave none, as before migration 000642). Only a read-once
-   * request carries it, so a status reload leaves it as it was.
+   * request or a resume of one (migration 000643) carries it, so a status
+   * reload leaves it as it was.
    */
   readRuns: ReadonlyMap<string, ReadRun | null>;
 };
@@ -77,7 +79,7 @@ export function useArrivalRegionStatus(
     generation.current += 1;
     const data = await sender(action);
     setState({ status: "ready", data });
-    if (action.action === "request_read") {
+    if (isReadAction(action)) {
       setReadRuns((known) => new Map(known).set(action.region, data.read_run));
     }
     return data;

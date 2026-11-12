@@ -105,6 +105,15 @@ export type ArrivalMedia = {
   content_sha256: string;
 };
 
+/**
+ * Whether the backend holds the post's photos (migration 000643): "acquired"
+ * once its shop's poll fetched them, "listed" while an on-demand read has
+ * shown the post from its source URLs ahead of that poll. A listed post keeps
+ * its key and observed time when its acquired copy replaces it. Older
+ * backends send no column, and every post they send is acquired.
+ */
+export type ArrivalMediaState = "acquired" | "listed";
+
 export type ArrivalPost = {
   arrival_key: string;
   buyer_handle: string;
@@ -134,6 +143,7 @@ export type ArrivalPost = {
    * is not mapped to one yet. Older backends send no column, which reads as null.
    */
   region: string | null;
+  media_state: ArrivalMediaState;
   unverified: true;
   media: ArrivalMedia[];
 };
@@ -229,6 +239,13 @@ function optionalRegion(value: unknown, field: string): string | null {
   return value;
 }
 
+// The media state is optional on a row: absent or null is an older backend,
+// whose posts are all acquired. A state this tab does not know reads as
+// acquired too, because it only decides a hint.
+function mediaState(value: unknown): ArrivalMediaState {
+  return value === "listed" ? "listed" : "acquired";
+}
+
 function countOrZero(value: unknown, field: string): number {
   if (value == null) return 0;
   const count = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
@@ -268,6 +285,7 @@ export function parseArrivalPosts(value: unknown): ArrivalPost[] {
       via_retweet_of: optionalHandle(row.via_retweet_of, `via_retweet_of: ${rowIndex}`),
       tweet_text: optionalText(row.tweet_text, `tweet_text: ${rowIndex}`),
       region: optionalRegion(row.region, `region: ${rowIndex}`),
+      media_state: mediaState(row.media_state),
       unverified: true,
       media: row.media.map((rawMedia, mediaIndex) => {
         if (rawMedia == null || typeof rawMedia !== "object" || Array.isArray(rawMedia)) {
@@ -741,6 +759,16 @@ function ArrivalPostCard({
                 : t("arrivals.reposted", { when: reposted })}
             </Badge>
           )}
+          {post.media_state === "listed" && (
+            <Badge
+              variant="outline"
+              className="text-muted-foreground"
+              title={t("arrivals.photosNotSavedDetail")}
+              data-testid="arrival-listed"
+            >
+              {t("arrivals.photosNotSaved")}
+            </Badge>
+          )}
         </div>
         <CardDescription className="space-y-1 break-words">
           {label && <div>{label}</div>}
@@ -1185,12 +1213,14 @@ export default function ArrivalPostsView({
   // While a selected region is being read once, the feed refreshes quietly.
   // First the status, so the last refresh after a read ends still finds every
   // post it brought. Then it asks again for each read the fresh status still
-  // shows pending, which keeps the read going: the backend records no second
-  // request, and queues a new read job run only when none is queued or
-  // running (one that stopped short, on its photo budget or before an hourly
-  // run, resumes). Asking only after the status says the request is still
-  // pending matters: asking for a region whose read has just finished would
-  // record a new request and read it all over again. Then the summary (new
+  // shows pending, which keeps the read going: the backend queues a new read
+  // job run only when none is queued or running (one that stopped short, on
+  // its photo budget or before an hourly run, resumes). It asks by the
+  // pending request's own id (resume_read, migration 000643), never by
+  // region: the status can be a moment old, and on 2026-11-12 a region asked
+  // for again one second after its read finished recorded a new request and
+  // read it all over again. resume_read never records a request, and answers
+  // not_pending once the request is fulfilled. Then the summary (new
   // accounts and their counts) and the newest posts, merged in without
   // touching the pages already loaded or the reader's place. A full load or
   // Load more that starts meanwhile wins, and a failed refresh changes nothing.
@@ -1208,18 +1238,21 @@ export default function ArrivalPostsView({
     }
   };
 
-  // Every answer is normal, "already_running" and "remote_unsupported"
-  // included, and the hook keeps the newest per region; only a refused call
-  // stops the asking for that region, until it is selected again, while the
-  // status keeps being polled.
+  // Every answer is normal, "already_running", "remote_unsupported" and
+  // "not_pending" included, and the hook keeps the newest per region; only a
+  // refused call stops the asking for that region, until it is selected
+  // again, while the status keeps being polled. A backend without resume_read
+  // answers 501, which stops it too: falling back to request_read would bring
+  // back the re-send that records a second request.
   const resendPendingReads = async (status: ArrivalRegionStatus) => {
     const pending = status.regions.filter((entry) => entry.pending_request !== null
       && regions.includes(entry.region)
       && !resendStopped.current.has(entry.region)
       && !requestingRef.current.has(entry.region));
-    await Promise.all(pending.map(async ({ region }) => {
+    await Promise.all(pending.map(async ({ region, pending_request: request }) => {
+      if (request === null) return;
       try {
-        await regionStatus.send({ action: "request_read", region });
+        await regionStatus.send({ action: "resume_read", region, request_id: request.request_id });
       } catch {
         resendStopped.current.add(region);
       }

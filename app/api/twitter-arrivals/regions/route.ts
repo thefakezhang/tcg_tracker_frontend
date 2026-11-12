@@ -7,8 +7,9 @@ import { createClient } from "@/lib/supabase/server";
 // migration 000622). Same boundary as ../route.ts: the caller's session goes
 // to the administrator-only backend RPCs, nothing is read or written
 // directly, no service key is involved, and the answer is never cached.
-// GET is the status; POST changes the focus or asks for a region to be read
-// once, and answers with the status after the change.
+// GET is the status; POST changes the focus, asks for a region to be read
+// once, or keeps a pending read going (resume_read, migration 000643), and
+// answers with the status after the change.
 
 const UNAVAILABLE = "Region controls are unavailable";
 const TOKYO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -23,13 +24,13 @@ function rpcMissing(error: { code?: string; message?: string }): boolean {
     || /could not find the function/i.test(error.message ?? "");
 }
 
-type RpcCall = { name: string; args: Record<string, string | null> };
+type RpcCall = { name: string; args: Record<string, string | number | null> };
 
 function rpcFor(body: unknown): RpcCall | string {
   if (body == null || typeof body !== "object" || Array.isArray(body)) {
     return "a JSON object is required";
   }
-  const { action, region, until } = body as Record<string, unknown>;
+  const { action, region, until, request_id: requestId } = body as Record<string, unknown>;
   if (action === "reset_focus") {
     return { name: "twitter_arrivals_clear_focus", args: { p_region: null } };
   }
@@ -46,8 +47,15 @@ function rpcFor(body: unknown): RpcCall | string {
       return { name: "twitter_arrivals_clear_focus", args: { p_region: region } };
     case "request_read":
       return { name: "twitter_arrivals_request_read", args: { p_region: region } };
+    case "resume_read":
+      // Keeps one pending request's read going (migration 000643); the region
+      // only names whose read it is for the tab, the request id is the key.
+      if (typeof requestId !== "number" || !Number.isSafeInteger(requestId) || requestId < 1) {
+        return "request_id must be a positive integer";
+      }
+      return { name: "twitter_arrivals_resume_read", args: { p_request_id: requestId } };
     default:
-      return "action must be set_focus, clear_focus, reset_focus or request_read";
+      return "action must be set_focus, clear_focus, reset_focus, request_read or resume_read";
   }
 }
 
