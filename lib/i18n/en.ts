@@ -456,6 +456,8 @@ const en = {
   "mercariLeads.slab.profitHint": "profit even if it grades PSA 1-6",
   "mercariLeads.slab.profitHintMultiple": "profit even if it grades PSA 1-6 · {multiple}",
   "mercariLeads.slab.unverified": "Only the set and name identify this card. Check the photos before buying.",
+  "mercariLeads.slab.kept": "Misses the raw bars, so it shows only here, for its slab play.",
+  "mercariLeads.slab.rawNetsNothing": "No raw multiple: the raw value nets {net} after selling costs.",
   "mercariLeads.slab.floor": "Card Ladder PSA {grades}: {floor}, the lower quarter of {count} sales (newest {date})",
   "mercariLeads.slab.math": "{floor} - {selling} eBay costs - {grading} grading = {net}, against {landed} landed",
   "mercariLeads.slab.mathDays": "{floor} - {selling} eBay costs - {grading} grading ({days} days) = {net}, against {landed} landed",

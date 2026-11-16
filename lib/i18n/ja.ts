@@ -458,6 +458,8 @@ const ja: { [K in keyof typeof en]: string } = {
   "mercariLeads.slab.profitHint": "PSA 1〜6でも出る利益",
   "mercariLeads.slab.profitHintMultiple": "PSA 1〜6でも出る利益 · {multiple}",
   "mercariLeads.slab.unverified": "セット名とカード名だけで特定しています。購入前に写真で確認してください。",
+  "mercariLeads.slab.kept": "素の価格では基準に届かないため、スラブ狙いとしてここにだけ表示しています。",
+  "mercariLeads.slab.rawNetsNothing": "素の倍率なし: 販売コスト差し引き後の素の価値は {net} です。",
   "mercariLeads.slab.floor": "Card Ladder PSA {grades}: {floor}（{count}件の販売の下位25%、最新 {date}）",
   "mercariLeads.slab.math": "{floor} - eBay費用 {selling} - 鑑定 {grading} = {net}、仕入れ {landed}",
   "mercariLeads.slab.mathDays": "{floor} - eBay費用 {selling} - 鑑定 {grading}（{days}日） = {net}、仕入れ {landed}",

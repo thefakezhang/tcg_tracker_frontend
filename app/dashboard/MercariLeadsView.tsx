@@ -69,6 +69,8 @@ export type MercariScreenResult = "never_clears" | "may_clear" | "no_evidence";
 // check confirmed it, or the title gave its printed number), unverified when
 // only a set and name named it.
 export type MercariSlabPlayState = "play" | "unverified";
+// Why a row that misses the raw bars was published (backend 000648, #2710).
+export type MercariKeptFor = "slab_play";
 
 // The group a feed row stands for (backend mercari_lead_groups, 000638): the
 // visible copies of one card at one holder or grade, this row the best under
@@ -207,6 +209,9 @@ export type MercariLead = {
   slab_play_profit_usd: number | null;
   slab_play_multiple: number | null;
   slab_play_state: MercariSlabPlayState | null;
+  // "slab_play" on a raw fixed-price row the publisher kept below the raw bars
+  // only for its slab play (backend 000648); only the slab_play lane shows it.
+  kept_for: MercariKeptFor | null;
   // The group a feed row stands for; null on a group member read in full.
   group: MercariLeadGroup | null;
 };
@@ -486,12 +491,24 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
     const maxBid = optionalInteger(row.auction_max_bid_jpy, "auction_max_bid_jpy");
     const withinMax = row.auction_bid_within_max == null ? null : requiredBoolean(row.auction_bid_within_max, "auction_bid_within_max");
     const ended = requiredBoolean(row.auction_ended, "auction_ended");
+    // A row kept below the raw bars only for its slab play (backend 000648)
+    // is a priced raw fixed-price row, as the backend CHECK holds it.
+    const keptFor = optionalString(row.kept_for, "kept_for");
+    if (keptFor !== null && (keptFor !== "slab_play" || auction || holderHint !== "holder_unknown"
+      || (lane !== "modern_raw" && lane !== "vintage_raw") || valueUsd === null)) {
+      throw invalid("kept for", index);
+    }
     if (!auction) {
       if (bidCount !== null || endsAt !== null || lastSeenAt !== null || maxBid !== null || withinMax !== null || ended) {
         throw invalid("fixed-price auction facts", index);
       }
-      // A fixed-price lead has a multiple or says why it has none.
-      if (lane !== "unpriced" && (multiple === null) !== (withheld !== null)) throw invalid("withheld reason", index);
+      // A fixed-price lead has a multiple or says why it has none, except a
+      // kept slab play whose raw value nets nothing: it has neither.
+      const keptNetsNothing = keptFor !== null && multiple === null && withheld === null
+        && netValue !== null && netValue <= 0;
+      if (lane !== "unpriced" && (multiple === null) !== (withheld !== null) && !keptNetsNothing) {
+        throw invalid("withheld reason", index);
+      }
     }
 
     const ask = requiredNumber(row.ask_jpy, "ask_jpy");
@@ -694,6 +711,7 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       slab_play_profit_usd: slabProfit,
       slab_play_multiple: slabMultiple,
       slab_play_state: slabState as MercariSlabPlayState | null,
+      kept_for: keptFor as MercariKeptFor | null,
       group: parseGroup(row, externalItemId, index),
     };
   });
@@ -1497,6 +1515,9 @@ function SlabPlay({ lead }: { lead: MercariLead }) {
       {unverified && (
         <p className="mt-1 text-sm font-medium" data-testid="mercari-lead-slab-unverified">{t("mercariLeads.slab.unverified")}</p>
       )}
+      {lead.kept_for !== null && (
+        <p className="mt-1 text-xs" data-testid="mercari-lead-slab-kept">{t("mercariLeads.slab.kept")}</p>
+      )}
       <p className="mt-1 text-xs">{floorLine}</p>
       <p className="text-xs tabular-nums" data-testid="mercari-lead-slab-math">
         {lead.slab_grading_days === null
@@ -1761,6 +1782,10 @@ function LeadCard({
             </div>
           ) : withheldText !== null ? (
             <p className="text-sm">{withheldText}</p>
+          ) : lead.kept_for !== null && lead.net_value_usd !== null ? (
+            <p className="text-sm" data-testid="mercari-lead-raw-nets-nothing">
+              {t("mercariLeads.slab.rawNetsNothing", { net: formatUsd(lead.net_value_usd) })}
+            </p>
           ) : (
             <p className="text-sm">
               <span className="text-muted-foreground">{t("mercariLeads.unpriced")}: </span>

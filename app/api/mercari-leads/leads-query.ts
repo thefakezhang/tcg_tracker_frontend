@@ -221,6 +221,8 @@ export const LEAD_COLUMNS = [
   "slab_play_profit_usd",
   "slab_play_multiple",
   "slab_play_state",
+  // Backend 000648 (#2710).
+  "kept_for",
 ].join(", ");
 
 function isOneOf<T extends string>(values: readonly T[], value: string): value is T {
