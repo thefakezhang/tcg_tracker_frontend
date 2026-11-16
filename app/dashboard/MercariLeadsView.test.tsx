@@ -111,6 +111,7 @@ const RAW: MercariLead = {
   slab_play_profit_usd: null,
   slab_play_multiple: null,
   slab_play_state: null,
+  kept_for: null,
   group: null,
 };
 
@@ -1261,6 +1262,18 @@ const SLAB_LOSS: MercariLead = {
   slab_play_state: null,
 };
 
+// A play the publisher kept below the raw bars (backend 000648, #2710): its raw
+// value nets nothing, so it has neither a multiple nor a withheld reason.
+const SLAB_KEPT: MercariLead = {
+  ...SLAB_PLAY,
+  kept_for: "slab_play",
+  value_usd: 1.2,
+  nm_value_usd: 1.2,
+  selling_cost_usd: 1.55,
+  net_value_usd: -0.35,
+  multiple: null,
+};
+
 describe("MercariLeadsView slab plays and the seller's condition", () => {
   it("opens the slab plays by profit, from the URL and back, with no evidence toggle", async () => {
     const loader = vi.fn(async (filters: MercariLeadFilters) => page(filters.lane === "slab_play" ? [SLAB_PLAY] : [RAW]));
@@ -1316,6 +1329,17 @@ describe("MercariLeadsView slab plays and the seller's condition", () => {
     expect(within(cards[1]).queryByTestId("mercari-lead-slab-play")).toBeNull();
     expect(within(cards[1]).getByTestId("mercari-lead-slab-floor").textContent)
       .toBe("Card Ladder PSA 2: $30.00, the lower quarter of 5 sales (newest Nov\u00a010,\u00a02026) · grading it leaves -$43.79 against the ask");
+  });
+
+  it("says a kept play is shown only for its slab play, and what its raw value nets", async () => {
+    view(vi.fn(async () => page([SLAB_KEPT])));
+
+    const card = await onlyCard();
+    expect(within(card).getByTestId("mercari-lead-slab-kept").textContent)
+      .toBe("Misses the raw bars, so it shows only here, for its slab play.");
+    expect(within(card).getByTestId("mercari-lead-raw-nets-nothing").textContent)
+      .toBe("No raw multiple: the raw value nets -$0.35 after selling costs.");
+    expect(within(card).getByTestId("mercari-lead-slab-play").textContent).toContain("+$137.70");
   });
 
   it("shows nothing of a slab play on a lead with no floor", async () => {
@@ -1588,6 +1612,8 @@ describe("parseMercariLeads", () => {
 
   it("accepts the 000646 slab shapes and fails closed on one the view should never produce", () => {
     expect(parseMercariLeads([SLAB_PLAY, SLAB_UNVERIFIED, SLAB_LOSS])).toHaveLength(3);
+    expect(parseMercariLeads([SLAB_KEPT, { ...SLAB_PLAY, kept_for: "slab_play" }]).map((lead) => lead.kept_for))
+      .toEqual(["slab_play", "slab_play"]);
     expect(parseMercariLeads([{ ...SLAB_PLAY, slab_floor_usd: "241.00", slab_play_profit_usd: "137.70" }])[0])
       .toMatchObject({ slab_floor_usd: 241, slab_play_profit_usd: 137.7 });
     // No grading cost: a floor and no play.
@@ -1610,6 +1636,14 @@ describe("parseMercariLeads", () => {
       [{ ...SLAB_PLAY, slab_play_state: "maybe" }, "slab play"],
       [{ ...SLAB_PLAY, slab_play_profit_usd: null }, "slab play"],
       [{ ...SLAB_PLAY, slab_grading_cost_usd: null }, "slab play"],
+      // A kept row (backend 000648) is a priced raw fixed-price row, and only
+      // it may have neither a multiple nor a reason, when its raw value nets
+      // nothing.
+      [{ ...SLAB_KEPT, kept_for: null }, "withheld reason"],
+      [{ ...SLAB_KEPT, net_value_usd: 5 }, "withheld reason"],
+      [{ ...SLAB_KEPT, kept_for: "raw" }, "kept for"],
+      [{ ...PSA10, kept_for: "slab_play" }, "kept for"],
+      [{ ...UNPRICED, kept_for: "slab_play" }, "kept for"],
     ] as const) {
       expect(() => parseMercariLeads([broken]), JSON.stringify(broken).slice(0, 80)).toThrow(`Invalid Mercari lead ${message}`);
     }

@@ -119,6 +119,11 @@ The evidence and screen toggles are hidden there, because the backend does not a
 Its defaults note says so.
 The backend's rules (the floor, the costs, which matcher tiers are trusted) are in the backend's `docs/mercari_title_leads.md` "Slab plays".
 
+Since backend 000648 (#2710) the publisher also keeps a raw row that misses the raw bars when it is a slab play, marked `kept_for = 'slab_play'`.
+The grouped feed leaves such a row out of every ordinary lane, and the route's row reads for an ordinary lane add `kept_for IS NULL`, so expanding a group by id cannot bring one back.
+In the Slab plays lane a kept row reads "Misses the raw bars, so it shows only here, for its slab play.", and when its raw value nets nothing it has neither a multiple nor a withheld reason, which the parser admits only on a kept row and the card states as "No raw multiple: the raw value nets ... after selling costs."
+The parser refuses `kept_for` on anything but a priced raw fixed-price row, as the backend CHECK does.
+
 The seller-condition filter is a row of toggles under the lane: "All" and the six conditions as Mercari spells them (the English gloss is each button's title).
 Several can be on at once, and turning all six on is the same as "All".
 It applies to every lane and format; Best condition is offered on every fixed-price feed.

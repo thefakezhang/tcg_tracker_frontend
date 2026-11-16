@@ -137,7 +137,7 @@ app/
     twitter-buybacks/rpc-errors.ts # Shared RPC failure classification for the Buybacks routes (forbidden, rpc-missing)
     mercari-deals/route.ts    # Operator-only Verified feed: mercari_published_deals_v, newest first, composite cursor (mercari_deals_tab.md)
     mercari-deals/action/route.ts # Dismiss / recheck through RPC record_mercari_deal_item_action
-    mercari-leads/route.ts    # Operator-only Leads feed: mercari_lead_groups then mercari_leads_v, one required lane (or the slab plays) and one format, a seller-condition filter, best-multiple, best-condition, slab-profit, newest or (auctions) ending-soonest keyset (mercari_leads_tab.md)
+    mercari-leads/route.ts    # Operator-only Leads feed: mercari_lead_groups then mercari_leads_v, one required lane (or the slab plays, which alone show rows kept below the raw bars) and one format, a seller-condition filter, best-multiple, best-condition, slab-profit, newest or (auctions) ending-soonest keyset (mercari_leads_tab.md)
     mercari-leads/leads-query.ts # Request bounds, column list and keyset cursor for the leads route
     mercari-leads/action/route.ts # Dismiss (reason required) / photo-check request through RPC record_mercari_lead_action
   dashboard/

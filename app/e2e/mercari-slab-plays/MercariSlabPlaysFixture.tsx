@@ -107,6 +107,7 @@ const BASE: MercariLead = {
   slab_play_profit_usd: 466.81,
   slab_play_multiple: 1.684,
   slab_play_state: "play",
+  kept_for: null,
   group: { rows: 1, listings: 1, askMin: 109000, askMax: 109000, memberIds: ["m10425422029"] },
 };
 
@@ -191,9 +192,53 @@ const LOSS: MercariLead = {
   group: { rows: 1, listings: 1, askMin: 1500, askMax: 1500, memberIds: ["m40000000004"] },
 };
 
+// A play the publisher kept below the raw bars (backend 000648, #2710): worth
+// $1.20 raw, which nets nothing after selling costs, but its PSA 1-6 floor of
+// $62 pays $20.15 over a landed $3.13 after $16.81 of eBay costs and grading.
+const KEPT: MercariLead = {
+  ...BASE,
+  external_item_id: "m40000000005",
+  canonical_url: "https://jp.mercari.com/item/m40000000005",
+  sanitized_title: "ポケモンカード ピィ 008/031",
+  ask_jpy: 500,
+  seller_condition_id: "2",
+  regional_name: "ピィ",
+  english_name: "Cleffa",
+  set_code: "SVHM",
+  set_name: "Starter deck",
+  card_number: "008/031",
+  lane: "modern_raw",
+  value_usd: 1.2,
+  value_condition: "nm",
+  nm_value_usd: 1.2,
+  landed_ask_usd: 3.13,
+  selling_cost_usd: 1.55,
+  net_value_usd: -0.35,
+  multiple: null,
+  photo_check_state: "unchecked",
+  photo_source_card_uid: null,
+  photo_card_uid: null,
+  photo_regional_name: null,
+  photo_english_name: null,
+  photo_set_code: null,
+  photo_card_number: null,
+  photo_checked_at: null,
+  current_card_uid: "c0000000-0000-4000-8000-000000000011",
+  slab_floor_usd: 62,
+  slab_floor_median_usd: 75,
+  slab_floor_sales: 7,
+  slab_floor_grades: [3, 4, 6],
+  slab_selling_cost_usd: 16.81,
+  slab_net_value_usd: 23.28,
+  slab_play_profit_usd: 20.15,
+  slab_play_multiple: 7.438,
+  kept_for: "slab_play",
+  group: { rows: 1, listings: 1, askMin: 500, askMax: 500, memberIds: ["m40000000005"] },
+};
+
 async function loader(filters: MercariLeadFilters): Promise<MercariLeadsPage> {
   const leads = filters.lane === "slab_play"
-    ? [BASE, ...(filters.includeUnverified ? [UNVERIFIED] : [])]
+    ? [BASE, KEPT, ...(filters.includeUnverified ? [UNVERIFIED] : [])]
     : filters.lane === "modern_raw" ? [LOSS] : [];
   return {
     leads: leads.filter((lead) => filters.conditions.length === 0 || filters.conditions.includes(lead.seller_condition_id)),

@@ -179,6 +179,7 @@ describe("protected Mercari leads route", () => {
     expect(query.calls).toEqual([
       ["select", [LEAD_COLUMNS]],
       ["eq", ["lane", "vintage_raw"]],
+      ["is", ["kept_for", null]],
       ["in", ["external_item_id", ["m11111111111", "m22222222222"]]],
     ]);
     const body = await response.json();
@@ -284,6 +285,7 @@ describe("protected Mercari leads route", () => {
     expect(query.calls).toEqual([
       ["select", [LEAD_COLUMNS]],
       ["eq", ["lane", "vintage_raw"]],
+      ["is", ["kept_for", null]],
       ["in", ["external_item_id", ["m11111111111", "m22222222222", "m33333333333"]]],
     ]);
     const body = await response.json();
@@ -366,7 +368,7 @@ describe("protected Mercari leads route", () => {
 // order (the backend pins the same list in TestMercariLeadsViewColumns).
 // PostgREST answers a select naming a missing column with a 400, so the route
 // must never ask for anything outside it.
-const VIEW_COLUMNS_000646 = [
+const VIEW_COLUMNS_000648 = [
   "platform", "external_item_id", "publication_id", "publication_published_at", "published_at",
   "source_kind", "source_run_id", "source_item_type", "canonical_url", "sanitized_title", "ask_jpy",
   "shipping_payer_id", "shipping_payer", "buyer_pays_shipping", "shipping_method_id", "shipping_added_jpy",
@@ -391,6 +393,8 @@ const VIEW_COLUMNS_000646 = [
   "slab_floor_usd", "slab_floor_median_usd", "slab_floor_sales", "slab_floor_grades", "slab_floor_as_of",
   "slab_grading_cost_usd", "slab_grading_days", "slab_selling_cost_usd", "slab_net_value_usd",
   "slab_play_profit_usd", "slab_play_multiple", "slab_play_state",
+  // 000648 (#2710): a row kept only as a slab play.
+  "kept_for",
 ];
 
 describe("Mercari leads column list", () => {
@@ -411,7 +415,7 @@ describe("Mercari leads column list", () => {
     expect(columns).toContain("photo_checks_paused");
     expect(columns).toContain("screen_result");
     expect(columns).toContain("value_age_days");
-    expect(columns.filter((column) => !VIEW_COLUMNS_000646.includes(column))).toEqual([]);
+    expect(columns.filter((column) => !VIEW_COLUMNS_000648.includes(column))).toEqual([]);
   });
 });
 
@@ -496,8 +500,21 @@ describe("slab plays and the seller's condition (backend 000646)", () => {
     }));
     expect(query.calls).toContainEqual(["not", ["slab_play_state", "is", null]]);
     expect(query.calls.some(([method]) => method === "eq")).toBe(false);
+    // A row kept below the raw bars (backend 000648) belongs here.
+    expect(query.calls).not.toContainEqual(["is", ["kept_for", null]]);
     const body = await response.json();
     expect(body.next_cursor).toEqual({ after: "213.53", after_key: "m12345678901" });
+  });
+
+  it("never reads a row kept only as a slab play into an ordinary lane, even by id", async () => {
+    const feed = serve([group("m12345678901")], [row("m12345678901", { lane: "vintage_raw" })]);
+    await GET(request("?lane=vintage_raw"));
+    expect(feed.calls).toContainEqual(["eq", ["lane", "vintage_raw"]]);
+    expect(feed.calls).toContainEqual(["is", ["kept_for", null]]);
+
+    const members = serve([], [row("m12345678901", { lane: "vintage_raw" })]);
+    await GET(request("?lane=vintage_raw&ids=m12345678901"));
+    expect(members.calls).toContainEqual(["is", ["kept_for", null]]);
   });
 
   it("sends the conditions and the unverified toggle only when they say something", async () => {
