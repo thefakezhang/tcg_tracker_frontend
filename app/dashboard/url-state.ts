@@ -31,7 +31,7 @@ import {
   MERCARI_SORT_PARAM,
   type MercariFeed,
   type MercariLeadFormat,
-  type MercariLeadLane,
+  type MercariFeedLane,
   type MercariLeadSort,
   parseMercariFeedParam,
   parseMercariFormatParam,
@@ -69,7 +69,7 @@ export interface DashboardUrlState {
   /** Mercari feed (leads or verified), only meaningful when the view is mercari; the default stays out of the URL. */
   feed: MercariFeed | null;
   /** Mercari leads lane, only meaningful when the view is mercari. */
-  lane: MercariLeadLane | null;
+  lane: MercariFeedLane | null;
   /** Mercari leads format (fixed price or auctions), only meaningful when the view is mercari; the default stays out of the URL. */
   format: MercariLeadFormat | null;
   /** Mercari leads sort, only meaningful when the view is mercari. */

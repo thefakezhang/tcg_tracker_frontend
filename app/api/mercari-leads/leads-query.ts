@@ -1,8 +1,8 @@
 // Shared shape of the Mercari leads read: the request the route accepts, the
 // columns the tab needs from the backend view mercari_leads_v (migrations
-// 000616, 000617, 000623, 000633, 000634 and 000638), the grouped feed's
-// arguments (mercari_lead_groups, 000638), and the keyset cursor over each
-// sort. Kept out of route.ts because a Next.js route module may export only
+// 000616, 000617, 000623, 000633, 000634, 000638 and 000646), the grouped
+// feed's arguments (mercari_lead_groups, 000638 and 000646), and the keyset
+// cursor over each sort. Kept out of route.ts because a Next.js route module may export only
 // HTTP handlers.
 
 export const DEFAULT_LIMIT = 50;
@@ -26,23 +26,32 @@ const SAFE_MULTIPLE = /^[0-9]{1,9}(\.[0-9]{1,3})?$/;
 // under "Best multiple", so a page can end on one.
 export const NULL_MULTIPLE = "null";
 
-export const LEAD_LANES = ["modern_raw", "vintage_raw", "psa", "unpriced"] as const;
+// The row lanes, and the slab plays (backend 000646, #2707): every raw lane's
+// leads whose card's Card Ladder PSA 1-6 floor clears the ask after grading.
+// "slab_play" is a feed, never a row's lane.
+export const LEAD_LANES = ["modern_raw", "vintage_raw", "psa", "unpriced", "slab_play"] as const;
 export type LeadLane = (typeof LEAD_LANES)[number];
 
-export const LEAD_SORTS = ["multiple", "newest", "ending"] as const;
+export const LEAD_SORTS = ["multiple", "newest", "ending", "condition", "profit"] as const;
 export type LeadSort = (typeof LEAD_SORTS)[number];
+
+// The condition the seller chose, 1 (new, unused) to 6 (poor overall).
+export const SELLER_CONDITIONS = ["1", "2", "3", "4", "5", "6"] as const;
+export type SellerCondition = (typeof SELLER_CONDITIONS)[number];
 
 // How a lead sells (backend 000633). One format per request: an auction has no
 // multiple, so the two are never ranked against each other.
 export const LEAD_FORMATS = ["fixed_price", "auction"] as const;
 export type LeadFormat = (typeof LEAD_FORMATS)[number];
 
-// The sorts each format offers: an auction is ranked by its soonest stated end,
-// never by a multiple on a bid that rises.
-const FORMAT_SORTS: Record<LeadFormat, readonly LeadSort[]> = {
-  fixed_price: ["multiple", "newest"],
-  auction: ["ending", "newest"],
-};
+// The sorts each feed offers, its default first: an auction is ranked by its
+// soonest stated end, never by a multiple on a bid that rises, and the slab
+// plays by their profit after grading. Slab plays are fixed price only.
+export function leadSorts(lane: LeadLane, format: LeadFormat): readonly LeadSort[] {
+  if (format === "auction") return ["ending", "newest"];
+  if (lane === "slab_play") return ["profit", "condition", "newest"];
+  return ["multiple", "condition", "newest"];
+}
 
 // The cursor spelling of an auction whose end no lead scan read; they sort
 // after every auction with a stated end.
@@ -54,10 +63,14 @@ export type PhotoState = (typeof PHOTO_STATES)[number];
 export type LeadCursor = {
   // The last row's sort key: its multiple (a decimal, or null) under "multiple",
   // its first_seen_at under "newest", its auction_ends_at (or null) under
-  // "ending", where after_seen is its first_seen_at, the second key.
+  // "ending", where after_seen is its first_seen_at, the second key; its slab
+  // profit under "profit"; and under "condition" the lane's value (the
+  // multiple or null, or the slab profit in the slab plays) after its
+  // condition, after_condition.
   after: string | null;
   after_key: string;
   after_seen?: string;
+  after_condition?: SellerCondition;
 };
 
 export type LeadsRequest = {
@@ -75,6 +88,10 @@ export type LeadsRequest = {
   includeEvidence: boolean;
   includeScreened: boolean;
   includeShops: boolean;
+  // The seller conditions to show; null is all six.
+  conditions: SellerCondition[] | null;
+  // The slab plays whose card only a set and name named, on the slab lane only.
+  includeUnverified: boolean;
   cursor: LeadCursor | null;
   limit: number;
   // The members of one group to read in full, in this order (the tab expands
@@ -188,6 +205,22 @@ export const LEAD_COLUMNS = [
   "screen_evidence_source",
   "screen_evidence_as_of",
   "screen_multiplier",
+  // Slab plays (backend 000646, #2707): the card's Card Ladder PSA 1-6 floor,
+  // what selling a slab at it and grading cost, the net, the profit over the
+  // landed ask, the multiple and whether the card is trusted. Selecting them
+  // before 000646 is applied is a 400, so this ships after the apply.
+  "slab_floor_usd",
+  "slab_floor_median_usd",
+  "slab_floor_sales",
+  "slab_floor_grades",
+  "slab_floor_as_of",
+  "slab_grading_cost_usd",
+  "slab_grading_days",
+  "slab_selling_cost_usd",
+  "slab_net_value_usd",
+  "slab_play_profit_usd",
+  "slab_play_multiple",
+  "slab_play_state",
 ].join(", ");
 
 function isOneOf<T extends string>(values: readonly T[], value: string): value is T {
@@ -213,13 +246,25 @@ export function parseLeadsRequest(params: URLSearchParams): { ok: true; value: L
   // a PSA value are never ranked against each other.
   const lane = params.get("lane")?.trim() ?? "";
   if (!isOneOf(LEAD_LANES, lane)) {
-    return fail("lane is required and must be modern_raw, vintage_raw, psa or unpriced");
+    return fail("lane is required and must be modern_raw, vintage_raw, psa, unpriced or slab_play");
   }
   const format = params.get("format")?.trim() || "fixed_price";
   if (!isOneOf(LEAD_FORMATS, format)) return fail("format must be fixed_price or auction");
-  const sort = params.get("sort")?.trim() || FORMAT_SORTS[format][0];
-  if (!isOneOf(LEAD_SORTS, sort) || !FORMAT_SORTS[format].includes(sort)) {
-    return fail(format === "auction" ? "sort must be ending or newest for auctions" : "sort must be multiple or newest");
+  if (lane === "slab_play" && format !== "fixed_price") return fail("slab plays are fixed price only");
+  const offered = leadSorts(lane, format);
+  const sort = params.get("sort")?.trim() || offered[0];
+  if (!isOneOf(LEAD_SORTS, sort) || !offered.includes(sort)) {
+    return fail(`sort must be ${offered.join(", ")} here`);
+  }
+  // Conditions: a comma list of distinct 1 to 6; absent is all of them.
+  const rawConditions = params.get("conditions")?.trim() ?? "";
+  let conditions: SellerCondition[] | null = null;
+  if (rawConditions !== "") {
+    const listed = rawConditions.split(",");
+    if (listed.some((condition) => !isOneOf(SELLER_CONDITIONS, condition)) || new Set(listed).size !== listed.length) {
+      return fail("conditions must be distinct values from 1 to 6");
+    }
+    conditions = listed as SellerCondition[];
   }
   const photo = params.get("photo")?.trim() ?? "";
   if (photo !== "" && !isOneOf(PHOTO_STATES, photo)) {
@@ -235,6 +280,9 @@ export function parseLeadsRequest(params: URLSearchParams): { ok: true; value: L
   if (typeof includeScreened === "string") return fail(includeScreened);
   const includeShops = flag(params, "include_shops");
   if (typeof includeShops === "string") return fail(includeShops);
+  const includeUnverified = flag(params, "include_unverified");
+  if (typeof includeUnverified === "string") return fail(includeUnverified);
+  if (includeUnverified && lane !== "slab_play") return fail("include_unverified is for slab plays only");
 
   // A group's members: listing ids only, each spliced into a PostgREST "in"
   // filter, so each must have its exact shape; never with a cursor.
@@ -245,7 +293,7 @@ export function parseLeadsRequest(params: URLSearchParams): { ok: true; value: L
     if (ids.length > MAX_GROUP_IDS || ids.some((id) => !SAFE_ITEM_ID.test(id)) || new Set(ids).size !== ids.length) {
       return fail(`ids must be 1 to ${MAX_GROUP_IDS} distinct listing ids`);
     }
-    if (params.has("after") || params.has("after_key") || params.has("after_seen")) {
+    if (params.has("after") || params.has("after_key") || params.has("after_seen") || params.has("after_condition")) {
       return fail("ids cannot be paged");
     }
   }
@@ -253,12 +301,27 @@ export function parseLeadsRequest(params: URLSearchParams): { ok: true; value: L
   const after = params.get("after")?.trim() ?? "";
   const afterKey = params.get("after_key")?.trim() ?? "";
   const afterSeen = params.get("after_seen")?.trim() ?? "";
+  const afterCondition = params.get("after_condition")?.trim() ?? "";
   if (Boolean(after) !== Boolean(afterKey)) return fail("after and after_key must be provided together");
   if (afterKey && !SAFE_ITEM_ID.test(afterKey)) return fail("after_key is invalid");
   if (afterSeen && sort !== "ending") return fail("after_seen is only for sorting by ending");
+  if (afterCondition && sort !== "condition") return fail("after_condition is only for sorting by condition");
   let cursor: LeadCursor | null = null;
   if (afterKey) {
-    if (sort === "ending") {
+    if (sort === "profit") {
+      if (!SAFE_MULTIPLE.test(after)) return fail("after must be a profit when sorting by profit");
+      cursor = { after, after_key: afterKey };
+    } else if (sort === "condition") {
+      if (!isOneOf(SELLER_CONDITIONS, afterCondition)) {
+        return fail("after_condition must be 1 to 6 when sorting by condition");
+      }
+      // The slab plays' profit is never null; an ordinary lane's multiple can be.
+      const nullable = lane !== "slab_play";
+      if (!SAFE_MULTIPLE.test(after) && !(nullable && after === NULL_MULTIPLE)) {
+        return fail("after must be the lane's value when sorting by condition");
+      }
+      cursor = { after: after === NULL_MULTIPLE ? null : after, after_key: afterKey, after_condition: afterCondition };
+    } else if (sort === "ending") {
       if (after !== NULL_ENDS_AT && !validTimestamp(after)) {
         return fail("after must be an RFC 3339 timestamp or null when sorting by ending");
       }
@@ -292,6 +355,8 @@ export function parseLeadsRequest(params: URLSearchParams): { ok: true; value: L
       includeEvidence,
       includeScreened,
       includeShops,
+      conditions,
+      includeUnverified,
       cursor,
       limit,
       ids,
@@ -300,9 +365,11 @@ export function parseLeadsRequest(params: URLSearchParams): { ok: true; value: L
 }
 
 /**
- * The arguments of the grouped feed, mercari_lead_groups (backend 000638): the
- * same filters the ungrouped read applied, and the cursor as the function's
- * typed boundary. Every value was validated by parseLeadsRequest.
+ * The arguments of the grouped feed, mercari_lead_groups (backend 000638 and
+ * 000646): the same filters the ungrouped read applied, and the cursor as the
+ * function's typed boundary. Every value was validated by parseLeadsRequest.
+ * The 000646 arguments are sent only when they say something, so the request
+ * of a tab that uses none of them reads as it did before.
  */
 export function groupArgs(request: LeadsRequest): Record<string, unknown> {
   const args: Record<string, unknown> = {
@@ -317,10 +384,19 @@ export function groupArgs(request: LeadsRequest): Record<string, unknown> {
     p_include_shops: request.includeShops,
     p_limit: request.limit,
   };
+  if (request.conditions) args.p_conditions = request.conditions;
+  if (request.includeUnverified) args.p_include_unverified = true;
   const cursor = request.cursor;
   if (cursor) {
     args.p_after_key = cursor.after_key;
-    if (request.sort === "multiple") {
+    if (request.sort === "profit") {
+      args.p_after_profit = cursor.after;
+    } else if (request.sort === "condition") {
+      args.p_after_condition = cursor.after_condition;
+      if (request.lane === "slab_play") args.p_after_profit = cursor.after;
+      else if (cursor.after === null) args.p_after_null = true;
+      else args.p_after_multiple = cursor.after;
+    } else if (request.sort === "multiple") {
       if (cursor.after === null) args.p_after_null = true;
       else args.p_after_multiple = cursor.after;
     } else if (request.sort === "newest") {
@@ -345,6 +421,8 @@ export type LeadGroup = {
   multiple: unknown;
   first_seen_at: unknown;
   auction_ends_at: unknown;
+  seller_condition_id: unknown;
+  slab_play_profit_usd: unknown;
 };
 
 function positiveInteger(value: unknown): number {
@@ -385,6 +463,8 @@ export function parseLeadGroups(value: unknown): LeadGroup[] {
       multiple: row.multiple,
       first_seen_at: row.first_seen_at,
       auction_ends_at: row.auction_ends_at,
+      seller_condition_id: row.seller_condition_id,
+      slab_play_profit_usd: row.slab_play_profit_usd,
     };
   });
 }
@@ -399,7 +479,7 @@ function multipleText(value: unknown): string | null {
 }
 
 /** The cursor after the last row of a full page, or null when the page is the last one. */
-export function nextCursor(rows: unknown[], limit: number, sort: LeadSort): LeadCursor | null {
+export function nextCursor(rows: unknown[], limit: number, sort: LeadSort, lane: LeadLane): LeadCursor | null {
   if (rows.length < limit) return null;
   const last = rows.at(-1);
   if (last == null || typeof last !== "object" || Array.isArray(last)) {
@@ -423,6 +503,26 @@ export function nextCursor(rows: unknown[], limit: number, sort: LeadSort): Lead
     }
     return { after: endsAt, after_key: row.external_item_id, after_seen: row.first_seen_at };
   }
+  if (sort === "profit" || (sort === "condition" && lane === "slab_play")) {
+    const profit = multipleText(row.slab_play_profit_usd ?? null);
+    if (profit === null) throw new Error("Mercari leads view returned an invalid cursor boundary");
+    if (sort === "profit") return { after: profit, after_key: row.external_item_id };
+    return { after: profit, after_key: row.external_item_id, after_condition: conditionText(row.seller_condition_id) };
+  }
   if (!("multiple" in row)) throw new Error("Mercari leads view returned an invalid cursor boundary");
+  if (sort === "condition") {
+    return {
+      after: multipleText(row.multiple),
+      after_key: row.external_item_id,
+      after_condition: conditionText(row.seller_condition_id),
+    };
+  }
   return { after: multipleText(row.multiple), after_key: row.external_item_id };
+}
+
+function conditionText(value: unknown): SellerCondition {
+  if (typeof value !== "string" || !isOneOf(SELLER_CONDITIONS, value)) {
+    throw new Error("Mercari leads view returned an invalid cursor boundary");
+  }
+  return value;
 }

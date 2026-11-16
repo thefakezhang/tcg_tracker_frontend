@@ -137,7 +137,7 @@ app/
     twitter-buybacks/rpc-errors.ts # Shared RPC failure classification for the Buybacks routes (forbidden, rpc-missing)
     mercari-deals/route.ts    # Operator-only Verified feed: mercari_published_deals_v, newest first, composite cursor (mercari_deals_tab.md)
     mercari-deals/action/route.ts # Dismiss / recheck through RPC record_mercari_deal_item_action
-    mercari-leads/route.ts    # Operator-only Leads feed: mercari_leads_v, one required lane and one format, best-multiple, newest or (auctions) ending-soonest keyset on the table's indexes (mercari_leads_tab.md)
+    mercari-leads/route.ts    # Operator-only Leads feed: mercari_lead_groups then mercari_leads_v, one required lane (or the slab plays) and one format, a seller-condition filter, best-multiple, best-condition, slab-profit, newest or (auctions) ending-soonest keyset (mercari_leads_tab.md)
     mercari-leads/leads-query.ts # Request bounds, column list and keyset cursor for the leads route
     mercari-leads/action/route.ts # Dismiss (reason required) / photo-check request through RPC record_mercari_lead_action
   dashboard/
@@ -202,7 +202,7 @@ app/
     MarketEvidenceCallout.tsx # Compact and detail presentation of Collectr/TCGPlayer market evidence
     MatchReviewView.tsx   # Match review queue for pending external-identifier candidates
     MercariTab.tsx        # The `mercari` slug: Leads | Verified switch (?feed=verified), Leads the default
-    MercariLeadsView.tsx  # Leads feed: one lane and format at a time, age and photo-check badges, value evidence and multiple, auctions with their maximum bid, fail-closed row parser
+    MercariLeadsView.tsx  # Leads feed: one lane and format at a time, the slab plays and a seller-condition filter, age and photo-check badges, value evidence and multiple, slab-play panel, auctions with their maximum bid, fail-closed row parser
     MercariDealsView.tsx  # Verified feed: photo-checked deal publication with exit, economics and reason codes
     MtgAliasesTab.tsx     # MTG text-variance alias manager (mtg_card_aliases)
     MtgCardIndex.tsx      # MTG catalog tab of the Card Index

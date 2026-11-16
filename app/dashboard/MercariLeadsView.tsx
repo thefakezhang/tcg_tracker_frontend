@@ -30,6 +30,7 @@ import {
   DEFAULT_MERCARI_SORT,
   MERCARI_FORMAT_PARAM,
   MERCARI_LANE_PARAM,
+  MERCARI_FEED_LANES,
   MERCARI_LEAD_FORMATS,
   MERCARI_LEAD_LANES,
   MERCARI_SORT_PARAM,
@@ -38,12 +39,13 @@ import {
   parseMercariSortParam,
   readUrlParam,
   writeUrlParam,
+  type MercariFeedLane,
   type MercariLeadFormat,
   type MercariLeadLane,
   type MercariLeadSort,
 } from "./url-params";
 
-export type { MercariLeadFormat, MercariLeadLane, MercariLeadSort } from "./url-params";
+export type { MercariFeedLane, MercariLeadFormat, MercariLeadLane, MercariLeadSort } from "./url-params";
 export type MercariPhotoState = "unchecked" | "confirmed" | "conflict" | "inconclusive" | "rejected";
 export type MercariLeadAction = "dismissed" | "photo_check_requested";
 export type MercariSourceStatus = "ON_SALE" | "TRADING" | "SOLD_OUT" | "UNKNOWN";
@@ -62,6 +64,11 @@ export type MercariPhotoCheckPriority = 1 | 2 | 3;
 // screen_multiplier times its highest price on file it could not clear the
 // bars, it could, or nothing prices it.
 export type MercariScreenResult = "never_clears" | "may_clear" | "no_evidence";
+// A raw lead whose card's Card Ladder PSA 1-6 floor clears its ask after
+// grading (backend 000646, #2707): a play when the card is trusted (the photo
+// check confirmed it, or the title gave its printed number), unverified when
+// only a set and name named it.
+export type MercariSlabPlayState = "play" | "unverified";
 
 // The group a feed row stands for (backend mercari_lead_groups, 000638): the
 // visible copies of one card at one holder or grade, this row the best under
@@ -180,12 +187,32 @@ export type MercariLead = {
   screen_evidence_source: string | null;
   screen_evidence_as_of: string | null;
   screen_multiplier: number | null;
+  // The slab play (backend 000646, #2707), on a raw fixed-price row whose
+  // card holds at least five Card Ladder PSA 1-6 sales in 365 days: their
+  // lower quartile (the floor), median, count, grades and newest date; the
+  // eBay selling cost of a slab at the floor and the grading cost and days;
+  // the net (floor less both), the profit over the landed ask, the net over
+  // the landed ask when that profit is positive, and the state. Every field
+  // is null on a row with no floor; the net and what follows from it are
+  // null when no grading cost is set.
+  slab_floor_usd: number | null;
+  slab_floor_median_usd: number | null;
+  slab_floor_sales: number | null;
+  slab_floor_grades: number[] | null;
+  slab_floor_as_of: string | null;
+  slab_grading_cost_usd: number | null;
+  slab_grading_days: number | null;
+  slab_selling_cost_usd: number | null;
+  slab_net_value_usd: number | null;
+  slab_play_profit_usd: number | null;
+  slab_play_multiple: number | null;
+  slab_play_state: MercariSlabPlayState | null;
   // The group a feed row stands for; null on a group member read in full.
   group: MercariLeadGroup | null;
 };
 
 export type MercariLeadFilters = {
-  lane: MercariLeadLane;
+  lane: MercariFeedLane;
   format: MercariLeadFormat;
   sort: MercariLeadSort;
   // "" is every photo state except rejected.
@@ -196,6 +223,10 @@ export type MercariLeadFilters = {
   includeEvidence: boolean;
   includeScreened: boolean;
   includeShops: boolean;
+  // The seller conditions to show (#2708); empty is all six.
+  conditions: MercariSellerConditionID[];
+  // Slab plays whose card only a set and name named; the slab lane only.
+  includeUnverified: boolean;
 };
 
 export type MercariLeadCursor = {
@@ -203,6 +234,8 @@ export type MercariLeadCursor = {
   after_key: string;
   // The second key of the auctions' "ending" sort: the last row's first sighting.
   after_seen?: string;
+  // The first key of the "condition" sort: the last row's seller condition.
+  after_condition?: string;
 };
 
 export type MercariLeadsPage = {
@@ -217,7 +250,7 @@ export type MercariLeadsLoader = (
 
 // Reads a group's other members in full, in the order given.
 export type MercariLeadGroupLoader = (
-  lane: MercariLeadLane,
+  lane: MercariFeedLane,
   ids: readonly string[],
 ) => Promise<MercariLead[]>;
 
@@ -237,7 +270,11 @@ export const DEFAULT_LEAD_FILTERS: MercariLeadFilters = {
   includeEvidence: false,
   includeScreened: false,
   includeShops: false,
+  conditions: [],
+  includeUnverified: false,
 };
+
+export const SELLER_CONDITION_IDS: readonly MercariSellerConditionID[] = ["1", "2", "3", "4", "5", "6"];
 
 export const PHOTO_STATES: readonly MercariPhotoState[] = ["unchecked", "confirmed", "conflict", "inconclusive", "rejected"];
 
@@ -264,6 +301,7 @@ const WITHHELD_REASONS = new Set(["seller_condition_3_6", "psa_grade_unread", "p
 const VALUE_CONDITIONS = new Set(["nm", "damaged_p25"]);
 const SOURCE_KINDS = new Set(["cold_crawl", "lead_scan"]);
 const SCREEN_RESULTS = new Set(["never_clears", "may_clear", "no_evidence"]);
+const SLAB_PLAY_STATES = new Set(["play", "unverified"]);
 // The most group members one expansion reads, best first.
 export const GROUP_EXPANSION_LIMIT = 50;
 const LISTING_FORMATS = new Set<string>(MERCARI_LEAD_FORMATS);
@@ -341,6 +379,16 @@ function imageURL(value: unknown, field: string): string | null {
     throw new Error(`Invalid Mercari lead URL scheme: ${field}`);
   }
   return parsed;
+}
+
+// The grades a floor's sales were at: distinct PSA grades 1 to 6, ascending.
+function slabGrades(value: unknown, index: number): number[] | null {
+  if (value === null || value === undefined) return null;
+  if (!Array.isArray(value) || value.length === 0
+    || value.some((grade, at) => !Number.isInteger(grade) || grade < 1 || grade > 6 || (at > 0 && grade <= value[at - 1]))) {
+    throw invalid("slab grades", index);
+  }
+  return value as number[];
 }
 
 function oneOf<T extends string>(values: Set<string>, value: unknown, what: string, index: number): T {
@@ -522,6 +570,37 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       throw invalid("screen", index);
     }
 
+    // The slab play, as 000646's view derives it: a floor only on a raw
+    // fixed-price row, from five or more sales; costs and a net only with a
+    // floor; a multiple exactly when the profit is positive; a state only on
+    // a positive profit.
+    const slabFloor = optionalNumber(row.slab_floor_usd, "slab_floor_usd");
+    const slabMedian = optionalNumber(row.slab_floor_median_usd, "slab_floor_median_usd");
+    const slabSales = optionalInteger(row.slab_floor_sales, "slab_floor_sales");
+    const slabFloorGrades = slabGrades(row.slab_floor_grades, index);
+    const slabAsOf = optionalString(row.slab_floor_as_of, "slab_floor_as_of");
+    const slabGrading = optionalNumber(row.slab_grading_cost_usd, "slab_grading_cost_usd");
+    const slabDays = optionalInteger(row.slab_grading_days, "slab_grading_days");
+    const slabSelling = optionalNumber(row.slab_selling_cost_usd, "slab_selling_cost_usd");
+    const slabNet = optionalNumber(row.slab_net_value_usd, "slab_net_value_usd");
+    const slabProfit = optionalNumber(row.slab_play_profit_usd, "slab_play_profit_usd");
+    const slabMultiple = optionalNumber(row.slab_play_multiple, "slab_play_multiple");
+    const slabState = optionalString(row.slab_play_state, "slab_play_state");
+    if (slabFloor === null
+      ? [slabMedian, slabSales, slabFloorGrades, slabAsOf, slabGrading, slabDays, slabSelling, slabNet].some((field) => field !== null)
+      : slabFloor <= 0 || slabMedian === null || slabSales === null || slabSales < 5 || slabFloorGrades === null
+        || slabAsOf === null || !DATE_ONLY.test(slabAsOf) || slabSelling === null
+        || holderHint !== "holder_unknown" || lane === "psa" || format !== "fixed_price") {
+      throw invalid("slab floor", index);
+    }
+    if ((slabNet === null) !== (slabProfit === null)
+      || (slabNet !== null && slabGrading === null)
+      || (slabMultiple !== null) !== (slabProfit !== null && slabProfit > 0)
+      || (slabMultiple !== null && slabMultiple <= 0)
+      || (slabState !== null && (!SLAB_PLAY_STATES.has(slabState) || slabProfit === null || slabProfit <= 0))) {
+      throw invalid("slab play", index);
+    }
+
     return {
       external_item_id: externalItemId,
       source_item_type: sourceItemType,
@@ -603,6 +682,18 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       screen_evidence_source: screenSource,
       screen_evidence_as_of: screenAsOf,
       screen_multiplier: screenMultiplier,
+      slab_floor_usd: slabFloor,
+      slab_floor_median_usd: slabMedian,
+      slab_floor_sales: slabSales,
+      slab_floor_grades: slabFloorGrades,
+      slab_floor_as_of: slabAsOf,
+      slab_grading_cost_usd: slabGrading,
+      slab_grading_days: slabDays,
+      slab_selling_cost_usd: slabSelling,
+      slab_net_value_usd: slabNet,
+      slab_play_profit_usd: slabProfit,
+      slab_play_multiple: slabMultiple,
+      slab_play_state: slabState as MercariSlabPlayState | null,
       group: parseGroup(row, externalItemId, index),
     };
   });
@@ -634,8 +725,14 @@ function parseCursor(value: unknown): MercariLeadCursor | null {
   const after = optionalString(raw.after, "next_cursor.after");
   const afterKey = requiredString(raw.after_key, "next_cursor.after_key");
   if (!SAFE_ITEM_ID.test(afterKey) || after === "") throw new Error("Invalid Mercari leads cursor");
-  if (raw.after_seen == null) return { after, after_key: afterKey };
-  return { after, after_key: afterKey, after_seen: requiredTimestamp(raw.after_seen, "next_cursor.after_seen") };
+  const cursor: MercariLeadCursor = { after, after_key: afterKey };
+  if (raw.after_seen != null) cursor.after_seen = requiredTimestamp(raw.after_seen, "next_cursor.after_seen");
+  if (raw.after_condition != null) {
+    const condition = requiredString(raw.after_condition, "next_cursor.after_condition");
+    if (!SELLER_CONDITIONS.has(condition)) throw new Error("Invalid Mercari leads cursor");
+    cursor.after_condition = condition;
+  }
+  return cursor;
 }
 
 async function readBody(response: Response): Promise<unknown> {
@@ -661,12 +758,18 @@ export const loadMercariLeads: MercariLeadsLoader = async (filters, cursor) => {
   if (filters.includeEvidence) query.set("include_evidence", "1");
   if (filters.includeScreened) query.set("include_screened", "1");
   if (filters.includeShops) query.set("include_shops", "1");
+  if (filters.conditions.length > 0) {
+    query.set("conditions", SELLER_CONDITION_IDS.filter((id) => filters.conditions.includes(id)).join(","));
+  }
+  // The route refuses it outside the slab lane, where it means nothing.
+  if (filters.lane === "slab_play" && filters.includeUnverified) query.set("include_unverified", "1");
   if (cursor) {
     // A best-multiple page can end inside the rows without a multiple, and an
     // ending-soonest page inside the auctions whose end no scan read.
     query.set("after", cursor.after ?? "null");
     query.set("after_key", cursor.after_key);
     if (cursor.after_seen) query.set("after_seen", cursor.after_seen);
+    if (cursor.after_condition) query.set("after_condition", cursor.after_condition);
   }
   const response = await fetch(`/api/mercari-leads?${query}`, {
     cache: "no-store",
@@ -727,9 +830,15 @@ function isUnknown(value: string | null): boolean {
   return value === null || value.trim() === "" || value === "UNKNOWN";
 }
 
-/** The sorts each format offers: an auction has no multiple, a fixed-price lead no end. */
-export function sortsFor(format: MercariLeadFormat): readonly MercariLeadSort[] {
-  return format === "auction" ? ["ending", "newest"] : ["multiple", "newest"];
+/**
+ * The sorts each feed offers, its default first: an auction has no multiple
+ * and a fixed-price lead no end; the slab plays rank by their profit after
+ * grading. Slab plays are fixed price only.
+ */
+export function sortsFor(format: MercariLeadFormat, lane: MercariFeedLane): readonly MercariLeadSort[] {
+  if (format === "auction") return ["ending", "newest"];
+  if (lane === "slab_play") return ["profit", "condition", "newest"];
+  return ["multiple", "condition", "newest"];
 }
 
 /**
@@ -740,30 +849,51 @@ export function sortsFor(format: MercariLeadFormat): readonly MercariLeadSort[] 
  * does not offer reads as its default.
  */
 export function effectiveSort(filters: MercariLeadFilters): MercariLeadSort {
-  const offered = sortsFor(filters.format);
+  const offered = sortsFor(filters.format, filters.lane);
   const sort = offered.includes(filters.sort) ? filters.sort : offered[0];
-  return filters.format === "fixed_price" && filters.lane === "unpriced" ? "newest" : sort;
+  return filters.format === "fixed_price" && filters.lane === "unpriced" && sort === "multiple" ? "newest" : sort;
 }
 
-const LANE_KEYS: Record<MercariLeadLane, TranslationKey> = {
+const LANE_KEYS: Record<MercariFeedLane, TranslationKey> = {
   modern_raw: "mercariLeads.lane.modern_raw",
   vintage_raw: "mercariLeads.lane.vintage_raw",
   psa: "mercariLeads.lane.psa",
   unpriced: "mercariLeads.lane.unpriced",
+  slab_play: "mercariLeads.lane.slab_play",
 };
 
-const LANE_HINT_KEYS: Record<MercariLeadLane, TranslationKey> = {
+const LANE_HINT_KEYS: Record<MercariFeedLane, TranslationKey> = {
   modern_raw: "mercariLeads.laneHint.modern_raw",
   vintage_raw: "mercariLeads.laneHint.vintage_raw",
   psa: "mercariLeads.laneHint.psa",
   unpriced: "mercariLeads.laneHint.unpriced",
+  slab_play: "mercariLeads.laneHint.slab_play",
 };
 
 const SORT_KEYS: Record<MercariLeadSort, TranslationKey> = {
   multiple: "mercariLeads.sort.multiple",
   newest: "mercariLeads.sort.newest",
   ending: "mercariLeads.sort.ending",
+  condition: "mercariLeads.sort.condition",
+  profit: "mercariLeads.sort.profit",
 };
+
+// A slab play on a trusted card reads green; one whose card only a set and
+// name named reads amber until its photos are checked.
+const SLAB_PLAY_CLASS = "border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200";
+const SLAB_UNVERIFIED_CLASS = "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-200";
+
+// "1-6", "6" or "1-3, 5": the grades a floor's sales were at.
+export function slabGradeText(grades: readonly number[]): string {
+  const runs: string[] = [];
+  for (let start = 0; start < grades.length;) {
+    let end = start;
+    while (end + 1 < grades.length && grades[end + 1] === grades[end] + 1) end++;
+    runs.push(end === start ? String(grades[start]) : `${grades[start]}-${grades[end]}`);
+    start = end + 1;
+  }
+  return runs.join(", ");
+}
 
 const FORMAT_KEYS: Record<MercariLeadFormat, TranslationKey> = {
   fixed_price: "mercariLeads.format.fixed_price",
@@ -1128,16 +1258,78 @@ function ChoiceGroup<T extends string>({
   );
 }
 
+// The conditions as Mercari spells them, short enough to sit in one row; the
+// full label (with its English in the English tab) is the button's title.
+const CONDITION_CHIP_KEYS: Record<MercariSellerConditionID, TranslationKey> = {
+  "1": "mercariLeads.conditionChip.1",
+  "2": "mercariLeads.conditionChip.2",
+  "3": "mercariLeads.conditionChip.3",
+  "4": "mercariLeads.conditionChip.4",
+  "5": "mercariLeads.conditionChip.5",
+  "6": "mercariLeads.conditionChip.6",
+};
+
+// The seller conditions to show (#2708): any of the six, or all of them. A
+// condition is a toggle, so several can be on at once; choosing all six is
+// the same as none.
+function ConditionFilter({
+  value,
+  onChange,
+}: {
+  value: readonly MercariSellerConditionID[];
+  onChange: (conditions: MercariSellerConditionID[]) => void;
+}) {
+  const { t } = useTranslation();
+  const label = t("mercariLeads.conditionFilter");
+  const toggle = (condition: MercariSellerConditionID) => {
+    const next = value.includes(condition) ? value.filter((id) => id !== condition) : [...value, condition];
+    onChange(next.length === SELLER_CONDITION_IDS.length ? [] : SELLER_CONDITION_IDS.filter((id) => next.includes(id)));
+  };
+  return (
+    <div role="group" aria-label={label} className="min-w-0 space-y-1.5" data-testid="mercari-condition-filter">
+      <p className="text-sm font-medium" aria-hidden="true">{label}</p>
+      <div className="flex flex-wrap gap-1">
+        <Button
+          type="button"
+          variant={value.length === 0 ? "default" : "outline"}
+          className="h-11 px-3 sm:h-8"
+          aria-pressed={value.length === 0}
+          onClick={() => onChange([])}
+        >
+          {t("mercariLeads.conditionAll")}
+        </Button>
+        {SELLER_CONDITION_IDS.map((condition) => (
+          <Button
+            key={condition}
+            type="button"
+            variant={value.includes(condition) ? "default" : "outline"}
+            className="h-11 px-3 sm:h-8"
+            aria-pressed={value.includes(condition)}
+            title={t(SELLER_CONDITION_KEYS[condition])}
+            onClick={() => toggle(condition)}
+          >
+            {t(CONDITION_CHIP_KEYS[condition])}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // The other copies of a group, read when the operator expands it: the best
 // GROUP_EXPANSION_LIMIT by the feed's sort, each on one compact line with what
 // sets it apart (its ask, multiple or reason, condition, age and photo state).
 function GroupMembers({
   lead,
   group,
+  feedLane,
   loadGroup,
 }: {
   lead: MercariLead;
   group: MercariLeadGroup;
+  // The feed the group came from: the slab plays read their members as slab
+  // plays, whatever row lane each is in.
+  feedLane: MercariFeedLane;
   loadGroup: MercariLeadGroupLoader;
 }) {
   const { t, language } = useTranslation();
@@ -1154,12 +1346,12 @@ function GroupMembers({
     let current = true;
     setMembers(null);
     setError(null);
-    loadGroup(lead.lane, idsKey.split(",")).then(
+    loadGroup(feedLane, idsKey.split(",")).then(
       (loaded) => { if (current) setMembers(loaded); },
       (reason) => { if (current) setError(asError(reason)); },
     );
     return () => { current = false; };
-  }, [loadGroup, lead.lane, idsKey, attempt]);
+  }, [loadGroup, lead.lane, idsKey, attempt, feedLane]);
 
   const multipleFormat = new Intl.NumberFormat(language === "ja" ? "ja-JP" : "en-US", {
     minimumFractionDigits: 2,
@@ -1195,7 +1387,9 @@ function GroupMembers({
         <ul className="space-y-1.5">
           {members.map((member) => {
             const photo = photoStatus(member);
-            const summary = member.listing_format === "auction"
+            const summary = feedLane === "slab_play" && member.slab_play_profit_usd !== null
+              ? t("mercariLeads.slab.memberProfit", { profit: formatUsd(member.slab_play_profit_usd) })
+              : member.listing_format === "auction"
               ? member.auction_max_bid_jpy !== null
                 ? t("mercariLeads.auction.maxBidShort", { jpy: formatJpy(member.auction_max_bid_jpy) })
                 : member.lane === "unpriced" ? t("mercariLeads.unpriced") : t("mercariLeads.auction.noMaxBid")
@@ -1242,13 +1436,86 @@ function GroupMembers({
   );
 }
 
+// The slab play of a raw lead (#2707): the profit even a PSA 1-6 copy leaves
+// after selling costs and grading, how it is reached, and a warning when only
+// a set and name named the card. A lead with a floor but no play says why in
+// one line.
+function SlabPlay({ lead }: { lead: MercariLead }) {
+  const { t, language } = useTranslation();
+  if (lead.slab_floor_usd === null || lead.slab_floor_sales === null || lead.slab_floor_grades === null
+    || lead.slab_floor_as_of === null) {
+    return null;
+  }
+  const floorLine = t("mercariLeads.slab.floor", {
+    grades: slabGradeText(lead.slab_floor_grades),
+    floor: formatUsd(lead.slab_floor_usd),
+    count: lead.slab_floor_sales,
+    date: unbroken(formatDate(lead.slab_floor_as_of, language)),
+  });
+  if (lead.slab_play_state === null || lead.slab_play_profit_usd === null || lead.slab_net_value_usd === null
+    || lead.slab_selling_cost_usd === null || lead.slab_grading_cost_usd === null) {
+    const reason = lead.slab_net_value_usd === null || lead.slab_play_profit_usd === null
+      ? t("mercariLeads.slab.noGradingCost")
+      : lead.slab_play_profit_usd <= 0
+        ? t("mercariLeads.slab.doesNotPay", { profit: formatUsd(lead.slab_play_profit_usd) })
+        : t("mercariLeads.slab.photosDisagree");
+    return (
+      <p className="text-xs text-muted-foreground" data-testid="mercari-lead-slab-floor">
+        {floorLine} · {reason}
+      </p>
+    );
+  }
+  const unverified = lead.slab_play_state === "unverified";
+  const multiple = lead.slab_play_multiple === null
+    ? null
+    : t("mercariLeads.multipleValue", {
+      multiple: new Intl.NumberFormat(language === "ja" ? "ja-JP" : "en-US", {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      }).format(lead.slab_play_multiple),
+    });
+  const costs = {
+    floor: formatUsd(lead.slab_floor_usd),
+    selling: formatUsd(lead.slab_selling_cost_usd),
+    grading: formatUsd(lead.slab_grading_cost_usd),
+    net: formatUsd(lead.slab_net_value_usd),
+    landed: formatUsd(lead.landed_ask_usd),
+  };
+  return (
+    <div
+      className={`rounded-lg border px-3 py-2 ${unverified ? SLAB_UNVERIFIED_CLASS : SLAB_PLAY_CLASS}`}
+      data-testid="mercari-lead-slab-play"
+    >
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <span className="text-2xl font-semibold tabular-nums">
+          {t("mercariLeads.slab.profit", { profit: formatUsd(lead.slab_play_profit_usd) })}
+        </span>
+        <span className="text-xs">
+          {multiple === null ? t("mercariLeads.slab.profitHint") : t("mercariLeads.slab.profitHintMultiple", { multiple })}
+        </span>
+      </div>
+      {unverified && (
+        <p className="mt-1 text-sm font-medium" data-testid="mercari-lead-slab-unverified">{t("mercariLeads.slab.unverified")}</p>
+      )}
+      <p className="mt-1 text-xs">{floorLine}</p>
+      <p className="text-xs tabular-nums" data-testid="mercari-lead-slab-math">
+        {lead.slab_grading_days === null
+          ? t("mercariLeads.slab.math", costs)
+          : t("mercariLeads.slab.mathDays", { ...costs, days: lead.slab_grading_days })}
+      </p>
+    </div>
+  );
+}
+
 function LeadCard({
   lead,
+  feedLane,
   actor,
   onActed,
   loadGroup,
 }: {
   lead: MercariLead;
+  feedLane: MercariFeedLane;
   actor: MercariLeadActor;
   onActed: (action: MercariLeadAction, reason: string) => void;
   loadGroup: MercariLeadGroupLoader;
@@ -1400,6 +1667,15 @@ function LeadCard({
             {t(photo.key)}
           </Badge>
           <Badge variant="outline">{holderLabel}</Badge>
+          {lead.slab_play_state !== null && (
+            <Badge
+              variant="outline"
+              className={lead.slab_play_state === "play" ? SLAB_PLAY_CLASS : SLAB_UNVERIFIED_CLASS}
+              data-testid="mercari-lead-slab-badge"
+            >
+              {t(lead.slab_play_state === "play" ? "mercariLeads.slab.badge" : "mercariLeads.slab.badgeUnverified")}
+            </Badge>
+          )}
           {lead.screen_result === "never_clears" && (
             <Badge variant="outline" className={SCREENED_CLASS} data-testid="mercari-lead-screened">
               {t("mercariLeads.screen.never_clears")}
@@ -1519,10 +1795,11 @@ function LeadCard({
               {group.listings > group.rows && (
                 <p className="mt-1 text-xs text-muted-foreground">{t("mercariLeads.group.listings", { count: group.listings })}</p>
               )}
-              {expanded && <GroupMembers lead={lead} group={group} loadGroup={loadGroup} />}
+              {expanded && <GroupMembers lead={lead} group={group} feedLane={feedLane} loadGroup={loadGroup} />}
             </div>
           )}
         </div>
+        <SlabPlay lead={lead} />
         <div className="grid min-w-0 grid-cols-[5rem_1fr] gap-3 sm:grid-cols-[7rem_1fr]">
           <div className="flex aspect-[3/4] min-w-0 items-center justify-center overflow-hidden rounded-lg border bg-muted">
             {lead.image_url ? (
@@ -1732,8 +2009,8 @@ export default function MercariLeadsView({
   useEffect(() => {
     writeUrlParam(MERCARI_LANE_PARAM, filters.lane === DEFAULT_MERCARI_LANE ? null : filters.lane);
     writeUrlParam(MERCARI_FORMAT_PARAM, filters.format === DEFAULT_MERCARI_FORMAT ? null : filters.format);
-    // Each format's first sort is its default, so it stays out of the URL.
-    writeUrlParam(MERCARI_SORT_PARAM, filters.sort === sortsFor(filters.format)[0] ? null : filters.sort);
+    // Each feed's first sort is its default, so it stays out of the URL.
+    writeUrlParam(MERCARI_SORT_PARAM, filters.sort === sortsFor(filters.format, filters.lane)[0] ? null : filters.sort);
   }, [filters.lane, filters.format, filters.sort]);
 
   useEffect(() => {
@@ -1849,18 +2126,26 @@ export default function MercariLeadsView({
             options={MERCARI_LEAD_FORMATS}
             value={filters.format}
             labelFor={(format) => t(FORMAT_KEYS[format])}
-            onChange={(format) => change({ format, sort: sortsFor(format)[0] })}
+            onChange={(format) => {
+              // Slab plays are fixed price only, so an auction feed leaves them.
+              const lane = format === "auction" && filters.lane === "slab_play" ? DEFAULT_MERCARI_LANE : filters.lane;
+              change({ format, lane, sort: sortsFor(format, lane)[0] });
+            }}
           />
           <ChoiceGroup
             label={t("mercariLeads.laneLabel")}
-            options={MERCARI_LEAD_LANES}
+            options={MERCARI_FEED_LANES}
             value={filters.lane}
             labelFor={(lane) => t(LANE_KEYS[lane])}
-            onChange={(lane) => change({ lane })}
+            disabled={(lane) => lane === "slab_play" && filters.format === "auction"}
+            onChange={(lane) => {
+              const offered = sortsFor(filters.format, lane);
+              change({ lane, sort: offered.includes(filters.sort) ? filters.sort : offered[0] });
+            }}
           />
           <ChoiceGroup
             label={t("mercariLeads.sortLabel")}
-            options={sortsFor(filters.format)}
+            options={sortsFor(filters.format, filters.lane)}
             value={sort}
             labelFor={(option) => t(SORT_KEYS[option])}
             disabled={(option) => filters.format === "fixed_price" && filters.lane === "unpriced" && option === "multiple"}
@@ -1869,19 +2154,20 @@ export default function MercariLeadsView({
         </div>
         <p className="text-xs text-muted-foreground" data-testid="mercari-lane-hint">
           {t(LANE_HINT_KEYS[filters.lane])}
-          {filters.format === "fixed_price" && filters.lane === "unpriced" ? ` ${t("mercariLeads.sortUnpricedNote")}` : ""}
+          {filters.format === "fixed_price" && filters.lane === "unpriced" && sort === "newest" ? ` ${t("mercariLeads.sortUnpricedNote")}` : ""}
           {filters.lane === "unpriced"
             ? ` ${t("mercariLeads.screenHint", { multiplier: leads.find((lead) => lead.screen_multiplier !== null)?.screen_multiplier ?? 2 })}`
             : ""}
         </p>
         <p className="text-xs text-muted-foreground" data-testid="mercari-defaults-hint">
-          {t("mercariLeads.defaultsHint")}
+          {t(filters.lane === "slab_play" ? "mercariLeads.defaultsHintSlab" : "mercariLeads.defaultsHint")}
         </p>
         {filters.format === "auction" && (
           <p className="text-xs text-muted-foreground" data-testid="mercari-format-hint">
             {t("mercariLeads.formatHint.auction")}
           </p>
         )}
+        <ConditionFilter value={filters.conditions} onChange={(conditions) => change({ conditions })} />
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
           <div className="min-w-0 space-y-1.5 sm:w-64">
             <Label htmlFor="mercari-lead-photo-filter">{t("mercariLeads.photoFilter")}</Label>
@@ -1917,7 +2203,7 @@ export default function MercariLeadsView({
           </label>
           {/* Each toggle shows only where it can change the page: evidence-only
               rows exist in the priced lanes, screened rows in the unpriced one. */}
-          {filters.lane !== "unpriced" && (
+          {filters.lane !== "unpriced" && filters.lane !== "slab_play" && (
             <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-8">
               <input
                 type="checkbox"
@@ -1937,6 +2223,17 @@ export default function MercariLeadsView({
                 onChange={(event) => change({ includeScreened: event.target.checked })}
               />
               {t("mercariLeads.includeScreened")}
+            </label>
+          )}
+          {filters.lane === "slab_play" && (
+            <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-8">
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={filters.includeUnverified}
+                onChange={(event) => change({ includeUnverified: event.target.checked })}
+              />
+              {t("mercariLeads.includeUnverified")}
             </label>
           )}
           <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-8">
@@ -1983,6 +2280,7 @@ export default function MercariLeadsView({
             <LeadCard
               key={lead.external_item_id}
               lead={lead}
+              feedLane={filters.lane}
               actor={actor}
               loadGroup={groupLoader}
               onActed={(action, reason) => markActed(lead.external_item_id, action, reason)}
