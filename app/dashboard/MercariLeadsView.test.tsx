@@ -8,6 +8,7 @@ import MercariLeadsView, {
   DEFAULT_LEAD_FILTERS,
   MercariLeadsRequestError,
   parseMercariLeads,
+  slabGradeText,
   type MercariLead,
   type MercariLeadCursor,
   type MercariLeadFilters,
@@ -98,6 +99,18 @@ const RAW: MercariLead = {
   screen_evidence_source: null,
   screen_evidence_as_of: null,
   screen_multiplier: 2,
+  slab_floor_usd: null,
+  slab_floor_median_usd: null,
+  slab_floor_sales: null,
+  slab_floor_grades: null,
+  slab_floor_as_of: null,
+  slab_grading_cost_usd: null,
+  slab_grading_days: null,
+  slab_selling_cost_usd: null,
+  slab_net_value_usd: null,
+  slab_play_profit_usd: null,
+  slab_play_multiple: null,
+  slab_play_state: null,
   group: null,
 };
 
@@ -274,6 +287,8 @@ describe("MercariLeadsView", () => {
       includeEvidence: false,
       includeScreened: false,
       includeShops: false,
+      conditions: [],
+      includeUnverified: false,
     });
     expect(loader).toHaveBeenCalledWith(DEFAULT_LEAD_FILTERS, null);
   });
@@ -1210,6 +1225,165 @@ describe("MercariLeadsView lighter feed", () => {
   });
 });
 
+// A slab play (backend 000646, #2707): RAW's card holds 84 Card Ladder PSA
+// 1-6 sales whose lower quarter is $241, which nets $177.30 after $41.30 of
+// eBay costs and $22.40 of grading, $137.70 over its $39.60 landed ask.
+const SLAB_PLAY: MercariLead = {
+  ...RAW,
+  slab_floor_usd: 241,
+  slab_floor_median_usd: 290,
+  slab_floor_sales: 84,
+  slab_floor_grades: [1, 2, 3, 4, 5, 6],
+  slab_floor_as_of: "2026-11-10",
+  slab_grading_cost_usd: 22.4,
+  slab_grading_days: 45,
+  slab_selling_cost_usd: 41.3,
+  slab_net_value_usd: 177.3,
+  slab_play_profit_usd: 137.7,
+  slab_play_multiple: 4.477,
+  slab_play_state: "play",
+};
+
+// The same play on a card only its set and name named.
+const SLAB_UNVERIFIED: MercariLead = { ...SLAB_PLAY, ...OTHER_ID, match_tier: "set_name", slab_play_state: "unverified" };
+
+// A floor that does not pay for grading.
+const SLAB_LOSS: MercariLead = {
+  ...SLAB_PLAY,
+  slab_floor_usd: 30,
+  slab_floor_median_usd: 30,
+  slab_floor_sales: 5,
+  slab_floor_grades: [2],
+  slab_selling_cost_usd: 11.79,
+  slab_net_value_usd: -4.19,
+  slab_play_profit_usd: -43.79,
+  slab_play_multiple: null,
+  slab_play_state: null,
+};
+
+describe("MercariLeadsView slab plays and the seller's condition", () => {
+  it("opens the slab plays by profit, from the URL and back, with no evidence toggle", async () => {
+    const loader = vi.fn(async (filters: MercariLeadFilters) => page(filters.lane === "slab_play" ? [SLAB_PLAY] : [RAW]));
+    view(loader);
+    await onlyCard();
+
+    fireEvent.click(within(screen.getByRole("group", { name: "Lane" })).getByRole("button", { name: "Slab plays" }));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(
+      { ...DEFAULT_LEAD_FILTERS, lane: "slab_play", sort: "profit" }, null,
+    ));
+    expect(window.location.search).toBe("?lane=slab_play");
+    const sorts = screen.getByRole("group", { name: "Sort" });
+    expect(within(sorts).getAllByRole("button").map((button) => button.textContent)).toEqual(["Slab profit", "Best condition", "Newest"]);
+    expect(within(sorts).getByRole("button", { name: "Slab profit" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByLabelText("Show evidence-only rows (no multiple)")).toBeNull();
+    expect(screen.getByTestId("mercari-lane-hint").textContent).toContain("so even a low grade pays");
+
+    fireEvent.click(screen.getByLabelText("Show plays whose card the title does not pin down"));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(expect.objectContaining({ includeUnverified: true }), null));
+
+    // Back to a row lane: its default sort, never the slab profit.
+    fireEvent.click(within(screen.getByRole("group", { name: "Lane" })).getByRole("button", { name: "Vintage raw" }));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lane: "vintage_raw", sort: "multiple" }), null,
+    ));
+    expect(window.location.search).toBe("?lane=vintage_raw");
+  });
+
+  it("shows a play's profit, its floor and how it is reached, and badges it", async () => {
+    view(vi.fn(async () => page([SLAB_PLAY])));
+
+    const card = await onlyCard();
+    expect(within(card).getByTestId("mercari-lead-slab-badge").textContent).toBe("Slab play");
+    const play = within(card).getByTestId("mercari-lead-slab-play");
+    expect(play.textContent).toContain("+$137.70");
+    expect(play.textContent).toContain("profit even if it grades PSA 1-6 · 4.5x");
+    expect(play.textContent).toContain("Card Ladder PSA 1-6: $241.00, the lower quarter of 84 sales (newest Nov\u00a010,\u00a02026)");
+    expect(within(play).getByTestId("mercari-lead-slab-math").textContent)
+      .toBe("$241.00 - $41.30 eBay costs - $22.40 grading (45 days) = $177.30, against $39.60 landed");
+    expect(within(play).queryByTestId("mercari-lead-slab-unverified")).toBeNull();
+    expect(play.className).toContain("text-emerald-800");
+  });
+
+  it("warns on a play whose card only a set and name named, and says why a floor is no play", async () => {
+    view(vi.fn(async () => page([SLAB_UNVERIFIED, { ...SLAB_LOSS, external_item_id: "m99999999999", canonical_url: "https://jp.mercari.com/item/m99999999999" }])));
+
+    const cards = await screen.findAllByTestId("mercari-lead-card");
+    expect(within(cards[0]).getByTestId("mercari-lead-slab-badge").textContent).toBe("Slab play: check the card");
+    expect(within(cards[0]).getByTestId("mercari-lead-slab-unverified").textContent)
+      .toBe("Only the set and name identify this card. Check the photos before buying.");
+    expect(within(cards[0]).getByTestId("mercari-lead-slab-play").className).toContain("text-amber-800");
+    expect(within(cards[1]).queryByTestId("mercari-lead-slab-badge")).toBeNull();
+    expect(within(cards[1]).queryByTestId("mercari-lead-slab-play")).toBeNull();
+    expect(within(cards[1]).getByTestId("mercari-lead-slab-floor").textContent)
+      .toBe("Card Ladder PSA 2: $30.00, the lower quarter of 5 sales (newest Nov\u00a010,\u00a02026) · grading it leaves -$43.79 against the ask");
+  });
+
+  it("shows nothing of a slab play on a lead with no floor", async () => {
+    view(vi.fn(async () => page([RAW])));
+    const card = await onlyCard();
+    expect(within(card).queryByTestId("mercari-lead-slab-play")).toBeNull();
+    expect(within(card).queryByTestId("mercari-lead-slab-floor")).toBeNull();
+    expect(within(card).queryByTestId("mercari-lead-slab-badge")).toBeNull();
+  });
+
+  it("filters by any of the seller's conditions, and all six is all", async () => {
+    const loader = vi.fn(async () => page([RAW]));
+    view(loader);
+    await onlyCard();
+
+    const conditions = screen.getByRole("group", { name: "Seller condition" });
+    expect(within(conditions).getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(within(conditions).getByRole("button", { name: "やや傷や汚れあり" }));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(expect.objectContaining({ conditions: ["4"] }), null));
+    fireEvent.click(within(conditions).getByRole("button", { name: "新品、未使用" }));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(expect.objectContaining({ conditions: ["1", "4"] }), null));
+    expect(within(conditions).getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("false");
+    for (const name of ["未使用に近い", "目立った傷や汚れなし", "傷や汚れあり", "全体的に状態が悪い"]) {
+      fireEvent.click(within(conditions).getByRole("button", { name }));
+    }
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(expect.objectContaining({ conditions: [] }), null));
+    expect(within(conditions).getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(conditions).getByRole("button", { name: "傷や汚れあり" }).getAttribute("title")).toBe("傷や汚れあり (damage or dirt)");
+  });
+
+  it("sorts by the seller's condition on request, and an auction feed leaves the slab plays", async () => {
+    window.history.replaceState(null, "", "/dashboard?view=mercari&lane=slab_play");
+    const loader = vi.fn(async () => page([]));
+    view(loader);
+    expect(await screen.findByText("No leads in this lane")).toBeTruthy();
+
+    fireEvent.click(within(screen.getByRole("group", { name: "Sort" })).getByRole("button", { name: "Best condition" }));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lane: "slab_play", sort: "condition" }), null,
+    ));
+    expect(window.location.search).toBe("?view=mercari&lane=slab_play&sort=condition");
+
+    fireEvent.click(within(screen.getByRole("group", { name: "Format" })).getByRole("button", { name: "Auctions" }));
+    await waitFor(() => expect(loader).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lane: "modern_raw", format: "auction", sort: "ending" }), null,
+    ));
+    expect(within(screen.getByRole("group", { name: "Lane" })).getByRole("button", { name: "Slab plays" })
+      .hasAttribute("disabled")).toBe(true);
+  });
+
+  it("words the slab plays in Japanese", async () => {
+    localStorage.setItem("language", "ja");
+    view(vi.fn(async () => page([SLAB_PLAY])));
+
+    const card = await onlyCard();
+    expect(within(card).getByTestId("mercari-lead-slab-badge").textContent).toBe("鑑定狙い");
+    expect(within(card).getByTestId("mercari-lead-slab-play").textContent).toContain("PSA 1〜6でも出る利益");
+    expect(screen.getByRole("button", { name: "鑑定狙い" })).toBeTruthy();
+  });
+
+  it("names a floor's grades as runs", () => {
+    expect(slabGradeText([1, 2, 3, 4, 5, 6])).toBe("1-6");
+    expect(slabGradeText([6])).toBe("6");
+    expect(slabGradeText([1, 2, 3, 5])).toBe("1-3, 5");
+    expect(slabGradeText([2, 4, 6])).toBe("2, 4, 6");
+  });
+});
+
 describe("parseMercariLeads", () => {
   it("accepts every lane's real shape and numeric strings", () => {
     expect(parseMercariLeads([RAW, PSA10, UNREAD_PSA, UNPRICED, DAMAGED_VINTAGE])).toHaveLength(5);
@@ -1409,6 +1583,35 @@ describe("parseMercariLeads", () => {
       { ...RAW, multiple: null },
     ]) {
       expect(() => parseMercariLeads([bad]), JSON.stringify(bad)).toThrow();
+    }
+  });
+
+  it("accepts the 000646 slab shapes and fails closed on one the view should never produce", () => {
+    expect(parseMercariLeads([SLAB_PLAY, SLAB_UNVERIFIED, SLAB_LOSS])).toHaveLength(3);
+    expect(parseMercariLeads([{ ...SLAB_PLAY, slab_floor_usd: "241.00", slab_play_profit_usd: "137.70" }])[0])
+      .toMatchObject({ slab_floor_usd: 241, slab_play_profit_usd: 137.7 });
+    // No grading cost: a floor and no play.
+    expect(parseMercariLeads([{
+      ...SLAB_PLAY, slab_grading_cost_usd: null, slab_grading_days: null, slab_net_value_usd: null,
+      slab_play_profit_usd: null, slab_play_multiple: null, slab_play_state: null,
+    }])).toHaveLength(1);
+    for (const [broken, message] of [
+      [{ ...PSA10, slab_floor_usd: 241, slab_floor_median_usd: 290, slab_floor_sales: 84, slab_floor_grades: [1], slab_floor_as_of: "2026-11-10", slab_selling_cost_usd: 41.3 }, "slab floor"],
+      [{ ...SLAB_PLAY, slab_floor_sales: 4 }, "slab floor"],
+      [{ ...SLAB_PLAY, slab_floor_grades: [3, 1] }, "slab grades"],
+      [{ ...SLAB_PLAY, slab_floor_grades: [7] }, "slab grades"],
+      [{ ...SLAB_PLAY, slab_floor_grades: [] }, "slab grades"],
+      [{ ...SLAB_PLAY, slab_floor_as_of: "Nov 10" }, "slab floor"],
+      [{ ...SLAB_PLAY, slab_selling_cost_usd: null }, "slab floor"],
+      [{ ...RAW, slab_grading_cost_usd: 22.4 }, "slab floor"],
+      [{ ...SLAB_PLAY, slab_play_multiple: null }, "slab play"],
+      [{ ...SLAB_LOSS, slab_play_multiple: 0.5 }, "slab play"],
+      [{ ...SLAB_LOSS, slab_play_state: "unverified" }, "slab play"],
+      [{ ...SLAB_PLAY, slab_play_state: "maybe" }, "slab play"],
+      [{ ...SLAB_PLAY, slab_play_profit_usd: null }, "slab play"],
+      [{ ...SLAB_PLAY, slab_grading_cost_usd: null }, "slab play"],
+    ] as const) {
+      expect(() => parseMercariLeads([broken]), JSON.stringify(broken).slice(0, 80)).toThrow(`Invalid Mercari lead ${message}`);
     }
   });
 

@@ -78,9 +78,11 @@ Every parameter is bounded in `leads-query.ts` before the database is asked anyt
 
 | parameter | values | default |
 |---|---|---|
-| `lane` | `modern_raw`, `vintage_raw`, `psa`, `unpriced` | required, a request without one is a 400 |
-| `format` | `fixed_price`, `auction` | `fixed_price` |
-| `sort` | fixed price: `multiple` (best multiple), `newest`; auctions: `ending` (ending soonest), `newest`; any other pairing is a 400 | the format's first |
+| `lane` | `modern_raw`, `vintage_raw`, `psa`, `unpriced`, `slab_play` | required, a request without one is a 400 |
+| `format` | `fixed_price`, `auction`; `slab_play` is fixed price only | `fixed_price` |
+| `sort` | fixed price: `multiple` (best multiple), `condition` (best condition), `newest`; slab plays: `profit`, `condition`, `newest`; auctions: `ending` (ending soonest), `newest`; any other pairing is a 400 | the feed's first |
+| `conditions` | a comma list of distinct seller conditions `1` to `6` | all six |
+| `include_unverified` | `1` or `true`, on `slab_play` only | only plays on a trusted card |
 | `photo` | one photo-check state | every state except `rejected` |
 | `include_unavailable` | `1` or `true` | only `source_status = 'ON_SALE'` and `auction_ended = false` |
 | `include_dismissed` | `1` or `true` | dismissed leads hidden |
@@ -90,6 +92,7 @@ Every parameter is bounded in `leads-query.ts` before the database is asked anyt
 | `ids` | 1 to 100 distinct listing ids, never with a cursor | the feed |
 | `after`, `after_key` | the keyset cursor, both or neither | first page |
 | `after_seen` | the ending sort's second key, required with its cursor and refused with any other | first page |
+| `after_condition` | the condition sort's first key, `1` to `6`, required with its cursor and refused with any other | first page |
 | `limit` | 1 to 100 | 50 |
 
 Every request is one lane and one format (`listing_format = format`), and every sort is a keyset on the representative of each group (before 000638, on the table's own indexes), with the lane as an equality:
@@ -99,11 +102,26 @@ Every request is one lane and one format (`listing_format = format`), and every 
 | Best multiple | `multiple DESC NULLS LAST, external_item_id` | `(lane, multiple DESC NULLS LAST, external_item_id)` |
 | Newest | `first_seen_at DESC, external_item_id` | `(lane, first_seen_at DESC, external_item_id)` |
 | Ending soonest (auctions) | `auction_ends_at ASC NULLS LAST, first_seen_at DESC, external_item_id` | `(lane, auction_ends_at, external_item_id) WHERE listing_format = 'auction'` |
+| Best condition | `seller_condition_id ASC`, then the lane's value `DESC NULLS LAST` (the multiple, or the slab profit in the slab plays), `external_item_id` | none; the grouped feed sorts the lane |
+| Slab profit | `slab_play_profit_usd DESC, external_item_id` | none; the grouped feed sorts the lane |
 
 Rows without a multiple (modern codes 3-6, thin PSA comps, a PSA title with no grade) sort last under Best multiple, so a page can end inside them.
 The cursor spells that boundary `after=null`, and the next page reads `multiple IS NULL AND external_item_id > after_key`; after a priced row it reads the smaller multiples, the tie on the id, and then every row without a multiple.
 The id and the cursor value are checked against their exact shape (`m` plus 9 to 11 digits or 20 to 32 alphanumerics; a `numeric(12,3)` decimal; an RFC 3339 timestamp) before they reach the database; the grouped feed takes the cursor as typed arguments (`p_after_multiple`, `p_after_time`, `p_after_seen`, `p_after_key`, `p_after_null`), and the ids are spliced into a PostgREST `in` filter.
-The unpriced lane has no multiple at all, so the view always asks it for Newest and disables Best multiple there.
+The unpriced lane has no multiple at all, so the view asks it for Newest when Best multiple is chosen and disables Best multiple there; Best condition still applies.
+
+### Slab plays and the seller's condition (backend 000646)
+
+Operator, 2026-11-16: a raw card cheaper than what its PSA 1-6 copies sell for, after grading, is always worth picking up, and the slab side is priced from Card Ladder only.
+The Slab plays lane (`lane=slab_play`) is every raw lane's leads whose `slab_play_state` is `play`, and with "Show plays whose card the title does not pin down" (`include_unverified`) also `unverified`, sorted by profit.
+The route reads its representatives and a group's members with `slab_play_state IS NOT NULL` instead of a lane equality, because no row carries `slab_play` as its lane.
+The evidence and screen toggles are hidden there, because the backend does not apply them: the Card Ladder floor is the evidence, and most plays are seller condition 3 to 6.
+Its defaults note says so.
+The backend's rules (the floor, the costs, which matcher tiers are trusted) are in the backend's `docs/mercari_title_leads.md` "Slab plays".
+
+The seller-condition filter is a row of toggles under the lane: "All" and the six conditions as Mercari spells them (the English gloss is each button's title).
+Several can be on at once, and turning all six on is the same as "All".
+It applies to every lane and format; Best condition is offered on every fixed-price feed.
 
 An auction has no multiple either, because its shown price is a bid that rises, so the auction feed offers Ending soonest and Newest only.
 Ending soonest because an auction's decision is due at its end, and its maximum bid stays right whatever the bid does until then; a multiple on the current bid, or the headroom under the maximum, would put the auctions nobody has bid on yet first, at prices nobody will pay.
@@ -148,6 +166,7 @@ The match tier is the one new field that does not fail closed: a tier the matche
 - The ask in JPY, any buyer-paid shipping added, the landed ask in USD, and a "Buyer pays shipping" marker.
 - The seller's condition, in Japanese with an English gloss.
 - The card: catalog image, name, set and number, then the variant label `pokemonVariantLabel` composes from `misc_info`, `edition` and `foil_treatment` (`1ED`, `ミラー`, as everywhere else in the app), a "Title match" line naming the matcher tier, and a note when the card is not in the cloud catalog.
+- On a raw lead whose card has a Card Ladder PSA 1-6 floor: when it is a play, a green panel with the profit after grading ("+$466.81 profit even if it grades PSA 1-6 · 1.7x"), the floor ("Card Ladder PSA 1-6: $1,401.00, the lower quarter of 47 sales (newest date)") and the arithmetic (floor less eBay costs less grading, with the grading days, against the landed ask), and a "Slab play" badge; when only a set and name named the card, the panel is amber, the badge reads "Slab play: check the card" and the panel says to check the photos before buying; when the floor does not pay for grading, no grading cost is set, or the photos disagree, one muted line with the floor and the reason.
 - The value with its basis, holder, sample count, window and newest-sale date, how old that sale is ("value as of 3 days ago", amber with "no newer sale" past 14 days, because a value with no recent sale may have moved; backend `value_age_days`), then the net after eBay fees and postage.
 - On an unpriced row, the never-a-deal screen: a grey "Can't be a deal" badge and "Even at 2x its best price on file ($4.50, SNKRDUNK, date), this listing could not clear 1.0x and $10 of profit at its ask" (`never_clears`); the best price on file for a row that could clear (`may_clear`); or that nothing prices it (`no_evidence`). A sale is named by its platform ("eBay sale").
 - When the row stands for a group of more than one, a "+N more ¥X-¥Y" button over the group's ask range; it expands the best 50 other copies, each on one line with its ask (linked to the listing), multiple or reason, seller condition, age and photo badge, and the number of listings in all when unpriced rows stand for more. A damaged vintage row reads "priced as damaged (bottom quarter of raw sales)" with "Near Mint $Y" beneath it. `value_basis = 'ebay_rule_v0'` reads "Provisional eBay value", never a final price; an unknown basis is shown by its code.

@@ -21,6 +21,10 @@ import { LEAD_COLUMNS, groupArgs, nextCursor, parseLeadGroups, parseLeadsRequest
 // #2436); the representatives are then read in full from the view, which a
 // page bounds to at most 100 rows. ?ids= reads a group's members in full, in
 // the order given, when the tab expands it.
+//
+// Since backend 000646 (#2707, #2708) the slab_play lane gathers the raw
+// leads whose card's Card Ladder PSA 1-6 floor clears the ask after grading,
+// and every feed takes a seller-condition filter and a condition sort.
 
 function unavailable() {
   return NextResponse.json({ error: "Mercari leads are unavailable" }, { status: 500 });
@@ -49,12 +53,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // A row lane reads its own rows; the slab plays read the rows of any raw
+  // lane that carry a slab play (backend 000646), which is what the grouped
+  // feed and its members are drawn from.
   const readRows = async (ids: string[]) => {
-    const { data, error } = await supabase
-      .from("mercari_leads_v")
-      .select(LEAD_COLUMNS)
-      .eq("lane", leadsRequest.lane)
-      .in("external_item_id", ids);
+    const view = supabase.from("mercari_leads_v").select(LEAD_COLUMNS);
+    const scoped = leadsRequest.lane === "slab_play"
+      ? view.not("slab_play_state", "is", null)
+      : view.eq("lane", leadsRequest.lane);
+    const { data, error } = await scoped.in("external_item_id", ids);
     if (error) return null;
     const byId = new Map<string, Record<string, unknown>>();
     for (const row of (data ?? []) as unknown as Record<string, unknown>[]) {
@@ -94,7 +101,7 @@ export async function GET(request: NextRequest) {
         : [];
     });
     return NextResponse.json(
-      { leads, next_cursor: nextCursor(groups, leadsRequest.limit, leadsRequest.sort) },
+      { leads, next_cursor: nextCursor(groups, leadsRequest.limit, leadsRequest.sort, leadsRequest.lane) },
       { headers: NO_STORE },
     );
   } catch {

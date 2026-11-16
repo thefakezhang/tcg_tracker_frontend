@@ -106,17 +106,26 @@ export function parseMercariFeedParam(value: string | null | undefined): Mercari
 /** The Mercari leads feed's lane leaf param: one lane at a time, so lanes never mix. */
 export const MERCARI_LANE_PARAM = "lane";
 
-/** The lead lanes, in the order the tab offers them; the same vocabulary as mercari_leads_v.lane. */
+/** The lead lanes a row carries; the same vocabulary as mercari_leads_v.lane. */
 export const MERCARI_LEAD_LANES = ["modern_raw", "vintage_raw", "psa", "unpriced"] as const;
 export type MercariLeadLane = (typeof MERCARI_LEAD_LANES)[number];
 
-/** The lane a viewer gets before choosing one; the view keeps it out of the URL. */
-export const DEFAULT_MERCARI_LANE: MercariLeadLane = "modern_raw";
+/**
+ * The feeds the tab offers, in its order: each row lane, then the slab plays
+ * (backend 000646, #2707), which gathers every raw lane's leads whose card's
+ * Card Ladder PSA 1-6 floor clears the ask after grading. No row carries
+ * "slab_play" as its lane.
+ */
+export const MERCARI_FEED_LANES = [...MERCARI_LEAD_LANES, "slab_play"] as const;
+export type MercariFeedLane = (typeof MERCARI_FEED_LANES)[number];
 
-/** The validated `?lane=` value, or null when absent or not a lane. */
-export function parseMercariLaneParam(value: string | null | undefined): MercariLeadLane | null {
+/** The lane a viewer gets before choosing one; the view keeps it out of the URL. */
+export const DEFAULT_MERCARI_LANE: MercariFeedLane = "modern_raw";
+
+/** The validated `?lane=` value, or null when absent or not a feed lane. */
+export function parseMercariLaneParam(value: string | null | undefined): MercariFeedLane | null {
   const trimmed = value?.trim() ?? "";
-  return (MERCARI_LEAD_LANES as readonly string[]).includes(trimmed) ? (trimmed as MercariLeadLane) : null;
+  return (MERCARI_FEED_LANES as readonly string[]).includes(trimmed) ? (trimmed as MercariFeedLane) : null;
 }
 
 /** The Mercari leads feed's sort leaf param. */
@@ -125,10 +134,13 @@ export const MERCARI_SORT_PARAM = "sort";
 /**
  * "multiple" is best multiple first and "newest" the newest first-seen listing
  * first; "ending" is an auction's soonest stated end first. A fixed-price feed
- * sorts by multiple or newest, an auction feed by ending or newest: an auction
- * carries no multiple, because its shown price is a bid that rises.
+ * sorts by multiple, condition or newest, an auction feed by ending or newest:
+ * an auction carries no multiple, because its shown price is a bid that rises.
+ * "condition" is the seller's best condition first, then the lane's value
+ * (#2708); "profit" is the slab plays' profit after grading, largest first
+ * (#2707), and only the slab plays offer it.
  */
-export const MERCARI_LEAD_SORTS = ["multiple", "newest", "ending"] as const;
+export const MERCARI_LEAD_SORTS = ["multiple", "newest", "ending", "condition", "profit"] as const;
 export type MercariLeadSort = (typeof MERCARI_LEAD_SORTS)[number];
 
 /** The Mercari leads feed's format leaf param: `?format=auction` lists the auctions; fixed price, the default, stays out of the URL. */

@@ -11,7 +11,7 @@ type Call = [method: string, args: unknown[]];
 function fakeQuery(result: { data: unknown; error: unknown }) {
   const calls: Call[] = [];
   const query: Record<string, unknown> = { calls };
-  for (const method of ["select", "order", "limit", "eq", "neq", "is", "gt", "or", "in"]) {
+  for (const method of ["select", "order", "limit", "eq", "neq", "is", "not", "gt", "or", "in"]) {
     query[method] = (...args: unknown[]) => {
       calls.push([method, args]);
       return query;
@@ -366,7 +366,7 @@ describe("protected Mercari leads route", () => {
 // order (the backend pins the same list in TestMercariLeadsViewColumns).
 // PostgREST answers a select naming a missing column with a 400, so the route
 // must never ask for anything outside it.
-const VIEW_COLUMNS_000638 = [
+const VIEW_COLUMNS_000646 = [
   "platform", "external_item_id", "publication_id", "publication_published_at", "published_at",
   "source_kind", "source_run_id", "source_item_type", "canonical_url", "sanitized_title", "ask_jpy",
   "shipping_payer_id", "shipping_payer", "buyer_pays_shipping", "shipping_method_id", "shipping_added_jpy",
@@ -387,6 +387,10 @@ const VIEW_COLUMNS_000638 = [
   "auction_max_bid_jpy", "auction_bid_within_max", "auction_ended", "photo_checks_paused",
   "current_publication_id", "value_refreshed_at", "value_age_days", "screen_result", "screen_evidence_usd",
   "screen_evidence_source", "screen_evidence_as_of", "screen_multiplier",
+  // 000646 (#2707): the slab play.
+  "slab_floor_usd", "slab_floor_median_usd", "slab_floor_sales", "slab_floor_grades", "slab_floor_as_of",
+  "slab_grading_cost_usd", "slab_grading_days", "slab_selling_cost_usd", "slab_net_value_usd",
+  "slab_play_profit_usd", "slab_play_multiple", "slab_play_state",
 ];
 
 describe("Mercari leads column list", () => {
@@ -407,7 +411,7 @@ describe("Mercari leads column list", () => {
     expect(columns).toContain("photo_checks_paused");
     expect(columns).toContain("screen_result");
     expect(columns).toContain("value_age_days");
-    expect(columns.filter((column) => !VIEW_COLUMNS_000638.includes(column))).toEqual([]);
+    expect(columns.filter((column) => !VIEW_COLUMNS_000646.includes(column))).toEqual([]);
   });
 });
 
@@ -425,6 +429,8 @@ describe("Mercari leads request and cursor", () => {
         includeEvidence: false,
         includeScreened: false,
         includeShops: false,
+        conditions: null,
+        includeUnverified: false,
         cursor: null,
         limit: 50,
         ids: null,
@@ -433,37 +439,149 @@ describe("Mercari leads request and cursor", () => {
   });
 
   it("fails closed on a cursor boundary the view should never produce", () => {
-    expect(nextCursor([row("m12345678901", { multiple: 2.5 })], 1, "multiple")).toEqual({
+    expect(nextCursor([row("m12345678901", { multiple: 2.5 })], 1, "multiple", "psa")).toEqual({
       after: "2.5",
       after_key: "m12345678901",
     });
-    expect(nextCursor([row("m12345678901", { multiple: "12.125" })], 1, "multiple")).toEqual({
+    expect(nextCursor([row("m12345678901", { multiple: "12.125" })], 1, "multiple", "psa")).toEqual({
       after: "12.125",
       after_key: "m12345678901",
     });
-    expect(nextCursor([row("m12345678901", { multiple: null })], 1, "multiple")).toEqual({
+    expect(nextCursor([row("m12345678901", { multiple: null })], 1, "multiple", "psa")).toEqual({
       after: null,
       after_key: "m12345678901",
     });
-    expect(nextCursor([row("m12345678901", { multiple: 2.5 })], 2, "multiple")).toBeNull();
-    expect(() => nextCursor([row("m12345678901", {})], 1, "multiple")).toThrow("invalid cursor boundary");
-    expect(() => nextCursor([row("m12345678901", { multiple: -1 })], 1, "multiple")).toThrow("invalid cursor boundary");
-    expect(() => nextCursor([row("bad id", { multiple: 2 })], 1, "multiple")).toThrow("invalid cursor boundary");
-    expect(() => nextCursor([row("m12345678901", { first_seen_at: "yesterday" })], 1, "newest")).toThrow("invalid cursor boundary");
-    expect(() => nextCursor(["not a row"], 1, "newest")).toThrow("invalid row");
+    expect(nextCursor([row("m12345678901", { multiple: 2.5 })], 2, "multiple", "psa")).toBeNull();
+    expect(() => nextCursor([row("m12345678901", {})], 1, "multiple", "psa")).toThrow("invalid cursor boundary");
+    expect(() => nextCursor([row("m12345678901", { multiple: -1 })], 1, "multiple", "psa")).toThrow("invalid cursor boundary");
+    expect(() => nextCursor([row("bad id", { multiple: 2 })], 1, "multiple", "psa")).toThrow("invalid cursor boundary");
+    expect(() => nextCursor([row("m12345678901", { first_seen_at: "yesterday" })], 1, "newest", "psa")).toThrow("invalid cursor boundary");
+    expect(() => nextCursor(["not a row"], 1, "newest", "psa")).toThrow("invalid row");
     expect(nextCursor([row("m12345678901", {
       auction_ends_at: "2026-11-08T11:00:00+00:00", first_seen_at: "2026-11-07T09:00:00+00:00",
-    })], 1, "ending")).toEqual({
+    })], 1, "ending", "psa")).toEqual({
       after: "2026-11-08T11:00:00+00:00", after_key: "m12345678901", after_seen: "2026-11-07T09:00:00+00:00",
     });
-    expect(() => nextCursor([row("m12345678901", { first_seen_at: "2026-11-07T09:00:00+00:00" })], 1, "ending"))
+    expect(() => nextCursor([row("m12345678901", { first_seen_at: "2026-11-07T09:00:00+00:00" })], 1, "ending", "psa"))
       .toThrow("invalid cursor boundary");
-    expect(() => nextCursor([row("m12345678901", { auction_ends_at: "soon", first_seen_at: "2026-11-07T09:00:00+00:00" })], 1, "ending"))
+    expect(() => nextCursor([row("m12345678901", { auction_ends_at: "soon", first_seen_at: "2026-11-07T09:00:00+00:00" })], 1, "ending", "psa"))
       .toThrow("invalid cursor boundary");
   });
 
   it("defaults an auction feed to ending soonest", () => {
     const parsed = parseLeadsRequest(new URLSearchParams("lane=psa&format=auction"));
     expect(parsed.ok && parsed.value.format === "auction" && parsed.value.sort === "ending").toBe(true);
+  });
+});
+
+describe("slab plays and the seller's condition (backend 000646)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getUser.mockResolvedValue({ data: { user: { id: "operator" } } });
+  });
+
+  it("reads the slab plays by profit, and their rows as slab plays rather than by row lane", async () => {
+    const query = serve(
+      [group("m12345678901", { slab_play_profit_usd: 213.53, seller_condition_id: "5" })],
+      [row("m12345678901", { lane: "unpriced", slab_play_state: "play" })],
+    );
+
+    const response = await GET(request("?lane=slab_play&limit=1"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("mercari_lead_groups", expect.objectContaining({
+      p_lane: "slab_play",
+      p_format: "fixed_price",
+      p_sort: "profit",
+    }));
+    expect(query.calls).toContainEqual(["not", ["slab_play_state", "is", null]]);
+    expect(query.calls.some(([method]) => method === "eq")).toBe(false);
+    const body = await response.json();
+    expect(body.next_cursor).toEqual({ after: "213.53", after_key: "m12345678901" });
+  });
+
+  it("sends the conditions and the unverified toggle only when they say something", async () => {
+    serve([], []);
+    await GET(request("?lane=slab_play&conditions=1,3&include_unverified=1"));
+    expect(mocks.rpc).toHaveBeenCalledWith("mercari_lead_groups", expect.objectContaining({
+      p_conditions: ["1", "3"],
+      p_include_unverified: true,
+    }));
+
+    mocks.rpc.mockClear();
+    serve([], []);
+    await GET(request("?lane=modern_raw"));
+    const [, args] = mocks.rpc.mock.calls.find(([name]) => name === "mercari_lead_groups") ?? [];
+    expect(args).not.toHaveProperty("p_conditions");
+    expect(args).not.toHaveProperty("p_include_unverified");
+  });
+
+  it("hands the profit and condition cursors to the grouped feed as their typed boundaries", async () => {
+    const cases: [string, Record<string, unknown>][] = [
+      ["?lane=slab_play&after=66.3&after_key=m00000000000", { p_after_key: "m00000000000", p_after_profit: "66.3" }],
+      [
+        "?lane=slab_play&sort=condition&after=66.3&after_key=m00000000000&after_condition=2",
+        { p_after_key: "m00000000000", p_after_condition: "2", p_after_profit: "66.3" },
+      ],
+      [
+        "?lane=modern_raw&sort=condition&after=4.5&after_key=m00000000000&after_condition=1",
+        { p_after_key: "m00000000000", p_after_condition: "1", p_after_multiple: "4.5" },
+      ],
+      [
+        "?lane=modern_raw&sort=condition&after=null&after_key=m00000000000&after_condition=3",
+        { p_after_key: "m00000000000", p_after_condition: "3", p_after_null: true },
+      ],
+    ];
+    for (const [query, boundary] of cases) {
+      mocks.rpc.mockClear();
+      serve([], []);
+      const response = await GET(request(query));
+      expect(response.status, query).toBe(200);
+      const [, args] = mocks.rpc.mock.calls.find(([name]) => name === "mercari_lead_groups") ?? [];
+      expect(args, query).toMatchObject(boundary);
+      for (const key of ["p_after_multiple", "p_after_profit", "p_after_condition", "p_after_null", "p_after_time"]) {
+        if (!(key in boundary)) expect(args, `${query} ${key}`).not.toHaveProperty(key);
+      }
+    }
+  });
+
+  it("refuses what the grouped feed would refuse, before asking it", async () => {
+    for (const query of [
+      "?lane=slab_plays",
+      "?lane=slab_play&format=auction",
+      "?lane=slab_play&sort=multiple",
+      "?lane=modern_raw&sort=profit",
+      "?lane=psa&format=auction&sort=condition",
+      "?lane=psa&conditions=7",
+      "?lane=psa&conditions=1,1",
+      "?lane=psa&conditions=1,,2",
+      "?lane=modern_raw&include_unverified=1",
+      // A profit is never null, and a condition cursor names its condition.
+      "?lane=slab_play&after=null&after_key=m12345678901",
+      "?lane=slab_play&sort=condition&after=null&after_key=m12345678901&after_condition=2",
+      "?lane=modern_raw&sort=condition&after=4.5&after_key=m12345678901",
+      "?lane=modern_raw&sort=condition&after=4.5&after_key=m12345678901&after_condition=9",
+      "?lane=modern_raw&after=4.5&after_key=m12345678901&after_condition=1",
+      "?lane=slab_play&ids=m12345678901&after_condition=1",
+    ]) {
+      const response = await GET(request(query));
+      expect(response.status, query).toBe(400);
+    }
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
+
+  it("builds a condition cursor from the representative's condition and its lane's value", () => {
+    expect(nextCursor([row("m12345678901", { seller_condition_id: "2", multiple: 3.25 })], 1, "condition", "modern_raw"))
+      .toEqual({ after: "3.25", after_key: "m12345678901", after_condition: "2" });
+    expect(nextCursor([row("m12345678901", { seller_condition_id: "3", multiple: null })], 1, "condition", "modern_raw"))
+      .toEqual({ after: null, after_key: "m12345678901", after_condition: "3" });
+    expect(nextCursor([row("m12345678901", { seller_condition_id: "2", slab_play_profit_usd: 66.3, multiple: null })], 1, "condition", "slab_play"))
+      .toEqual({ after: "66.3", after_key: "m12345678901", after_condition: "2" });
+    expect(() => nextCursor([row("m12345678901", { seller_condition_id: "2", slab_play_profit_usd: null })], 1, "profit", "slab_play"))
+      .toThrow("invalid cursor boundary");
+    expect(() => nextCursor([row("m12345678901", { seller_condition_id: "8", multiple: 2 })], 1, "condition", "modern_raw"))
+      .toThrow("invalid cursor boundary");
+    expect(() => nextCursor([row("m12345678901", { slab_play_profit_usd: -4 })], 1, "profit", "slab_play"))
+      .toThrow("invalid cursor boundary");
   });
 });
