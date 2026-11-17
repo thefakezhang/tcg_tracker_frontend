@@ -223,6 +223,12 @@ export const LEAD_COLUMNS = [
   "slab_play_state",
   // Backend 000648 (#2710).
   "kept_for",
+  // Backend 000653 (#2755): the PSA service level a slab play is graded at and
+  // its turnaround in business days. Selecting them before 000653 is applied
+  // is a 400, so this ships after the apply.
+  "slab_grading_service_level",
+  "slab_grading_business_days_min",
+  "slab_grading_business_days_max",
 ].join(", ");
 
 function isOneOf<T extends string>(values: readonly T[], value: string): value is T {
