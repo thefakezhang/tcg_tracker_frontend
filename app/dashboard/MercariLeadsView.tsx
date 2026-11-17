@@ -212,6 +212,14 @@ export type MercariLead = {
   // "slab_play" on a raw fixed-price row the publisher kept below the raw bars
   // only for its slab play (backend 000648); only the slab_play lane shows it.
   kept_for: MercariKeptFor | null;
+  // The PSA service level the play is graded at (the cheapest whose max
+  // insured value covers the floor) and its turnaround in business days
+  // (backend 000653, #2755); all null when the publication records no PSA
+  // schedule (publisher v14 and before, graded at the flat yen) or no level
+  // covers the floor.
+  slab_grading_service_level: string | null;
+  slab_grading_business_days_min: number | null;
+  slab_grading_business_days_max: number | null;
   // The group a feed row stands for; null on a group member read in full.
   group: MercariLeadGroup | null;
 };
@@ -603,8 +611,20 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
     const slabProfit = optionalNumber(row.slab_play_profit_usd, "slab_play_profit_usd");
     const slabMultiple = optionalNumber(row.slab_play_multiple, "slab_play_multiple");
     const slabState = optionalString(row.slab_play_state, "slab_play_state");
+    const slabLevel = optionalString(row.slab_grading_service_level, "slab_grading_service_level");
+    const slabBusinessMin = optionalInteger(row.slab_grading_business_days_min, "slab_grading_business_days_min");
+    const slabBusinessMax = optionalInteger(row.slab_grading_business_days_max, "slab_grading_business_days_max");
+    // A service level comes whole, with its price and a turnaround, or not
+    // at all (000653).
+    if (slabLevel === null
+      ? slabBusinessMin !== null || slabBusinessMax !== null
+      : slabLevel.trim() === "" || slabBusinessMin === null || slabBusinessMax === null || slabBusinessMin <= 0
+        || slabBusinessMax < slabBusinessMin || slabGrading === null) {
+      throw invalid("slab grading level", index);
+    }
     if (slabFloor === null
-      ? [slabMedian, slabSales, slabFloorGrades, slabAsOf, slabGrading, slabDays, slabSelling, slabNet].some((field) => field !== null)
+      ? [slabMedian, slabSales, slabFloorGrades, slabAsOf, slabGrading, slabDays, slabSelling, slabNet, slabLevel]
+        .some((field) => field !== null)
       : slabFloor <= 0 || slabMedian === null || slabSales === null || slabSales < 5 || slabFloorGrades === null
         || slabAsOf === null || !DATE_ONLY.test(slabAsOf) || slabSelling === null
         || holderHint !== "holder_unknown" || lane === "psa" || format !== "fixed_price") {
@@ -712,6 +732,9 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       slab_play_multiple: slabMultiple,
       slab_play_state: slabState as MercariSlabPlayState | null,
       kept_for: keptFor as MercariKeptFor | null,
+      slab_grading_service_level: slabLevel,
+      slab_grading_business_days_min: slabBusinessMin,
+      slab_grading_business_days_max: slabBusinessMax,
       group: parseGroup(row, externalItemId, index),
     };
   });
@@ -969,6 +992,7 @@ const STATUS_KEYS: Record<Exclude<MercariSourceStatus, "ON_SALE">, TranslationKe
 
 const VALUE_BASIS_KEYS: Record<string, TranslationKey> = {
   ebay_rule_v0: "mercariLeads.valueBasis.ebay_rule_v0",
+  cardladder_psa_v0: "mercariLeads.valueBasis.cardladder_psa_v0",
 };
 
 // psa_thin_comps names its sale count and grade, so it is worded in LeadCard.
@@ -1104,6 +1128,8 @@ const UNPRICED_KEYS: Record<string, TranslationKey> = {
   no_raw_comps_180d: "mercariLeads.unpricedReason.no_raw_comps_180d",
   thin_raw_comps_180d: "mercariLeads.unpricedReason.thin_raw_comps_180d",
   no_psa_comps_at_grade_180d: "mercariLeads.unpricedReason.no_psa_comps_at_grade_180d",
+  no_cardladder_psa_at_grade_180d: "mercariLeads.unpricedReason.no_cardladder_psa_at_grade_180d",
+  cardladder_comps_frozen: "mercariLeads.unpricedReason.cardladder_comps_frozen",
   card_unresolved: "mercariLeads.unpricedReason.card_unresolved",
 };
 
@@ -1520,9 +1546,17 @@ function SlabPlay({ lead }: { lead: MercariLead }) {
       )}
       <p className="mt-1 text-xs">{floorLine}</p>
       <p className="text-xs tabular-nums" data-testid="mercari-lead-slab-math">
-        {lead.slab_grading_days === null
-          ? t("mercariLeads.slab.math", costs)
-          : t("mercariLeads.slab.mathDays", { ...costs, days: lead.slab_grading_days })}
+        {lead.slab_grading_service_level !== null
+          && lead.slab_grading_business_days_min !== null && lead.slab_grading_business_days_max !== null
+          ? t("mercariLeads.slab.mathLevel", {
+            ...costs,
+            level: lead.slab_grading_service_level,
+            min: lead.slab_grading_business_days_min,
+            max: lead.slab_grading_business_days_max,
+          })
+          : lead.slab_grading_days === null
+            ? t("mercariLeads.slab.math", costs)
+            : t("mercariLeads.slab.mathDays", { ...costs, days: lead.slab_grading_days })}
       </p>
     </div>
   );

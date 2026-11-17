@@ -112,6 +112,9 @@ const RAW: MercariLead = {
   slab_play_multiple: null,
   slab_play_state: null,
   kept_for: null,
+  slab_grading_service_level: null,
+  slab_grading_business_days_min: null,
+  slab_grading_business_days_max: null,
   group: null,
 };
 
@@ -404,6 +407,30 @@ describe("MercariLeadsView", () => {
     expect(within(card).getByText("PSA 9")).toBeTruthy();
     expect(within(card).getByTestId("mercari-lead-multiple").textContent)
       .toBe("Unpriced: no PSA 9 eBay sales in the last 180 days");
+  });
+
+  it("names Card Ladder as a PSA lead's value and its two unpriced reasons", async () => {
+    view(vi.fn(async () => page([
+      { ...PSA10, value_basis: "cardladder_psa_v0" },
+      {
+        ...UNPRICED, external_item_id: "m99999999998", canonical_url: "https://jp.mercari.com/item/m99999999998",
+        holder_hint: "psa_8", title_psa_grade: 8, value_basis: "cardladder_psa_v0",
+        unpriced_reason: "no_cardladder_psa_at_grade_180d", value_sample_count: 0, other_listings: 0,
+      },
+      {
+        ...UNPRICED, external_item_id: "m99999999997", canonical_url: "https://jp.mercari.com/item/m99999999997",
+        holder_hint: "psa_10", title_psa_grade: 10, value_basis: "cardladder_psa_v0",
+        unpriced_reason: "cardladder_comps_frozen", value_sample_count: 5, other_listings: 0,
+      },
+    ])));
+
+    const cards = await screen.findAllByTestId("mercari-lead-card");
+    expect(cards[0].textContent).toContain("$480.00 · Card Ladder PSA sales, at PSA 10");
+    expect(cards[0].textContent).not.toContain("eBay value");
+    expect(within(cards[1]).getByTestId("mercari-lead-multiple").textContent)
+      .toBe("Unpriced: no PSA 8 Card Ladder sales in the last 180 days");
+    expect(within(cards[2]).getByTestId("mercari-lead-multiple").textContent)
+      .toBe("Unpriced: Card Ladder stopped updating this card's sales, so they price nothing (5 found)");
   });
 
   it("values a PSA lead only at its exact grade and never as raw", async () => {
@@ -1245,6 +1272,21 @@ const SLAB_PLAY: MercariLead = {
   slab_play_state: "play",
 };
 
+// The same floor graded at PSA's Value level (backend 000653, #2755): $39.99
+// for a card declared up to $500, so 241 - 41.30 - 39.99 = $159.71, $120.11
+// over the landed ask.
+const SLAB_GRADED: MercariLead = {
+  ...SLAB_PLAY,
+  slab_grading_cost_usd: 39.99,
+  slab_grading_days: 140,
+  slab_grading_service_level: "Value",
+  slab_grading_business_days_min: 90,
+  slab_grading_business_days_max: 100,
+  slab_net_value_usd: 159.71,
+  slab_play_profit_usd: 120.11,
+  slab_play_multiple: 4.033,
+};
+
 // The same play on a card only its set and name named.
 const SLAB_UNVERIFIED: MercariLead = { ...SLAB_PLAY, ...OTHER_ID, match_tier: "set_name", slab_play_state: "unverified" };
 
@@ -1315,6 +1357,15 @@ describe("MercariLeadsView slab plays and the seller's condition", () => {
       .toBe("$241.00 - $41.30 eBay costs - $22.40 grading (45 days) = $177.30, against $39.60 landed");
     expect(within(play).queryByTestId("mercari-lead-slab-unverified")).toBeNull();
     expect(play.className).toContain("text-emerald-800");
+  });
+
+  it("names the PSA service level a play is graded at and its turnaround", async () => {
+    view(vi.fn(async () => page([SLAB_GRADED])));
+
+    const play = within(await onlyCard()).getByTestId("mercari-lead-slab-play");
+    expect(play.textContent).toContain("+$120.11");
+    expect(within(play).getByTestId("mercari-lead-slab-math").textContent)
+      .toBe("$241.00 - $41.30 eBay costs - $39.99 PSA Value grading (90-100 business days) = $159.71, against $39.60 landed");
   });
 
   it("warns on a play whose card only a set and name named, and says why a floor is no play", async () => {
@@ -1611,7 +1662,7 @@ describe("parseMercariLeads", () => {
   });
 
   it("accepts the 000646 slab shapes and fails closed on one the view should never produce", () => {
-    expect(parseMercariLeads([SLAB_PLAY, SLAB_UNVERIFIED, SLAB_LOSS])).toHaveLength(3);
+    expect(parseMercariLeads([SLAB_PLAY, SLAB_UNVERIFIED, SLAB_LOSS, SLAB_GRADED])).toHaveLength(4);
     expect(parseMercariLeads([SLAB_KEPT, { ...SLAB_PLAY, kept_for: "slab_play" }]).map((lead) => lead.kept_for))
       .toEqual(["slab_play", "slab_play"]);
     expect(parseMercariLeads([{ ...SLAB_PLAY, slab_floor_usd: "241.00", slab_play_profit_usd: "137.70" }])[0])
@@ -1636,6 +1687,13 @@ describe("parseMercariLeads", () => {
       [{ ...SLAB_PLAY, slab_play_state: "maybe" }, "slab play"],
       [{ ...SLAB_PLAY, slab_play_profit_usd: null }, "slab play"],
       [{ ...SLAB_PLAY, slab_grading_cost_usd: null }, "slab play"],
+      // A PSA service level (backend 000653) comes whole, and only with a
+      // floor and its price.
+      [{ ...SLAB_GRADED, slab_grading_business_days_max: null }, "slab grading level"],
+      [{ ...SLAB_GRADED, slab_grading_business_days_min: 120 }, "slab grading level"],
+      [{ ...SLAB_GRADED, slab_grading_service_level: " " }, "slab grading level"],
+      [{ ...SLAB_PLAY, slab_grading_business_days_min: 90 }, "slab grading level"],
+      [{ ...RAW, slab_grading_service_level: "Value", slab_grading_business_days_min: 90, slab_grading_business_days_max: 100 }, "slab grading level"],
       // A kept row (backend 000648) is a priced raw fixed-price row, and only
       // it may have neither a multiple nor a reason, when its raw value nets
       // nothing.

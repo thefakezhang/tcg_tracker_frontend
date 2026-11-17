@@ -15,7 +15,10 @@ import {
 
 // Shapes taken from the leads measured on cloud 2026-11-16: a trusted play,
 // a play on a name-only title, and a raw deal whose floor does not pay for
-// grading. Images are left out so the fixture makes no outside request.
+// grading. Since backend 000653 (#2755) each is graded at the cheapest PSA
+// service level covering its floor: $1,401 at Priority ($79.99), $574 at
+// Standard ($59.99), $30 and $62 at Value ($39.99). Images are left out so
+// the fixture makes no outside request.
 const BASE: MercariLead = {
   external_item_id: "m10425422029",
   source_item_type: "mercari",
@@ -100,14 +103,17 @@ const BASE: MercariLead = {
   slab_floor_sales: 47,
   slab_floor_grades: [1, 2, 3, 4, 5, 6],
   slab_floor_as_of: "2026-11-14",
-  slab_grading_cost_usd: 21.9,
-  slab_grading_days: 45,
+  slab_grading_cost_usd: 79.99,
+  slab_grading_days: 84,
   slab_selling_cost_usd: 230.19,
-  slab_net_value_usd: 1148.91,
-  slab_play_profit_usd: 466.81,
-  slab_play_multiple: 1.684,
+  slab_net_value_usd: 1090.82,
+  slab_play_profit_usd: 408.72,
+  slab_play_multiple: 1.599,
   slab_play_state: "play",
   kept_for: null,
+  slab_grading_service_level: "Priority",
+  slab_grading_business_days_min: 50,
+  slab_grading_business_days_max: 60,
   group: { rows: 1, listings: 1, askMin: 109000, askMax: 109000, memberIds: ["m10425422029"] },
 };
 
@@ -143,10 +149,15 @@ const UNVERIFIED: MercariLead = {
   slab_floor_median_usd: 800,
   slab_floor_sales: 30,
   slab_floor_grades: [1, 2, 3, 4, 5, 6],
+  slab_grading_cost_usd: 59.99,
+  slab_grading_days: 112,
+  slab_grading_service_level: "Standard",
+  slab_grading_business_days_min: 70,
+  slab_grading_business_days_max: 80,
   slab_selling_cost_usd: 93.66,
-  slab_net_value_usd: 458.44,
-  slab_play_profit_usd: 433.41,
-  slab_play_multiple: 18.316,
+  slab_net_value_usd: 420.35,
+  slab_play_profit_usd: 395.32,
+  slab_play_multiple: 16.794,
   slab_play_state: "unverified",
   group: { rows: 4, listings: 4, askMin: 4000, askMax: 19000, memberIds: ["m68586542292", "m79011294601", "m32515374287", "m19402124811"] },
 };
@@ -184,9 +195,14 @@ const LOSS: MercariLead = {
   slab_floor_median_usd: 32,
   slab_floor_sales: 6,
   slab_floor_grades: [2, 3, 5],
+  slab_grading_cost_usd: 39.99,
+  slab_grading_days: 140,
+  slab_grading_service_level: "Value",
+  slab_grading_business_days_min: 90,
+  slab_grading_business_days_max: 100,
   slab_selling_cost_usd: 11.79,
-  slab_net_value_usd: -3.69,
-  slab_play_profit_usd: -13.08,
+  slab_net_value_usd: -21.78,
+  slab_play_profit_usd: -31.17,
   slab_play_multiple: null,
   slab_play_state: null,
   group: { rows: 1, listings: 1, askMin: 1500, askMax: 1500, memberIds: ["m40000000004"] },
@@ -194,7 +210,8 @@ const LOSS: MercariLead = {
 
 // A play the publisher kept below the raw bars (backend 000648, #2710): worth
 // $1.20 raw, which nets nothing after selling costs, but its PSA 1-6 floor of
-// $62 pays $20.15 over a landed $3.13 after $16.81 of eBay costs and grading.
+// $62 pays $2.07 over a landed $3.13 after $16.81 of eBay costs and $39.99 of
+// grading.
 const KEPT: MercariLead = {
   ...BASE,
   external_item_id: "m40000000005",
@@ -228,10 +245,15 @@ const KEPT: MercariLead = {
   slab_floor_median_usd: 75,
   slab_floor_sales: 7,
   slab_floor_grades: [3, 4, 6],
+  slab_grading_cost_usd: 39.99,
+  slab_grading_days: 140,
+  slab_grading_service_level: "Value",
+  slab_grading_business_days_min: 90,
+  slab_grading_business_days_max: 100,
   slab_selling_cost_usd: 16.81,
-  slab_net_value_usd: 23.28,
-  slab_play_profit_usd: 20.15,
-  slab_play_multiple: 7.438,
+  slab_net_value_usd: 5.2,
+  slab_play_profit_usd: 2.07,
+  slab_play_multiple: 1.661,
   kept_for: "slab_play",
   group: { rows: 1, listings: 1, askMin: 500, askMax: 500, memberIds: ["m40000000005"] },
 };

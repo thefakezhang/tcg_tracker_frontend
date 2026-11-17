@@ -395,6 +395,8 @@ const VIEW_COLUMNS_000648 = [
   "slab_play_profit_usd", "slab_play_multiple", "slab_play_state",
   // 000648 (#2710): a row kept only as a slab play.
   "kept_for",
+  // 000653 (#2755): the PSA service level a slab play is graded at.
+  "slab_grading_service_level", "slab_grading_business_days_min", "slab_grading_business_days_max",
 ];
 
 describe("Mercari leads column list", () => {
