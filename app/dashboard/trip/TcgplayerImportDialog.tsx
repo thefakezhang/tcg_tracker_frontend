@@ -123,6 +123,7 @@ export default function TcgplayerImportDialog({ open, onOpenChange, holdings, on
 
         <input
           type="file"
+          aria-label={t("trips.tcgCsvImport")}
           accept=".csv,text/csv"
           className="block w-full text-sm file:mr-3 file:min-h-11 file:rounded-md file:border file:bg-muted file:px-3"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }}
@@ -161,13 +162,13 @@ export default function TcgplayerImportDialog({ open, onOpenChange, holdings, on
               </p>
             )}
             <div className="max-h-80 overflow-x-auto overflow-y-auto rounded-md border">
-              <Table className="w-full table-fixed">
+              <Table className="w-full min-w-[36rem] table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-8" />
+                    <TableHead className="w-14" />
                     <TableHead className="w-[30%]">{t("trips.tcgCsvColCard")}</TableHead>
-                    <TableHead className="w-12">{t("trips.saleQty")}</TableHead>
-                    <TableHead className="w-16">{t("trips.tcgCsvColPrice")}</TableHead>
+                    <TableHead className="w-20">{t("trips.saleQty")}</TableHead>
+                    <TableHead className="w-24">{t("trips.tcgCsvColPrice")}</TableHead>
                     <TableHead>{t("trips.tcgCsvColMatch")}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -179,17 +180,20 @@ export default function TcgplayerImportDialog({ open, onOpenChange, holdings, on
                     return (
                       <TableRow key={row.rowIndex} className={resolved === null ? "opacity-60" : undefined}>
                         <TableCell>
-                          <input
-                            type="checkbox"
-                            className="size-4"
-                            disabled={resolved === null}
-                            checked={on}
-                            onChange={(e) => setExcluded((prev) => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.delete(row.rowIndex); else next.add(row.rowIndex);
-                              return next;
-                            })}
-                          />
+                          <label className="flex min-h-11 min-w-11 items-center justify-center">
+                            <input
+                              type="checkbox"
+                              aria-label={`${t("trips.tcgCsvColCard")}: ${row.name}`}
+                              className="size-4"
+                              disabled={resolved === null}
+                              checked={on}
+                              onChange={(e) => setExcluded((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.delete(row.rowIndex); else next.add(row.rowIndex);
+                                return next;
+                              })}
+                            />
+                          </label>
                         </TableCell>
                         <TableCell className="min-w-0 text-xs">
                           <div className="break-words font-medium">{row.name}</div>
@@ -208,7 +212,8 @@ export default function TcgplayerImportDialog({ open, onOpenChange, holdings, on
                             <span className="block min-w-0">
                               <span className="text-amber-600 dark:text-amber-400">{t("trips.tcgCsvAmbiguousRow", { n: match.candidates.length })}</span>
                               <select
-                                className="mt-1 block w-full max-w-full truncate rounded-md border bg-background px-1 py-1 text-xs"
+                                aria-label={`${t("trips.tcgCsvColMatch")}: ${row.name}`}
+                                className="mt-1 block min-h-11 w-full max-w-full truncate rounded-md border bg-background px-1 py-1 text-xs"
                                 value={chosen[row.rowIndex] ?? ""}
                                 onChange={(e) => setChosen((prev) => ({ ...prev, [row.rowIndex]: e.target.value }))}
                               >
