@@ -989,7 +989,11 @@ function regionTrigger() {
   return screen.getByRole("button", { name: /^Filter by region: / });
 }
 
-function openRegionMenu() {
+async function openRegionMenu() {
+  await act(async () => {
+    // The summary mounts the trigger asynchronously. Flush its React effects
+    // before clicking; finding its text alone does not mean Base UI is ready.
+  });
   fireEvent.click(regionTrigger());
   return screen.findByTestId("arrival-region-menu");
 }

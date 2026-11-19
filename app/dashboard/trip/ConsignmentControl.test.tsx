@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageProvider } from "../LanguageContext";
 import ConsignmentControl from "./ConsignmentControl";
@@ -38,11 +38,16 @@ afterEach(cleanup);
 
 describe("ConsignmentControl", () => {
   it("keeps a booked sale visible after consigned quantity reaches zero and confirms reversal", async () => {
-    render(
-      <LanguageProvider>
-        <ConsignmentControl game="pokemon" lineId={17} qtyRemaining={3} />
-      </LanguageProvider>,
-    );
+    // Flush the asynchronous initial load and its React effects before the
+    // first pointer event. Finding the sale text alone left the initial
+    // dialog setup racing that immediate click in repeated render runs.
+    await act(async () => {
+      render(
+        <LanguageProvider>
+          <ConsignmentControl game="pokemon" lineId={17} qtyRemaining={3} />
+        </LanguageProvider>,
+      );
+    });
 
     expect(await screen.findByText("Sold ×2 for $40.00 (net $36.00)")).toBeTruthy();
     const trigger = screen.getByRole("button", { name: "Undo sale" });
@@ -52,29 +57,7 @@ describe("ConsignmentControl", () => {
 
     expect(mocks.rpc).not.toHaveBeenCalled();
 
-    // Wait for the dialog itself, then read its text. Waiting on the TEXT
-    // first made the whole assertion a race against a five-second timeout
-    // scanning the whole document, which is why this still failed
-    // occasionally under a loaded full-suite run after the portal-order fix.
-    //
-    // The timeout is deliberately HALF the suite's testTimeout (10_000 in
-    // vitest.config.ts) and that is the point of the number. It used to be the
-    // full 10_000, so when the dialog never appeared this find burned the
-    // entire test budget and the run died on the OUTER timeout - reporting
-    //
-    //     Error: Test timed out in 10000ms.
-    //
-    // which says nothing about what was missing. At 5_000 the find loses
-    // first, and testing-library reports the role it could not locate plus the
-    // rendered DOM, which is what someone debugging #378 actually needs.
-    //
-    // This does NOT fix the flake. It was observed twice in twenty-one local
-    // full-suite runs and did not reproduce at all in the last ten, so the
-    // cause is still unknown; see tcg_tracker_frontend#378. The file's own
-    // history is two previous rounds of fixing this same test (portal
-    // ordering, then scoping the confirm to the dialog), so the next round
-    // should start from evidence rather than a third guess - and until this
-    // change there was no evidence to start from.
+    // Keep the missing-dialog diagnostic inside the suite's outer timeout.
     const dialog = await screen.findByRole("alertdialog", {}, { timeout: 5_000 });
     expect(within(dialog).getByText(/full accounting reversal/)).toBeTruthy();
 
