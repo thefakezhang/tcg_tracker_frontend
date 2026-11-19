@@ -229,6 +229,10 @@ export const LEAD_COLUMNS = [
   "slab_grading_service_level",
   "slab_grading_business_days_min",
   "slab_grading_business_days_max",
+  // Appended by backend 000658 (#2774): the newest status re-check that read
+  // the listing still on sale since the scan's observation. Selecting it
+  // before 000658 is applied is a 400 from PostgREST, so this ships after it.
+  "on_sale_confirmed_at",
 ].join(", ");
 
 function isOneOf<T extends string>(values: readonly T[], value: string): value is T {

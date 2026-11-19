@@ -41,6 +41,8 @@ Set by the operator on 2026-11-01 and enforced by the publisher and the table's 
 - By default the feed shows rows with a multiple (an auction with a maximum bid) from C2C sellers; evidence-only rows and Mercari Shops listings are each one toggle away.
 - Every value says how old its newest sale is, amber past two weeks, and the page says when the values were computed (once a day).
 - Leads that cannot be bought (no longer on sale, rejected by a photo check, dismissed) are hidden by default and one control away.
+- Since backend 000658 (#2774) the acquisition host re-checks the deals the tab shows: a re-check that finds one sold or in a transaction makes it no longer on sale, and one that finds its page gone makes it photo-rejected, so both leave the default view.
+  A re-check that finds it still on sale is shown under "Last seen" as "Still on sale at a re-check" with its time, and the row parser refuses a confirmation that is not newer than the scan's observation or sits on a cold-crawl row.
 - The operator can dismiss a lead with a reason or ask for a photo check.
 - A fresh lead says whether its photo check is queued and why, or why no check can confirm it, and a checked lead says when it was checked.
 - While photo checks are paused on the acquisition host, no lead says a check is queued and none offers to request one (#2437).
@@ -250,7 +252,7 @@ Switch to Verified for the photo-checked deal publication.
 
 ## Known limits
 
-- The route selects the columns 000617, 000623 and 000633 append to `mercari_leads_v`, and PostgREST answers a select naming a missing column with a 400, so each version must ship after its migration is applied; until then, and until the publisher has run, the route answers "Mercari leads are unavailable". It was built and tested against the migrations' column lists with fixtures, and `route.test.ts` pins the selected columns to 000633's view.
+- The route selects the columns 000617, 000623 and 000633 append to `mercari_leads_v`, and PostgREST answers a select naming a missing column with a 400, so each version must ship after its migration is applied; until then, and until the publisher has run, the route answers "Mercari leads are unavailable". It was built and tested against the migrations' column lists with fixtures, and `route.test.ts` pins the selected columns to the view's current list (000658's `on_sale_confirmed_at` last).
 - An auction's current bid is as of its newest observation, so a bid placed since can already be over the maximum shown; and auctions observed before the lead scan read bid counts and ends show both as not read yet.
 - The route calls `mercari_lead_groups` and selects 000638's columns, so this version ships after 000638 is applied; before it the route answers "Mercari leads are unavailable".
 - A group's expansion shows its best 50 other copies; a larger group says how many it holds.
