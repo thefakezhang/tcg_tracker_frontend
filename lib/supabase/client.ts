@@ -9,6 +9,29 @@ import { createBrowserClient } from "@supabase/ssr";
 // recovers (reads retry below; the next request triggers a fresh refresh).
 const REQUEST_TIMEOUT_MS = 15_000;
 
+function abortReason(signal?: AbortSignal | null): unknown {
+  return signal?.reason === undefined
+    ? new DOMException("The operation was aborted.", "AbortError")
+    : signal.reason;
+}
+
+function waitForRetry(delay: number, signal?: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timer = setTimeout(finish, delay);
+    const abort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      reject(abortReason(signal));
+    };
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
 // Retry transient network failures for safe (GET) requests so reads self-heal
 // instead of surfacing "NetworkError when attempting to fetch resource".
 // Mutations (POST/PATCH/DELETE/RPC) are NOT retried here — re-sending could
@@ -16,24 +39,36 @@ const REQUEST_TIMEOUT_MS = 15_000;
 async function fetchWithRetry(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const method = (init?.method ?? "GET").toUpperCase();
   const tries = method === "GET" ? 3 : 1;
+  const caller = init?.signal;
   let lastErr: unknown;
   for (let i = 0; i < tries; i++) {
+    if (caller?.aborted) throw abortReason(caller);
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(new DOMException("request timeout", "TimeoutError")), REQUEST_TIMEOUT_MS);
-    // Honor a caller-supplied signal (e.g. supabase's own .abortSignal()) too.
-    const caller = init?.signal;
-    if (caller) {
-      if (caller.aborted) ctrl.abort(caller.reason);
-      else caller.addEventListener("abort", () => ctrl.abort(caller.reason), { once: true });
+    // Native composition follows cancellation through response-body reads
+    // without retaining a JS listener on a long-lived caller signal.
+    const nativeComposition = caller && typeof AbortSignal.any === "function";
+    const signal = nativeComposition ? AbortSignal.any([caller, ctrl.signal]) : ctrl.signal;
+    const forwardAbort = () => ctrl.abort(abortReason(caller));
+    if (caller && !nativeComposition) {
+      caller.addEventListener("abort", forwardAbort, { once: true });
     }
+    let receivedResponse = false;
     try {
-      return await fetch(input, { ...init, signal: ctrl.signal });
+      const response = await fetch(input, { ...init, signal });
+      receivedResponse = true;
+      return response;
     } catch (e) {
+      if (caller?.aborted) throw abortReason(caller);
       lastErr = e;
-      if (i < tries - 1) await new Promise((r) => setTimeout(r, 250 * (i + 1)));
     } finally {
       clearTimeout(timer);
+      // Older browsers need forwarding until the caller aborts: fetch resolves
+      // at headers, before the body finishes. Removing it on success would
+      // silently break cancellation of a streaming body.
+      if (!receivedResponse) caller?.removeEventListener("abort", forwardAbort);
     }
+    if (i < tries - 1) await waitForRetry(250 * (i + 1), caller);
   }
   throw lastErr;
 }
