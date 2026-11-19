@@ -43,6 +43,7 @@ export default function MtgMetaView() {
   const [search, setSearch] = useState("");
   const [risingOnly, setRisingOnly] = useState(false);
   const [sort, setSort] = useState<MetaCardSort>("share");
+  const [allArchetypes, setAllArchetypes] = useState(false);
 
   const fetchMeta = useCallback(async () => {
     const supabase = createClient();
@@ -60,10 +61,14 @@ export default function MtgMetaView() {
   }, [format]);
   const { data, error, isLoading, retry } = useSupabaseQuery(["mtg-meta", format], fetchMeta, { keepPreviousData: false });
 
+  // By share, not by the stored rank: rank is the row's position on the
+  // format page, which groups archetypes by macro class, so Modern's largest
+  // deck (Broodscale Bloodchief, 16%) sat at position 47 under COMBO.
   const archetypes = useMemo(
-    () => [...(data?.archetypes ?? [])].sort((a, b) => a.rank - b.rank),
+    () => [...(data?.archetypes ?? [])].sort((a, b) => b.share_2m - a.share_2m || a.rank - b.rank),
     [data],
   );
+  const shownArchetypes = allArchetypes ? archetypes : archetypes.slice(0, ARCHETYPES_SHOWN);
   const cards = useMemo(
     () => filterMetaCards(data?.cards ?? [], { board, search, risingOnly, sort }),
     [data, board, search, risingOnly, sort],
@@ -123,32 +128,42 @@ export default function MtgMetaView() {
                     <TableRow>
                       <TableHead className="w-8">#</TableHead>
                       <TableHead>{t("mtgMeta.colArchetype")}</TableHead>
-                      <TableHead className="text-right">{t("mtgMeta.colShare2m")}</TableHead>
-                      <TableHead className="text-right">{t("mtgMeta.colShare2w")}</TableHead>
-                      <TableHead className="text-right">{t("mtgMeta.colWeek")}</TableHead>
+                      <TableHead className="text-right"><ResponsiveLabel full={t("mtgMeta.colShare2m")} short={t("mtgMeta.colShare2mShort")} /></TableHead>
+                      <TableHead className="text-right"><ResponsiveLabel full={t("mtgMeta.colShare2w")} short={t("mtgMeta.colShare2wShort")} /></TableHead>
+                      <TableHead className="hidden text-right sm:table-cell">{t("mtgMeta.colWeek")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {archetypes.map((a) => (
+                    {shownArchetypes.map((a, index) => (
                       <TableRow key={a.archetype_id}>
-                        <TableCell className="tabular-nums text-muted-foreground">{a.rank}</TableCell>
-                        <TableCell className="min-w-0">
+                        <TableCell className="tabular-nums text-muted-foreground">{index + 1}</TableCell>
+                        <TableCell className="min-w-0 whitespace-normal break-words">
                           <a href={a.evidence_url} target="_blank" rel="noreferrer" className="hover:underline">
                             {a.archetype_name}
                           </a>
-                          <span className="ml-1.5 text-[10px] uppercase text-muted-foreground">{a.macro_class}</span>
+                          <span className="block text-[10px] uppercase text-muted-foreground sm:ml-1.5 sm:inline">{a.macro_class}</span>
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{pct(a.share_2m)}</TableCell>
                         <TableCell className="text-right tabular-nums">
                           <ShareWithDirection share={a.share_2w} direction={metaDirection(a.share_2m, a.share_2w)} t={t} />
                         </TableCell>
-                        <TableCell className="text-right tabular-nums">
+                        <TableCell className="hidden text-right tabular-nums sm:table-cell">
                           <WeekChange value={weekChange(a.share_2m, a.share_2m_prior)} />
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
+                {archetypes.length > ARCHETYPES_SHOWN && (
+                  <Button
+                    variant="ghost"
+                    className="h-11 w-full rounded-none border-t text-xs sm:h-8"
+                    onClick={() => setAllArchetypes((v) => !v)}
+                    data-testid="mtg-meta-archetypes-toggle"
+                  >
+                    {allArchetypes ? t("mtgMeta.showFewer") : t("mtgMeta.showAll", { n: String(archetypes.length) })}
+                  </Button>
+                )}
               </div>
             )}
           </section>
@@ -193,17 +208,17 @@ export default function MtgMetaView() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t("mtgMeta.colCard")}</TableHead>
-                    <TableHead className="text-right">{t("mtgMeta.colShare2m")}</TableHead>
-                    <TableHead className="text-right">{t("mtgMeta.colAvg")}</TableHead>
-                    <TableHead className="text-right">{t("mtgMeta.colShare2w")}</TableHead>
-                    <TableHead className="text-right">{t("mtgMeta.colWeek")}</TableHead>
-                    <TableHead className="text-right">{t("mtgMeta.colPrice")}</TableHead>
+                    <TableHead className="text-right"><ResponsiveLabel full={t("mtgMeta.colShare2m")} short={t("mtgMeta.colShare2mShort")} /></TableHead>
+                    <TableHead className="hidden text-right sm:table-cell">{t("mtgMeta.colAvg")}</TableHead>
+                    <TableHead className="text-right"><ResponsiveLabel full={t("mtgMeta.colShare2w")} short={t("mtgMeta.colShare2wShort")} /></TableHead>
+                    <TableHead className="hidden text-right sm:table-cell">{t("mtgMeta.colWeek")}</TableHead>
+                    <TableHead className="text-right"><ResponsiveLabel full={t("mtgMeta.colPrice")} short={t("mtgMeta.colPriceShort")} /></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {cards.map((c) => (
                     <TableRow key={`${c.board}:${c.card_name}`} data-testid="mtg-meta-card-row">
-                      <TableCell className="min-w-0">
+                      <TableCell className="min-w-0 whitespace-normal break-words">
                         <span className={cn(c.in_catalog === false && "text-muted-foreground")}>{c.card_name}</span>
                         {c.in_catalog === false && (
                           <Badge variant="outline" className="ml-1.5 h-auto px-1 py-px text-[10px]" title={t("mtgMeta.notInCatalogHint")}>
@@ -218,11 +233,11 @@ export default function MtgMetaView() {
                           </span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{(c.avg_2m ?? c.avg_2w)?.toFixed(1) ?? "-"}</TableCell>
+                      <TableCell className="hidden text-right tabular-nums sm:table-cell">{(c.avg_2m ?? c.avg_2w)?.toFixed(1) ?? "-"}</TableCell>
                       <TableCell className="text-right tabular-nums">
                         <ShareWithDirection share={c.share_2w} direction={metaDirection(c.share_2m, c.share_2w)} t={t} />
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">
+                      <TableCell className="hidden text-right tabular-nums sm:table-cell">
                         <WeekChange value={weekChange(c.share_2m, c.share_2m_prior)} />
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
@@ -244,6 +259,23 @@ export default function MtgMetaView() {
         </div>
       )}
     </div>
+  );
+}
+
+// The archetype tail is long - Modern lists 70, most under 1% - so the table
+// opens on the top of the metagame and expands on request.
+const ARCHETYPES_SHOWN = 15;
+
+// A column header that fits a 390px phone: the full words from the sm
+// breakpoint up, an abbreviation below it, and the full words for assistive
+// technology at every width.
+function ResponsiveLabel({ full, short }: { full: string; short: string }) {
+  return (
+    <>
+      <span className="hidden sm:inline">{full}</span>
+      <span className="sm:hidden" aria-hidden="true">{short}</span>
+      <span className="sr-only sm:hidden">{full}</span>
+    </>
   );
 }
 

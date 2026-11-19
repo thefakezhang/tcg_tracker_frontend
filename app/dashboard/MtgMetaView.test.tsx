@@ -13,8 +13,8 @@ vi.mock("@/lib/i18n", () => ({
 
 const ROWS: Record<string, Record<string, unknown>[]> = {
   mtg_format_archetypes_v: [
-    { format_code: "MO", format_name: "Modern", archetype_id: 351, archetype_name: "UR Aggro", macro_class: "AGGRO", rank: 2, share_2m: 7, share_2w: 6, share_2m_prior: 7.5, trend: null, decks_2m: 3477, decks_2w: 588, observed_at: "2026-11-22T10:00:00Z", prior_observed_at: "2026-11-15T10:00:00Z", evidence_url: "https://www.mtgtop8.com/archetype?a=351&meta=51&f=MO" },
-    { format_code: "MO", format_name: "Modern", archetype_id: 918, archetype_name: "Rakdos Aggro", macro_class: "AGGRO", rank: 1, share_2m: 8, share_2w: 10, share_2m_prior: 6, trend: "up_light", decks_2m: 3477, decks_2w: 588, observed_at: "2026-11-22T10:00:00Z", prior_observed_at: "2026-11-15T10:00:00Z", evidence_url: "https://www.mtgtop8.com/archetype?a=918&meta=51&f=MO" },
+    { format_code: "MO", format_name: "Modern", archetype_id: 351, archetype_name: "UR Aggro", macro_class: "AGGRO", rank: 1, share_2m: 7, share_2w: 6, share_2m_prior: 7.5, trend: null, decks_2m: 3477, decks_2w: 588, observed_at: "2026-11-22T10:00:00Z", prior_observed_at: "2026-11-15T10:00:00Z", evidence_url: "https://www.mtgtop8.com/archetype?a=351&meta=51&f=MO" },
+    { format_code: "MO", format_name: "Modern", archetype_id: 918, archetype_name: "Rakdos Aggro", macro_class: "COMBO", rank: 9, share_2m: 8, share_2w: 10, share_2m_prior: 6, trend: "up_light", decks_2m: 3477, decks_2w: 588, observed_at: "2026-11-22T10:00:00Z", prior_observed_at: "2026-11-15T10:00:00Z", evidence_url: "https://www.mtgtop8.com/archetype?a=918&meta=51&f=MO" },
   ],
   mtg_format_card_play_v: [
     { format_code: "MO", format_name: "Modern", board: "MD", card_name: "Arid Mesa", catalog_key: "ARID MESA", rank_2m: 1, share_2m: 33.3, decks_2m: 1153, avg_2m: 2.8, rank_2w: 1, share_2w: 35.1, avg_2w: 2.8, share_2m_prior: 31, total_decks_2m: 3477, observed_at: "2026-11-22T10:00:00Z", in_catalog: true, median_sell_usd: 31.5, priced_printings: 12, evidence_url: "https://www.mtgtop8.com/topcards?f=MO&meta=51" },
@@ -45,7 +45,9 @@ import MtgMetaView from "./MtgMetaView";
 afterEach(cleanup);
 
 describe("MtgMetaView", () => {
-  it("reads one format, ranks the archetypes and shows each card's direction", async () => {
+  // Ranked by share, not by the stored rank, which is the page's
+  // class-grouped position: Rakdos (8%, rank 9) comes before UR (7%, rank 1).
+  it("reads one format, ranks the archetypes by share and shows each card's direction", async () => {
     render(<MtgMetaView />);
     const archetypes = await screen.findByTestId("mtg-meta-archetype-table");
     const names = within(archetypes).getAllByRole("link").map((a) => a.textContent);
