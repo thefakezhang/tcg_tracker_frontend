@@ -526,4 +526,3 @@ export function CurationWorkspace({ config }: { config: CurationConfig }) {
     </div>
   );
 }
-

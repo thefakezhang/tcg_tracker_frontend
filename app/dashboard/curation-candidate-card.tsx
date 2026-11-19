@@ -365,4 +365,3 @@ export function CurationCandidateCard({ config, c, idx, status, language, saving
     </Card>
   );
 }
-
