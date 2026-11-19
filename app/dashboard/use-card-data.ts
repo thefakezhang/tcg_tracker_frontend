@@ -6,6 +6,7 @@ import { type Game, type PsaMode } from "./GameContext";
 import { exitValue, latestSignals, signalForRow, type GradeSignal } from "./grade-signals";
 import type { ExitPercentile } from "./ExitBasisContext";
 import { selectAllByIds } from "@/lib/supabase/select-all";
+import { createSessionCache } from "@/lib/session-cache";
 import { externalIdMatches, smartSearchFilters, tokenizeSearchTerm, uidRange } from "@/lib/card-search";
 import {
   bestOpportunity,
@@ -432,49 +433,46 @@ export interface CardRowData {
   } | null;
 }
 
-// Cache exchange rates per session
-let rateMapCache: Map<string, number> | null = null;
-
-// Cache conditions table: condition_id → tier
-let conditionsCache: { map: Map<number, number>; tiers: number[] } | null =
-  null;
+// Session metadata shares in-flight work and caches only successful reads.
+// Supabase errors retain the existing empty fallback, but do not poison later
+// callers. These reads belong to the session, never to one card's controller.
+const readRates = createSessionCache<Map<string, number>>();
+const readConditions = createSessionCache<{ map: Map<number, number>; tiers: number[] }>();
+const readLocations = createSessionCache<Map<number, LocationInfo>>();
 
 export async function fetchConditionsCache(
   supabase: ReturnType<typeof createClient>
 ): Promise<{ map: Map<number, number>; tiers: number[] }> {
-  if (conditionsCache) return conditionsCache;
+  return readConditions(async () => {
+    const { data: conditions, error } = await supabase
+      .from("conditions")
+      .select("condition_id, tier");
 
-  const { data: conditions } = await supabase
-    .from("conditions")
-    .select("condition_id, tier");
-
-  const map = new Map<number, number>();
-  const tierSet = new Set<number>();
-  for (const c of conditions ?? []) {
-    map.set(c.condition_id, c.tier);
-    tierSet.add(c.tier);
-  }
-  const tiers = [...tierSet].sort((a, b) => a - b);
-  conditionsCache = { map, tiers };
-  return conditionsCache;
+    const map = new Map<number, number>();
+    const tierSet = new Set<number>();
+    for (const c of conditions ?? []) {
+      map.set(c.condition_id, c.tier);
+      tierSet.add(c.tier);
+    }
+    return { value: { map, tiers: [...tierSet].sort((a, b) => a - b) }, cache: !error };
+  });
 }
 
 export async function fetchRateMap(
   supabase: ReturnType<typeof createClient>
 ): Promise<Map<string, number>> {
-  if (rateMapCache) return rateMapCache;
+  return readRates(async () => {
+    const { data: rates, error } = await supabase
+      .from("exchange_rates")
+      .select("from_currency, to_currency, rate")
+      .eq("to_currency", "USD");
 
-  const { data: rates } = await supabase
-    .from("exchange_rates")
-    .select("from_currency, to_currency, rate")
-    .eq("to_currency", "USD");
-
-  const map = new Map<string, number>();
-  for (const r of rates ?? []) {
-    map.set(r.from_currency, r.rate);
-  }
-  rateMapCache = map;
-  return map;
+    const map = new Map<string, number>();
+    for (const r of rates ?? []) {
+      map.set(r.from_currency, r.rate);
+    }
+    return { value: map, cache: !error };
+  });
 }
 
 export interface LocationInfo {
@@ -482,37 +480,35 @@ export interface LocationInfo {
   marketRegion: string | null;
 }
 
-let locationMapCache: Map<number, LocationInfo> | null = null;
-
-// Drop the session cache and re-read locations. Needed when a location_id
-// appears that the cached map has never seen: locations are added while
-// dashboard sessions stay open (2026-08-26: the new 130point source rendered
-// price points with empty shop text for every session older than the row).
+// A location added during this session needs a fresh map. Supersede an ordinary
+// pending load; simultaneous refresh callers join the same replacement read.
 export async function refreshLocationMap(
   supabase: ReturnType<typeof createClient>
 ): Promise<Map<number, LocationInfo>> {
-  locationMapCache = null;
-  return fetchLocationMap(supabase);
+  return loadLocationMap(supabase, true);
 }
 
 export async function fetchLocationMap(
   supabase: ReturnType<typeof createClient>
 ): Promise<Map<number, LocationInfo>> {
-  if (locationMapCache) return locationMapCache;
+  return loadLocationMap(supabase);
+}
 
-  const { data: locations } = await supabase
-    .from("locations")
-    .select("location_id, name, market_region");
+function loadLocationMap(supabase: ReturnType<typeof createClient>, refresh = false) {
+  return readLocations(async () => {
+    const { data: locations, error } = await supabase
+      .from("locations")
+      .select("location_id, name, market_region");
 
-  const map = new Map<number, LocationInfo>();
-  for (const loc of locations ?? []) {
-    map.set(loc.location_id, {
-      name: loc.name,
-      marketRegion: loc.market_region ?? null,
-    });
-  }
-  locationMapCache = map;
-  return map;
+    const map = new Map<number, LocationInfo>();
+    for (const loc of locations ?? []) {
+      map.set(loc.location_id, {
+        name: loc.name,
+        marketRegion: loc.market_region ?? null,
+      });
+    }
+    return { value: map, cache: !error };
+  }, refresh);
 }
 
 // Map sort column IDs from the table to summary table columns
