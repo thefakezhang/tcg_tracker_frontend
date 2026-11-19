@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 15
     env:
       NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:9'
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: 'production-runtime-check'
 
     steps:
       - uses: actions/checkout@v7
@@ -45,3 +47,9 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+      - name: Production runtime without development dependencies
+        run: |
+          npm prune --omit=dev --ignore-scripts
+          node scripts/check-production-runtime.mjs
+          git diff --exit-code -- package.json package-lock.json

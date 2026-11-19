@@ -29,7 +29,7 @@ Three supporting changes ship with it, because a public page changes their risk:
 - `app/api/proxy-image/route.ts` now requires an authenticated session.
   Middleware only guards `/dashboard`, so before this the route was an open proxy on a public origin - an arbitrary-URL `fetch` usable as an internal-port oracle and as free bandwidth serving arbitrary bytes from our domain.
   It also blocks private and link-local hosts, caps the body at 8 MB and times out at 10s.
-- `next.config.ts` sets CSP `frame-ancestors 'none'`, `X-Frame-Options`, `Referrer-Policy`, `X-Content-Type-Options`, `Permissions-Policy` and HSTS on every route.
+- `next.config.mjs` sets CSP `frame-ancestors 'none'`, `X-Frame-Options`, `Referrer-Policy`, `X-Content-Type-Options`, `Permissions-Policy` and HSTS on every route.
 - `middleware.ts` excludes `/wantlist` from the matcher, so an anonymous hit does not pay a Supabase `getUser()` round trip and static delivery is preserved.
 
 ## Goals

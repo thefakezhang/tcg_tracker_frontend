@@ -1,5 +1,3 @@
-import type { NextConfig } from "next";
-
 // The site serves a public, unauthenticated page (/wantlist) alongside the
 // signed-in dashboard, so these are no longer optional. Applied to every route.
 const securityHeaders = [
@@ -13,7 +11,8 @@ const securityHeaders = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
 ];
 
-const nextConfig: NextConfig = {
+/** @type {import("next").NextConfig} */
+const nextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
