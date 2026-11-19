@@ -447,18 +447,22 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
     setSelectedCard(entry);
   }, [setActiveGame]);
 
+  const selectedGame = selectedCard?.game;
   const handleTargetPriceChange = useCallback(
     (eid: number, price: number | null) => {
+      if (!selectedGame) return;
+      // Entry IDs belong to separate game tables. Keep the saved game's
+      // identity even if another detail opens before its write completes.
       setData((prev) =>
         prev.map((row) =>
-          row.entryId === eid ? { ...row, targetPriceUsd: price } : row
+          row.game === selectedGame && row.entryId === eid ? { ...row, targetPriceUsd: price } : row
         )
       );
       setSelectedCard((prev) =>
-        prev && prev.entryId === eid ? { ...prev, targetPriceUsd: price } : prev
+        prev && prev.game === selectedGame && prev.entryId === eid ? { ...prev, targetPriceUsd: price } : prev
       );
     },
-    []
+    [selectedGame]
   );
 
   const renderGridItem = useCallback(

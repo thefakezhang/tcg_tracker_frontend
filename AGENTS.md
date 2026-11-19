@@ -759,6 +759,8 @@ The view indexes raw summary fallbacks once instead of scanning all summaries pe
 Replacing a load or leaving the view aborts its requests; late results and errors cannot replace the selected list.
 Lifecycle tokens also reject refreshes from removals that finish after switching lists, unmounting, or returning to the same list ID.
 - When clicking an entry in BuyListView, `setActiveGame` is called so CardDetailModal fetches from the correct game table.
+- Target-price save callbacks match both game and entry ID, including delayed completions after another detail opens.
+The modal keeps its game-specific persistence table and USD target value; rejected writes leave displayed row targets unchanged.
 - Grid view has a compact toggle (default on) that hides price/ROI info on cards.
 - Buy list description is shown as a tooltip on the header title.
 - Sidebar shows all buy lists with a create dialog (uses Field/FieldGroup/Label pattern).
