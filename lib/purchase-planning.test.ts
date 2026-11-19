@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sortedOrigins, summarizePlan, type DemandCoverage, type PurchaseAllocation, type PurchasePlanLine } from "./purchase-planning";
+import { primaryAllocationsByLine, sortedOrigins, summarizePlan, type DemandCoverage, type PurchaseAllocation, type PurchasePlanLine } from "./purchase-planning";
 
 describe("purchase planning helpers", () => {
   it("orders committed exact demand before softer criteria demand", () => {
@@ -35,5 +35,35 @@ describe("purchase planning helpers", () => {
       coveredCustomers: 1,
       uncoveredCustomers: 1,
     });
+  });
+});
+
+
+describe("planner allocation index", () => {
+  const allocation = (id: number, line: number, status = "planned", role: "primary" | "backup" = "primary") => ({
+    allocation_id: id, plan_line_id: line, status, role,
+  }) as PurchaseAllocation;
+
+  it("preserves customer order and retains all primary statuses except released/cancelled", () => {
+    const rows = [
+      allocation(1, 10), allocation(2, 20, "fulfilled"), allocation(3, 10, "reserved"),
+      allocation(4, 10, "released"), allocation(5, 10, "cancelled"),
+      allocation(6, 10, "ordered", "backup"), allocation(7, 10, "future-active-status"),
+    ];
+    const indexed = primaryAllocationsByLine(rows);
+    expect(indexed.get(10)).toEqual([rows[0], rows[2], rows[6]]);
+    expect(indexed.get(20)).toEqual([rows[1]]);
+    expect(indexed.get(99)).toBeUndefined();
+  });
+
+  it("visits allocations linearly for a thousand-line plan", () => {
+    let visits = 0;
+    const allocations = Array.from({ length: 4000 }, (_, i) => ({
+      ...allocation(i, i % 1000),
+      get plan_line_id() { visits++; return i % 1000; },
+    }));
+    const indexed = primaryAllocationsByLine(allocations);
+    for (let line = 0; line < 1000; line++) expect(indexed.get(line)).toHaveLength(4);
+    expect(visits).toBeLessThanOrEqual(8000);
   });
 });

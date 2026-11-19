@@ -198,3 +198,16 @@ export function summarizePlan(lines: PurchasePlanLine[], coverage: DemandCoverag
     ).size,
   };
 }
+
+// Keep display order and include fulfilled/reserved allocations, as the planner
+// did before indexing. Only released/cancelled assignments disappear here.
+export function primaryAllocationsByLine(allocations: readonly PurchaseAllocation[]): Map<number, PurchaseAllocation[]> {
+  const byLine = new Map<number, PurchaseAllocation[]>();
+  for (const allocation of allocations) {
+    if (allocation.role !== "primary" || allocation.status === "released" || allocation.status === "cancelled") continue;
+    const rows = byLine.get(allocation.plan_line_id);
+    if (rows) rows.push(allocation);
+    else byLine.set(allocation.plan_line_id, [allocation]);
+  }
+  return byLine;
+}
