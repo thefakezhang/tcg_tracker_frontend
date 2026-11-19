@@ -206,11 +206,25 @@ interface PurchaseRow {
   tripName: string | null;
 }
 
+interface SaleOpeningIdentity {
+  rowKey: string | null;
+  cardId: string | null;
+  activeGame: Game;
+  open: boolean;
+}
+
 interface DetailLoadIdentity {
   card: CardRowData | null;
   activeGame: Game;
   open: boolean;
   ownedVersion: number;
+}
+
+interface SaleFeedback {
+  identity: SaleOpeningIdentity;
+  lineId: number | null;
+  error: string | null;
+  done: { marginUsd: number } | null;
 }
 
 interface CardDetails {
@@ -265,6 +279,19 @@ export default function CardDetailModal({
   const { buylists, addToBuylist } = useBuyList();
   const [addedTo, setAddedTo] = useState<string | null>(null);
   const ownedVersion = useOwnedInventoryVersion();
+  // Buy-list target-price updates replace the row object without changing the
+  // opening. The stable key still distinguishes entries and PSA-grade rows.
+  const rowKey = card?.key ?? null;
+  const cardId = card ? String(card.card.card_id) : null;
+  const openingIdentity = useMemo<SaleOpeningIdentity>(
+    () => ({ rowKey, cardId, activeGame, open }),
+    [rowKey, cardId, activeGame, open],
+  );
+  const committedOpening = useRef<SaleOpeningIdentity | null>(null);
+  useLayoutEffect(() => {
+    committedOpening.current = openingIdentity;
+    return () => { committedOpening.current = null; };
+  }, [openingIdentity]);
   // Every opening, selection and inventory refresh owns a distinct result.
   // Comparing this identity during render also hides old holdings/sale controls
   // before the new effect starts, including A -> B -> A and close/reopen.
@@ -292,7 +319,11 @@ export default function CardDetailModal({
   // Per-line quick sale (record_line_sale): the same lot lines this panel
   // already renders. Pinned to the exact line so COGS comes from that line's
   // own landed basis - no trip-tab detour for a single-card sale.
-  const [sellLineId, setSellLineId] = useState<number | null>(null);
+  const [saleFeedback, setSaleFeedback] = useState<SaleFeedback | null>(null);
+  const currentSaleFeedback = saleFeedback?.identity === openingIdentity ? saleFeedback : null;
+  const sellLineId = currentSaleFeedback?.lineId ?? null;
+  const sellError = currentSaleFeedback?.error ?? null;
+  const sellDone = currentSaleFeedback?.done ?? null;
   const [sellQty, setSellQty] = useState("1");
   const [sellCcy, setSellCcy] = useState("USD");
   const [sellProceeds, setSellProceeds] = useState("");
@@ -303,9 +334,9 @@ export default function CardDetailModal({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   });
   const [sellPlatform, setSellPlatform] = useState("");
+  // Keep the mutation lock across openings until the actual write settles.
+  // Otherwise reopening the same card could sell stale holdings twice.
   const [sellBusy, setSellBusy] = useState(false);
-  const [sellError, setSellError] = useState<string | null>(null);
-  const [sellDone, setSellDone] = useState<{ marginUsd: number } | null>(null);
   const { rateFor } = useFxRate();
   const [selectedTiers, setSelectedTiers] = useState<number[]>([initialTier]);
   const [activeTab, setActiveTab] = useState<"non-psa" | "psa">(initialPsaMode);
@@ -860,10 +891,17 @@ export default function CardDetailModal({
             prices: in a shop the prices are what you opened the card for, and
             this is reference you scroll to. */}
         {sourceRows.length > 0 && (() => {
+          const setSellError = (error: string | null) => {
+            setSaleFeedback((current) => current?.identity === openingIdentity
+              ? { ...current, error } : current);
+          };
           const openSell = (s: SourceRow) => {
-            setSellError(null);
-            setSellDone(null);
-            setSellLineId((cur) => (cur === s.lineId ? null : s.lineId));
+            setSaleFeedback((current) => ({
+              identity: openingIdentity,
+              lineId: current?.identity === openingIdentity && current.lineId === s.lineId ? null : s.lineId,
+              error: null,
+              done: null,
+            }));
             setSellQty("1");
             // Import-leg inventory sells in the US (USD); export-leg in Japan (JPY).
             const ccy = s.leg === "export" ? "JPY" : "USD";
@@ -904,13 +942,19 @@ export default function CardDetailModal({
             });
             setSellBusy(false);
             if (error) {
-              setSellError(error.message);
+              if (committedOpening.current === openingIdentity) setSellError(error.message);
               return;
             }
+            // The successful write changed inventory even if its opening closed.
+            bumpOwnedInventory();
+            if (committedOpening.current !== openingIdentity) return;
             const row = (Array.isArray(data) ? data[0] : data) as { margin_usd?: number } | null;
-            setSellDone({ marginUsd: Number(row?.margin_usd ?? 0) });
-            setSellLineId(null);
-            bumpOwnedInventory(); // ownedVersion dependency refetches this panel
+            setSaleFeedback({
+              identity: openingIdentity,
+              lineId: null,
+              error: null,
+              done: { marginUsd: Number(row?.margin_usd ?? 0) },
+            });
           };
           const onHand = sourceRows.reduce((s, r) => s + r.qtyOnHand, 0);
           const basis = sourceRows.reduce((s, r) => s + r.qtyOnHand * r.unitCostUsd, 0);
