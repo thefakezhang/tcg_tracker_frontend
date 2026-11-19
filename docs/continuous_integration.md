@@ -37,3 +37,22 @@ Warnings remain visible, including existing effect-dependency, native-image and 
 The intentional underscore convention for discarded fields and callback parameters is configured explicitly.
 The malformed-wire-document test retains one narrowly documented `any` exception so it can exercise parser refusal on invalid nested input.
 The Deno aggregator's four connection parameters derive their type from its imported pool rather than `any`; this is a type-only change and does not deploy the function.
+
+## Production dependencies
+
+Builds install development dependencies because Tailwind, PostCSS plugins, animation CSS and the shadcn stylesheet are compiled into the application.
+Those build tools and the shadcn generator are development dependencies; they are not required by the running server.
+The Next configuration uses JavaScript modules with a JSDoc type, so production startup does not require TypeScript or try to install development dependencies.
+After the production build, CI prunes development dependencies and runs `scripts/check-production-runtime.mjs` against a new loopback-only server on an automatically allocated port.
+The smoke check verifies public pages, their compiled assets, security headers and native image processing, then stops the server.
+It does not authenticate, mutate application data or send test requests to an external service.
+For the local equivalent, build with `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9 NEXT_PUBLIC_SUPABASE_ANON_KEY=production-runtime-check npm run build`, then run `npm prune --omit=dev --ignore-scripts` and `node scripts/check-production-runtime.mjs`.
+Run `npm ci` before further development checks.
+
+Next and its ESLint configuration stay on the same supported 15.5 patch version.
+The scoped Next PostCSS override uses the declared patched PostCSS 8 version because Next 15 still pins an older transitive copy.
+Remove that override when the framework's own dependency no longer needs it, after rerunning the build and runtime checks.
+Audit production and development dependencies separately; a clean production audit does not imply that every development-tool advisory is resolved.
+
+The production smoke build uses dummy Supabase settings at loopback port 9 and sends no session cookies.
+It serves anonymous pages and local assets only; it does not need live credentials or contact the database.

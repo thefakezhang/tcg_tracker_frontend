@@ -994,7 +994,7 @@ The listings tables have a foreign key to `currencies` — queries join via `cur
 
 - `/wantlist` is public by design and statically generated - see `wantlist_page.md`.
 It is excluded from the middleware matcher so anonymous hits skip the Supabase `getUser()` round trip.
-- `next.config.ts` sets the security headers (CSP `frame-ancestors`, `X-Frame-Options`, `Referrer-Policy`, `X-Content-Type-Options`, `Permissions-Policy`, HSTS) on every route.
+- `next.config.mjs` sets the security headers (CSP `frame-ancestors`, `X-Frame-Options`, `Referrer-Policy`, `X-Content-Type-Options`, `Permissions-Policy`, HSTS) on every route.
 Do not drop them.
 - **Never render `card_uid` on a public page.**
 `card_index_merge_pokemon_unlinked_refs` is `SECURITY DEFINER`, anon-executable, and defaults to `p_dry_run => false`.
