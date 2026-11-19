@@ -54,5 +54,32 @@ The scoped Next PostCSS override uses the declared patched PostCSS 8 version bec
 Remove that override when the framework's own dependency no longer needs it, after rerunning the build and runtime checks.
 Audit production and development dependencies separately; a clean production audit does not imply that every development-tool advisory is resolved.
 
+## Development toolchain maintenance
+
+Vitest is pinned to 4.1.12, and its supported Vite peer is explicitly pinned to the previously used 7.3.7.
+This removes the old tinypool and vite-node dependency chain while keeping the Vite, Rollup and esbuild transformation versions stable.
+The existing test selection, two-worker CI limit, per-file environments, assertions and timeouts remain unchanged.
+Compare collected test identities as well as pass totals when changing test runners; this project does not currently collect line-coverage reports.
+The CardBrowser fixture keeps the mocked game-context setter stable across renders, matching React's state-setter contract so the mock does not manufacture game-change filter resets.
+The quick-sale retry fixture holds its second RPC response explicitly, checks the pending state, then settles it before asserting completed feedback; an invocation count alone does not prove completion.
+
+The shadcn 4.23 lockfile update stays within the declared major and uses its supported Zod 4 dependency.
+It replaces the older SDK, Express and Hono development-server dependency chain with the current MCP server/core packages.
+The application still imports shadcn's Tailwind stylesheet, so this is also a build-input change even though shadcn is a development dependency.
+Validate emitted application CSS, the local registry build command and an existing mocked browser journey alongside the full tests and production checks.
+The new stylesheet preserves its existing rules and adds optional visual effects; do not assume that a development-only package cannot affect the shipped UI.
+
+The 2026-11-19 lockfile audit has four moderate development findings and no high or critical findings, down from 17 findings before this increment.
+The remaining chain is shadcn -> ts-morph 26.0.0 -> @ts-morph/common 0.27.0 -> minimatch 10.2.6.
+Shadcn requires ts-morph `^26.0.0`, that package requires common `~0.27.0`, and common requires minimatch `^10.0.1`.
+The [glob-pattern amplification advisory](https://github.com/advisories/GHSA-g3hv-75wg-m249)'s patched minimatch 11.0.1 is outside that last range; updating the chain requires compatible upstream releases or a separately validated tooling migration, not a forced transitive override.
+The production dependency records remain unchanged and their separate audit is clean.
+Audit results are dated observations, not a permanent security guarantee.
+The remaining supported-upstream update is tracked in [issue 468](https://github.com/thefakezhang/tcg_tracker_frontend/issues/468).
+
+Resolving the Vitest major upgrade hit an internal optional-peer resolver error in npm 10.9.2 and 10.9.11.
+The lockfile was generated using an isolated npm 11.21.3 command, without `--force` or `--legacy-peer-deps`.
+Normal installation continues to use `npm ci`; no global npm upgrade or new runtime dependency is required.
+
 The production smoke build uses dummy Supabase settings at loopback port 9 and sends no session cookies.
 It serves anonymous pages and local assets only; it does not need live credentials or contact the database.

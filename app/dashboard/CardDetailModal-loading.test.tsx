@@ -392,11 +392,16 @@ describe("CardDetailModal quick-sale feedback", () => {
     expect(screen.getByRole("alert").textContent).toBe("Sale rejected");
     expect(mock.bumpInventory).not.toHaveBeenCalled();
     const first = sales()[0][1];
-    mock.rpc.mockResolvedValue(saleResult("success"));
+    const retry = holdSale();
     expect(sales()).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "inventory.sellConfirm" }));
     await waitFor(() => expect(sales()).toHaveLength(2));
     expect(sales()[1][1]).toEqual(first);
+    expect(screen.getByRole("button", { name: "inventory.sellRecording" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(mock.bumpInventory).not.toHaveBeenCalled();
+    // Invocation is not completion; settle the retry before checking feedback.
+    await act(async () => { retry.resolve(saleResult("success")); });
     expect(screen.getByRole("status").textContent).toBe("inventory.sellDone: $7.89");
     expect(mock.bumpInventory).toHaveBeenCalledTimes(1);
   });
