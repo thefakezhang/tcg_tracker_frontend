@@ -7,6 +7,7 @@ describe("proxy-image URL policy", () => {
       "https://pub-edb881114340454d8aae56176adec4f2.r2.dev/pokemon/617520.jpg",
       "https://tcgplayer-cdn.tcgplayer.com/product/517824_200w.jpg",
       "http://example.com/a.png",
+      "https://fcdn.example/a.png", "https://fdimages.example/a.png",
     ]) expect(decideProxyUrl(u).ok).toBe(true);
   });
   it("rejects missing, malformed and non-http schemes", () => {
@@ -21,7 +22,7 @@ describe("proxy-image URL policy", () => {
       "http://localhost/x", "http://127.0.0.1/x", "http://[::1]/x", "http://0.0.0.0/x",
       "http://169.254.169.254/latest/meta-data/", "http://10.1.2.3/x", "http://192.168.0.1/x",
       "http://172.16.5.5/x", "http://100.64.0.1/x", "http://foo.internal/x", "http://[fd00::1]/x",
-      "http://[::ffff:127.0.0.1]/x",
+      "http://[::ffff:127.0.0.1]/x", "http://[::]/x", "http://[fe90::1]/x",
     ]) expect(decideProxyUrl(u).ok, u).toBe(false);
   });
   it("rejects credentials embedded in the URL", () => {

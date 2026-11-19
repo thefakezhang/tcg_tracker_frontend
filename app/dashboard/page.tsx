@@ -1,14 +1,17 @@
 "use client";
 
-import CardBrowser from "./CardBrowser";
-import SealedBrowser from "./SealedBrowser";
-import BuyListView from "./BuyListView";
-import TripDashboard from "./TripDashboard";
+import dynamic from "next/dynamic";
+import ViewLoading from "./ViewLoading";
 import { viewBySentinel } from "./views";
 import { useBuyList } from "./BuyListContext";
 import { useTrips } from "./TripContext";
 import { useGame } from "./GameContext";
 import { useUrlHydrated } from "./UrlStateSync";
+
+const CardBrowser = dynamic(() => import("./CardBrowser"), { loading: ViewLoading });
+const SealedBrowser = dynamic(() => import("./SealedBrowser"), { loading: ViewLoading });
+const BuyListView = dynamic(() => import("./BuyListView"), { loading: ViewLoading });
+const TripDashboard = dynamic(() => import("./TripDashboard"), { loading: ViewLoading });
 
 function DashboardContent() {
   const { activeBuylistId } = useBuyList();

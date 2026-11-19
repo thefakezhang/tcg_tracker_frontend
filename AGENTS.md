@@ -144,7 +144,7 @@ app/
     layout.tsx            # Auth guard, renders DashboardShell
     page.tsx              # Main-pane router, first match wins: views-registry sentinel -> TripDashboard (positive trip id) -> BuyListView -> SealedBrowser (pokemon_sealed) -> CardBrowser
     DashboardShell.tsx    # Context providers + sidebar + header
-    views.tsx             # Single source of truth for top-level views (sentinel -> slug/group/icon/label/component)
+    views.tsx             # View metadata + lazy component loaders; routing, sidebar and header share this registry
     url-state.ts          # Pure codec: view-selection contexts <-> /dashboard query string (?view=, ?view=arrivals&shop=&since=, ?view=buybacks&shop=, ?view=mercari&feed=&lane=&format=&sort=, ?trip=&tab=, ?buylist=, ?game=)
     url-params.ts         # Leaf query params a view owns (?tab=, ?shop=, ?since=, ?feed=, ?lane=, ?sort=): readUrlParam / writeUrlParam (replaceState) and their validators; import-free so a view can use it without the views registry cycle
     UrlStateSync.tsx      # Applies the URL on first paint / popstate, pushes history on context change, carries a leaf param while its selection stays
@@ -168,7 +168,7 @@ app/
     CardIndexEditModal.tsx # Card Index edit dialog (identity fields, platform links, merge)
     CardIndexView.tsx     # Card Index catalog surface with Pokemon / MTG / sealed tabs
     CardLinksTab.tsx      # Card Index > Pokemon > Needs IDs: unnumbered cards missing a tcgplayer/snkrdunk id, bound by hand
-    CurationView.tsx      # Image-buylist candidate review for singles (keyboard-first)
+    CurationView.tsx      # Singles adapter entry point for the shared image-curation workspace
     CurrencyContext.tsx   # Display currency (none/USD/JPY), localStorage persisted
     CustomersView.tsx     # Customer CRM: customers plus exact wishlist and criteria wants
     GradeEvidencePanel.tsx # Per-grade bands, comps, demand, flags, and event annotations
@@ -218,7 +218,13 @@ app/
     ReviewQueueNavigationContext.tsx # One-shot {game, source} navigation target for the match review queue
     SalesView.tsx         # All-sales history over sales_ledger_v with expandable groups and receipts
     SealedBrowser.tsx     # Sealed tab browser (condition/edition/region dropdowns; no PSA/tier)
-    SealedCurationView.tsx # Sealed twin of CurationView
+    SealedCurationView.tsx # Sealed adapter entry point for the shared image-curation workspace
+    curation-workspace.tsx # Shared queue reads, filtering, keyboard commands and mutation state
+    curation-candidate-card.tsx # Shared review controls and geometry editing
+    curation-images.tsx    # Shared crop preview and lightbox
+    curation-adapters.ts   # Singles/sealed schema, search, condition and RPC differences
+    curation-model.ts      # Normalized presentation and callback types
+    ViewLoading.tsx       # Translated loading state for lazy workspaces
     SealedDetailModal.tsx # Sealed product detail dialog (raw sealed listings + add to buy list)
     ShoppingListView.tsx  # Pre-trip shopping list (customer_shopping_list_v)
     SourceHealthView.tsx  # Source health board, calibration summary, and run-control drill-down
@@ -1006,7 +1012,10 @@ Bake its data in at build time rather than adding anon grants.
   Theoretical / realized returns keep `formatRoiPct` (`theoretical-roi.ts`): signed, 1dp - a different meaning, deliberately a different look.
   `lib/dates.ts`: `formatDate` ("Aug 16, 2026" / "2026年8月16日" - month names so day/month order cannot be misread across a JP-US business) and `formatDateTime` (adds a short local time, for ops surfaces); both take the app `language`, and both pin a bare `YYYY-MM-DD` to local midnight (`new Date("2026-08-16")` is UTC midnight and renders as the previous day in the Americas).
   Before the 2026-08-18 unification the app had four USD formats, three JPY copies, six inline ROI formulas and dates rendered three ways.
-- **API routes require a session and validate their inputs**: the middleware only guards `/dashboard`, so every `app/api/*` route must check `supabase.auth.getUser()` itself. `/api/proxy-image` does, and only proxies `http(s)` to public hosts (`lib/proxy-image-policy.ts`, tested) - it was an anonymous open proxy before the 2026-08-18 audit. Browser-side database access rules live in the backend repo's `docs/security_model.md` (anon holds no privileges in `public` since migration 000290; new RPCs must be granted to `authenticated` explicitly).
+- **API routes require a session and validate their inputs**: the middleware only guards `/dashboard`, so every `app/api/*` route must check `supabase.auth.getUser()` itself. `/api/proxy-image` does, and only proxies `http(s)` to public hosts (`lib/proxy-image-policy.ts`, tested) - it was an anonymous open proxy before the 2026-08-18 audit. The route imports that policy for the initial URL and every redirect, with one bounded deadline and at most five redirects.
+  Route tests exercise the actual authenticated handler with mocked upstream transport.
+  This URL policy does not validate DNS resolution.
+  Browser-side database access rules live in the backend repo's `docs/security_model.md` (anon holds no privileges in `public` since migration 000290; new RPCs must be granted to `authenticated` explicitly).
 - **The Arrivals tab stays post-level and administrator-only**: `/api/twitter-arrivals` passes the caller session to backend RPC `twitter_arrival_posts` (migration 000580), which checks the administrator mapping, and `/api/twitter-arrivals/sources` does the same with `twitter_arrival_sources` for the per-account panel (answering 501 while that RPC is absent, so the tab derives the list from loaded posts). Posts are collected hourly during shop hours, 11:00-20:00 JST. The response must stay explicitly unverified and must not carry item identity, price, grade, or condition. The X handle is the primary identity (most enrolled shops have no `source-labels` entry); the selected shop and the time window live in `?view=arrivals&shop=<buyer_handle>&since=<24h|48h|7d|all>` (default 48 h, kept out of the URL). Nothing is deleted when a post ages out: the window's cutoff goes to both RPCs as `p_since` (and is re-applied client-side to the newest-first pages), and a finite window is loaded whole, page after page up to a 30-page bound, so an account's section shows every post it made in the window inside its own bounded scroll panel. A re-post (optional row fields `last_boosted_at`, `boost_count`, `via_retweet_of`) lifts a row's time to its latest boost through `lib/arrival-observed-at.ts`, which the window, the grouping, and the route's cursor all share. The post's original caption (optional row field `tweet_text`, migration 000605) is shown as plain text, never HTML; see `docs/twitter_arrival_posts.md`. The region panel above the feed (`ArrivalRegionPanel`, `/api/twitter-arrivals/regions`, backend #2342 and migration 000622) shows which regions the hourly run reads and changes the focus or asks for a read-once through the backend's administrator RPCs only; it answers 501 and says the controls wait for the migration until those RPCs exist.
 - **The Buybacks tab is administrator-only and read-only**: `/api/twitter-buybacks` passes the caller session to backend RPC `twitter_buyback_sources` and `/api/twitter-buybacks/buylist?source=` to `twitter_buyback_buylist` (backend #2392, migration 000628), both answering 501 with `reason: "rpc-missing"` while the RPC is absent so the tab says it waits for the migration. The backend decides everything about a quote (which tweets count, the 24 h / 72 h freshness bands, one row per card and grade at its latest quote anchored at the source's latest tweet, an identical quote cross-posted by two accounts collapsing to one row, and the verified price, which is the quote's own listing effect rather than the shared listing's current price); the browser only validates (fail closed), filters, sorts, and draws crops from the public sheet image with the backend's boxes. The selected source is `?view=buybacks&shop=<source>`. Nothing on the tab approves, edits or prices; see `docs/twitter_buybacks_tab.md`.
 - **The Mercari tab is operator-only and holds two feeds, each reading one backend view**: `MercariTab` switches between Leads (the default) and Verified, and both routes check `source_run_is_operator()` through the caller session before reading.

@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { decideProxyUrl } from "@/lib/proxy-image-policy";
 
 // Only the dashboard's buy-list export calls this. Without an auth check it is
 // an open proxy on a public origin: anyone could make our server fetch an
@@ -15,28 +16,29 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const url = request.nextUrl.searchParams.get("url");
-  if (!url) {
-    return NextResponse.json({ error: "Missing url" }, { status: 400 });
-  }
-
-  // Even for a signed-in caller, keep the fetch to public http(s) image hosts:
-  // no file:, no data:, no internal addresses.
-  let target: URL;
-  try {
-    target = new URL(url);
-  } catch {
-    return NextResponse.json({ error: "Bad url" }, { status: 400 });
-  }
-  if (target.protocol !== "https:" && target.protocol !== "http:") {
-    return NextResponse.json({ error: "Bad scheme" }, { status: 400 });
-  }
-  if (isPrivateHost(target.hostname)) {
-    return NextResponse.json({ error: "Blocked host" }, { status: 400 });
+  const decision = decideProxyUrl(request.nextUrl.searchParams.get("url"));
+  if (!decision.ok) {
+    return NextResponse.json({ error: decision.reason }, { status: 400 });
   }
 
   try {
-    const res = await fetch(target, { redirect: "follow", signal: AbortSignal.timeout(10_000) });
+    let target = decision.url;
+    const signal = AbortSignal.timeout(10_000);
+    let res = await fetch(target, { redirect: "manual", signal });
+    // Every hop uses the same policy and deadline as the original request.
+    for (let redirects = 0; REDIRECT_STATUSES.has(res.status); redirects++) {
+      const location = res.headers.get("location");
+      await res.body?.cancel();
+      if (!location || redirects >= 5) {
+        return NextResponse.json({ error: "Invalid upstream redirect" }, { status: 502 });
+      }
+      const next = decideProxyUrl(new URL(location, target).href);
+      if (!next.ok) {
+        return NextResponse.json({ error: next.reason }, { status: 400 });
+      }
+      target = next.url;
+      res = await fetch(target, { redirect: "manual", signal });
+    }
     if (!res.ok) {
       return NextResponse.json({ error: "Upstream error" }, { status: 502 });
     }
@@ -61,20 +63,4 @@ export async function GET(request: NextRequest) {
 
 const MAX_BYTES = 8 * 1024 * 1024;
 
-function isPrivateHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".internal")) return true;
-  if (h === "[::1]" || h === "::1") return true;
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (!v4) return false;
-  const [a, b] = [Number(v4[1]), Number(v4[2])];
-  return (
-    a === 10 ||
-    a === 127 ||
-    a === 0 ||
-    (a === 192 && b === 168) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 169 && b === 254) ||
-    (a === 100 && b >= 64 && b <= 127)
-  );
-}
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);

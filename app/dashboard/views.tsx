@@ -1,32 +1,35 @@
+import dynamic from "next/dynamic";
+import ViewLoading from "./ViewLoading";
 import { useEffect, useRef, type ReactNode } from "react";
 import {
   Boxes, CalendarDays, ClipboardCheck, DollarSign, Filter, Landmark, Library, PackageOpen,
   ArrowLeftRight, HandCoins, Languages, Map as MapIcon, Receipt, ScanLine, ScanSearch, Send, ShieldCheck, ShoppingBasket, Store, Users, Activity, type LucideIcon } from "lucide-react";
 import type { TranslationKey } from "@/lib/i18n";
-import TripsOverview from "./TripsOverview";
-import InventoryView from "./InventoryView";
-import ScanReviewView from "./ScanReviewView";
-import SalesView from "./SalesView";
-import TradesView from "./TradesView";
-import CurationView from "./CurationView";
-import SealedCurationView from "./SealedCurationView";
-import CardIndexView from "./CardIndexView";
-import MatchReviewView from "./MatchReviewView";
-import SourceHealthView from "./SourceHealthView";
-import EventsCalendarView from "./EventsCalendarView";
-import ImageAutoAcceptView from "./ImageAutoAcceptView";
-import CustomersView from "./CustomersView";
-import ReachOutView from "./ReachOutView";
-import ShoppingListView from "./ShoppingListView";
-import PurchasePlannerView from "./PurchasePlannerView";
-import FinancesView from "./FinancesView";
-import ExpensesTab from "./trip/ExpensesTab";
-import EnglishCounterpartReviewView from "./EnglishCounterpartReviewView";
-import EnglishCatalogReviewView from "./EnglishCatalogReviewView";
-import ArrivalPostsView from "./ArrivalPostsView";
-import TwitterBuybacksView from "./TwitterBuybacksView";
-import MercariTab from "./MercariTab";
 import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNavigationContext";
+
+const TripsOverview = dynamic(() => import("./TripsOverview"), { loading: ViewLoading });
+const InventoryView = dynamic(() => import("./InventoryView"), { loading: ViewLoading });
+const ScanReviewView = dynamic(() => import("./ScanReviewView"), { loading: ViewLoading });
+const SalesView = dynamic(() => import("./SalesView"), { loading: ViewLoading });
+const TradesView = dynamic(() => import("./TradesView"), { loading: ViewLoading });
+const CurationView = dynamic(() => import("./CurationView"), { loading: ViewLoading });
+const SealedCurationView = dynamic(() => import("./SealedCurationView"), { loading: ViewLoading });
+const CardIndexView = dynamic(() => import("./CardIndexView"), { loading: ViewLoading });
+const MatchReviewView = dynamic(() => import("./MatchReviewView"), { loading: ViewLoading });
+const SourceHealthView = dynamic(() => import("./SourceHealthView"), { loading: ViewLoading });
+const EventsCalendarView = dynamic(() => import("./EventsCalendarView"), { loading: ViewLoading });
+const ImageAutoAcceptView = dynamic(() => import("./ImageAutoAcceptView"), { loading: ViewLoading });
+const CustomersView = dynamic(() => import("./CustomersView"), { loading: ViewLoading });
+const ReachOutView = dynamic(() => import("./ReachOutView"), { loading: ViewLoading });
+const ShoppingListView = dynamic(() => import("./ShoppingListView"), { loading: ViewLoading });
+const PurchasePlannerView = dynamic(() => import("./PurchasePlannerView"), { loading: ViewLoading });
+const FinancesView = dynamic(() => import("./FinancesView"), { loading: ViewLoading });
+const ExpensesTab = dynamic(() => import("./trip/ExpensesTab"), { loading: ViewLoading });
+const EnglishCounterpartReviewView = dynamic(() => import("./EnglishCounterpartReviewView"), { loading: ViewLoading });
+const EnglishCatalogReviewView = dynamic(() => import("./EnglishCatalogReviewView"), { loading: ViewLoading });
+const ArrivalPostsView = dynamic(() => import("./ArrivalPostsView"), { loading: ViewLoading });
+const TwitterBuybacksView = dynamic(() => import("./TwitterBuybacksView"), { loading: ViewLoading });
+const MercariTab = dynamic(() => import("./MercariTab"), { loading: ViewLoading });
 
 function RoutedMatchReviewView() {
   const { target, consumeTarget } = useReviewQueueNavigation();
