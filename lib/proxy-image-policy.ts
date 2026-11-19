@@ -15,7 +15,7 @@ const PRIVATE_V4 = [
 function isPrivateHost(host: string): boolean {
   const h = host.toLowerCase().replace(/^\[|\]$/g, "");
   if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".internal") || h.endsWith(".local")) return true;
-  if (h === "::1" || h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) return true;
+  if (h.includes(":") && (h === "::" || h === "::1" || /^fe[89ab]/.test(h) || h.startsWith("fc") || h.startsWith("fd"))) return true;
   if (h.startsWith("::ffff:")) {
     // IPv4-mapped IPv6. The URL parser canonicalises "::ffff:127.0.0.1" to
     // "::ffff:7f00:1", so accept both spellings and re-check as v4.
