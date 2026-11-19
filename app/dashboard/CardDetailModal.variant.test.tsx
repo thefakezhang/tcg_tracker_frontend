@@ -37,7 +37,7 @@ vi.mock("@/lib/supabase/client", () => ({
       const builder: Record<string, unknown> = {
         then: pending.then.bind(pending),
       };
-      for (const method of ["select", "eq", "gt", "order", "update", "maybeSingle"]) {
+      for (const method of ["select", "eq", "gt", "order", "update", "maybeSingle", "abortSignal"]) {
         builder[method] = vi.fn(() => builder);
       }
       return builder;
