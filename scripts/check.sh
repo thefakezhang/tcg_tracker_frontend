@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Typecheck + test + build the frontend. Usage: scripts/check.sh
+# Lint + typecheck + test + build the frontend. Usage: scripts/check.sh
 # Node bin is auto-detected (latest nvm install) so this works across machines.
 set -euo pipefail
 # nvm is OPTIONAL: a machine without it uses the node already on PATH. The
@@ -8,10 +8,12 @@ set -euo pipefail
 # identical to "the checks failed" when in fact nothing was ever checked.
 NODE_BIN=$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1 || true)
 [ -n "$NODE_BIN" ] && export PATH="$NODE_BIN:$PATH"
+echo "== lint =="
+npm run lint
 echo "== tsc --noEmit =="
 npx tsc --noEmit
 echo "== test =="
-npm test
+npm test -- --maxWorkers=2
 echo "== next build =="
 npx next build
 echo "OK"

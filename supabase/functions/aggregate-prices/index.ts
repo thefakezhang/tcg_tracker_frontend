@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { Pool } from "https://deno.land/x/postgres@v0.17.0/mod.ts";
 
+type QueryConnection = Awaited<ReturnType<Pool["connect"]>>;
+
 const GAMES = ["pokemon", "mtg"] as const;
 
 // Every summary row carries exactly ONE lane: an entry (the cheapest live ask
@@ -353,8 +355,7 @@ const NET_EXIT = `CASE WHEN xf.platform IS NULL THEN x.normalized_price::numeric
            END`;
 
 async function computeAndInsert(
-  // deno-lint-ignore no-explicit-any
-  conn: any,
+  conn: QueryConnection,
   listingsTable: string,
   identifiersTable: string,
   useTcgDepth: boolean,
@@ -756,8 +757,7 @@ async function computeAndInsert(
 // (product_id, sealed_condition, variant_edition); there is no PSA grade and no
 // condition tier, so no slice filtering.
 async function computeAndInsertSealed(
-  // deno-lint-ignore no-explicit-any
-  conn: any,
+  conn: QueryConnection,
   listingsTable: string,
   summariesTable: string
 ): Promise<number> {
@@ -985,8 +985,7 @@ async function computeAndInsertSealed(
 // locations appear in market_listings for this slice. Adding / removing a
 // source is a data change, not a migration.
 async function insertBySourceCards(
-  // deno-lint-ignore no-explicit-any
-  conn: any,
+  conn: QueryConnection,
   listingsTable: string,
   bySourceTable: string,
   psaMode: "non-psa" | "psa",
@@ -1071,8 +1070,7 @@ async function insertBySourceCards(
 // mirrors pokemon_sealed_price_summaries: (product_id, sealed_condition,
 // variant_edition, side, source). No PSA, no tier.
 async function insertBySourceSealed(
-  // deno-lint-ignore no-explicit-any
-  conn: any,
+  conn: QueryConnection,
   listingsTable: string,
   bySourceTable: string,
 ): Promise<number> {
