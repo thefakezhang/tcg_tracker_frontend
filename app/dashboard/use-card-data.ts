@@ -875,6 +875,7 @@ export function useCardData(options: {
     const s = dSearch.trim();
     const cn = dCardNumber.trim();
     const sc = dSetCode.trim();
+    let extIds: number[] = [];
     if (s) {
       // Shared smart semantics (lib/card-search): a pasted uid (full or the
       // displayed 8-hex prefix) or exact platform external id lands the card;
@@ -885,7 +886,6 @@ export function useCardData(options: {
       const extTable = activeGame === "pokemon"
         ? "pokemon_external_identifiers"
         : "mtg_external_identifiers";
-      let extIds: number[];
       try {
         extIds = await externalIdMatches(supabase, extTable, "card_id", s);
       } catch (lookupError) {
@@ -987,18 +987,6 @@ export function useCardData(options: {
       sortColumn !== "conservativeExit";
 
     if (mtgSearch) {
-      let extIds: number[] = [];
-      if (s) {
-        try {
-          extIds = await externalIdMatches(supabase, "mtg_external_identifiers", "card_id", s);
-        } catch (lookupError) {
-          if (abort.signal.aborted) return;
-          setError(lookupError instanceof Error ? lookupError : new Error(String(lookupError)));
-          setLoading(false);
-          return;
-        }
-        if (abort.signal.aborted) return;
-      }
       // Identifier paste wins and applies alone, exactly as smartSearchFilters does.
       const uid = s ? uidRange(s) : null;
       const identifierPaste = uid !== null || extIds.length > 0;
@@ -1116,7 +1104,7 @@ export function useCardData(options: {
           const rawEntry = row.psaGrade == null ? row.prices.lowestSell?.normalizedPrice ?? null : null;
           return {
             ...row,
-            signal: signalForRow(row, signals),
+            signal: signalForRow(row, cardSignals),
             deal,
             rawToGradeEvUsd: rawEV,
             rawToGradeNetUsd: rawEV != null && rawEntry != null ? rawEV - rawEntry : null,

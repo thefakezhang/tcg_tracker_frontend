@@ -769,7 +769,12 @@ The operator must record deferred, unavailable, or out-of-scope outcomes when le
 Blockers stop the transition, while warnings require explicit acknowledgement.
 - `CustomersView.tsx` captures quantity, intent, expiry, and grade bounds on exact wants and quantity, intent, and expiry on criteria wants.
 Rejected criterion inserts keep the Add criterion dialog and entered values open, announce an inline error, and allow retry; only a successful insert closes the dialog and refreshes the criteria list.
-- `lib/purchase-planning.ts` contains pure ordering and summary behavior covered by `lib/purchase-planning.test.ts`.
+- The plan list has a stable cache key; lines, allocations and coverage are fetched only for the selected plan.
+Switching plans clears previous-plan details while the new request loads.
+Creating a plan refreshes list membership before selecting its ID; deleting one refreshes membership and lets the shared selection rule choose the next plan.
+The initial load performs four reads, and a plan switch performs three, without reloading the list.
+- `lib/purchase-planning.ts` contains pure ordering, summary behavior and a primary-allocation index covered by `lib/purchase-planning.test.ts`.
+`planner-query-efficiency.test.tsx` exercises the actual SWR cache with mocked transport, including creation, deletion, switching and mutation refresh.
 - Backend architecture and invariants are documented in `docs/customer_purchase_planning.md` in the backend repository.
 
 ### Buyer result grid

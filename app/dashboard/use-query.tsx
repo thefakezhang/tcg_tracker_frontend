@@ -10,10 +10,15 @@ import { EXTERNAL_IDENTIFIER_LOOKUP_ERROR_CODE } from "@/lib/card-search";
 // blank-flash on refetch. Returns a uniform shape so every view can show a real
 // error + Retry instead of a silent blank screen (a failed read previously
 // looked identical to "no data"). Pass `null` as key to skip the query.
-export function useSupabaseQuery<T>(key: Key, fetcher: () => Promise<T>) {
+// Disable keepPreviousData when changing identity must clear the old rows.
+export function useSupabaseQuery<T>(
+  key: Key,
+  fetcher: () => Promise<T>,
+  options: { keepPreviousData?: boolean } = {},
+) {
   const { data, error, isLoading, isValidating, mutate } = useSWR<T>(key, fetcher, {
     revalidateOnFocus: false, // heavy queries — don't refetch on every tab focus
-    keepPreviousData: true,
+    keepPreviousData: options.keepPreviousData ?? true,
     errorRetryCount: 2,
   });
   return {

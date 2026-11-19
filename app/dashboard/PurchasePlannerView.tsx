@@ -22,6 +22,7 @@ import { useTrips } from "./TripContext";
 import { useTranslation } from "@/lib/i18n";
 import {
   sortedOrigins,
+  primaryAllocationsByLine,
   summarizePlan,
   type DemandCoverage,
   type DemandOrigin,
@@ -95,24 +96,26 @@ export interface CatalogResult {
   variantEdition: string | null;
 }
 
-async function fetchPlannerData(planId: number | null): Promise<PlannerData> {
+async function fetchPlannerPlans(): Promise<Pick<PlannerData, "plans">> {
   const supabase = createClient();
   const { data: planRows, error: planError } = await supabase
     .from("purchase_plans")
     .select("*")
     .order("created_at", { ascending: false });
   if (planError) throw planError;
-  const plans = (planRows ?? []) as PurchasePlan[];
-  const selected = planId ?? plans[0]?.plan_id ?? null;
-  if (selected == null) return { plans, lines: [], allocations: [], coverage: [] };
+  return { plans: (planRows ?? []) as PurchasePlan[] };
+}
+
+async function fetchPlannerDetails(planId: number): Promise<Omit<PlannerData, "plans">> {
+  const supabase = createClient();
 
   const [lineResult, allocationResult, coverageResult] = await Promise.all([
-    supabase.from("purchase_plan_lines_v").select("*").eq("plan_id", selected).order("plan_line_id"),
-    supabase.from("purchase_plan_allocations_v").select("*").eq("plan_id", selected).order("allocation_id"),
+    supabase.from("purchase_plan_lines_v").select("*").eq("plan_id", planId).order("plan_line_id"),
+    supabase.from("purchase_plan_allocations_v").select("*").eq("plan_id", planId).order("allocation_id"),
     supabase
       .from("purchase_plan_coverage_v")
       .select("*")
-      .eq("plan_id", selected)
+      .eq("plan_id", planId)
       .order("customer_name")
       .order("priority"),
   ]);
@@ -120,7 +123,6 @@ async function fetchPlannerData(planId: number | null): Promise<PlannerData> {
   if (allocationResult.error) throw allocationResult.error;
   if (coverageResult.error) throw coverageResult.error;
   return {
-    plans,
     lines: (lineResult.data ?? []) as PurchasePlanLine[],
     allocations: (allocationResult.data ?? []) as PurchaseAllocation[],
     coverage: (coverageResult.data ?? []) as DemandCoverage[],
@@ -286,7 +288,22 @@ export default function PurchasePlannerView() {
   const [reconciliationStateError, setReconciliationStateError] = useState<string | null>(null);
   const [disposition, setDisposition] = useState<DemandCoverage | null>(null);
   const [lineError, setLineError] = useState<string | null>(null);
-  const { data, error, isLoading, retry } = useSupabaseQuery(["purchase-planner", planId], () => fetchPlannerData(planId));
+  const plansQuery = useSupabaseQuery(["purchase-planner-plans"], fetchPlannerPlans);
+  const detailsQuery = useSupabaseQuery(
+    planId == null ? null : ["purchase-planner-details", planId],
+    () => fetchPlannerDetails(planId!),
+    // A previous plan's allocations must never be offered for the new plan.
+    { keepPreviousData: false },
+  );
+  const data = useMemo<PlannerData | undefined>(() => plansQuery.data && ({
+    plans: plansQuery.data.plans,
+    lines: detailsQuery.data?.lines ?? [],
+    allocations: detailsQuery.data?.allocations ?? [],
+    coverage: detailsQuery.data?.coverage ?? [],
+  }), [plansQuery.data, detailsQuery.data]);
+  const error = plansQuery.error ?? detailsQuery.error;
+  const isLoading = plansQuery.isLoading || (planId != null && detailsQuery.isLoading);
+  const retry = () => Promise.all([plansQuery.retry(), detailsQuery.retry()]);
 
   // Memoised because it is an effect dependency below. As a bare filter it was
   // a new array on every render, so that effect ran on every render.
@@ -372,8 +389,7 @@ export default function PurchasePlannerView() {
     if (deleteError) { setLineError(formatMutationError(deleteError)); return; }
     // Let the selection effect pick the next visible plan rather than guessing
     // here, so there is still one rule deciding what is selected.
-    setPlanId(null);
-    retry();
+    void plansQuery.retry();
   }
 
   async function removeLine(lineId: number) {
@@ -578,14 +594,21 @@ export default function PurchasePlannerView() {
       <NewPlanDialog
         open={newPlanOpen}
         onOpenChange={setNewPlanOpen}
-        onCreated={(id, planTrip) => {
+        onCreated={async (id, planTrip) => {
           // Move the filter to the new plan's trip, so a plan the operator just
           // made is one he can see. Without this the filter swallows it and the
           // create reads as having failed - and it was also how the selection
           // loop got started, by selecting a plan the filter then rejected.
+          // Refresh membership before selection so the selection effect does
+          // not reject the new ID against the cached list.
+          try {
+            await plansQuery.retry();
+          } catch {
+            // The query error above offers Retry without selecting a missing ID.
+            return;
+          }
           setTripFilter(planTrip ?? "none");
           setPlanId(id);
-          retry();
         }}
       />
       {plan && <AddLineDialog planId={plan.plan_id} open={lineOpen} onOpenChange={setLineOpen} onAdded={retry} />}
@@ -613,6 +636,7 @@ function PlanLines({ lines, allocations, editable, onAllocate, onRemove }: {
   onRemove: (lineId: number) => void;
 }) {
   const { t } = useTranslation();
+  const primaryByLine = useMemo(() => primaryAllocationsByLine(allocations), [allocations]);
   if (!lines.length) return <p className="rounded-md border p-8 text-center text-sm text-muted-foreground">{t("purchasePlanner.noLines")}</p>;
   return (
     <div className="overflow-x-auto rounded-md border">
@@ -630,8 +654,7 @@ function PlanLines({ lines, allocations, editable, onAllocate, onRemove }: {
         </thead>
         <tbody>
           {lines.map((line) => {
-            const lineAllocations = allocations.filter((allocation) => allocation.plan_line_id === line.plan_line_id && !["released", "cancelled"].includes(allocation.status));
-            const primary = lineAllocations.filter((allocation) => allocation.role === "primary");
+            const primary = primaryByLine.get(line.plan_line_id) ?? [];
             return (
               <tr key={line.plan_line_id} className="border-t align-top">
                 <td className="px-3 py-2">
