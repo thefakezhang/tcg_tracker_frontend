@@ -511,6 +511,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "mercariLeads.ageDays": "{days}日",
   "mercariLeads.observed": "最終確認（日本時間）",
   "mercariLeads.observedAgo": "{age}前",
+  "mercariLeads.onSaleConfirmed": "再確認で販売中（日本時間）",
   "mercariLeads.psaGradeUnread": "PSA（グレード不明）",
   "mercariLeads.unresolved": "クラウドのカタログに未登録のため、取得ホストのカード情報を表示しています。",
   "mercariLeads.photoCheckRequested": "写真確認を依頼済み",

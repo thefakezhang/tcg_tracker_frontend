@@ -397,6 +397,7 @@ const VIEW_COLUMNS_000648 = [
   "kept_for",
   // 000653 (#2755): the PSA service level a slab play is graded at.
   "slab_grading_service_level", "slab_grading_business_days_min", "slab_grading_business_days_max",
+  "on_sale_confirmed_at",
 ];
 
 describe("Mercari leads column list", () => {

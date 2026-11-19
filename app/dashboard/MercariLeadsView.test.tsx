@@ -116,6 +116,7 @@ const RAW: MercariLead = {
   slab_grading_service_level: null,
   slab_grading_business_days_min: null,
   slab_grading_business_days_max: null,
+  on_sale_confirmed_at: null,
   group: null,
 };
 
@@ -1302,6 +1303,7 @@ const SLAB_GRADED: MercariLead = {
   slab_grading_service_level: "Value",
   slab_grading_business_days_min: 90,
   slab_grading_business_days_max: 100,
+  on_sale_confirmed_at: null,
   slab_net_value_usd: 159.71,
   slab_play_profit_usd: 120.11,
   slab_play_multiple: 4.033,
@@ -1814,5 +1816,32 @@ describe("setAge", () => {
 
   it("reads a release date that is still in the future as zero weeks old", () => {
     expect(setAge("2026-12-01", now)).toMatchObject({ weeks: 0, tier: "new" });
+  });
+});
+
+describe("MercariLeadsView status re-checks (#2774)", () => {
+  it("says when a re-check last saw a deal still on sale, and nothing on a deal no re-check has seen", async () => {
+    // The view read these rows at 2026-10-30T23:27Z (observed_at plus observed_age_hours).
+    view(vi.fn(async () => page([
+      { ...RAW, on_sale_confirmed_at: "2026-10-30T22:57:00+00:00" },
+      { ...RAW, external_item_id: "m77777777779", canonical_url: "https://jp.mercari.com/item/m77777777779" },
+    ])));
+    const cards = await screen.findAllByTestId("mercari-lead-card");
+    expect(cards).toHaveLength(2);
+    // The age is spaced with no-break spaces, as every age on the tab is.
+    expect(within(cards[0]).getByTestId("mercari-lead-on-sale-confirmed").textContent?.replace(/\s/g, " "))
+      .toBe("Still on sale at a re-check (JST): Oct 31, 2026, 7:57 AM (under 1 h ago)");
+    expect(within(cards[1]).queryByTestId("mercari-lead-on-sale-confirmed")).toBeNull();
+  });
+
+  it("refuses a confirmation no newer than the scan's observation, or on a cold-crawl row", () => {
+    const at = "2026-10-30T22:57:00+00:00";
+    expect(parseMercariLeads([{ ...RAW, on_sale_confirmed_at: at }])[0].on_sale_confirmed_at).toBe(at);
+    expect(() => parseMercariLeads([{ ...RAW, on_sale_confirmed_at: RAW.observed_at }]))
+      .toThrow("Invalid Mercari lead on-sale confirmation");
+    expect(() => parseMercariLeads([{ ...COLD, on_sale_confirmed_at: at }]))
+      .toThrow("Invalid Mercari lead on-sale confirmation");
+    expect(() => parseMercariLeads([{ ...RAW, on_sale_confirmed_at: "yesterday" }]))
+      .toThrow("Invalid Mercari lead timestamp: on_sale_confirmed_at");
   });
 });
