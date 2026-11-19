@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CardRowData, LocationInfo } from "./use-card-data";
 
@@ -12,17 +12,19 @@ type Read = {
 const mock = vi.hoisted(() => ({
   game: "pokemon" as "pokemon" | "mtg",
   ownedVersion: 0,
+  sourceLeg: "import" as "import" | "export",
+  bumpInventory: vi.fn(),
   reads: [] as Read[],
   rpc: vi.fn(),
   rates: vi.fn(), locations: vi.fn(), conditions: vi.fn(), refresh: vi.fn(),
 }));
-vi.mock("@/lib/i18n", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("@/lib/i18n", () => ({ useTranslation: () => ({ t: (key: string, params?: Record<string, unknown>) => key === "inventory.sellDone" ? `${key}: ${params?.margin}` : key }) }));
 vi.mock("./LanguageContext", () => ({ useLanguage: () => ({ language: "en" }) }));
 vi.mock("./GameContext", () => ({ useGame: () => ({ activeGame: mock.game }) }));
 vi.mock("./CurrencyContext", () => ({ useCurrency: () => ({ displayCurrency: "none", convertPrice: (price: number) => ({ price, symbol: "$" }) }) }));
 vi.mock("./BuyListContext", () => ({ useBuyList: () => ({ buylists: [], addToBuylist: vi.fn() }) }));
-vi.mock("@/lib/use-fx-rate", () => ({ useFxRate: () => ({ rateFor: () => 1 }), fmtRate: () => "1" }));
-vi.mock("./owned-inventory", () => ({ useOwnedInventoryVersion: () => mock.ownedVersion, bumpOwnedInventory: vi.fn() }));
+vi.mock("@/lib/use-fx-rate", () => ({ useFxRate: () => ({ rateFor: (currency: string) => currency === "JPY" ? 0.0067 : 1 }), fmtRate: (rate: number) => String(rate) }));
+vi.mock("./owned-inventory", () => ({ useOwnedInventoryVersion: () => mock.ownedVersion, bumpOwnedInventory: mock.bumpInventory }));
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({
   rpc: mock.rpc,
   from: (table: string) => {
@@ -87,7 +89,7 @@ async function finish(id: number, locationId = 1, heldQty = id) {
       if (read.table.endsWith("market_listings")) data = [{ card_id: id, price_type: "Sell", price_kind: "ask", price: id, currency: "USD", currencies: { symbol: "$" }, psa_grade: 0, condition: 1, location_id: locationId, listing_url: `https://example.test/card/${id}`, last_updated: "2026-11-19T01:00:00Z" }];
       if (read.table === "inventory_holdings_v") data = [{ condition_id: 1, psa_grade: 0, qty_on_hand: heldQty }];
       if (read.table === "owned_inventory_counts_v") data = [{ qty_incoming: heldQty }];
-      if (read.table.endsWith("lot_lines")) data = [{ line_id: id * 100, quantity: 2, qty_remaining: 2, consigned_qty: 0, allocated_cost_usd: 20, direct_purchase_cost_usd: 10, acquisition_lots: { shop_label: `Owned source ${id}`, acquired_at: "2026-11-01", leg: "import", trips: null } }];
+      if (read.table.endsWith("lot_lines")) data = [{ line_id: id * 100, quantity: 2, qty_remaining: 2, consigned_qty: 0, allocated_cost_usd: 20, direct_purchase_cost_usd: 10, acquisition_lots: { shop_label: `Owned source ${id}`, acquired_at: "2026-11-01", leg: mock.sourceLeg, trips: null } }];
       if (read.table === "trip_observations_v") data = [{ sighting_id: id, psa_grade: 0, store_name: `Observed source ${id}`, observed_price: id, currency: "USD", price_usd: id, observed_at: "2026-11-01", trip_name: null }];
       if (read.table === "pokemon_tcgplayer_market") data = { market_usd: 30 };
       read.resolve({ data, error: null });
@@ -110,7 +112,8 @@ function expectCard(id: number) {
 }
 
 beforeEach(() => {
-  mock.game = "pokemon"; mock.ownedVersion = 0; mock.reads = [];
+  mock.game = "pokemon"; mock.ownedVersion = 0; mock.sourceLeg = "import"; mock.reads = [];
+  mock.bumpInventory.mockReset();
   mock.rpc.mockReset().mockResolvedValue({ data: null, error: null });
   mock.rates.mockReset().mockResolvedValue(new Map([["USD", 1]]));
   mock.locations.mockReset().mockResolvedValue(locations());
@@ -232,5 +235,169 @@ describe("CardDetailModal current load", () => {
     expect(mock.reads.some((read) => read.table.startsWith("pokemon_") || read.table === "trip_observations_v")).toBe(false);
     expect(exposures()).toEqual([]);
     expect(within(screen.getByRole("tablist")).queryByRole("tab", { name: "modal.tabPsa" })).toBeNull();
+  });
+});
+
+
+type SaleResult = { data: { margin_usd: number }[] | null; error: { message: string } | null };
+function sales() { return mock.rpc.mock.calls.filter(([name]) => name === "record_line_sale"); }
+function holdSale() {
+  const write = deferred<SaleResult>();
+  mock.rpc.mockImplementation((name: string) => name === "record_line_sale" ? write.promise : Promise.resolve({ data: null, error: null }));
+  return write;
+}
+function saleResult(outcome: "success" | "error"): SaleResult {
+  return outcome === "success" ? { data: [{ margin_usd: 7.89 }], error: null } : { data: null, error: { message: "Sale rejected" } };
+}
+async function beginSale(proceeds = "24.75") {
+  fireEvent.click(screen.getByRole("button", { name: "inventory.sellLine" }));
+  fireEvent.change(screen.getByLabelText("inventory.sellProceeds"), { target: { value: proceeds } });
+  fireEvent.click(screen.getByRole("button", { name: "inventory.sellConfirm" }));
+  await waitFor(() => expect(sales()).toHaveLength(1));
+}
+
+describe("CardDetailModal quick-sale feedback", () => {
+  it("preserves edited sale inputs across a price-only buy-list row clone", async () => {
+    const entry = { ...a, key: "pokemon:7", targetPriceUsd: 10 };
+    const view = render(modal(entry)); await ready(11); await finish(11);
+    fireEvent.click(screen.getByRole("button", { name: "inventory.sellLine" }));
+    fireEvent.change(screen.getByLabelText("inventory.sellProceeds"), { target: { value: "24.75" } });
+    // BuyListView's target-price callback replaces this row while retaining its key.
+    const updatedEntry = { ...entry, targetPriceUsd: 20 };
+    view.rerender(modal(updatedEntry)); await ready(11); await finish(11);
+    expect((screen.getByLabelText("inventory.sellProceeds") as HTMLInputElement).value).toBe("24.75");
+    expect(sales()).toHaveLength(0);
+  });
+
+  it.each(["success", "error"] as const)("retains pending %s feedback across a price-only buy-list row clone", async (outcome) => {
+    const write = holdSale();
+    const entry = { ...a, key: "pokemon:7", targetPriceUsd: 10 };
+    const view = render(modal(entry)); await ready(11); await finish(11); await beginSale();
+    const updatedEntry = { ...entry, targetPriceUsd: 20 };
+    view.rerender(modal(updatedEntry)); await ready(11); await finish(11);
+    expect((screen.getByLabelText("inventory.sellProceeds") as HTMLInputElement).value).toBe("24.75");
+    expect(screen.getByRole("button", { name: "inventory.sellRecording" }).hasAttribute("disabled")).toBe(true);
+    await act(async () => { write.resolve(saleResult(outcome)); });
+    if (outcome === "success") expect(screen.getByRole("status").textContent).toBe("inventory.sellDone: $7.89");
+    else expect(screen.getByRole("alert").textContent).toBe("Sale rejected");
+    expect(sales()).toHaveLength(1);
+    expect(mock.bumpInventory).toHaveBeenCalledTimes(outcome === "success" ? 1 : 0);
+  });
+
+  it("fences another selected row even when its card ID and game match", async () => {
+    const write = holdSale();
+    const entry = { ...a, key: "pokemon:7" };
+    const view = render(modal(entry)); await ready(11); await finish(11); await beginSale();
+    view.rerender(modal({ ...entry, key: "pokemon:8" })); await ready(11); await finish(11);
+    expect(screen.queryByLabelText("inventory.sellProceeds")).toBeNull();
+    expect(screen.getByRole("button", { name: "inventory.sellLine" }).hasAttribute("disabled")).toBe(true);
+    await act(async () => { write.resolve(saleResult("success")); });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(mock.bumpInventory).toHaveBeenCalledTimes(1);
+    expect(sales()).toHaveLength(1);
+  });
+
+  it.each((["switch", "reopen", "aba", "game"] as const).flatMap((transition) =>
+    (["success", "error"] as const).map((outcome) => ({ transition, outcome })),
+  ))("scopes late $outcome feedback and form cleanup across $transition", async ({ transition, outcome }) => {
+    const write = holdSale();
+    const view = render(modal(a)); await ready(11); await finish(11); await beginSale();
+    const payload = sales()[0][1];
+    if (transition === "switch") { view.rerender(modal(b)); await ready(22); await finish(22); }
+    if (transition === "reopen") { view.rerender(modal(a, false)); view.rerender(modal(a)); await ready(11); await finish(11); }
+    if (transition === "aba") {
+      view.rerender(modal(b)); await ready(22); await finish(22);
+      view.rerender(modal(a)); await ready(11); await finish(11);
+    }
+    if (transition === "game") { mock.game = "mtg"; view.rerender(modal(a)); await ready(11); await finish(11); }
+    // The mutation lock spans views even though the obsolete form does not.
+    expect(screen.getByRole("button", { name: "inventory.sellLine" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByLabelText("inventory.sellProceeds")).toBeNull();
+    await act(async () => { write.resolve(saleResult(outcome)); });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByLabelText("inventory.sellProceeds")).toBeNull();
+    expect(screen.getByRole("button", { name: "inventory.sellLine" }).hasAttribute("disabled")).toBe(false);
+    expect(sales()).toHaveLength(1);
+    expect(sales()[0][1]).toBe(payload);
+    expect(payload).toMatchObject({ p_game: "pokemon", p_lot_line_id: 1100, p_gross_usd: 24.75 });
+    expect(mock.bumpInventory).toHaveBeenCalledTimes(outcome === "success" ? 1 : 0);
+  });
+
+  it("keeps a same-card reopen locked until the original sale actually settles", async () => {
+    const write = holdSale();
+    const view = render(modal(a)); await ready(11); await finish(11); await beginSale();
+    view.rerender(modal(a, false)); view.rerender(modal(a)); await ready(11); await finish(11);
+    const sell = screen.getByRole("button", { name: "inventory.sellLine" });
+    expect(sell.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(sell);
+    const record = screen.queryByRole("button", { name: "inventory.sellRecording" });
+    if (record) { expect(record.hasAttribute("disabled")).toBe(true); fireEvent.click(record); }
+    expect(sales()).toHaveLength(1);
+    await act(async () => { write.resolve(saleResult("success")); });
+    expect(screen.getByRole("button", { name: "inventory.sellLine" }).hasAttribute("disabled")).toBe(false);
+    expect(sales()).toHaveLength(1);
+    expect(mock.bumpInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["success", "error"] as const)("handles %s after unmount without cancelling the write", async (outcome) => {
+    const write = holdSale();
+    const view = render(modal(a)); await ready(11); await finish(11); await beginSale();
+    view.unmount();
+    await act(async () => { write.resolve(saleResult(outcome)); });
+    expect(sales()).toHaveLength(1);
+    expect(mock.bumpInventory).toHaveBeenCalledTimes(outcome === "success" ? 1 : 0);
+  });
+
+  it.each(["success", "error"] as const)("retains current %s feedback through an unrelated inventory refresh", async (outcome) => {
+    const write = holdSale();
+    const view = render(modal(a)); await ready(11); await finish(11); await beginSale();
+    mock.ownedVersion += 1; view.rerender(modal(a)); await ready(11); await finish(11);
+    expect((screen.getByLabelText("inventory.sellProceeds") as HTMLInputElement).value).toBe("24.75");
+    expect(screen.getByRole("button", { name: "inventory.sellRecording" }).hasAttribute("disabled")).toBe(true);
+    await act(async () => { write.resolve(saleResult(outcome)); });
+    if (outcome === "success") expect(screen.getByRole("status").textContent).toBe("inventory.sellDone: $7.89");
+    else {
+      expect(screen.getByRole("alert").textContent).toBe("Sale rejected");
+      expect((screen.getByLabelText("inventory.sellProceeds") as HTMLInputElement).value).toBe("24.75");
+    }
+    expect(mock.bumpInventory).toHaveBeenCalledTimes(outcome === "success" ? 1 : 0);
+  });
+
+  it.each([
+    { leg: "import", currency: "USD", proceeds: "24.75", fx: 1, gross: 24.75 },
+    { leg: "export", currency: "JPY", proceeds: "2480", fx: 0.0067, gross: 16.62 },
+  ] as const)("preserves the current $currency sale payload and input behavior", async ({ leg, currency, proceeds, fx, gross }) => {
+    mock.sourceLeg = leg;
+    const write = holdSale();
+    render(modal(a)); await ready(11); await finish(11);
+    fireEvent.click(screen.getByRole("button", { name: "inventory.sellLine" }));
+    fireEvent.change(screen.getByLabelText("trips.qty"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("inventory.sellProceeds"), { target: { value: proceeds } });
+    fireEvent.change(screen.getByLabelText("inventory.sellDate"), { target: { value: "2026-11-18" } });
+    fireEvent.change(screen.getByLabelText("inventory.sellPlatform"), { target: { value: "  shop #1  " } });
+    fireEvent.click(screen.getByRole("button", { name: "inventory.sellConfirm" }));
+    await waitFor(() => expect(sales()).toHaveLength(1));
+    expect(sales()[0][1]).toEqual({ p_game: "pokemon", p_lot_line_id: 1100, p_quantity: 2, p_gross_usd: gross, p_fees_usd: 0, p_sold_at: "2026-11-18", p_orig_currency: currency, p_proceeds_orig: Number(proceeds), p_fx_rate: fx, p_platform_label: "shop #1" });
+    await act(async () => { write.resolve(saleResult("success")); });
+    expect(screen.getByRole("status").textContent).toBe("inventory.sellDone: $7.89");
+    expect(screen.queryByLabelText("inventory.sellProceeds")).toBeNull();
+    expect(mock.bumpInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps current rejection inputs and retries only after another confirmation", async () => {
+    const write = holdSale();
+    render(modal(a)); await ready(11); await finish(11); await beginSale();
+    await act(async () => { write.resolve(saleResult("error")); });
+    expect(screen.getByRole("alert").textContent).toBe("Sale rejected");
+    expect(mock.bumpInventory).not.toHaveBeenCalled();
+    const first = sales()[0][1];
+    mock.rpc.mockResolvedValue(saleResult("success"));
+    expect(sales()).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "inventory.sellConfirm" }));
+    await waitFor(() => expect(sales()).toHaveLength(2));
+    expect(sales()[1][1]).toEqual(first);
+    expect(screen.getByRole("status").textContent).toBe("inventory.sellDone: $7.89");
+    expect(mock.bumpInventory).toHaveBeenCalledTimes(1);
   });
 });

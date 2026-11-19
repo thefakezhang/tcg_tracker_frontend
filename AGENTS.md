@@ -565,6 +565,8 @@ Never render a lease token, raw log, credential, arbitrary heartbeat failure sum
 Its listings, holdings, history and source-lot sale controls come from one result scoped to the current card/game/opening/inventory refresh.
 Obsolete per-card reads are cancelled, shared metadata reads continue, and stale responses cannot publish details or record opportunity exposures.
 See [docs/card_detail_loading.md](docs/card_detail_loading.md) for the lifecycle and controlled regression evidence.
+Quick-sale form selection and feedback belong to the current card opening, while the pending-write lock spans openings and successful writes always refresh global inventory.
+See [docs/card_sale_feedback.md](docs/card_sale_feedback.md) for the preserved mutation contract and deferred-write tests.
 - Displays buy/sell listings in side-by-side tables, separated by Non-PSA/PSA tabs.
 - Has its own tier filter dropdown.
 - Uses `useCurrency()` for price conversion in `ListingTable`.

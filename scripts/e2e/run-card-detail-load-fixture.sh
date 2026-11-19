@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 frontend_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+case "${1:-load}" in
+  load) browser_script="scripts/e2e/card-detail-load-fixture.mjs" ;;
+  sale-feedback) browser_script="scripts/e2e/card-sale-feedback-fixture.mjs" ;;
+  *) echo "Expected load or sale-feedback scenario" >&2; exit 2 ;;
+esac
 next_pid=""
 cleanup() {
   local result="$?"
@@ -32,5 +37,5 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 if [[ "$ready" -ne 1 ]]; then tail -n 40 "$artifact_root/next-dev.log" >&2; exit 1; fi
-APP_URL="http://127.0.0.1:${app_port}" E2E_ARTIFACT_ROOT="$artifact_root" node scripts/e2e/card-detail-load-fixture.mjs
+APP_URL="http://127.0.0.1:${app_port}" E2E_ARTIFACT_ROOT="$artifact_root" node "$browser_script"
 echo "Browser evidence: $artifact_root"
