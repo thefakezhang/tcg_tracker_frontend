@@ -153,26 +153,41 @@ export const FORMAT_PLAY_CODE: Record<MtgFormatPlayDimension, MtgFormatCode> = {
   cedhPlayed: "cEDH",
 };
 
-// "up" when the last two weeks run clearly ahead of the two-month share, "down"
-// when clearly behind, otherwise null. Clearly means both a quarter relative
-// and a full point absolute: a 1.2% card moving to 1.6% is noise in a two-week
-// window of a few hundred decks, and a 40% staple moving to 42% is not news.
-export function formatPlayTrend(play: MtgFormatPlay | null | undefined): "up" | "down" | null {
+// Which way a format label is moving: "up" when the last two weeks run
+// clearly ahead of the two-month share, "down" when clearly behind, otherwise
+// null. Clearly means both a quarter relative and a full point absolute: a
+// 1.2% card moving to 1.6% is noise in a two-week window of a few hundred
+// decks, and a 40% staple moving to 42% is not news.
+//
+// It names the BOARD that moved and that board's two-week share, because the
+// two boards can move in opposite directions and the text has to quote the
+// one the arrow is about: Teferi, Time Raveler fell in Modern sideboards
+// while rising in main decks, and the first version read "Falling: 18.6%",
+// which was the main-deck share going up.
+//
+// recent is null when the card is absent from the two-week list, which means
+// under the crawl floor rather than zero.
+export interface FormatPlayTrend {
+  direction: "up" | "down";
+  board: "main" | "side";
+  recent: number | null;
+}
+
+export function formatPlayTrend(play: MtgFormatPlay | null | undefined): FormatPlayTrend | null {
   if (!play) return null;
-  const pairs: [number | undefined, number | undefined][] = [
-    [play.main_pct, play.main_pct_2w],
-    [play.side_pct, play.side_pct_2w],
+  const boards: { board: "main" | "side"; twoMonth?: number; twoWeek?: number }[] = [
+    { board: "main", twoMonth: play.main_pct, twoWeek: play.main_pct_2w },
+    { board: "side", twoMonth: play.side_pct, twoWeek: play.side_pct_2w },
   ];
-  let best: "up" | "down" | null = null;
+  let best: FormatPlayTrend | null = null;
   let bestDelta = 0;
-  for (const [twoMonth, twoWeek] of pairs) {
+  for (const { board, twoMonth, twoWeek } of boards) {
     if (twoMonth == null) continue;
-    const recent = twoWeek ?? 0;
-    const delta = recent - twoMonth;
+    const delta = (twoWeek ?? 0) - twoMonth;
     if (Math.abs(delta) < 1 || Math.abs(delta) < twoMonth * 0.25) continue;
     if (Math.abs(delta) > Math.abs(bestDelta)) {
       bestDelta = delta;
-      best = delta > 0 ? "up" : "down";
+      best = { direction: delta > 0 ? "up" : "down", board, recent: twoWeek ?? null };
     }
   }
   return best;

@@ -6,7 +6,7 @@ function row(over: Partial<MetaCardRow>): MetaCardRow {
     format_code: "MO", format_name: "Modern", board: "MD", card_name: "Card", catalog_key: "CARD",
     rank_2m: 1, share_2m: 10, decks_2m: 300, avg_2m: 4, rank_2w: 1, share_2w: 10, avg_2w: 4,
     share_2m_prior: 10, total_decks_2m: 3000, observed_at: "2026-11-22T10:00:00Z", in_catalog: true,
-    median_sell_usd: 5, priced_printings: 3, evidence_url: "https://www.mtgtop8.com/topcards?f=MO&meta=51",
+    us_low_ask_usd: 5, us_ask_printings: 3, us_low_ask_location: "tcgplayer", evidence_url: "https://www.mtgtop8.com/topcards?f=MO&meta=51",
     ...over,
   };
 }
@@ -34,9 +34,9 @@ describe("weekChange", () => {
 
 describe("filterMetaCards", () => {
   const rows = [
-    row({ card_name: "Arid Mesa", share_2m: 33.3, share_2w: 35, median_sell_usd: 30 }),
-    row({ card_name: "Breakout", share_2m: null, share_2w: 6, median_sell_usd: 2 }),
-    row({ card_name: "Riser", share_2m: 4, share_2w: 9, median_sell_usd: 12 }),
+    row({ card_name: "Arid Mesa", share_2m: 33.3, share_2w: 35, us_low_ask_usd: 30 }),
+    row({ card_name: "Breakout", share_2m: null, share_2w: 6, us_low_ask_usd: 2 }),
+    row({ card_name: "Riser", share_2m: 4, share_2w: 9, us_low_ask_usd: 12 }),
     row({ card_name: "Side Card", board: "SB", share_2m: 12 }),
   ];
   it("keeps one board, sorted by two-month share with two-week-only cards last", () => {

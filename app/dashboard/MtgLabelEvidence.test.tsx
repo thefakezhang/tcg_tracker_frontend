@@ -137,7 +137,7 @@ describe("MtgLabelEvidence", () => {
     expect(screen.queryByTestId("mtg-label-format-MO-trend-up")).toBeNull();
     // 6 against 12 is a clear fall, and the arrow says by how much.
     const legacyTrend = screen.getByTestId("mtg-label-format-LE-trend-down");
-    expect(legacyTrend.getAttribute("aria-label")).toBe("mtgLabel.trendDown:6");
+    expect(legacyTrend.getAttribute("aria-label")).toBe("mtgLabel.trendDownMain:6");
     expect(screen.queryByTestId("mtg-label-format-ST")).toBeNull();
   });
 
@@ -162,7 +162,7 @@ describe("MtgFormatBadges", () => {
     const modern = screen.getByTestId("mtg-format-badge-MO");
     expect(modern.tagName).toBe("A");
     expect(modern.getAttribute("title")).toContain("4.1% of 3,477 decks");
-    expect(modern.getAttribute("title")).toContain("mtgLabel.trendUp:9");
+    expect(modern.getAttribute("title")).toContain("mtgLabel.trendUpMain:9");
     // No url recorded: a plain badge, not a dead link.
     expect(screen.getByTestId("mtg-format-badge-cEDH").tagName).toBe("SPAN");
   });
@@ -181,12 +181,38 @@ describe("MtgFormatBadges", () => {
 });
 
 describe("format labels in mtg-tags", () => {
-  it("reads the clearer of the two boards", () => {
-    expect(formatPlayTrend({ main_pct: 10, main_pct_2w: 10.5, side_pct: 4, side_pct_2w: 9 })).toBe("up");
+  it("reads the clearer of the two boards and names it", () => {
+    expect(formatPlayTrend({ main_pct: 10, main_pct_2w: 10.5, side_pct: 4, side_pct_2w: 9 }))
+      .toEqual({ direction: "up", board: "side", recent: 9 });
     expect(formatPlayTrend({ main_pct: 3, main_pct_2w: 3.4 })).toBeNull();
-    // Absent from the last two weeks entirely is a fall to zero.
-    expect(formatPlayTrend({ main_pct: 5 })).toBe("down");
+    // Absent from the last two weeks is under the floor, not a measured zero.
+    expect(formatPlayTrend({ main_pct: 5 })).toEqual({ direction: "down", board: "main", recent: null });
     expect(formatPlayTrend(undefined)).toBeNull();
+  });
+
+  // The independent check found the text quoting the main-deck share while
+  // the arrow was about the sideboard: Teferi, Time Raveler read "Falling:
+  // 18.6%" in Modern, which was its main-deck share going up.
+  it("quotes the board the arrow is about", () => {
+    render(<MtgLabelEvidence card={{
+      is_modern_played: true,
+      format_play: { MO: { main_pct: 15.4, main_pct_2w: 18.6, side_pct: 9.1, side_pct_2w: 3.0, reason: "15.4% of 3,477 decks" } },
+    }} />);
+    const trend = screen.getByTestId("mtg-label-format-MO-trend-down");
+    expect(trend.getAttribute("aria-label")).toBe("mtgLabel.trendDownSide:3");
+  });
+
+  it("says under 1% for a card gone from the two-week list, and commanders for cEDH", () => {
+    render(<MtgFormatBadges card={{
+      is_legacy_played: true,
+      is_cedh_played: true,
+      format_play: {
+        LE: { main_pct: 5, reason: "5.0% of 2,564 decks" },
+        cEDH: { side_pct: 4, side_pct_2w: 9, reason: "commander in 4.0% of 2,596 decks" },
+      },
+    }} />);
+    expect(screen.getByTestId("mtg-format-badge-LE").getAttribute("title")).toContain("mtgLabel.trendGone");
+    expect(screen.getByTestId("mtg-format-badge-cEDH").getAttribute("title")).toContain("mtgLabel.trendUpCommander:9");
   });
 
   it("counts a format label as a label", () => {
