@@ -747,8 +747,14 @@ No frontend event action changes a market listing, signal, price, or ranking.
 ### Buy Lists
 
 - `BuyListContext.tsx` manages buy list state and CRUD operations via Supabase.
-- Buy lists are cross-game — a single list can contain both Pokémon and MTG cards.
-- `BuyListView.tsx` fetches entries from both `pokemon_buylist_entries` and `mtg_buylist_entries`, joins to their respective summary/definition tables, and merges results client-side.
+- Buy lists are cross-game: a single list can contain Pokémon singles, MTG cards, and Pokémon sealed products.
+- `BuyListView.tsx` pages entries and summaries, then batch-loads only missing catalog definitions with `selectAllByIds`.
+Fallback IDs are deduplicated, chunked, and paged; no entry performs its own catalog request.
+Raw singles prefer tier 1 and otherwise the first available raw tier; PSA grades and sealed condition/edition matches stay exact.
+A missing definition keeps the entry with unknown metadata and empty prices, while a failed read shows a retryable query error.
+The view indexes raw summary fallbacks once instead of scanning all summaries per entry, preserving Map overwrite order for repeated keys.
+Replacing a load or leaving the view aborts its requests; late results and errors cannot replace the selected list.
+Lifecycle tokens also reject refreshes from removals that finish after switching lists, unmounting, or returning to the same list ID.
 - When clicking an entry in BuyListView, `setActiveGame` is called so CardDetailModal fetches from the correct game table.
 - Grid view has a compact toggle (default on) that hides price/ROI info on cards.
 - Buy list description is shown as a tooltip on the header title.
