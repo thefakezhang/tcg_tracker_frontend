@@ -113,6 +113,8 @@ export type MercariLead = {
   english_name: string | null;
   set_code: string;
   set_name: string | null;
+  // ISO date from pokemon_sets; null when the card has no catalog set row.
+  set_release_date?: string | null;
   card_number: string | null;
   misc_info: string | null;
   // The typed variant axes, so a first edition or a mirror shows on the label.
@@ -328,6 +330,24 @@ function requiredString(value: unknown, field: string): string {
     throw new Error(`Invalid Mercari lead field: ${field}`);
   }
   return value;
+}
+
+// How old the card's set is, so a lead from a brand-new set carries a warning.
+// Measured on our own TCGplayer sales (Oct-Nov 2026): cards from sets a few
+// weeks old fell 43-54% in the five weeks after we bought them, sets 3-12
+// months old fell 21-36%, and sets from 2022-2024 held within 15%. This is a
+// heads-up for the operator, not a price adjustment.
+export type SetAge = { released: Date; weeks: number; months: number; tier: "new" | "recent" | null };
+
+export function setAge(release: string | null | undefined, now: Date = new Date()): SetAge | null {
+  if (!release || !/^\d{4}-\d{2}-\d{2}$/.test(release)) return null;
+  const released = new Date(`${release}T00:00:00Z`);
+  if (Number.isNaN(released.getTime())) return null;
+  const days = Math.max(0, Math.floor((now.getTime() - released.getTime()) / 86_400_000));
+  const weeks = Math.floor(days / 7);
+  const months = Math.floor(days / 30.44);
+  const tier = days < 91 ? "new" : days < 365 ? "recent" : null;
+  return { released, weeks, months, tier };
 }
 
 function optionalString(value: unknown, field: string): string | null {
@@ -661,6 +681,7 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       english_name: optionalString(row.english_name, "english_name"),
       set_code: requiredString(row.set_code, "set_code"),
       set_name: optionalString(row.set_name, "set_name"),
+      set_release_date: optionalString(row.set_release_date, "set_release_date"),
       card_number: optionalString(row.card_number, "card_number"),
       misc_info: optionalString(row.misc_info, "misc_info"),
       edition: optionalString(row.edition, "edition"),
@@ -1635,6 +1656,8 @@ function LeadCard({
       : t(WITHHELD_KEYS[lead.multiple_withheld_reason]);
   const listedKey: TranslationKey = lead.source_created_at ? "mercariLeads.listedAgo" : "mercariLeads.firstSeenAgo";
   const setLabel = lead.set_name ? `${lead.set_name} (${lead.set_code})` : lead.set_code;
+  const releaseInfo = setAge(lead.set_release_date);
+  const releaseDate = releaseInfo ? formatDate(lead.set_release_date, language) : "";
   // Edition and finish come from the typed axes, never from misc_info alone.
   const variant = pokemonVariantLabel(lead);
   const tierKey = MATCH_TIER_KEYS[lead.match_tier];
@@ -1883,6 +1906,19 @@ function LeadCard({
                 {isUnknown(lead.card_number) ? "" : ` ${lead.card_number}`}
                 {variant ? <>{" · "}<span className="whitespace-nowrap">{variant}</span></> : null}
               </dd>
+              {releaseInfo ? (
+                <dd
+                  className={`text-xs ${releaseInfo.tier === "new" ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}
+                  data-testid="mercari-lead-set-age"
+                >
+                  {t("mercariLeads.setReleased", { date: releaseDate })}
+                  {releaseInfo.tier === "new"
+                    ? ` · ${t("mercariLeads.setNew", { weeks: releaseInfo.weeks })}`
+                    : releaseInfo.tier === "recent"
+                      ? ` · ${t("mercariLeads.setRecent", { months: releaseInfo.months })}`
+                      : ""}
+                </dd>
+              ) : null}
               <dd className="text-xs text-muted-foreground" data-testid="mercari-lead-match">
                 {t("mercariLeads.matchedBy", {
                   tier: tierKey ? t(tierKey) : lead.match_tier,

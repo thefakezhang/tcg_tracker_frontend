@@ -126,6 +126,7 @@ export const LEAD_COLUMNS = [
   "english_name",
   "set_code",
   "set_name",
+  "set_release_date",
   "card_number",
   "misc_info",
   "image_url",
