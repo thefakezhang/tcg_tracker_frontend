@@ -7,7 +7,9 @@ import { selectAll, selectAllByIds } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
 import { useSupabaseQuery, QueryError } from "./use-query";
 import { useLanguage } from "./LanguageContext";
-import { getCardDisplayName, cardMeta, viewVariantLabel } from "./use-card-data";
+import { getCardDisplayName, cardMeta, viewVariantLabel, MTG_LABEL_COLS } from "./use-card-data";
+import { MtgFormatBadges } from "./MtgLabelEvidence";
+import type { MtgLabelProvenance, MtgTagFlags } from "./mtg-tags";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +67,9 @@ interface Holding {
   imageUrl: string | null;
   englishName: string | null;
   uid: string | null;
+  // MTG only: the label columns of mtg_card_definitions_v, for the format
+  // badges. Null for every other game and for a card the fetch did not find.
+  mtgLabels: (MtgTagFlags & MtgLabelProvenance) | null;
   reprintEvents: InventoryExposure[];
 }
 
@@ -91,12 +96,12 @@ export default function InventoryView() {
   // toward the leg total instead of vanishing from it.
   const fetchHoldings = useCallback(async (): Promise<{ holdings: Holding[]; roiLines: RoiLine[] }> => {
     const supabase = createClient();
-    const holdingsData = await selectAll<Omit<Holding, "imageUrl" | "englishName" | "uid" | "reprintEvents">>(
+    const holdingsData = await selectAll<Omit<Holding, "imageUrl" | "englishName" | "uid" | "mtgLabels" | "reprintEvents">>(
       () => supabase.from("inventory_holdings_v").select("game, item_type, leg, card_id, product_id, name, set_code, card_number, misc_info, variant_label, condition_id, psa_grade, sealed_condition, variant_edition, qty_on_hand, avg_cost_usd, total_cost_usd"),
       ["game", "item_type", "leg", "card_id", "product_id", "condition_id", "psa_grade", "sealed_condition", "variant_edition"],
     );
     const rows = holdingsData.map(
-      (h) => ({ ...h, imageUrl: null as string | null, englishName: null as string | null, uid: null as string | null, reprintEvents: [] as InventoryExposure[] })
+      (h) => ({ ...h, imageUrl: null as string | null, englishName: null as string | null, uid: null as string | null, mtgLabels: null as (MtgTagFlags & MtgLabelProvenance) | null, reprintEvents: [] as InventoryExposure[] })
     ).sort((a, b) => Number(b.total_cost_usd) - Number(a.total_cost_usd));
 
     const exposures = await selectAll<InventoryExposure>(
@@ -112,25 +117,31 @@ export default function InventoryView() {
 
     // batch-fetch image_url (+ english_name for pokemon) by id, per source table
     const byGame = (g: string) => rows.filter((r) => r.game === g);
+    type DefHit = { image_url: string | null; english_name?: string | null; uid: string | null; row: Record<string, unknown> };
     const fetchDefs = async (table: string, idCol: string, uidCol: string, ids: number[], cols: string) => {
-      if (ids.length === 0) return new Map<number, { image_url: string | null; english_name?: string | null; uid: string | null }>();
+      if (ids.length === 0) return new Map<number, DefHit>();
       const defs = await selectAllByIds<Record<string, unknown>>(
         ids,
         [idCol],
         (chunk) => supabase.from(table).select(cols).in(idCol, chunk),
       );
-      const m = new Map<number, { image_url: string | null; english_name?: string | null; uid: string | null }>();
-      for (const d of defs) m.set(d[idCol] as number, { image_url: (d.image_url as string) ?? null, english_name: (d.english_name as string) ?? null, uid: (d[uidCol] as string) ?? null });
+      const m = new Map<number, DefHit>();
+      for (const d of defs) m.set(d[idCol] as number, { image_url: (d.image_url as string) ?? null, english_name: (d.english_name as string) ?? null, uid: (d[uidCol] as string) ?? null, row: d });
       return m;
     };
     const [pkm, mtg, sealed] = await Promise.all([
       fetchDefs("pokemon_card_definitions", "card_id", "card_uid", byGame("pokemon").map((r) => r.card_id!).filter(Boolean), "card_id, card_uid, image_url, english_name"),
-      fetchDefs("mtg_card_definitions_v", "card_id", "card_uid", byGame("mtg").map((r) => r.card_id!).filter(Boolean), "card_id, card_uid, image_url"),
+      // The label columns ride along so a holding shows the formats it is
+      // played in (mtgtop8, backend 000664) and the EDHREC labels beside it.
+      fetchDefs("mtg_card_definitions_v", "card_id", "card_uid", byGame("mtg").map((r) => r.card_id!).filter(Boolean), `card_id, card_uid, image_url, ${MTG_LABEL_COLS}`),
       fetchDefs("pokemon_sealed_products", "product_id", "product_uid", byGame("pokemon_sealed").map((r) => r.product_id!).filter(Boolean), "product_id, product_uid, image_url"),
     ]);
     for (const r of rows) {
       const hit = r.game === "pokemon" ? pkm.get(r.card_id!) : r.game === "mtg" ? mtg.get(r.card_id!) : sealed.get(r.product_id!);
-      if (hit) { r.imageUrl = hit.image_url; r.englishName = hit.english_name ?? null; r.uid = hit.uid; }
+      if (hit) {
+        r.imageUrl = hit.image_url; r.englishName = hit.english_name ?? null; r.uid = hit.uid;
+        if (r.game === "mtg") r.mtgLabels = hit.row as MtgTagFlags & MtgLabelProvenance;
+      }
     }
     return { holdings: rows, roiLines: await fetchRoiLines() };
   }, []);
@@ -353,6 +364,7 @@ export default function InventoryView() {
                   <Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge>
                   <span className="truncate">{detail(h)}</span>
                 </div>
+                {h.mtgLabels && <MtgFormatBadges card={h.mtgLabels} linked={false} />}
                 {h.reprintEvents.length > 0 && <Badge variant="outline" className="border-amber-500/50 text-[10px] text-amber-300" title={h.reprintEvents.map((event) => event.event_title).join("; ")}><AlertTriangle className="size-3" />{t("inventory.reprintRisk", { n: h.reprintEvents.length })}</Badge>}
                 <div className="grid grid-cols-3 gap-1 border-t pt-1 text-center text-[10px]">
                   <span><span className="block font-semibold tabular-nums">{h.qty_on_hand}</span><span className="text-muted-foreground">{t("inventory.ownedQty")}</span></span>
@@ -401,7 +413,7 @@ export default function InventoryView() {
           <TableBody>
             {rows.map((h) => (
               <TableRow key={keyOf(h)}>
-                <TableCell className="truncate max-w-[320px]">{label(h)} <span className="text-muted-foreground">· {cardMeta(h.set_code, h.card_number, viewVariantLabel(h))}</span></TableCell>
+                <TableCell className="max-w-[320px]"><div className="truncate">{label(h)} <span className="text-muted-foreground">· {cardMeta(h.set_code, h.card_number, viewVariantLabel(h))}</span></div>{h.mtgLabels && <MtgFormatBadges card={h.mtgLabels} />}</TableCell>
                 <TableCell><Badge variant="secondary" className="text-[10px]">{t(h.leg === "export" ? "trips.legExport" : "trips.legImport")}</Badge></TableCell>
                 <TableCell className="text-xs text-muted-foreground">{detail(h)}</TableCell>
                 <TableCell>{h.reprintEvents.length > 0 ? <Badge variant="outline" className="border-amber-500/50 text-amber-300" title={h.reprintEvents.map((event) => `${event.starts_on}: ${event.event_title}`).join("; ")}><AlertTriangle className="size-3" />{t("inventory.reprintRisk", { n: h.reprintEvents.length })}</Badge> : <span className="text-xs text-muted-foreground">{t("inventory.noEventRisk")}</span>}</TableCell>

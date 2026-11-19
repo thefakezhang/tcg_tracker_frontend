@@ -291,8 +291,11 @@ export const POKEMON_CARD_DEF_COLS =
 // jsonb_build_object (migration 000566). The browse path reads the view, the
 // search path bypasses it, so a column added to one and not the other renders
 // on an unfiltered browse and then vanishes the moment a search term is typed.
+//
+// The mtgtop8 format labels (backend 000664) are the four is_*_played flags
+// plus one format_play evidence object, on all three paths the same way.
 export const MTG_LABEL_COLS =
-  "is_cedh_staple, is_cedh_exclusive, is_top_commander, edhrec_tags_reason, edhrec_tags_evidence_url, edhrec_tags_as_of, is_commander_stockable, commander_demand_reason, commander_demand_evidence_url, commander_demand_as_of";
+  "is_cedh_staple, is_cedh_exclusive, is_top_commander, edhrec_tags_reason, edhrec_tags_evidence_url, edhrec_tags_as_of, is_commander_stockable, commander_demand_reason, commander_demand_evidence_url, commander_demand_as_of, is_standard_played, is_modern_played, is_legacy_played, is_cedh_played, format_play";
 export const MTG_CARD_DEF_COLS =
   `card_id, card_uid, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language, ${MTG_LABEL_COLS}`;
 

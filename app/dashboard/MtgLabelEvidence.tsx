@@ -1,11 +1,14 @@
 "use client";
 
-import { ExternalLink } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useTranslation } from "@/lib/i18n";
 import { formatDate } from "@/lib/dates";
 import {
   EDHREC_TAG_DIMENSIONS,
+  FORMAT_PLAY_CODE,
+  FORMAT_PLAY_DIMENSIONS,
+  formatPlayTrend,
   mtgTagColumn,
   type MtgEdhrecTagDimension,
   type MtgLabelProvenance,
@@ -35,6 +38,11 @@ import {
 // decks across 56 commanders" on the other, and both are right. Do not unify
 // them: the counts come from different pages on different cadences, which is
 // why each row carries its own badge, link and date.
+//
+// THE FORMAT LABELS ARE ONE ROW PER FORMAT. mtgtop8 measures each format on its
+// own page (migration 000664), so a card played in Modern and Legacy shows two
+// rows with two shares and two links, and the arrow says whether the last two
+// weeks run clearly ahead of or behind the two-month share.
 export function MtgLabelEvidence({
   card,
   compact = false,
@@ -64,7 +72,27 @@ export function MtgLabelEvidence({
       url: card.commander_demand_evidence_url,
       asOf: card.commander_demand_as_of,
     },
-  ].filter((group) => group.active);
+    ...FORMAT_PLAY_DIMENSIONS.map((dimension) => {
+      const play = card.format_play?.[FORMAT_PLAY_CODE[dimension]];
+      const trend = formatPlayTrend(play);
+      const recent = trend === null ? null : (
+        play?.main_pct != null ? play.main_pct_2w ?? 0 : play?.side_pct_2w ?? 0
+      );
+      return {
+        key: `format-${FORMAT_PLAY_CODE[dimension]}`,
+        active: card[mtgTagColumn(dimension)] === true,
+        label: t(`mtgLabel.${dimension}`),
+        reason: play?.reason,
+        url: play?.url,
+        asOf: play?.as_of,
+        trend,
+        trendText: trend === null ? null : t(
+          trend === "up" ? "mtgLabel.trendUp" : "mtgLabel.trendDown",
+          { recent: String(recent) },
+        ),
+      };
+    }),
+  ].filter((group) => group.active) as EvidenceGroup[];
 
   if (groups.length === 0) return null;
   return (
@@ -95,12 +123,25 @@ export function MtgLabelEvidence({
                 <span className="whitespace-nowrap"> ({t("mtgLabel.asOf", { date: asOf })})</span>
               )}
             </span>
+            {group.trend && (
+              <span
+                className={group.trend === "up" ? "shrink-0 text-emerald-600 dark:text-emerald-400" : "shrink-0 text-amber-600 dark:text-amber-400"}
+                title={group.trendText ?? undefined}
+                aria-label={group.trendText ?? undefined}
+                role="img"
+                data-testid={`mtg-label-${group.key}-trend-${group.trend}`}
+              >
+                {group.trend === "up"
+                  ? <ArrowUpRight className="size-3" aria-hidden="true" />
+                  : <ArrowDownRight className="size-3" aria-hidden="true" />}
+              </span>
+            )}
             {group.url && (
               <ExternalLink className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
             )}
           </>
         );
-        const describedBy = `${group.label}: ${reason}${asOf ? ` (${t("mtgLabel.asOf", { date: asOf })})` : ""}`;
+        const describedBy = `${group.label}: ${reason}${asOf ? ` (${t("mtgLabel.asOf", { date: asOf })})` : ""}${group.trendText ? `. ${group.trendText}` : ""}`;
         return group.url ? (
           <a
             key={group.key}
@@ -132,9 +173,81 @@ export function MtgLabelEvidence({
   );
 }
 
+interface EvidenceGroup {
+  key: string;
+  active: boolean;
+  label: string;
+  reason?: string | null;
+  url?: string | null;
+  asOf?: string | null;
+  trend?: "up" | "down" | null;
+  trendText?: string | null;
+}
+
 // The badge needs its OWN label, not the filter chip's. A chip is an
 // instruction over the whole catalog and reads in the plural ("cEDH staples");
 // a badge is a statement about the one card under it and reads in the singular.
 function tagLabelKey(dimension: MtgEdhrecTagDimension) {
   return `mtgLabel.${dimension}` as const;
+}
+
+// The format labels as one line of small badges, for a table row where the
+// full evidence rows above would be too tall (the inventory list). Each badge
+// still carries its measurement: the reason and date in its title, the trend
+// as an arrow, and a link to the mtgtop8 page it was read from.
+//
+// linked=false renders plain badges, for a badge row inside a control that is
+// itself clickable (the inventory grid tile is a <button>, and a link nested
+// in a button is invalid and steals the tap).
+export function MtgFormatBadges({
+  card,
+  linked = true,
+}: {
+  card: MtgTagFlags & MtgLabelProvenance;
+  linked?: boolean;
+}) {
+  const { t, language } = useTranslation();
+  const active = FORMAT_PLAY_DIMENSIONS.filter((dimension) => card[mtgTagColumn(dimension)] === true);
+  if (active.length === 0) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1" data-testid="mtg-format-badges">
+      {active.map((dimension) => {
+        const code = FORMAT_PLAY_CODE[dimension];
+        const play = card.format_play?.[code];
+        const trend = formatPlayTrend(play);
+        const asOf = formatDate(play?.as_of, language);
+        const recent = play?.main_pct != null ? play.main_pct_2w ?? 0 : play?.side_pct_2w ?? 0;
+        const title = [
+          `${t(`mtgLabel.${dimension}`)}: ${play?.reason || t("mtgLabel.evidenceUnavailable")}`,
+          asOf ? `(${t("mtgLabel.asOf", { date: asOf })})` : "",
+          trend ? t(trend === "up" ? "mtgLabel.trendUp" : "mtgLabel.trendDown", { recent: String(recent) }) : "",
+        ].filter(Boolean).join(" ");
+        const badge = (
+          <Badge variant="outline" className="h-auto gap-0.5 px-1 py-px text-[10px]">
+            {t(`mtgLabel.${dimension}`)}
+            {trend === "up" && <ArrowUpRight className="size-3 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />}
+            {trend === "down" && <ArrowDownRight className="size-3 text-amber-600 dark:text-amber-400" aria-hidden="true" />}
+          </Badge>
+        );
+        return linked && play?.url ? (
+          <a
+            key={code}
+            href={play.url}
+            target="_blank"
+            rel="noreferrer"
+            title={title}
+            aria-label={title}
+            data-testid={`mtg-format-badge-${code}`}
+            className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            {badge}
+          </a>
+        ) : (
+          <span key={code} title={title} aria-label={title} data-testid={`mtg-format-badge-${code}`}>{badge}</span>
+        );
+      })}
+    </span>
+  );
 }

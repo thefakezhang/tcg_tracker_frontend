@@ -39,6 +39,15 @@ const flatRow: Record<string, unknown> = {
   commander_demand_reason: "50,339 decks",
   commander_demand_evidence_url: null,
   commander_demand_as_of: null,
+  // mtgtop8 format labels (backend 000664). is_reserved is on the view too
+  // (000663) but is a filter column the browser never renders, so it stays a
+  // summary-side field here, exactly as the real response places it.
+  is_reserved: false,
+  is_standard_played: false,
+  is_modern_played: true,
+  is_legacy_played: false,
+  is_cedh_played: false,
+  format_play: { MO: { main_pct: 3.2, reason: "3.2% of 3,477 decks, 4.0 copies" } },
 };
 
 describe("mtgBrowserRowToSummaryRow", () => {
@@ -54,6 +63,7 @@ describe("mtgBrowserRowToSummaryRow", () => {
     for (const col of cardCols.filter((c) => c !== "card_id")) {
       expect(row).not.toHaveProperty(col);
     }
+    expect(row.is_reserved).toBe(false);
   });
 
   it("names the view the backend migration creates", () => {

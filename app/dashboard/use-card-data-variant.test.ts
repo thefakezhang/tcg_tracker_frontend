@@ -87,7 +87,7 @@ describe("Pokemon card-definition variant propagation", () => {
   // the search path bypasses it, so a label in one and not the other renders
   // on an unfiltered browse and vanishes the moment a search term is typed.
   // The backend half is pinned by TestMtgLabelColumnsReachBothReadPaths.
-  it("asks for every EDHREC label the browser renders", () => {
+  it("asks for every EDHREC and mtgtop8 label the browser renders", () => {
     expect(MTG_LABEL_COLS.split(", ")).toEqual([
       "is_cedh_staple",
       "is_cedh_exclusive",
@@ -99,6 +99,11 @@ describe("Pokemon card-definition variant propagation", () => {
       "commander_demand_reason",
       "commander_demand_evidence_url",
       "commander_demand_as_of",
+      "is_standard_played",
+      "is_modern_played",
+      "is_legacy_played",
+      "is_cedh_played",
+      "format_play",
     ]);
   });
 
