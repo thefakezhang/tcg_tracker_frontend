@@ -6,6 +6,8 @@ import CardBrowser from "./CardBrowser";
 
 const mocks = vi.hoisted(() => ({
   useCardData: vi.fn(),
+  // GameProvider exposes React's stable state setter across renders.
+  setPsaMode: vi.fn(),
   refetch: vi.fn(),
   from: vi.fn(),
   queryResolved: vi.fn(),
@@ -26,7 +28,7 @@ const translate = (key: string, values?: Record<string, string | number>) => {
 vi.mock("@/lib/i18n", () => ({ useTranslation: () => ({ t: translate }) }));
 vi.mock("./LanguageContext", () => ({ useLanguage: () => ({ language: mocks.language }) }));
 vi.mock("./GameContext", () => ({
-  useGame: () => ({ activeGame: mocks.activeGame, psaMode: "psa", setPsaMode: vi.fn() }),
+  useGame: () => ({ activeGame: mocks.activeGame, psaMode: "psa", setPsaMode: mocks.setPsaMode }),
 }));
 vi.mock("./ExitBasisContext", () => ({
   useExitBasis: () => ({ exitPercentile: "p25", setExitPercentile: vi.fn() }),
@@ -111,6 +113,7 @@ vi.mock("@/lib/supabase/client", () => ({
 afterEach(cleanup);
 
 beforeEach(() => {
+  mocks.setPsaMode.mockReset();
   mocks.refetch.mockReset();
   mocks.from.mockReset();
   mocks.queryResolved.mockReset();
