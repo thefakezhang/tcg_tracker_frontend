@@ -3,7 +3,7 @@ import ViewLoading from "./ViewLoading";
 import { useEffect, useRef, type ReactNode } from "react";
 import {
   Boxes, CalendarDays, ClipboardCheck, DollarSign, Filter, Landmark, Library, PackageOpen,
-  ArrowLeftRight, HandCoins, Languages, Map as MapIcon, Receipt, ScanLine, ScanSearch, Send, ShieldCheck, ShoppingBasket, Store, Users, Activity, type LucideIcon } from "lucide-react";
+  ArrowLeftRight, HandCoins, Languages, Map as MapIcon, Receipt, ScanLine, ScanSearch, Send, ShieldCheck, ShoppingBasket, Store, Trophy, Users, Activity, type LucideIcon } from "lucide-react";
 import type { TranslationKey } from "@/lib/i18n";
 import { MATCH_REVIEW_SENTINEL, useReviewQueueNavigation } from "./ReviewQueueNavigationContext";
 
@@ -30,6 +30,7 @@ const EnglishCatalogReviewView = dynamic(() => import("./EnglishCatalogReviewVie
 const ArrivalPostsView = dynamic(() => import("./ArrivalPostsView"), { loading: ViewLoading });
 const TwitterBuybacksView = dynamic(() => import("./TwitterBuybacksView"), { loading: ViewLoading });
 const MercariTab = dynamic(() => import("./MercariTab"), { loading: ViewLoading });
+const MtgMetaView = dynamic(() => import("./MtgMetaView"), { loading: ViewLoading });
 
 function RoutedMatchReviewView() {
   const { target, consumeTarget } = useReviewQueueNavigation();
@@ -74,6 +75,7 @@ export const VIEWS: ViewDef[] = [
   { sentinel: -13, slug: "events", group: "catalog.section", icon: CalendarDays, sidebarKey: "events.title", titleKey: "events.title", render: () => <EventsCalendarView key="events-calendar" /> },
   { sentinel: -21, slug: "arrivals", group: "catalog.section", icon: PackageOpen, sidebarKey: "arrivals.nav", titleKey: "arrivals.title", render: () => <ArrivalPostsView key="arrival-posts" /> },
   { sentinel: -23, slug: "buybacks", group: "catalog.section", icon: HandCoins, sidebarKey: "buybacks.nav", titleKey: "buybacks.title", render: () => <TwitterBuybacksView key="twitter-buybacks" /> },
+  { sentinel: -24, slug: "mtg-meta", group: "catalog.section", icon: Trophy, sidebarKey: "mtgMeta.nav", titleKey: "mtgMeta.title", render: () => <MtgMetaView key="mtg-meta" /> },
   { sentinel: -22, slug: "mercari", group: "catalog.section", icon: Store, sidebarKey: "mercari.nav", titleKey: "mercari.tabTitle", render: () => <MercariTab key="mercari" /> },
   // Lives with the curation surfaces: it governs what the image-curation
   // pipeline auto-promotes, so the operator looks for it next to the queues.

@@ -863,14 +863,18 @@ The missing-signature compatibility path is marked verify-only before the non-id
 Each remittance, cancellation, and settlement has its own local-calendar date, note, inline error, and success state.
 Do not put those controls back into shared component state because that silently applies one movement's source facts to another movement.
 
-### MTG card labels (EDHREC)
+### MTG card labels (EDHREC and mtgtop8)
 
-MTG cards carry five labels, rendered by `MtgLabelEvidence.tsx` and filterable as chips driven by `MTG_TAG_DIMENSIONS` in `mtg-tags.ts`.
+MTG cards carry nine labels, rendered by `MtgLabelEvidence.tsx` and filterable as chips driven by `MTG_TAG_DIMENSIONS` in `mtg-tags.ts`.
 Adding a label is one entry in `TAG_COLUMNS`, one in `MTG_LABEL_COLS`, and a `cardBrowser.<dimension>` / `<dimension>Hint` key in both locales.
 
 - `is_reserved` comes from MTGJSON and is per printing. It is a published Wizards policy, not a measurement, so it has **no provenance and no evidence row** - a chip only.
 - `is_cedh_staple`, `is_cedh_exclusive`, `is_top_commander` come from edhrec.com's ranking pages, refreshed weekly by `refresh-edhrec-tags`.
 - `is_commander_stockable` comes from a different job on a different cadence, `refresh-edhrec-demand`, which reads the top commanders' own pages. It is a stocking signal, not a format fact: enough Commander decks play the card, and enough printings of it are priced, that the median price means something.
+- `is_standard_played`, `is_modern_played`, `is_legacy_played`, `is_cedh_played` come from mtgtop8.com tournament results, refreshed weekly by `refresh-mtgtop8-meta` (backend migration 000664, #2770). A card is labelled when it is in at least 1% of that format's last two months of decks, main deck or sideboard; the floor lives in the backend writer.
+  Their evidence is one `format_play` jsonb keyed by format code (`ST`, `MO`, `LE`, `cEDH`), typed as `MtgFormatPlay`, because each format is its own measurement from its own page on its own date. `MtgLabelEvidence` renders **one row per active format**, and an arrow when the last two weeks run clearly ahead of or behind the two-month share (`formatPlayTrend`: a quarter relative and a full point absolute).
+  `MtgFormatBadges` is the one-line form for table rows (the inventory list); pass `linked={false}` inside a clickable tile, because a link nested in a `<button>` is invalid.
+  The **MTG meta** view (`MtgMetaView.tsx`, slug `mtg-meta`) reads the same crawl as a metagame: archetype shares per format and every card's play rate, with the two-week share and the change since last week (`mtg_format_archetypes_v`, `mtg_format_card_play_v`).
 
 **Provenance is per writer, not per label** (backend migration 000564). The three cEDH tags are set together by one refresh and share one `edhrec_tags_reason` / `_evidence_url` / `_as_of`; stockable has its own group. `MtgLabelEvidence` therefore renders **one row per group**, not one per label, and names the active tags in the badge.
 
@@ -892,8 +896,9 @@ MTG cards reach the browser through surfaces that share no SQL:
 A column added to one and not the other **does not fail**. The RPC's `jsonb_build_object` is a hand-kept list, so a missing key reads as null: the label renders on an unfiltered browse and vanishes the instant the user types a search term, with no error anywhere.
 `MTG_LABEL_COLS` in `use-card-data.ts` is the frontend half and is pinned by `use-card-data-variant.test.ts`; the backend half is pinned by `TestMtgLabelColumnsReachBothReadPaths` (backend migration 000566) and, for the flat browse view, `TestMtgLabelColumnsReachTheFlatBrowserView` and `TestMtgBrowserViewCarriesEverySummaryColumn` (000660).
 A chip's column additionally has to be in the RPC's `tag_cols` whitelist, where omission means the chip is **silently ignored** rather than refused.
+It also has to be a column on the flat browse view even when the browser never renders it: the browse applies chips as top-level filters there, so a missing column answers `400 42703` for the whole page. That is how the Reserved List chip broke (backend #2808); `TestMtgFilterableTagsReachTheFlatBrowserView` now derives the required columns from `tag_cols`.
 
-Backend contract: `docs/commander_demand_signal.md`.
+Backend contracts: `docs/commander_demand_signal.md`, `docs/mtgtop8_format_meta.md`.
 
 ### Sealed Products (Pokémon)
 
@@ -940,7 +945,7 @@ The authoritative schema is `docs/schema.md` in the backend repository; this tab
 |-------|-------------|
 | `pokemon_card_definitions` | card_id, regional_name, english_name, set_code, card_number, misc_info, edition, foil_treatment, image_url |
 | `mtg_card_definitions` | card_id, regional_name, set_code, card_number, misc_info, image_url |
-| `mtg_card_definitions_v` (view) | the above joined to `mtg_universal_cards`, plus the EDHREC labels and their provenance (see **MTG card labels**) |
+| `mtg_card_definitions_v` (view) | the above joined to `mtg_universal_cards`, plus the EDHREC and mtgtop8 labels and their provenance (see **MTG card labels**) |
 | `pokemon_market_listings` / `mtg_market_listings` | card_id, price_type (Buy/Sell), price, currency, psa_grade, condition, location_id |
 | `currencies` | code (PK), symbol |
 | `exchange_rates` | from_currency, to_currency, rate |

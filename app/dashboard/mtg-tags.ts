@@ -21,20 +21,35 @@
 // buying copies is a decision the data supports. The floors live in that
 // command, not here and not in the schema, so they can be tuned without a
 // migration (000564, 000566).
+//
+// The four format chips come from mtgtop8.com tournament results, refreshed
+// weekly by refresh-mtgtop8-meta (backend migration 000664, #2770): a card is
+// "played" in a format when enough of that format's last two months of decks
+// run it, main deck or sideboard. Each format is its own measurement from its
+// own page, so the evidence is one format_play object keyed by format code
+// rather than one provenance group for all four.
 
 export type MtgTagDimension =
   | "reserved"
   | "cedhStaple"
   | "cedhExclusive"
   | "topCommander"
-  | "commanderStockable";
+  | "commanderStockable"
+  | "standardPlayed"
+  | "modernPlayed"
+  | "legacyPlayed"
+  | "cedhPlayed";
 
 export type MtgTagColumn =
   | "is_reserved"
   | "is_cedh_staple"
   | "is_cedh_exclusive"
   | "is_top_commander"
-  | "is_commander_stockable";
+  | "is_commander_stockable"
+  | "is_standard_played"
+  | "is_modern_played"
+  | "is_legacy_played"
+  | "is_cedh_played";
 
 const TAG_COLUMNS: Record<MtgTagDimension, MtgTagColumn> = {
   reserved: "is_reserved",
@@ -42,6 +57,10 @@ const TAG_COLUMNS: Record<MtgTagDimension, MtgTagColumn> = {
   cedhExclusive: "is_cedh_exclusive",
   topCommander: "is_top_commander",
   commanderStockable: "is_commander_stockable",
+  standardPlayed: "is_standard_played",
+  modernPlayed: "is_modern_played",
+  legacyPlayed: "is_legacy_played",
+  cedhPlayed: "is_cedh_played",
 };
 
 // Declaration order drives the order of the chips in the browser.
@@ -51,6 +70,10 @@ export const MTG_TAG_DIMENSIONS: readonly MtgTagDimension[] = [
   "cedhExclusive",
   "topCommander",
   "commanderStockable",
+  "standardPlayed",
+  "modernPlayed",
+  "legacyPlayed",
+  "cedhPlayed",
 ];
 
 export interface MtgTagFlags {
@@ -59,6 +82,10 @@ export interface MtgTagFlags {
   is_cedh_exclusive?: boolean | null;
   is_top_commander?: boolean | null;
   is_commander_stockable?: boolean | null;
+  is_standard_played?: boolean | null;
+  is_modern_played?: boolean | null;
+  is_legacy_played?: boolean | null;
+  is_cedh_played?: boolean | null;
 }
 
 // Provenance for the EDHREC-derived labels, one group per WRITER rather than
@@ -78,6 +105,77 @@ export interface MtgLabelProvenance {
   commander_demand_reason?: string | null;
   commander_demand_evidence_url?: string | null;
   commander_demand_as_of?: string | null;
+  format_play?: MtgFormatPlayByCode | null;
+}
+
+// One format's evidence inside format_play, as refresh-mtgtop8-meta writes it.
+// Shares are percentages of the format's decks in mtgtop8's "Last 2 Months"
+// period; the *_2w fields are the same card in "Last 2 Weeks", which is what
+// shows a card rising or falling inside a single crawl. jsonb_strip_nulls drops
+// a board the card is not played on, so every numeric field is optional.
+export interface MtgFormatPlay {
+  format?: string;
+  main_pct?: number;
+  main_decks?: number;
+  main_avg?: number;
+  side_pct?: number;
+  side_decks?: number;
+  side_avg?: number;
+  main_pct_2w?: number;
+  side_pct_2w?: number;
+  total_decks?: number;
+  period?: string;
+  url?: string;
+  as_of?: string;
+  reason?: string;
+}
+
+export type MtgFormatCode = "ST" | "MO" | "LE" | "cEDH";
+export type MtgFormatPlayByCode = Partial<Record<MtgFormatCode, MtgFormatPlay>>;
+
+export type MtgFormatPlayDimension = Extract<
+  MtgTagDimension,
+  "standardPlayed" | "modernPlayed" | "legacyPlayed" | "cedhPlayed"
+>;
+
+// Chip order, and the format code each label's evidence is keyed under.
+export const FORMAT_PLAY_DIMENSIONS: readonly MtgFormatPlayDimension[] = [
+  "standardPlayed",
+  "modernPlayed",
+  "legacyPlayed",
+  "cedhPlayed",
+];
+
+export const FORMAT_PLAY_CODE: Record<MtgFormatPlayDimension, MtgFormatCode> = {
+  standardPlayed: "ST",
+  modernPlayed: "MO",
+  legacyPlayed: "LE",
+  cedhPlayed: "cEDH",
+};
+
+// "up" when the last two weeks run clearly ahead of the two-month share, "down"
+// when clearly behind, otherwise null. Clearly means both a quarter relative
+// and a full point absolute: a 1.2% card moving to 1.6% is noise in a two-week
+// window of a few hundred decks, and a 40% staple moving to 42% is not news.
+export function formatPlayTrend(play: MtgFormatPlay | null | undefined): "up" | "down" | null {
+  if (!play) return null;
+  const pairs: [number | undefined, number | undefined][] = [
+    [play.main_pct, play.main_pct_2w],
+    [play.side_pct, play.side_pct_2w],
+  ];
+  let best: "up" | "down" | null = null;
+  let bestDelta = 0;
+  for (const [twoMonth, twoWeek] of pairs) {
+    if (twoMonth == null) continue;
+    const recent = twoWeek ?? 0;
+    const delta = recent - twoMonth;
+    if (Math.abs(delta) < 1 || Math.abs(delta) < twoMonth * 0.25) continue;
+    if (Math.abs(delta) > Math.abs(bestDelta)) {
+      bestDelta = delta;
+      best = delta > 0 ? "up" : "down";
+    }
+  }
+  return best;
 }
 
 // The three tags one EDHREC refresh writes together, in chip order. Exported
@@ -100,7 +198,8 @@ export const EDHREC_TAG_DIMENSIONS: readonly MtgEdhrecTagDimension[] = [
 
 export function hasAnyMtgLabel(card: MtgTagFlags): boolean {
   return EDHREC_TAG_DIMENSIONS.some((d) => card[mtgTagColumn(d)] === true)
-    || card.is_commander_stockable === true;
+    || card.is_commander_stockable === true
+    || FORMAT_PLAY_DIMENSIONS.some((d) => card[mtgTagColumn(d)] === true);
 }
 
 export interface MtgTagQueryFilter {

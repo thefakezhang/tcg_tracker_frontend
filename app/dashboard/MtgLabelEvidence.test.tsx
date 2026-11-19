@@ -2,7 +2,8 @@
 
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MtgLabelEvidence } from "./MtgLabelEvidence";
+import { MtgFormatBadges, MtgLabelEvidence } from "./MtgLabelEvidence";
+import { formatPlayTrend, hasAnyMtgLabel, mtgTagSelectionQueryFilter } from "./mtg-tags";
 
 vi.mock("@/lib/i18n", () => ({
   useTranslation: () => ({
@@ -114,5 +115,88 @@ describe("MtgLabelEvidence", () => {
   it("renders nothing for a card that is only on the Reserved List", () => {
     const { container } = render(<MtgLabelEvidence card={{ is_reserved: true }} />);
     expect(container.textContent).toBe("");
+  });
+
+  // mtgtop8 measures each format on its own page (backend 000664), so a card
+  // played in two formats gets two rows, each with its own share and link.
+  it("renders one row per active format with that format's own evidence", () => {
+    render(<MtgLabelEvidence card={{
+      is_modern_played: true,
+      is_legacy_played: true,
+      is_standard_played: false,
+      format_play: {
+        MO: { reason: "33.3% of 3,477 decks, 2.8 copies", url: "https://www.mtgtop8.com/topcards?f=MO&meta=51", as_of: "2026-11-22T10:00:00Z", main_pct: 33.3, main_pct_2w: 35.1 },
+        LE: { reason: "12.0% of 2,564 decks, 1.5 copies", url: "https://www.mtgtop8.com/topcards?f=LE&meta=39", main_pct: 12, main_pct_2w: 6 },
+      },
+    }} />);
+    const modern = screen.getByTestId("mtg-label-format-MO");
+    expect(modern.textContent).toContain("mtgLabel.modernPlayed");
+    expect(modern.textContent).toContain("33.3% of 3,477 decks");
+    expect(modern.getAttribute("href")).toBe("https://www.mtgtop8.com/topcards?f=MO&meta=51");
+    // 35.1 against 33.3 is under a quarter relative: steady, no arrow.
+    expect(screen.queryByTestId("mtg-label-format-MO-trend-up")).toBeNull();
+    // 6 against 12 is a clear fall, and the arrow says by how much.
+    const legacyTrend = screen.getByTestId("mtg-label-format-LE-trend-down");
+    expect(legacyTrend.getAttribute("aria-label")).toBe("mtgLabel.trendDown:6");
+    expect(screen.queryByTestId("mtg-label-format-ST")).toBeNull();
+  });
+
+  it("renders a format label whose evidence object is missing", () => {
+    render(<MtgLabelEvidence card={{ is_cedh_played: true }} />);
+    expect(screen.getByTestId("mtg-label-format-cEDH").textContent).toContain("mtgLabel.evidenceUnavailable");
+  });
+});
+
+describe("MtgFormatBadges", () => {
+  const card = {
+    is_modern_played: true,
+    is_cedh_played: true,
+    format_play: {
+      MO: { reason: "4.1% of 3,477 decks, 4.0 copies", url: "https://www.mtgtop8.com/topcards?f=MO&meta=51", main_pct: 4.1, main_pct_2w: 9 },
+      cEDH: { reason: "commander in 17.0%", side_pct: 17, side_pct_2w: 16 },
+    },
+  };
+
+  it("links each badge to its format's page and carries the reason in its title", () => {
+    render(<MtgFormatBadges card={card} />);
+    const modern = screen.getByTestId("mtg-format-badge-MO");
+    expect(modern.tagName).toBe("A");
+    expect(modern.getAttribute("title")).toContain("4.1% of 3,477 decks");
+    expect(modern.getAttribute("title")).toContain("mtgLabel.trendUp:9");
+    // No url recorded: a plain badge, not a dead link.
+    expect(screen.getByTestId("mtg-format-badge-cEDH").tagName).toBe("SPAN");
+  });
+
+  // The inventory grid tile is a <button>; a link inside it is invalid.
+  it("renders no links when linked is false", () => {
+    const { container } = render(<MtgFormatBadges card={card} linked={false} />);
+    expect(container.querySelector("a")).toBeNull();
+    expect(screen.getByTestId("mtg-format-badge-MO").tagName).toBe("SPAN");
+  });
+
+  it("renders nothing for a card played in no tracked format", () => {
+    const { container } = render(<MtgFormatBadges card={{ is_cedh_staple: true }} />);
+    expect(container.textContent).toBe("");
+  });
+});
+
+describe("format labels in mtg-tags", () => {
+  it("reads the clearer of the two boards", () => {
+    expect(formatPlayTrend({ main_pct: 10, main_pct_2w: 10.5, side_pct: 4, side_pct_2w: 9 })).toBe("up");
+    expect(formatPlayTrend({ main_pct: 3, main_pct_2w: 3.4 })).toBeNull();
+    // Absent from the last two weeks entirely is a fall to zero.
+    expect(formatPlayTrend({ main_pct: 5 })).toBe("down");
+    expect(formatPlayTrend(undefined)).toBeNull();
+  });
+
+  it("counts a format label as a label", () => {
+    expect(hasAnyMtgLabel({ is_legacy_played: true })).toBe(true);
+    expect(hasAnyMtgLabel({ is_reserved: true })).toBe(false);
+  });
+
+  it("filters a format chip on its own column", () => {
+    expect(mtgTagSelectionQueryFilter(new Set(["modernPlayed"]))).toEqual({ equalsTrue: ["is_modern_played"], anyOfTrue: [] });
+    expect(mtgTagSelectionQueryFilter(new Set(["standardPlayed", "cedhPlayed"])).anyOfTrue)
+      .toEqual(["is_standard_played", "is_cedh_played"]);
   });
 });
