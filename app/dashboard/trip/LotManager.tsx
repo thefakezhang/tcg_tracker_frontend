@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Plus, Trash2, Check, Pencil, Upload, ImageOff, RotateCcw, Loader2, DollarSign } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll, selectAllByIds } from "@/lib/supabase/select-all";
@@ -12,6 +12,7 @@ import { bumpOwnedInventory } from "../owned-inventory";
 import { useLanguage } from "../LanguageContext";
 import { useLotPicker } from "../LotPickerContext";
 import { useSaving } from "@/lib/use-saving";
+import { formatMutationError } from "@/lib/mutation-error";
 import { useFxRate, fmtRate } from "@/lib/use-fx-rate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -152,6 +153,13 @@ const ACQUISITION_COST_CATEGORIES: AcquisitionCostCategory[] = [
   "custom",
 ];
 
+// Check before constructing each page as well as passing the signal to the
+// transport: even a transport that ignores abort must not start the next page.
+function lotQuery<T extends { abortSignal(signal: AbortSignal): T }>(signal: AbortSignal, build: () => T): T {
+  signal.throwIfAborted();
+  return build().abortSignal(signal);
+}
+
 export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }) {
   const { t } = useTranslation();
   const { saving, save } = useSaving();
@@ -159,6 +167,18 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   const { refresh: refreshOpenLots } = useLotPicker();
   const [lots, setLots] = useState<Lot[]>([]);
   const [selectedLot, setSelectedLot] = useState<number | null>(null);
+  // Object identity distinguishes A -> B -> A, including callbacks from writes
+  // started during the first visit. Cleanup also invalidates an unmounted view.
+  const selection = useMemo(() => ({ lotId: selectedLot, tripId, leg }), [selectedLot, tripId, leg]);
+  const activeSelection = useRef<typeof selection | null>(null);
+  const lineRead = useRef<AbortController | null>(null);
+  const costRead = useRef<AbortController | null>(null);
+  const [linesLoading, setLinesLoading] = useState(false);
+  const [costsLoading, setCostsLoading] = useState(false);
+  const [linesError, setLinesError] = useState<string | null>(null);
+  const [costsError, setCostsError] = useState<string | null>(null);
+  const loadError = linesError ?? costsError;
+  const lotLoading = linesLoading || costsLoading;
   const [lines, setLines] = useState<LotLine[]>([]);
   const [costs, setCosts] = useState<AcquisitionCost[]>([]);
   const [conditions, setConditions] = useState<Cond[]>([]);
@@ -205,7 +225,27 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   // delete) render inline under the lot header instead of a browser alert(),
   // and clear on the next action or when another lot is selected.
   const [lotError, setLotError] = useState<string | null>(null);
-  useEffect(() => { setLotError(null); }, [selectedLot]);
+  useLayoutEffect(() => {
+    activeSelection.current = selection;
+    setLines([]);
+    setCosts([]);
+    setLotRoiLines([]);
+    setEconByLine(new Map());
+    setLotError(null);
+    setLinesError(null);
+    setCostsError(null);
+    setLinesLoading(false);
+    setCostsLoading(false);
+    return () => {
+      activeSelection.current = null;
+      lineRead.current?.abort();
+      costRead.current?.abort();
+    };
+  }, [selection]);
+  const isCurrentSelection = useCallback(() => activeSelection.current === selection, [selection]);
+  const setCurrentLotError = useCallback((message: string | null) => {
+    if (isCurrentSelection()) setLotError(message);
+  }, [isCurrentSelection]);
 
   const gameForLine = (ln: LotLine): string =>
     ln.kind === "sealed" ? "pokemon_sealed" : ln.table === "mtg_lot_lines" ? "mtg" : "pokemon";
@@ -327,7 +367,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     setConditions((data as Cond[]) ?? []);
   }, []);
 
-  const fetchLines = useCallback(async (lotId: number) => {
+  const fetchLines = useCallback(async (lotId: number, signal: AbortSignal) => {
     const supabase = createClient();
     const out: LotLine[] = [];
     for (const game of ["pokemon", "mtg"] as CardGame[]) {
@@ -335,7 +375,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       // PostgREST cap them at 1000 (a dropped line = a card silently missing
       // from the lot). Key: line_id.
       const rows = await selectAll<SingleLotLineRow>(
-        () => supabase.from(LINE_TABLE[game]).select("line_id, card_id, condition_id, psa_grade, quantity, price_override_usd, direct_purchase_cost_usd, acquisition_cost_alloc_usd, allocated_cost_usd, qty_remaining").eq("lot_id", lotId),
+        () => lotQuery(signal, () => supabase.from(LINE_TABLE[game]).select("line_id, card_id, condition_id, psa_grade, quantity, price_override_usd, direct_purchase_cost_usd, acquisition_cost_alloc_usd, allocated_cost_usd, qty_remaining").eq("lot_id", lotId)),
         ["line_id"],
       );
       if (rows.length === 0) continue;
@@ -348,7 +388,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       const defs = await selectAllByIds<{ card_id: number; regional_name: string; english_name?: string | null; set_code: string; card_number: string | null; image_url: string | null } & PokemonVariantProjection>(
         rows.map((r) => r.card_id),
         ["card_id"],
-        (chunk) => supabase.from(nameTable).select(cols).in("card_id", chunk),
+        (chunk) => lotQuery(signal, () => supabase.from(nameTable).select(cols).in("card_id", chunk)),
       );
       const defMap = new Map<number, { regionalName: string; englishName: string | null; setCode: string; cardNumber: string | null; variantLabel: string | null; imageUrl: string | null }>();
       for (const d of defs) {
@@ -360,14 +400,14 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       }
     }
     const srows = await selectAll<SealedLotLineRow>(
-      () => supabase.from(SEALED_TABLE).select("line_id, product_id, sealed_condition, variant_edition, quantity, price_override_usd, market_value_usd, direct_purchase_cost_usd, acquisition_cost_alloc_usd, allocated_cost_usd, qty_remaining").eq("lot_id", lotId),
+      () => lotQuery(signal, () => supabase.from(SEALED_TABLE).select("line_id, product_id, sealed_condition, variant_edition, quantity, price_override_usd, market_value_usd, direct_purchase_cost_usd, acquisition_cost_alloc_usd, allocated_cost_usd, qty_remaining").eq("lot_id", lotId)),
       ["line_id"],
     );
     if (srows.length > 0) {
       const prods = await selectAllByIds<{ product_id: number; name: string; set_code: string; image_url: string | null }>(
         srows.map((r) => r.product_id),
         ["product_id"],
-        (chunk) => supabase.from("pokemon_sealed_products").select("product_id, name, set_code, image_url").in("product_id", chunk),
+        (chunk) => lotQuery(signal, () => supabase.from("pokemon_sealed_products").select("product_id, name, set_code, image_url").in("product_id", chunk)),
       );
       const pMap = new Map<number, { name: string; setCode: string; imageUrl: string | null }>();
       for (const p of prods) {
@@ -384,10 +424,10 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     // and the loaded figure simply doesn't render. Keyed by (game, line_id)
     // because line_id is only unique within its own table.
     const ovh = await selectAll<{ game: string; line_id: number; overhead_alloc_usd: number; loaded_cost_usd: number }>(
-      () => supabase
+      () => lotQuery(signal, () => supabase
         .from("trip_overhead_alloc_v")
         .select("game, line_id, overhead_alloc_usd, loaded_cost_usd")
-        .eq("lot_id", lotId),
+        .eq("lot_id", lotId)),
       ["game", "line_id"],
     );
     if (ovh.length) {
@@ -405,52 +445,85 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
         if (hit) { ln.overheadAllocUsd = hit.overhead; ln.loadedCostUsd = hit.loaded; }
       }
     }
-    setLines(out);
     // Fetched alongside the lines (not in its own effect) so a sale that moves
     // qty_remaining can never leave the ROI figures one render behind the
     // quantities they are computed from.
-    setLotRoiLines(await fetchRoiLines({ lotId }));
+    const roiLines = await fetchRoiLines({ lotId }, signal);
     // Realized sale economics for this lot's finalized lines (gross sold + margin).
     // Fetched here alongside the lines so a sale can never leave the realized
     // figures a render behind the quantities they came from.
     const econRows = await selectAll<InventoryEconomicsRow>(
-      () => supabase.from("inventory_economics_v").select(
+      () => lotQuery(signal, () => supabase.from("inventory_economics_v").select(
         "line_key, lot_line_id, qty_sold, lifecycle_status, gross_usd, net_proceeds_usd, cogs_usd, profit_usd",
-      ).eq("lot_id", lotId),
+      ).eq("lot_id", lotId)),
       ["line_key"],
     );
-    setEconByLine(new Map(econRows.map((r) => [r.line_key, r])));
+    signal.throwIfAborted();
+    return { lines: out, roiLines, economics: new Map(econRows.map((r) => [r.line_key, r])) };
   }, []);
 
-  const fetchCosts = useCallback(async (lotId: number) => {
+  const fetchCosts = useCallback(async (lotId: number, signal: AbortSignal) => {
     const supabase = createClient();
-    const { data, error } = await supabase
+    const { data, error } = await lotQuery(signal, () => supabase
       .from("acquisition_costs")
       .select("cost_id, category, custom_type, amount_orig, orig_currency, fx_rate_used, amount_usd, note")
       .eq("lot_id", lotId)
-      .order("cost_id");
-    if (error) {
-      setCosts([]);
-      return;
-    }
-    setCosts((data as AcquisitionCost[]) ?? []);
+      .order("cost_id"));
+    signal.throwIfAborted();
+    if (error) throw error;
+    return (data as AcquisitionCost[]) ?? [];
   }, []);
 
+  const loadLines = useCallback(async (lotId: number) => {
+    if (!isCurrentSelection() || selection.lotId !== lotId) return;
+    lineRead.current?.abort();
+    const controller = new AbortController();
+    lineRead.current = controller;
+    const current = () => isCurrentSelection() && lineRead.current === controller && !controller.signal.aborted;
+    setLinesLoading(true);
+    setLinesError(null);
+    try {
+      const snapshot = await fetchLines(lotId, controller.signal);
+      if (!current()) return;
+      // Publish the related quantities and financial evidence together.
+      setLines(snapshot.lines);
+      setLotRoiLines(snapshot.roiLines);
+      setEconByLine(snapshot.economics);
+    } catch (error) {
+      if (current()) setLinesError(formatMutationError(error));
+    } finally {
+      if (current()) setLinesLoading(false);
+    }
+  }, [fetchLines, isCurrentSelection, selection]);
+
+  const loadCosts = useCallback(async (lotId: number) => {
+    if (!isCurrentSelection() || selection.lotId !== lotId) return;
+    costRead.current?.abort();
+    const controller = new AbortController();
+    costRead.current = controller;
+    const current = () => isCurrentSelection() && costRead.current === controller && !controller.signal.aborted;
+    setCostsLoading(true);
+    setCostsError(null);
+    try {
+      const nextCosts = await fetchCosts(lotId, controller.signal);
+      if (current()) setCosts(nextCosts);
+    } catch (error) {
+      if (current()) setCostsError(formatMutationError(error));
+    } finally {
+      if (current()) setCostsLoading(false);
+    }
+  }, [fetchCosts, isCurrentSelection, selection]);
+
   const reloadLot = useCallback(async (lotId: number) => {
-    await Promise.all([fetchLines(lotId), fetchCosts(lotId)]);
+    await Promise.all([loadLines(lotId), loadCosts(lotId)]);
     await refreshOpenLots();
-  }, [fetchCosts, fetchLines, refreshOpenLots]);
+  }, [loadCosts, loadLines, refreshOpenLots]);
 
   useEffect(() => { fetchLots(); fetchConditions(); }, [fetchLots, fetchConditions]);
   useEffect(() => { setSelectedLot(null); }, [leg]);
   useEffect(() => {
-    if (selectedLot) {
-      void Promise.all([fetchLines(selectedLot), fetchCosts(selectedLot)]);
-    } else {
-      setLines([]);
-      setCosts([]);
-    }
-  }, [selectedLot, fetchCosts, fetchLines]);
+    if (selectedLot) void Promise.all([loadLines(selectedLot), loadCosts(selectedLot)]);
+  }, [selectedLot, loadCosts, loadLines]);
 
   useEffect(() => {
     if (selectedLot === null && lots.length > 0) {
@@ -742,7 +815,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   }
 
   async function addLine(hit: SearchHit) {
-    setLotError(null);
+    setCurrentLotError(null);
     if (!selectedLot) return;
     const supabase = createClient();
     const { error } = hit.kind === "sealed"
@@ -775,7 +848,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
           quantity: 1,
         });
     if (error) {
-      setLotError(error.message);
+      setCurrentLotError(error.message);
       return;
     }
     await reloadLot(selectedLot);
@@ -783,25 +856,25 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   }
 
   async function updateLine(line: LotLine, patch: Partial<Pick<LotLine, "quantity" | "condition_id" | "psa_grade" | "sealed_condition" | "variant_edition" | "price_override_usd" | "market_value_usd">>) {
-    setLotError(null);
+    setCurrentLotError(null);
     const supabase = createClient();
     const { error } = await supabase.from(line.table).update(patch).eq("line_id", line.line_id);
-    if (error) setLotError(error.message);
+    if (error) setCurrentLotError(error.message);
     if (selectedLot) await reloadLot(selectedLot);
     bumpOwnedInventory();
   }
 
   async function removeLine(line: LotLine) {
-    setLotError(null);
+    setCurrentLotError(null);
     const supabase = createClient();
     const { error } = await supabase.from(line.table).delete().eq("line_id", line.line_id);
-    if (error) setLotError(error.message);
+    if (error) setCurrentLotError(error.message);
     if (selectedLot) await reloadLot(selectedLot);
     bumpOwnedInventory();
   }
 
   async function addCost() {
-    setLotError(null);
+    setCurrentLotError(null);
     if (!selectedLot || !lot) return;
     const rawAmount = Math.abs(Number(costAmount) || 0);
     const amountOrig =
@@ -823,13 +896,15 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       note: costNote.trim() || null,
     });
     if (error) {
-      setLotError(error.message);
+      setCurrentLotError(error.message);
       return;
     }
-    setCostAmount("");
-    setCostCustomType("");
-    setCostNote("");
-    await fetchCosts(selectedLot);
+    if (isCurrentSelection()) {
+      setCostAmount("");
+      setCostCustomType("");
+      setCostNote("");
+    }
+    await loadCosts(selectedLot);
   }
 
   async function updateCost(
@@ -840,7 +915,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       | "fx_rate_used" | "note"
     >>,
   ) {
-    setLotError(null);
+    setCurrentLotError(null);
     if (!selectedLot) return;
     const supabase = createClient();
     const { error } = await supabase
@@ -848,15 +923,15 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       .update(patch)
       .eq("cost_id", cost.cost_id);
     if (error) {
-      setLotError(error.message);
-      await fetchCosts(selectedLot);
+      setCurrentLotError(error.message);
+      await loadCosts(selectedLot);
       return;
     }
-    await fetchCosts(selectedLot);
+    await loadCosts(selectedLot);
   }
 
   async function removeCost(costId: number) {
-    setLotError(null);
+    setCurrentLotError(null);
     if (!selectedLot) return;
     const supabase = createClient();
     const { error } = await supabase
@@ -864,14 +939,14 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       .delete()
       .eq("cost_id", costId);
     if (error) {
-      setLotError(error.message);
+      setCurrentLotError(error.message);
       return;
     }
-    await fetchCosts(selectedLot);
+    await loadCosts(selectedLot);
   }
 
   async function finalize() {
-    setLotError(null);
+    setCurrentLotError(null);
     if (!selectedLot) return;
     const supabase = createClient();
     const isNet = (m?: string) => !!m && /networkerror|failed to fetch|load failed/i.test(m);
@@ -885,7 +960,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     if (error) {
       // The server blocks a blank-line lot with no total; show the friendly,
       // translated guidance instead of the raw SQL exception.
-      setLotError(/have no price and the lot has no total/.test(error.message)
+      setCurrentLotError(/have no price and the lot has no total/.test(error.message)
         ? t("trips.finalizeNeedsPrices", { count: blankLineCount })
         : error.message);
       return;
@@ -896,18 +971,18 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
   }
 
   async function unfinalize() {
-    setLotError(null);
+    setCurrentLotError(null);
     if (!selectedLot) return;
     const supabase = createClient();
     const { error } = await supabase.rpc("unfinalize_acquisition_lot", { p_lot_id: selectedLot });
-    if (error) { setLotError(error.message); return; } // e.g. "void those sales first"
+    if (error) { setCurrentLotError(error.message); return; } // e.g. "void those sales first"
     await fetchLots();
     await reloadLot(selectedLot);
     bumpOwnedInventory();
   }
 
   async function deleteLot(lotId: number) {
-    setLotError(null);
+    setCurrentLotError(null);
     // Close the confirm dialog before the async work: deleting clears the
     // selection, which unmounts this panel (and the dialog) - closing first
     // lets base-ui release the pointer-events lock so the page stays clickable.
@@ -916,8 +991,8 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
     // Lot lines cascade on delete; the DB blocks deletion of a lot whose lines
     // have already been sold (sale layers reference them), surfaced here.
     const { error } = await supabase.from("acquisition_lots").delete().eq("lot_id", lotId);
-    if (error) { setLotError(error.message); return; }
-    setSelectedLot(null);
+    if (error) { setCurrentLotError(error.message); return; }
+    if (isCurrentSelection()) setSelectedLot(null);
     await fetchLots();
     await refreshOpenLots();
     bumpOwnedInventory();
@@ -971,7 +1046,7 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
       )}
 
       {lot && (
-        <div className="space-y-3 rounded-md border p-3">
+        <div className="space-y-3 rounded-md border p-3" aria-busy={lotLoading}>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <div className="font-medium">{lot.shop_label || formatDate(lot.acquired_at, language)}</div>
@@ -1035,6 +1110,11 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
             </div>
           </div>
 
+          {lotLoading && <p role="status" className="text-xs text-muted-foreground">{t("common.loading")}</p>}
+          {loadError && <div role="alert" className="flex items-center gap-2 text-xs text-destructive">
+            <span>{loadError}</span>
+            <Button variant="outline" size="sm" onClick={() => reloadLot(lot.lot_id)}>{t("common.retry")}</Button>
+          </div>}
           {lotError && <p role="alert" className="text-xs text-destructive">{lotError}</p>}
 
           <LotReceipts lotId={lot.lot_id} />
@@ -1058,9 +1138,9 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
               {costs.map((cost) => (
                 <div
                   key={cost.cost_id}
-                  className="grid grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_5.5rem_2.5rem] items-center gap-1 rounded-md bg-muted/40 p-1.5 text-xs"
+                  className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem_2.75rem] items-center gap-1 rounded-md bg-muted/40 p-1.5 text-xs sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_5.5rem_2.5rem]"
                 >
-                  <div className="min-w-0">
+                  <div className="col-span-4 min-w-0 sm:col-span-1">
                     <div className="truncate font-medium">
                       {cost.category === "custom"
                         ? cost.custom_type
@@ -1125,9 +1205,9 @@ export default function LotManager({ tripId, leg }: { tripId: number; leg: Leg }
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="size-10 sm:size-7"
+                      className="size-11 sm:size-7"
                       onClick={() => removeCost(cost.cost_id)}
-                      aria-label={t("trips.delete")}
+                      aria-label={t("trips.removeLine")}
                     >
                       <Trash2 className="size-4" />
                     </Button>

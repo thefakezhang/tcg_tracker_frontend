@@ -103,18 +103,20 @@ export interface RoiFilter {
 
 // Paged, because a wide filter (a whole leg across trips) can exceed
 // PostgREST's 1000-row cap and a dropped line would quietly shrink the rollup.
-export async function fetchRoiLines(filter: RoiFilter = {}): Promise<RoiLine[]> {
+export async function fetchRoiLines(filter: RoiFilter = {}, signal?: AbortSignal): Promise<RoiLine[]> {
   const supabase = createClient();
   const rows = await selectAll<Record<string, unknown>>(
     () => {
+      signal?.throwIfAborted();
       let q = supabase.from("inventory_theoretical_roi_v").select(COLUMNS);
       if (filter.lotId != null) q = q.eq("lot_id", filter.lotId);
       if (filter.tripId != null) q = q.eq("trip_id", filter.tripId);
       if (filter.leg) q = q.eq("leg", filter.leg);
-      return q;
+      return signal ? q.abortSignal(signal) : q;
     },
     ["line_key"],
   );
+  signal?.throwIfAborted();
   return rows.map(normalize);
 }
 

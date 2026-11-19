@@ -48,6 +48,15 @@ Single-card searches keep a grade selector where `0` is raw and `1` through `10`
 The selected grade is written with the lot line and remains editable until finalization.
 Sealed lines preserve `product_id`, sealed condition, and edition.
 
+Each selected-lot visit owns its line, catalog-definition, overhead, ROI, realized-economics, and acquisition-cost reads, including a second visit after A -> B -> A.
+Switching lots or closing the view aborts those obsolete requests and clears their displayed snapshot before the next paint.
+The independent lot-list, condition, receipt, and search readers keep their existing lifecycles.
+The read helpers check cancellation before every page, so a transport that delivers a late response cannot start more obsolete pages or dependent reads.
+Lines, theoretical ROI, and realized economics publish together only for the latest detail request.
+Costs have a separate guarded request so editing one acquisition expense still refreshes only the expense query.
+Loading state and inline read errors follow the same request ownership, with Retry for the current selection.
+Mutation payloads and persistence are unchanged; a mutation may finish after navigation, but its old callback cannot change the new selection's data, errors, or form inputs.
+
 The acquisition-cost editor supports shipping, handling, travel, food, tax or duty, insurance, discount or refund, and custom types.
 It freezes original currency, FX, USD value, and note for each cost.
 Draft cost edits and deletes operate on the cost row, not the lot purchase total.
@@ -101,6 +110,8 @@ Global buttons and sidebar menu buttons have a 44px minimum phone target.
 Tab triggers themselves, not only their container, have a 44px phone target.
 Trip tab strips scroll internally and cannot widen the page.
 Lot, sale, and master inventory default to card grids on phones.
+Acquisition-cost labels and notes span the phone row above the numeric fields, so fixed currency and amount columns cannot collapse the label to zero width.
+The phone cost-delete button also keeps a 44px target; the desktop cost grid is unchanged.
 The finance sheet uses the full 390px phone width.
 The consignment sheet also uses the full phone width, and its quantity inputs and save buttons keep a 44px minimum phone target.
 The Inventory toolbar wraps on narrow screens instead of widening the page.
@@ -127,6 +138,12 @@ The runner leaves production data untouched.
 
 ## Automated coverage
 
+- `LotManager.test.tsx` drives the real component through delayed Supabase transport, including selection roundtrips, unmount, obsolete errors, latest-request cost refresh, mutation completion, preserved inputs, and ROI pagination cancellation.
+- `lot-load-fixture.mjs` drives the guarded `/e2e/lot-load` page at 1440x900 and 390x844 with intercepted loopback transport and no database writes.
+It covers A -> B, A -> B -> A, closing during a delayed read, keyboard selection, 44px lot selectors, and horizontal overflow.
+The fixture is unavailable in production or without `E2E_FIXTURES_ENABLED=1`.
+Start a loopback-only development server under the shared `/tmp/tcg-tracker-docker-browser.lock` with that flag and the local fixture Supabase URL, then run `APP_URL=http://127.0.0.1:<port> E2E_ARTIFACT_ROOT=/tmp/<owned-directory> node scripts/e2e/lot-load-fixture.mjs`.
+Stop the owned server and release the lock afterward.
 - `lot-line-model.test.ts` covers PSA and sealed line mapping.
 - `sale-lot-model.test.ts` covers source-fact request shape, exact explicit totals, signed expenses, and mixed-lot grouping.
 - `owned-inventory.test.ts` covers batch count keys and mapping.
