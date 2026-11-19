@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, EyeOff, Eye, Hash, ImageOff, Layers, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { selectAll, selectAllByIds } from "@/lib/supabase/select-all";
 import { useTranslation } from "@/lib/i18n";
+import { QueryError } from "./use-query";
 import { useHeader } from "./HeaderContext";
 import { useBuyList } from "./BuyListContext";
 import { type Game, useGame } from "./GameContext";
@@ -133,6 +134,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
     useBuyList();
   const [data, setData] = useState<BuylistEntryRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [selectedCard, setSelectedCard] = useState<BuylistEntryRow | null>(
     null
@@ -144,202 +146,241 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
 
   const buylist = buylists.find((b) => b.buylist_id === buylistId);
 
-  const fetchEntries = useCallback(async () => {
+  const loadAbort = useRef<AbortController | null>(null);
+  const loadLifecycle = useRef({ listId: buylistId, generation: 0, active: false });
+  loadLifecycle.current.listId = buylistId;
+  const fetchEntries = useCallback(async (generation = loadLifecycle.current.generation) => {
+    // A removal may finish after another list has replaced this one. Reject
+    // its refresh before it can cancel the current list's request.
+    const lifecycle = loadLifecycle.current;
+    if (!lifecycle.active || lifecycle.listId !== buylistId || lifecycle.generation !== generation) return;
+    loadAbort.current?.abort();
+    const request = new AbortController();
+    loadAbort.current = request;
     setLoading(true);
-    const supabase = createClient();
+    setError(null);
+    try {
+      const supabase = createClient();
 
-    const results: BuylistEntryRow[] = [];
+      const results: BuylistEntryRow[] = [];
 
-    for (const game of ["pokemon", "mtg"] as Game[]) {
-      const entryTable =
-        game === "pokemon" ? "pokemon_buylist_entries" : "mtg_buylist_entries";
-      const summaryTable =
-        game === "pokemon"
-          ? "pokemon_price_summaries"
-          : "mtg_price_summaries";
-      const cardTable =
-        game === "pokemon"
-          ? "pokemon_card_definitions"
-          : "mtg_card_definitions_v";
+      for (const game of ["pokemon", "mtg"] as Game[]) {
+        const entryTable =
+          game === "pokemon" ? "pokemon_buylist_entries" : "mtg_buylist_entries";
+        const summaryTable =
+          game === "pokemon"
+            ? "pokemon_price_summaries"
+            : "mtg_price_summaries";
+        const cardTable =
+          game === "pokemon"
+            ? "pokemon_card_definitions"
+            : "mtg_card_definitions_v";
 
-      // A buylist has no fixed size, so page the entries rather than let
-      // PostgREST silently cap them at 1000 (a lost entry = a card missing from
-      // the list with no error).
-      const entries = await selectAll<Record<string, unknown>>(
-        () => supabase.from(entryTable).select("entry_id, card_id, psa_grade, target_price_usd").eq("buylist_id", buylistId),
-        ["entry_id"],
-      );
-      if (entries.length === 0) continue;
+        // A buylist has no fixed size, so page the entries rather than let
+        // PostgREST silently cap them at 1000 (a lost entry = a card missing from
+        // the list with no error).
+        const entries = await selectAll<Record<string, unknown>>(
+          () => supabase.from(entryTable).select("entry_id, card_id, psa_grade, target_price_usd").eq("buylist_id", buylistId).abortSignal(request.signal),
+          ["entry_id"],
+        );
+        if (request.signal.aborted) return;
+        if (entries.length === 0) continue;
 
-      const cardIds = entries.map((e) => e.card_id as string);
+        const cardIds = entries.map((e) => e.card_id as string);
 
-      // Summaries fan out (~3 tiers/psa rows per card), so this both chunks the
-      // card_id list and pages each chunk. Truncation here would drop a tier and
-      // silently misprice the entry rather than error. Key: (card_id, tier, psa).
-      const summaries = await selectAllByIds<SummaryRow>(
-        cardIds,
-        ["card_id", "tier", "psa_grade"],
-        (chunk) => buylistSummaryQuery(supabase, game, summaryTable, cardTable, chunk),
-      );
+        // Summaries fan out (~3 tiers/psa rows per card), so this both chunks the
+        // card_id list and pages each chunk. Truncation here would drop a tier and
+        // silently misprice the entry rather than error. Key: (card_id, tier, psa).
+        const summaries = await selectAllByIds<SummaryRow>(
+          cardIds,
+          ["card_id", "tier", "psa_grade"],
+          (chunk) => buylistSummaryQuery(supabase, game, summaryTable, cardTable, chunk).abortSignal(request.signal),
+        );
 
-      const summaryMap = new Map<string, SummaryRow>();
-      for (const s of summaries) {
-        // Key by card_id:psa_grade:tier
-        const key = `${s.card_id}:${s.psa_grade}:${s.tier}`;
-        summaryMap.set(key, s);
-      }
-
-      for (const entry of entries as Record<string, unknown>[]) {
-        const cardId = entry.card_id as string;
-        const psaGrade = (entry.psa_grade as number) ?? 0;
-        const entryId = entry.entry_id as number;
-
-        // Find best matching summary row
-        let summary: SummaryRow | undefined;
-        if (psaGrade > 0) {
-          summary = summaryMap.get(`${cardId}:${psaGrade}:-1`);
-        } else {
-          // Try tier 1, then any available
-          summary = summaryMap.get(`${cardId}:0:1`);
-          if (!summary) {
-            for (const [key, s] of summaryMap) {
-              if (key.startsWith(`${cardId}:0:`)) {
-                summary = s;
-                break;
-              }
-            }
+        if (request.signal.aborted) return;
+        const summaryMap = new Map<string, SummaryRow>();
+        for (const s of summaries) {
+          // Key by card_id:psa_grade:tier
+          const key = `${s.card_id}:${s.psa_grade}:${s.tier}`;
+          summaryMap.set(key, s);
+        }
+        const firstRawSummary = new Map<string, SummaryRow>();
+        // Map overwrites retain the key's original position. Build from its
+        // final values so repeated keys keep the same fallback as before.
+        for (const s of summaryMap.values()) {
+          if (s.psa_grade === 0 && !firstRawSummary.has(String(s.card_id))) {
+            firstRawSummary.set(String(s.card_id), s);
           }
         }
+        const matchedSummaries = entries.map((entry) => {
+          const cardId = String(entry.card_id);
+          const grade = (entry.psa_grade as number) ?? 0;
+          return grade > 0
+            ? summaryMap.get(`${cardId}:${grade}:-1`)
+            : summaryMap.get(`${cardId}:0:1`) ?? firstRawSummary.get(cardId);
+        });
+        const missingIds = entries.flatMap((entry, index) =>
+          matchedSummaries[index]?.[cardTable] ? [] : [entry.card_id as string | number],
+        );
+        const definitions = await selectAllByIds<CardDefinition>(
+          missingIds,
+          ["card_id"],
+          (chunk) => supabase.from(cardTable).select(cardDefCols(game)).in("card_id", chunk).abortSignal(request.signal),
+        );
+        if (request.signal.aborted) return;
+        const definitionsById = new Map(definitions.map((definition) => [String(definition.card_id), definition]));
 
-        const cardDef = summary
-          ? (summary[cardTable] as CardDefinition)
-          : null;
+        for (const [index, entry] of entries.entries()) {
+          const cardId = entry.card_id as string;
+          const psaGrade = (entry.psa_grade as number) ?? 0;
+          const entryId = entry.entry_id as number;
 
-        if (!cardDef) {
-          // Card definition not found via summary, fetch directly
-          const { data: directCard } = await supabase
-            .from(cardTable)
-            .select(cardDefCols(game))
-            .eq("card_id", cardId)
-            .single();
+          const summary = matchedSummaries[index];
+
+          const cardDef = summary
+            ? (summary[cardTable] as CardDefinition)
+            : null;
+
+          if (!cardDef) {
+            const directCard = definitionsById.get(String(cardId));
+
+            results.push({
+              key: `${game}:${entryId}`,
+              card: directCard ?? {
+                card_id: cardId,
+                regional_name: "Unknown",
+                set_code: "",
+                card_number: null,
+                misc_info: null,
+                image_url: null,
+              },
+              psaGrade: psaGrade > 0 ? psaGrade : undefined,
+              prices: { highestBuy: null, lowestSell: null },
+              roi: null,
+              game,
+              entryId,
+              targetPriceUsd: (entry.target_price_usd as number | null) ?? null,
+            });
+            continue;
+          }
 
           results.push({
             key: `${game}:${entryId}`,
-            card: (directCard as unknown as CardDefinition) ?? {
-              card_id: cardId,
-              regional_name: "Unknown",
-              set_code: "",
-              card_number: null,
-              misc_info: null,
-              image_url: null,
-            },
+            card: cardDef,
             psaGrade: psaGrade > 0 ? psaGrade : undefined,
-            prices: { highestBuy: null, lowestSell: null },
-            roi: null,
+            prices: {
+              highestBuy: summary ? summaryToPrice(summary, "buy") : null,
+              lowestSell: summary ? summaryToPrice(summary, "sell") : null,
+            },
+            roi: summary?.net_roi == null ? null : Number(summary.net_roi),
             game,
             entryId,
             targetPriceUsd: (entry.target_price_usd as number | null) ?? null,
           });
-          continue;
         }
-
-        results.push({
-          key: `${game}:${entryId}`,
-          card: cardDef,
-          psaGrade: psaGrade > 0 ? psaGrade : undefined,
-          prices: {
-            highestBuy: summary ? summaryToPrice(summary, "buy") : null,
-            lowestSell: summary ? summaryToPrice(summary, "sell") : null,
-          },
-          roi: summary?.net_roi == null ? null : Number(summary.net_roi),
-          game,
-          entryId,
-          targetPriceUsd: (entry.target_price_usd as number | null) ?? null,
-        });
       }
-    }
 
-    // Sealed products: separate entry table keyed on
-    // product_id + sealed_condition + variant_edition (not card_id + psa_grade).
-    {
-      const entries = await selectAll<Record<string, unknown>>(
-        () => supabase.from("pokemon_sealed_buylist_entries").select("entry_id, product_id, sealed_condition, variant_edition, target_price_usd").eq("buylist_id", buylistId),
-        ["entry_id"],
-      );
-
-      if (entries.length > 0) {
-        const productIds = entries.map((e) => e.product_id as number);
-        // pokemon_sealed_summaries_v exposes product_id as card_id; page on its
-        // grain (card_id, sealed_condition, variant_edition).
-        const summaries = await selectAllByIds<SealedSummaryRow>(
-          productIds,
-          ["card_id", "sealed_condition", "variant_edition"],
-          (chunk) => supabase.from("pokemon_sealed_summaries_v").select("*").in("card_id", chunk),
+      // Sealed products: separate entry table keyed on
+      // product_id + sealed_condition + variant_edition (not card_id + psa_grade).
+      {
+        const entries = await selectAll<Record<string, unknown>>(
+          () => supabase.from("pokemon_sealed_buylist_entries").select("entry_id, product_id, sealed_condition, variant_edition, target_price_usd").eq("buylist_id", buylistId).abortSignal(request.signal),
+          ["entry_id"],
         );
 
-        const summaryMap = new Map<string, SealedSummaryRow>();
-        for (const s of summaries) {
-          summaryMap.set(`${s.card_id}:${s.sealed_condition}:${s.variant_edition}`, s);
-        }
+        if (request.signal.aborted) return;
+        if (entries.length > 0) {
+          const productIds = entries.map((e) => e.product_id as number);
+          // pokemon_sealed_summaries_v exposes product_id as card_id; page on its
+          // grain (card_id, sealed_condition, variant_edition).
+          const summaries = await selectAllByIds<SealedSummaryRow>(
+            productIds,
+            ["card_id", "sealed_condition", "variant_edition"],
+            (chunk) => supabase.from("pokemon_sealed_summaries_v").select("*").in("card_id", chunk).abortSignal(request.signal),
+          );
 
-        for (const entry of entries as Record<string, unknown>[]) {
-          const productId = entry.product_id as number;
-          const cond = entry.sealed_condition as string;
-          const ed = entry.variant_edition as string;
-          const entryId = entry.entry_id as number;
-          const summary = summaryMap.get(`${productId}:${cond}:${ed}`);
-
-          let base: SealedRowData;
-          if (summary) {
-            base = sealedRowToCardRow(summary);
-          } else {
-            // No current summary for that variant (e.g. no listings); fall back
-            // to the product definition with empty prices.
-            const { data: directProduct } = await supabase
-              .from("pokemon_sealed_products")
-              .select(
-                "product_id, name, english_name, set_code, misc_info, image_url, product_type, language"
-              )
-              .eq("product_id", productId)
-              .single();
-            const p = directProduct as Record<string, unknown> | null;
-            base = {
-              key: `${productId}:${cond}:${ed}`,
-              card: {
-                card_id: String(productId),
-                regional_name: (p?.name as string) ?? "Unknown",
-                english_name: (p?.english_name as string | null) ?? null,
-                set_code: (p?.set_code as string) ?? "",
-                card_number: null,
-                misc_info: (p?.misc_info as string | null) ?? null,
-                image_url: (p?.image_url as string | null) ?? null,
-              },
-              prices: { highestBuy: null, lowestSell: null },
-              roi: null,
-              productType: (p?.product_type as string) ?? "other",
-              sealedCondition: cond,
-              variantEdition: ed,
-              language: (p?.language as string) ?? "en",
-            };
+          if (request.signal.aborted) return;
+          const summaryMap = new Map<string, SealedSummaryRow>();
+          for (const s of summaries) {
+            summaryMap.set(`${s.card_id}:${s.sealed_condition}:${s.variant_edition}`, s);
           }
 
-          results.push({
-            ...base,
-            key: `pokemon_sealed:${entryId}`,
-            game: "pokemon_sealed",
-            entryId,
-            targetPriceUsd: (entry.target_price_usd as number | null) ?? null,
-          });
+          const missingIds = entries.flatMap((entry) =>
+            summaryMap.has(`${entry.product_id}:${entry.sealed_condition}:${entry.variant_edition}`)
+              ? [] : [entry.product_id as number],
+          );
+          const definitions = await selectAllByIds<Record<string, unknown>>(
+            missingIds,
+            ["product_id"],
+            (chunk) => supabase.from("pokemon_sealed_products")
+              .select("product_id, name, english_name, set_code, misc_info, image_url, product_type, language")
+              .in("product_id", chunk).abortSignal(request.signal),
+          );
+          if (request.signal.aborted) return;
+          const definitionsById = new Map(definitions.map((definition) => [String(definition.product_id), definition]));
+
+          for (const entry of entries) {
+            const productId = entry.product_id as number;
+            const cond = entry.sealed_condition as string;
+            const ed = entry.variant_edition as string;
+            const entryId = entry.entry_id as number;
+            const summary = summaryMap.get(`${productId}:${cond}:${ed}`);
+
+            let base: SealedRowData;
+            if (summary) {
+              base = sealedRowToCardRow(summary);
+            } else {
+              // No current summary for that variant (e.g. no listings); fall back
+              // to the product definition with empty prices.
+              const p = definitionsById.get(String(productId));
+              base = {
+                key: `${productId}:${cond}:${ed}`,
+                card: {
+                  card_id: String(productId),
+                  regional_name: (p?.name as string) ?? "Unknown",
+                  english_name: (p?.english_name as string | null) ?? null,
+                  set_code: (p?.set_code as string) ?? "",
+                  card_number: null,
+                  misc_info: (p?.misc_info as string | null) ?? null,
+                  image_url: (p?.image_url as string | null) ?? null,
+                },
+                prices: { highestBuy: null, lowestSell: null },
+                roi: null,
+                productType: (p?.product_type as string) ?? "other",
+                sealedCondition: cond,
+                variantEdition: ed,
+                language: (p?.language as string) ?? "en",
+              };
+            }
+
+            results.push({
+              ...base,
+              key: `pokemon_sealed:${entryId}`,
+              game: "pokemon_sealed",
+              entryId,
+              targetPriceUsd: (entry.target_price_usd as number | null) ?? null,
+            });
+          }
         }
       }
-    }
 
-    setData(results);
-    setLoading(false);
+      setData(results);
+    } catch (loadError) {
+      if (!request.signal.aborted) setError(loadError);
+    } finally {
+      if (!request.signal.aborted) setLoading(false);
+    }
   }, [buylistId]);
 
   useEffect(() => {
-    fetchEntries();
+    const generation = ++loadLifecycle.current.generation;
+    loadLifecycle.current.active = true;
+    void fetchEntries(generation);
+    return () => {
+      if (loadLifecycle.current.generation !== generation) return;
+      loadLifecycle.current.active = false;
+      loadAbort.current?.abort();
+    };
   }, [fetchEntries]);
 
   useEffect(() => {
@@ -520,6 +561,12 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
     [t, setActiveGame, compact, language]
   );
 
+  const handleRemoveFromBuylist = selectedCard ? async () => {
+    const generation = loadLifecycle.current.generation;
+    await removeFromBuylist(selectedCard.game, selectedCard.entryId);
+    void fetchEntries(generation);
+  } : undefined;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -544,7 +591,9 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
         )}
       </div>
 
-      {!loading && data.length === 0 ? (
+      {error ? (
+        <QueryError error={error} onRetry={() => void fetchEntries()} />
+      ) : !loading && data.length === 0 ? (
         <div className="flex h-24 items-center justify-center text-muted-foreground">
           {t("buyList.empty")}
         </div>
@@ -575,14 +624,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
           entryId={selectedCard?.entryId}
           targetPriceUsd={selectedCard?.targetPriceUsd}
           onTargetPriceChange={handleTargetPriceChange}
-          onRemoveFromBuylist={
-            selectedCard
-              ? async () => {
-                  await removeFromBuylist(selectedCard.game, selectedCard.entryId);
-                  fetchEntries();
-                }
-              : undefined
-          }
+          onRemoveFromBuylist={handleRemoveFromBuylist}
         />
       ) : (
         <CardDetailModal
@@ -593,14 +635,7 @@ export default function BuyListView({ buylistId }: BuyListViewProps) {
           entryId={selectedCard?.entryId}
           targetPriceUsd={selectedCard?.targetPriceUsd}
           onTargetPriceChange={handleTargetPriceChange}
-          onRemoveFromBuylist={
-            selectedCard
-              ? async () => {
-                  await removeFromBuylist(selectedCard.game, selectedCard.entryId);
-                  fetchEntries();
-                }
-              : undefined
-          }
+          onRemoveFromBuylist={handleRemoveFromBuylist}
         />
       )}
 
