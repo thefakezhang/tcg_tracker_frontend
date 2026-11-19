@@ -40,6 +40,8 @@ describe("parseBuybackOverview", () => {
   });
 
   it("fails closed on a malformed field instead of rendering a guess", () => {
+    // Deliberately corrupt nested wire documents to exercise parser refusals.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const cases: [string, (doc: Record<string, any>) => void][] = [
       ["unknown freshness", (doc) => { doc.sources[0].freshness = "stale"; }],
       ["negative count", (doc) => { doc.sources[0].tweets_24h = -1; }],

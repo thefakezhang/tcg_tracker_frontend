@@ -77,8 +77,10 @@ The script proves the exact file is byte-identical to `origin/main` before pushi
 It refuses a divergent tree and prints the diff.
 `git status` is not sufficient on its own: a worktree can sit on a detached merge commit and be perfectly correct, while a clean checkout of someone else's branch is clean and wrong.
 - Skill `.claude/skills/ship-pr` - the branch -> commit -> PR -> poll -> merge -> cleanup flow.
-- Script `scripts/check.sh` - `tsc --noEmit` + `next build` (node bin auto-detected).
-- Pull requests run the unit tests, TypeScript check, and production build in one Linux CI job; see [docs/continuous_integration.md](docs/continuous_integration.md).
+- Script `scripts/check.sh` - lint, TypeScript, two-worker tests and production build (node bin auto-detected).
+- Pull requests run ESLint, unit tests, the TypeScript check, and production build in one Linux CI job; see [docs/continuous_integration.md](docs/continuous_integration.md).
+`npm run lint` uses the committed flat configuration and declared dependencies without an interactive setup prompt.
+Warnings are reported separately from errors; do not describe a passing command as warning-free unless its output is.
 
 ---
 
@@ -323,7 +325,7 @@ hooks/
   use-mobile.ts           # useIsMobile() - 768px breakpoint
 middleware.ts             # Next.js middleware entry (delegates to supabase/middleware)
 scripts/
-  check.sh                # tsc --noEmit + next build
+  check.sh                # lint + types + two-worker tests + production build
   e2e/                    # Browser acceptance scripts (shared Docker + browser lock, guarded auth)
 ios/FieldLookup/          # Read-only native iPhone card lookup, native tests, and XcodeGen project spec
 supabase/

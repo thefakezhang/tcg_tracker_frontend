@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:e2e:lot-economics": "bash scripts/e2e/run-lot-economics-browser.sh",
     "test:e2e:financial-integrity": "bash scripts/e2e/run-financial-integrity-browser.sh",
@@ -45,11 +45,14 @@
     "write-excel-file": "^4.1.1"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "3.3.7",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^22.13.10",
     "@types/react": "^19.0.12",
     "@types/react-dom": "^19.0.4",
+    "eslint": "9.39.5",
+    "eslint-config-next": "15.5.12",
     "jsdom": "^29.1.1",
     "playwright": "^1.61.1",
     "typescript": "^5.7.3",
