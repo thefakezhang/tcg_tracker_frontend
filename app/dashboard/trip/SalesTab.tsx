@@ -25,7 +25,7 @@ import {
 } from "./sale-lot-model";
 import { parseSaleQuantity } from "./sale-input";
 import ReceiptsDialog from "../Receipts";
-import { useSaleEditDialogs, allocate } from "../SaleEditDialogs";
+import { useSaleEditDialogs } from "../SaleEditDialogs";
 import TcgplayerImportDialog, { type TcgImportEntry } from "./TcgplayerImportDialog";
 import { type MatchableHolding } from "./tcgplayer-collection-match";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -314,7 +314,6 @@ export default function SalesTab({ tripId }: { tripId: number }) {
       setLotOpen(!!draft.lotOpen);
     }
     setDraftRehydrated(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tripId]);
 
   // Persist the lot-sale draft on every change once restored. Empty state clears
@@ -332,10 +331,6 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     else clearSellLotDraft(tripId);
   }, [draftRehydrated, tripId, selected, lotQty, lotGross, lotFees, lotCurrency, lotFx, lotDate, lotAllocationMethod, lotExpenseCategory, lotItemExpenses, lotItemExpenseCategories, lotExplicitGross, lotCustomerId, lotOpen]);
 
-  const customerName = useCallback(
-    (id: number | null) => (id == null ? null : customers.find((c) => c.customer_id === id)?.name ?? null),
-    [customers],
-  );
 
   // A small buyer <select> reused by the sale dialog, the lot dialog, and each
   // history row (retroactive attribution). Matches the sort-select styling.
@@ -488,7 +483,6 @@ export default function SalesTab({ tripId }: { tripId: number }) {
       leg: h.leg,
       qty_on_hand: h.qty_on_hand,
     })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [holdings],
   );
   // The label this sale is filed under, and the default currency. It no longer
@@ -670,14 +664,16 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     const itemExpense: Record<string, string> = {};
     const itemCategory: Record<string, SaleExpenseCategory> = {};
     const hasAllPrices = entries.every((e) => e.priceUsd != null && e.priceUsd > 0);
-    let grossSum = 0;
+    let grossCents = 0;
     for (const e of entries) {
       q[e.holdingKey] = String(e.qty);
       itemExpense[e.holdingKey] = "";
       itemCategory[e.holdingKey] = "shipping";
       const lineGross = (e.priceUsd ?? 0) * e.qty;
       explicitGross[e.holdingKey] = hasAllPrices ? lineGross.toFixed(2) : "";
-      grossSum += lineGross;
+      // Sum the exact displayed line amounts. Weighted prices capped to stock
+      // can contain fractional cents; rounding only the total breaks equality.
+      grossCents += Math.round(Number(explicitGross[e.holdingKey]) * 100);
     }
     setSelected(keys);
     setLotQty(q);
@@ -688,13 +684,14 @@ export default function SalesTab({ tripId }: { tripId: number }) {
     setLotFees("0");
     setLotDate(new Date().toISOString().slice(0, 10));
     setLotCustomerId(null);
-    // Determine currency from the imported holdings' leg (single leg -> that leg).
+    // CSV prices are USD regardless of where the holdings originated. Unpriced
+    // imports keep the manual sale's leg-based currency default for review.
     const legs = new Set(entries.map((e) => holdings.find((h) => holdingKey(h) === e.holdingKey)?.leg).filter(Boolean));
     const oneLeg = legs.size === 1 ? [...legs][0] : null;
-    setLotCurrency(oneLeg === "export" ? "JPY" : "USD");
+    setLotCurrency(hasAllPrices ? "USD" : oneLeg === "export" ? "JPY" : "USD");
     if (hasAllPrices) {
       setLotAllocationMethod("explicit_prices");
-      setLotGross(grossSum.toFixed(2));
+      setLotGross((grossCents / 100).toFixed(2));
     } else {
       setLotAllocationMethod("market_value");
       setLotGross("");
@@ -1194,6 +1191,13 @@ export default function SalesTab({ tripId }: { tripId: number }) {
       </Dialog>
 
       {saleEdit.dialogs}
+
+      <TcgplayerImportDialog
+        open={tcgImportOpen}
+        onOpenChange={setTcgImportOpen}
+        holdings={matchableHoldings}
+        onImport={importFromTcg}
+      />
 
       <Dialog open={lotOpen} onOpenChange={(o) => !o && setLotOpen(false)}>
         <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-xl">

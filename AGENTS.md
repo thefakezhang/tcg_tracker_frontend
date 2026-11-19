@@ -621,6 +621,9 @@ It preserves the full signal row, source flags, displayed market inputs, and an 
 - `LotManager.tsx` records raw or PSA single cards, Pokémon sealed products, and typed acquisition expenses in one draft lot.
 - Finalization preserves direct purchase, acquisition expense, and landed basis separately.
 - `SalesTab.tsx` records one bulk total, one shared expense, optional item expenses, and one allocation method across mixed card and sealed holdings.
+  Its TCGplayer CSV importer opens a preview and stages the existing sale form; only explicit Record sale confirmation invokes the sale RPC.
+  Priced CSV imports retain USD units regardless of the holdings' origin; unpriced imports retain the manual form's defaults.
+  See `docs/sales_csv_import.md` for the contracts and controlled browser verification.
 - Source-fact sale groups use a global history key, while legacy groups remain game-scoped.
 - `owned-inventory.ts` batches quiet `Owned N` counts for the buying surfaces without exposing finance detail there.
 - `InventoryView.tsx` is the sole consignment mutation surface for Pokémon singles, MTG singles, and Pokémon sealed products.
