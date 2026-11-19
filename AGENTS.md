@@ -561,6 +561,9 @@ Never render a lease token, raw log, credential, arbitrary heartbeat failure sum
 ### Card Detail Modal
 
 - `CardDetailModal.tsx` fetches its own listings independently (not from the table data).
+Its listings, holdings, history and source-lot sale controls come from one result scoped to the current card/game/opening/inventory refresh.
+Obsolete per-card reads are cancelled, shared metadata reads continue, and stale responses cannot publish details or record opportunity exposures.
+See [docs/card_detail_loading.md](docs/card_detail_loading.md) for the lifecycle and controlled regression evidence.
 - Displays buy/sell listings in side-by-side tables, separated by Non-PSA/PSA tabs.
 - Has its own tier filter dropdown.
 - Uses `useCurrency()` for price conversion in `ListingTable`.

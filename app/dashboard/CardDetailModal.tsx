@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, DollarSign, ExternalLink, Hash, Layers, LoaderCircle, Plus, Sparkles, Trash2 } from "lucide-react";
 import {
   Dialog,
@@ -206,6 +206,34 @@ interface PurchaseRow {
   tripName: string | null;
 }
 
+interface DetailLoadIdentity {
+  card: CardRowData | null;
+  activeGame: Game;
+  open: boolean;
+  ownedVersion: number;
+}
+
+interface CardDetails {
+  rawListings: MarketListing[];
+  detailTcgMarketUsd: number | null;
+  marketEvidenceCardId: number | null;
+  heldRows: HeldRow[];
+  sourceRows: SourceRow[];
+  observationRows: ObservationRow[];
+  purchaseRows: PurchaseRow[];
+  incomingQty: number;
+  rateMap: Map<string, number>;
+  locationMap: Map<number, LocationInfo>;
+  conditionsMap: Map<number, number>;
+  availableTiers: number[];
+}
+
+const EMPTY_DETAILS: CardDetails = {
+  rawListings: [], detailTcgMarketUsd: null, marketEvidenceCardId: null,
+  heldRows: [], sourceRows: [], observationRows: [], purchaseRows: [], incomingQty: 0,
+  rateMap: new Map(), locationMap: new Map(), conditionsMap: new Map(), availableTiers: [],
+};
+
 interface CardDetailModalProps {
   card: CardRowData | null;
   open: boolean;
@@ -236,14 +264,31 @@ export default function CardDetailModal({
   const { activeGame } = useGame();
   const { buylists, addToBuylist } = useBuyList();
   const [addedTo, setAddedTo] = useState<string | null>(null);
-  const [rawListings, setRawListings] = useState<MarketListing[]>([]);
-  const [detailTcgMarketUsd, setDetailTcgMarketUsd] = useState<number | null>(null);
-  const [marketEvidenceCardId, setMarketEvidenceCardId] = useState<number | null>(null);
-  const [heldRows, setHeldRows] = useState<HeldRow[]>([]);
-  const [sourceRows, setSourceRows] = useState<SourceRow[]>([]);
-  const [observationRows, setObservationRows] = useState<ObservationRow[]>([]);
-  const [purchaseRows, setPurchaseRows] = useState<PurchaseRow[]>([]);
-  const [incomingQty, setIncomingQty] = useState(0);
+  const ownedVersion = useOwnedInventoryVersion();
+  // Every opening, selection and inventory refresh owns a distinct result.
+  // Comparing this identity during render also hides old holdings/sale controls
+  // before the new effect starts, including A -> B -> A and close/reopen.
+  const loadIdentity = useMemo<DetailLoadIdentity>(
+    () => ({ card, activeGame, open, ownedVersion }),
+    [card, activeGame, open, ownedVersion],
+  );
+  // Fence exposures at commit, before passive-effect cleanup can run.
+  const committedLoad = useRef<DetailLoadIdentity | null>(null);
+  useLayoutEffect(() => {
+    committedLoad.current = loadIdentity;
+    return () => { committedLoad.current = null; };
+  }, [loadIdentity]);
+  const [loadedDetails, setLoadedDetails] = useState<{
+    identity: DetailLoadIdentity;
+    data: CardDetails;
+  } | null>(null);
+  const currentDetails = loadedDetails?.identity === loadIdentity ? loadedDetails.data : null;
+  const {
+    rawListings, detailTcgMarketUsd, marketEvidenceCardId, heldRows, sourceRows,
+    observationRows, purchaseRows, incomingQty, rateMap, locationMap,
+    conditionsMap, availableTiers,
+  } = currentDetails ?? EMPTY_DETAILS;
+  const loading = Boolean(card && open && !currentDetails);
   // Per-line quick sale (record_line_sale): the same lot lines this panel
   // already renders. Pinned to the exact line so COGS comes from that line's
   // own landed basis - no trip-tab detour for a single-card sale.
@@ -262,16 +307,7 @@ export default function CardDetailModal({
   const [sellError, setSellError] = useState<string | null>(null);
   const [sellDone, setSellDone] = useState<{ marginUsd: number } | null>(null);
   const { rateFor } = useFxRate();
-  const [rateMap, setRateMap] = useState<Map<string, number>>(new Map());
-  const [locationMap, setLocationMap] = useState<Map<number, LocationInfo>>(
-    new Map()
-  );
-  const [conditionsMap, setConditionsMap] = useState<Map<number, number>>(
-    new Map()
-  );
-  const [availableTiers, setAvailableTiers] = useState<number[]>([]);
   const [selectedTiers, setSelectedTiers] = useState<number[]>([initialTier]);
-  const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"non-psa" | "psa">(initialPsaMode);
   const [targetPrice, setTargetPrice] = useState<string>("");
   const [savingTargetPrice, setSavingTargetPrice] = useState(false);
@@ -283,12 +319,6 @@ export default function CardDetailModal({
   const [askingPrice, setAskingPrice] = useState("");
   const [askingCurrency, setAskingCurrency] = useState<"JPY" | "USD">("JPY");
   const [sightingGrade, setSightingGrade] = useState(0);
-  // Re-fetch holdings when any lot write bumps the owned-inventory store
-  // (e.g. the Bought flow adds a draft-lot line while this modal is open).
-  const ownedVersion = useOwnedInventoryVersion();
-  // Bumped when a targeted refresh this modal requested has finished, which
-  // re-runs the listings effect below so the panel shows the prices that just
-  // landed rather than the ones it opened with.
 
   const defaultSightingGrade = useCallback((tab: "non-psa" | "psa") => {
     const rowGrade = Number(card?.psaGrade ?? 0);
@@ -335,12 +365,11 @@ export default function CardDetailModal({
   }, [open, initialPsaMode, initialTier, targetPriceUsd, defaultSightingGrade]);
 
   useEffect(() => {
+    const { card, activeGame, open } = loadIdentity;
     if (!card || !open) return;
 
     let cancelled = false;
-    setLoading(true);
-    setDetailTcgMarketUsd(null);
-    setMarketEvidenceCardId(null);
+    const controller = new AbortController();
 
     async function fetchListings() {
       const supabase = createClient();
@@ -349,7 +378,8 @@ export default function CardDetailModal({
           supabase
             .from(LISTINGS_TABLE_MAP[activeGame])
             .select(listingCols(activeGame))
-            .eq("card_id", card!.card.card_id),
+            .eq("card_id", card!.card.card_id)
+            .abortSignal(controller.signal),
           fetchRateMap(supabase),
           fetchLocationMap(supabase),
           fetchConditionsCache(supabase),
@@ -359,12 +389,14 @@ export default function CardDetailModal({
             .from("inventory_holdings_v")
             .select("condition_id, psa_grade, qty_on_hand")
             .eq("game", activeGame)
-            .eq("card_id", card!.card.card_id),
+            .eq("card_id", card!.card.card_id)
+            .abortSignal(controller.signal),
           supabase
             .from("owned_inventory_counts_v")
             .select("qty_incoming")
             .eq("game", activeGame)
-            .eq("card_id", card!.card.card_id),
+            .eq("card_id", card!.card.card_id)
+            .abortSignal(controller.signal),
           // F2: the source lots the held copies came from - one card instance,
           // broken out by where it was bought + that lot's unit cost. Finalized
           // on-hand only (qty_remaining > 0 is set at finalize).
@@ -372,6 +404,7 @@ export default function CardDetailModal({
             .from(activeGame === "mtg" ? "mtg_lot_lines" : "pokemon_lot_lines")
             .select("line_id, quantity, qty_remaining, consigned_qty, allocated_cost_usd, acquisition_lots(shop_label, acquired_at, leg, trips(name))")
             .eq("card_id", card!.card.card_id)
+            .abortSignal(controller.signal)
             .gt("qty_remaining", 0),
           // Observations the operator logged for this card (Pokemon-only deal
           // subsystem), so the write-only sighting form now has a history above it.
@@ -380,6 +413,7 @@ export default function CardDetailModal({
                 .from("trip_observations_v")
                 .select("sighting_id, psa_grade, store_name, observed_price, currency, price_usd, observed_at, trip_name")
                 .eq("card_id", card!.card.card_id)
+                .abortSignal(controller.signal)
                 .order("observed_at", { ascending: false })
             : Promise.resolve({ data: [] as ObservationRow[] }),
           // Every finalized purchase of this card (incl. already-sold) is a real
@@ -389,6 +423,7 @@ export default function CardDetailModal({
             .from(activeGame === "mtg" ? "mtg_lot_lines" : "pokemon_lot_lines")
             .select("line_id, quantity, direct_purchase_cost_usd, acquisition_lots(shop_label, acquired_at, leg, trips(name))")
             .eq("card_id", card!.card.card_id)
+            .abortSignal(controller.signal)
             .gt("direct_purchase_cost_usd", 0),
           // What the on-hand copies could return if sold today, per source lot
           // line - the same figures the lot and leg rollups are built from.
@@ -396,17 +431,26 @@ export default function CardDetailModal({
             .from("inventory_theoretical_roi_v")
             .select("lot_line_id, qty_on_hand, on_hand_cost_usd, exit_unit_usd, net_pct, exit_net_usd, theoretical_profit_usd, theoretical_roi_pct, days_held, below_cost, priced")
             .eq("game", activeGame)
-            .eq("card_id", card!.card.card_id),
+            .eq("card_id", card!.card.card_id)
+            .abortSignal(controller.signal),
           activeGame === "pokemon"
             ? supabase
                 .from("pokemon_tcgplayer_market")
                 .select("market_usd")
                 .eq("card_id", card!.card.card_id)
+                .abortSignal(controller.signal)
                 .maybeSingle()
             : Promise.resolve({ data: null, error: null }),
         ]);
 
-      if (cancelled) return;
+      if (cancelled || committedLoad.current !== loadIdentity) return;
+      // Shared session metadata must finish independently of this card's owned
+      // reads. Resolve it before publishing any part of the current result.
+      let resolvedLocations = locations;
+      if ((raw ?? []).some((listing) => !locations.has(listing.location_id))) {
+        resolvedLocations = await refreshLocationMap(supabase);
+      }
+      if (cancelled || committedLoad.current !== loadIdentity) return;
 
       const listings: MarketListing[] = (raw ?? []).map(
         (l: Record<string, unknown>) => ({
@@ -426,15 +470,7 @@ export default function CardDetailModal({
         })
       );
 
-      setRawListings(listings);
       const tcgValue = Number((tcgplayer.data as { market_usd?: number | string } | null)?.market_usd);
-      setDetailTcgMarketUsd(Number.isFinite(tcgValue) && tcgValue > 0 ? tcgValue : null);
-      setMarketEvidenceCardId(
-        activeGame === "pokemon" && !rawError && !tcgplayer.error
-          ? Number(card!.card.card_id)
-          : null,
-      );
-      setHeldRows((held.data as HeldRow[] | null) ?? []);
       const roiByLineId = new Map<number, { exit_gross_usd: number | null; exit_net_usd: number | null; net_pct: number | null; theoretical_roi_pct: number | null; below_cost: boolean | null; priced: boolean }>();
       for (const r of ((roi.data as Record<string, unknown>[] | null) ?? [])) {
         const unit = r.exit_unit_usd == null ? null : Number(r.exit_unit_usd);
@@ -447,62 +483,61 @@ export default function CardDetailModal({
           priced: r.priced === true,
         });
       }
-      setSourceRows(
-        (((srcLots.data as Record<string, unknown>[] | null) ?? []).map((r) => {
-          const lot = r.acquisition_lots as { shop_label: string | null; acquired_at: string | null; leg: string; trips: { name: string | null } | null } | null;
-          const qty = Number(r.quantity) || 1;
-          const qtyOnHand = Number(r.qty_remaining) || 0;
-          const hit = roiByLineId.get(Number(r.line_id));
-          return {
-            lineId: Number(r.line_id),
-            shopLabel: lot?.shop_label ?? null,
-            acquiredAt: lot?.acquired_at ?? null,
-            leg: lot?.leg ?? "",
-            tripName: lot?.trips?.name ?? null,
-            qtyOnHand,
-            unitCostUsd: Number(r.allocated_cost_usd) / qty,
-            consigned: Math.max(0, Math.min(Number(r.consigned_qty) || 0, qtyOnHand)),
-            exitGrossUsd: hit?.priced ? hit.exit_gross_usd : null,
-            exitNetUsd: hit?.priced ? hit.exit_net_usd : null,
-            netPct: hit?.priced ? hit.net_pct : null,
-            roiPct: hit?.priced ? hit.theoretical_roi_pct : null,
-            belowCost: hit?.priced === true && hit.below_cost === true,
-          } satisfies SourceRow;
-        })).sort((a, b) => (a.acquiredAt ?? "").localeCompare(b.acquiredAt ?? "")),
-      );
-      setObservationRows((obs.data as ObservationRow[] | null) ?? []);
-      setPurchaseRows(
-        (((purch.data as Record<string, unknown>[] | null) ?? []).map((r) => {
-          const lot = r.acquisition_lots as { shop_label: string | null; acquired_at: string | null; leg: string; trips: { name: string | null } | null } | null;
-          const qty = Number(r.quantity) || 1;
-          return {
-            lineId: Number(r.line_id),
-            unitUsd: Number(r.direct_purchase_cost_usd) / qty,
-            shopLabel: lot?.shop_label ?? null,
-            acquiredAt: lot?.acquired_at ?? null,
-            leg: lot?.leg ?? "",
-            tripName: lot?.trips?.name ?? null,
-          } satisfies PurchaseRow;
-        })).sort((a, b) => (b.acquiredAt ?? "").localeCompare(a.acquiredAt ?? "")),
-      );
-      setIncomingQty(
-        ((ownedCounts.data as { qty_incoming: number }[] | null) ?? [])
-          .reduce((sum, row) => sum + Number(row.qty_incoming ?? 0), 0),
-      );
-      setRateMap(rates);
-      // A listing pointing at a location the session cache has never seen
-      // means the cache is stale (a source was added mid-session): refresh
-      // once so its rows are labeled instead of silently blank.
-      let resolvedLocations = locations;
-      if ((raw ?? []).some((l) => !locations.has(l.location_id))) {
-        resolvedLocations = await refreshLocationMap(supabase);
-      }
-      setLocationMap(resolvedLocations);
-      setConditionsMap(conditionsData.map);
-      setAvailableTiers(conditionsData.tiers);
-      setLoading(false);
+      const sourceRows = (((srcLots.data as Record<string, unknown>[] | null) ?? []).map((r) => {
+        const lot = r.acquisition_lots as { shop_label: string | null; acquired_at: string | null; leg: string; trips: { name: string | null } | null } | null;
+        const qty = Number(r.quantity) || 1;
+        const qtyOnHand = Number(r.qty_remaining) || 0;
+        const hit = roiByLineId.get(Number(r.line_id));
+        return {
+          lineId: Number(r.line_id),
+          shopLabel: lot?.shop_label ?? null,
+          acquiredAt: lot?.acquired_at ?? null,
+          leg: lot?.leg ?? "",
+          tripName: lot?.trips?.name ?? null,
+          qtyOnHand,
+          unitCostUsd: Number(r.allocated_cost_usd) / qty,
+          consigned: Math.max(0, Math.min(Number(r.consigned_qty) || 0, qtyOnHand)),
+          exitGrossUsd: hit?.priced ? hit.exit_gross_usd : null,
+          exitNetUsd: hit?.priced ? hit.exit_net_usd : null,
+          netPct: hit?.priced ? hit.net_pct : null,
+          roiPct: hit?.priced ? hit.theoretical_roi_pct : null,
+          belowCost: hit?.priced === true && hit.below_cost === true,
+        } satisfies SourceRow;
+      })).sort((a, b) => (a.acquiredAt ?? "").localeCompare(b.acquiredAt ?? ""));
+      const purchaseRows = (((purch.data as Record<string, unknown>[] | null) ?? []).map((r) => {
+        const lot = r.acquisition_lots as { shop_label: string | null; acquired_at: string | null; leg: string; trips: { name: string | null } | null } | null;
+        const qty = Number(r.quantity) || 1;
+        return {
+          lineId: Number(r.line_id),
+          unitUsd: Number(r.direct_purchase_cost_usd) / qty,
+          shopLabel: lot?.shop_label ?? null,
+          acquiredAt: lot?.acquired_at ?? null,
+          leg: lot?.leg ?? "",
+          tripName: lot?.trips?.name ?? null,
+        } satisfies PurchaseRow;
+      })).sort((a, b) => (b.acquiredAt ?? "").localeCompare(a.acquiredAt ?? ""));
+      const incomingQty = ((ownedCounts.data as { qty_incoming: number }[] | null) ?? [])
+        .reduce((sum, row) => sum + Number(row.qty_incoming ?? 0), 0);
+      setLoadedDetails({
+        identity: loadIdentity,
+        data: {
+          rawListings: listings,
+          detailTcgMarketUsd: Number.isFinite(tcgValue) && tcgValue > 0 ? tcgValue : null,
+          marketEvidenceCardId: activeGame === "pokemon" && !rawError && !tcgplayer.error
+            ? Number(card!.card.card_id) : null,
+          heldRows: (held.data as HeldRow[] | null) ?? [],
+          sourceRows,
+          observationRows: (obs.data as ObservationRow[] | null) ?? [],
+          purchaseRows,
+          incomingQty,
+          rateMap: rates,
+          locationMap: resolvedLocations,
+          conditionsMap: conditionsData.map,
+          availableTiers: conditionsData.tiers,
+        },
+      });
       if (activeGame === "pokemon") {
-        void recordOpportunityExposures(detailOpportunityPayloads(card!, listings, locations)).catch((exposureError) => {
+        void recordOpportunityExposures(detailOpportunityPayloads(card!, listings, resolvedLocations)).catch((exposureError) => {
           console.error("Failed to record opened listing opportunities:", exposureError);
         });
       }
@@ -511,9 +546,9 @@ export default function CardDetailModal({
     fetchListings();
     return () => {
       cancelled = true;
+      controller.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, open, activeGame, ownedVersion]);
+  }, [loadIdentity]);
 
   const { buyNonPsa, sellNonPsa, buyPsa, sellPsa } = useMemo(() => {
     const normalize = (l: MarketListing) =>
@@ -580,7 +615,7 @@ export default function CardDetailModal({
       buyPsa: buyPsaSorted.map(toDetail),
       sellPsa: sellPsaSorted.map(toDetail),
     };
-  }, [rawListings, rateMap, locationMap, conditionsMap, selectedTiers]);
+  }, [rawListings, rateMap, locationMap, conditionsMap, selectedTiers, card]);
 
   const rawMarketEvidence = useMemo<MarketEvidence | null>(() => {
     if (
@@ -718,7 +753,9 @@ export default function CardDetailModal({
                 </div>
               )}
               <div className="mt-1 text-xs">
-                {ownedSummary.total + incomingQty > 0 ? (
+                {loading ? (
+                  <Skeleton className="h-4 w-24" />
+                ) : ownedSummary.total + incomingQty > 0 ? (
                   <span className="text-muted-foreground">
                     {t("inventory.owned")} {ownedSummary.total}
                     {ownedSummary.breakdown ? ` (${ownedSummary.breakdown})` : ""}
