@@ -150,7 +150,8 @@ describe("buy-list target prices with colliding entry IDs", () => {
     expect(mock.writes).toEqual([{ table: `${game}_buylist_entries`, patch: { target_price_usd: value }, filters: [["entry_id", 7]] }]);
     await waitFor(() => expect(prices()).toEqual(expected(game, value)));
     expect(games.map((candidate) => mock.tables[`${candidate}_buylist_entries`][0].target_price_usd)).toEqual(expected(game, value));
-    expect(input().value).toBe(value == null ? "" : String(value));
+    // The modal synchronizes its input in an effect after the row update.
+    await waitFor(() => expect(input().value).toBe(value == null ? "" : String(value)));
   });
 
   it.each(games)("keeps all rows unchanged when the %s save is rejected", async (game) => {
