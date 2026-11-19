@@ -5,13 +5,23 @@ How `lib/supabase/client.ts` is built, and why it does not use the stock default
 ## Architecture
 
 Every client component reaches Supabase through `createClient()` in `lib/supabase/client.ts`.
-48 modules import it, and it memoizes a single `createBrowserClient` instance for the whole tab.
+It memoizes a single `createBrowserClient` instance for the whole tab.
 That memo is load-bearing: a fresh client per call would create several GoTrue instances under one storage key, each running its own auto-refresh, racing to spend the same single-use refresh token.
 
 Two behaviours are overridden.
 
 **`global.fetch` is `fetchWithRetry`.**
-It caps every request at `REQUEST_TIMEOUT_MS` (15s) and retries GETs three times, so a connection that is open but silent (sleep/wake, network switch) fails instead of hanging forever.
+Each fetch attempt has the existing `REQUEST_TIMEOUT_MS` (15s) response deadline, and GET transport failures receive at most three attempts with 250ms and 500ms backoffs.
+HTTP error responses and mutations are not automatically retried.
+Caller cancellation stops an active fetch or its retry backoff promptly, preserving the caller's abort reason instead of waiting through unnecessary attempts.
+
+Where available, native `AbortSignal.any` combines the caller signal with the per-attempt timeout controller without retaining JavaScript forwarding listeners on a long-lived caller signal.
+Cancellation continues to reach a response body after fetch has returned its headers.
+Older browsers retain the existing forwarding listener on a successful response until the caller aborts, because fetch does not expose a generic body-completion hook and removing the listener at headers would break streaming cancellation.
+Failed attempts release their forwarding listeners, and retry waits always release their timers and listeners.
+This fallback preserves the existing browser compatibility range; it does not provide the native path's completed-response listener improvement.
+Cancellation does not require `throwIfAborted`; signals without `reason` receive a standard `AbortError`, while explicit reasons (including `null`) are preserved.
+The response deadline and body-error retry policy remain unchanged.
 
 **`auth.lock` is `resilientAuthLock`.**
 It replaces auth-js's `navigatorLock`, for the reason below.
@@ -80,3 +90,16 @@ Two separate browsers with three tabs each serve 60/60 with no token-reuse rejec
 - Coordinating auth across different browsers or profiles. They hold separate sessions; there is nothing to coordinate.
 - Coordinating with the server-side refresh in `lib/supabase/middleware.ts`. A browser Web Lock cannot reach it. GoTrue's refresh-token reuse interval covers that overlap, and concurrent middleware invocations were measured resolving through the grace path rather than rejecting.
 - Reducing how many queries a dashboard issues on mount. Fewer would ease contention, but the lock must be correct regardless.
+
+## Request lifecycle regression coverage
+
+`lib/supabase/client-requests.test.ts` drives the real configured Supabase client's query and RPC transport.
+It covers repeated successful reads, cancellation before a request, during a fetch and during backoff, both native and compatibility composition paths, cancellation after headers while the body is streaming, failed-attempt cleanup, the existing retry schedule, bounded hung fetches and the single-attempt mutation contract.
+The original implementation retained ten caller listeners after ten completed reads and failed the three prompt-cancellation cases.
+The existing authentication-lock tests remain separate and unchanged.
+
+A local Chromium probe also bundles this client and drives actual HTTP reads against a loopback fixture, with all other origins blocked.
+The original active/backoff cancellations made three fetch calls and settled in roughly 706-752ms; the corrected cases made one call and settled in under 1ms in that fixture.
+Ten completed reads retained ten managed caller listeners originally and zero with native composition afterward.
+All eight corrected native/fallback scenarios passed, including cancellation during a delayed response body.
+These are controlled transport measurements, not production network latency estimates; the legacy successful-response listener limitation remains as described above.
