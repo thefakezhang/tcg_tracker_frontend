@@ -96,6 +96,11 @@ try {
     assert(await archetypes.locator("tbody tr").count() === 70, "Show all should list every Modern archetype");
     const firstCard = (await page.getByTestId("mtg-meta-card-row").first().textContent()) ?? "";
     assert(firstCard.startsWith("Arid Mesa"), `first Modern card reads ${firstCard}`);
+    // The price is the lowest near-mint US ask (backend 000666). The median it
+    // replaced showed Force of Negation at $1,530.38 off two RFIN J1 rows.
+    const negation = page.getByTestId("mtg-meta-card-row").filter({ hasText: "Force of Negation" });
+    const negationText = (await negation.first().textContent()) ?? "";
+    assert(negationText.includes("$35.28"), `Force of Negation is priced ${negationText}, want the $35.28 lowest US ask`);
     await assertNoOverflow(page, `${viewport.name} Modern`);
     await page.screenshot({ path: `${artifactRoot}/${viewport.name}-modern.png`, fullPage: true });
 

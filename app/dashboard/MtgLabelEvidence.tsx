@@ -7,6 +7,8 @@ import { formatDate } from "@/lib/dates";
 import {
   EDHREC_TAG_DIMENSIONS,
   FORMAT_PLAY_CODE,
+  type FormatPlayTrend,
+  type MtgFormatCode,
   FORMAT_PLAY_DIMENSIONS,
   formatPlayTrend,
   mtgTagColumn,
@@ -75,9 +77,6 @@ export function MtgLabelEvidence({
     ...FORMAT_PLAY_DIMENSIONS.map((dimension) => {
       const play = card.format_play?.[FORMAT_PLAY_CODE[dimension]];
       const trend = formatPlayTrend(play);
-      const recent = trend === null ? null : (
-        play?.main_pct != null ? play.main_pct_2w ?? 0 : play?.side_pct_2w ?? 0
-      );
       return {
         key: `format-${FORMAT_PLAY_CODE[dimension]}`,
         active: card[mtgTagColumn(dimension)] === true,
@@ -85,11 +84,8 @@ export function MtgLabelEvidence({
         reason: play?.reason,
         url: play?.url,
         asOf: play?.as_of,
-        trend,
-        trendText: trend === null ? null : t(
-          trend === "up" ? "mtgLabel.trendUp" : "mtgLabel.trendDown",
-          { recent: String(recent) },
-        ),
+        trend: trend?.direction ?? null,
+        trendText: trendText(t, trend, FORMAT_PLAY_CODE[dimension]),
       };
     }),
   ].filter((group) => group.active) as EvidenceGroup[];
@@ -173,6 +169,20 @@ export function MtgLabelEvidence({
   );
 }
 
+// The sentence behind a trend arrow, naming the board that moved. A cEDH
+// "sideboard" is the command zone, so it reads as commanders there.
+function trendText(
+  t: ReturnType<typeof useTranslation>["t"],
+  trend: FormatPlayTrend | null,
+  code: MtgFormatCode,
+): string | null {
+  if (!trend) return null;
+  if (trend.recent === null) return t("mtgLabel.trendGone");
+  const board = trend.board === "main" ? "Main" : code === "cEDH" ? "Commander" : "Side";
+  const key = `mtgLabel.trend${trend.direction === "up" ? "Up" : "Down"}${board}` as const;
+  return t(key, { recent: String(trend.recent) });
+}
+
 interface EvidenceGroup {
   key: string;
   active: boolean;
@@ -214,13 +224,13 @@ export function MtgFormatBadges({
       {active.map((dimension) => {
         const code = FORMAT_PLAY_CODE[dimension];
         const play = card.format_play?.[code];
-        const trend = formatPlayTrend(play);
+        const trendDetail = formatPlayTrend(play);
+        const trend = trendDetail?.direction ?? null;
         const asOf = formatDate(play?.as_of, language);
-        const recent = play?.main_pct != null ? play.main_pct_2w ?? 0 : play?.side_pct_2w ?? 0;
         const title = [
           `${t(`mtgLabel.${dimension}`)}: ${play?.reason || t("mtgLabel.evidenceUnavailable")}`,
           asOf ? `(${t("mtgLabel.asOf", { date: asOf })})` : "",
-          trend ? t(trend === "up" ? "mtgLabel.trendUp" : "mtgLabel.trendDown", { recent: String(recent) }) : "",
+          trendText(t, trendDetail, code) ?? "",
         ].filter(Boolean).join(" ");
         const badge = (
           <Badge variant="outline" className="h-auto gap-0.5 px-1 py-px text-[10px]">

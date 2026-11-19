@@ -58,15 +58,20 @@ export interface MetaCardRow {
   total_decks_2m: number;
   observed_at: string;
   in_catalog: boolean | null;
-  median_sell_usd: number | null;
-  priced_printings: number | null;
+  // The cheapest near-mint ask on a US marketplace across every printing
+  // (backend 000666), the number of printings that have one, and where it is.
+  // Replaces the deprecated median_sell_usd, which only some printings
+  // reached and which showed Force of Negation at $1,530.
+  us_low_ask_usd: number | null;
+  us_ask_printings: number | null;
+  us_low_ask_location: string | null;
   evidence_url: string;
 }
 
 export const META_ARCHETYPE_COLS =
   "format_code, format_name, archetype_id, archetype_name, macro_class, rank, share_2m, share_2w, share_2m_prior, trend, decks_2m, decks_2w, observed_at, prior_observed_at, evidence_url";
 export const META_CARD_COLS =
-  "format_code, format_name, board, card_name, catalog_key, rank_2m, share_2m, decks_2m, avg_2m, rank_2w, share_2w, avg_2w, share_2m_prior, total_decks_2m, observed_at, in_catalog, median_sell_usd, priced_printings, evidence_url";
+  "format_code, format_name, board, card_name, catalog_key, rank_2m, share_2m, decks_2m, avg_2m, rank_2w, share_2w, avg_2w, share_2m_prior, total_decks_2m, observed_at, in_catalog, us_low_ask_usd, us_ask_printings, us_low_ask_location, evidence_url";
 
 export type MetaDirection = "up" | "down" | "new" | null;
 
@@ -105,7 +110,7 @@ export function filterMetaCards(
   });
   const key = (row: MetaCardRow): number => {
     if (opts.sort === "recent") return row.share_2w ?? -1;
-    if (opts.sort === "price") return row.median_sell_usd ?? -1;
+    if (opts.sort === "price") return row.us_low_ask_usd ?? -1;
     return row.share_2m ?? -1;
   };
   // Ties break on name so the order is stable across refetches.

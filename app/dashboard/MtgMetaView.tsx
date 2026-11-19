@@ -34,8 +34,9 @@ import { QueryError, useSupabaseQuery } from "./use-query";
 //
 // Every share is mtgtop8's own, over its "Last 2 Months" period, with "Last 2
 // Weeks" beside it for direction and the previous weekly crawl for the change
-// since last week. The NA median is the same raw near-mint anchor the
-// Commander demand view uses, over every printing the catalog prices.
+// since last week. The price is the cheapest near-mint ask on a US
+// marketplace across every printing (backend 000666): what a playable copy
+// costs, and an ask aggregates at its minimum (price_anchor_policy.md).
 export default function MtgMetaView() {
   const { t, language } = useTranslation();
   const [format, setFormat] = useState<MtgFormatCode>("MO");
@@ -241,9 +242,9 @@ export default function MtgMetaView() {
                         <WeekChange value={weekChange(c.share_2m, c.share_2m_prior)} />
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {c.median_sell_usd == null ? <span className="text-muted-foreground">-</span> : (
-                          <span title={t("mtgMeta.priceTitle", { n: String(c.priced_printings ?? 0) })}>
-                            ${c.median_sell_usd.toFixed(2)}
+                        {c.us_low_ask_usd == null ? <span className="text-muted-foreground">-</span> : (
+                          <span title={t("mtgMeta.priceTitle", { n: String(c.us_ask_printings ?? 0), location: c.us_low_ask_location ?? "" })}>
+                            ${c.us_low_ask_usd.toFixed(2)}
                           </span>
                         )}
                       </TableCell>
