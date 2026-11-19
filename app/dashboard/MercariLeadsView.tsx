@@ -222,6 +222,9 @@ export type MercariLead = {
   slab_grading_service_level: string | null;
   slab_grading_business_days_min: number | null;
   slab_grading_business_days_max: number | null;
+  // When a status re-check last read the listing still on sale, newer than
+  // observed_at (backend 000658, #2774); null when none has since.
+  on_sale_confirmed_at: string | null;
   // The group a feed row stands for; null on a group member read in full.
   group: MercariLeadGroup | null;
 };
@@ -634,6 +637,14 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
     const slabLevel = optionalString(row.slab_grading_service_level, "slab_grading_service_level");
     const slabBusinessMin = optionalInteger(row.slab_grading_business_days_min, "slab_grading_business_days_min");
     const slabBusinessMax = optionalInteger(row.slab_grading_business_days_max, "slab_grading_business_days_max");
+    const onSaleConfirmedAt = optionalTimestamp(row.on_sale_confirmed_at, "on_sale_confirmed_at");
+    // A confirmation is a re-check since the scan saw the listing, so it is
+    // newer than observed_at, and only a fresh lead is re-checked.
+    if (onSaleConfirmedAt !== null
+      && (sourceKind !== "lead_scan"
+        || Date.parse(onSaleConfirmedAt) <= Date.parse(requiredTimestamp(row.observed_at, "observed_at")))) {
+      throw invalid("on-sale confirmation", index);
+    }
     // A service level comes whole, with its price and a turnaround, or not
     // at all (000653).
     if (slabLevel === null
@@ -756,6 +767,7 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       slab_grading_service_level: slabLevel,
       slab_grading_business_days_min: slabBusinessMin,
       slab_grading_business_days_max: slabBusinessMax,
+      on_sale_confirmed_at: onSaleConfirmedAt,
       group: parseGroup(row, externalItemId, index),
     };
   });
@@ -1786,6 +1798,11 @@ function LeadCard({
         </CardTitle>
         <CardDescription className="break-words">
           {t("mercariLeads.observed")}: {dateTime(lead.observed_at)} ({t("mercariLeads.observedAgo", { age: age(lead.observed_age_hours) })})
+          {lead.on_sale_confirmed_at !== null && (
+            <span className="block" data-testid="mercari-lead-on-sale-confirmed">
+              {t("mercariLeads.onSaleConfirmed")}: {dateTime(lead.on_sale_confirmed_at)} ({t("mercariLeads.observedAgo", { age: age(hoursAtRead(lead, lead.on_sale_confirmed_at)) })})
+            </span>
+          )}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

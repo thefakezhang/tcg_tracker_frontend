@@ -114,6 +114,7 @@ const BASE: MercariLead = {
   slab_grading_service_level: "Priority",
   slab_grading_business_days_min: 50,
   slab_grading_business_days_max: 60,
+  on_sale_confirmed_at: null,
   group: { rows: 1, listings: 1, askMin: 109000, askMax: 109000, memberIds: ["m10425422029"] },
 };
 
@@ -154,6 +155,7 @@ const UNVERIFIED: MercariLead = {
   slab_grading_service_level: "Standard",
   slab_grading_business_days_min: 70,
   slab_grading_business_days_max: 80,
+  on_sale_confirmed_at: null,
   slab_selling_cost_usd: 93.66,
   slab_net_value_usd: 420.35,
   slab_play_profit_usd: 395.32,
@@ -200,6 +202,7 @@ const LOSS: MercariLead = {
   slab_grading_service_level: "Value",
   slab_grading_business_days_min: 90,
   slab_grading_business_days_max: 100,
+  on_sale_confirmed_at: null,
   slab_selling_cost_usd: 11.79,
   slab_net_value_usd: -21.78,
   slab_play_profit_usd: -31.17,
@@ -250,6 +253,7 @@ const KEPT: MercariLead = {
   slab_grading_service_level: "Value",
   slab_grading_business_days_min: 90,
   slab_grading_business_days_max: 100,
+  on_sale_confirmed_at: null,
   slab_selling_cost_usd: 16.81,
   slab_net_value_usd: 5.2,
   slab_play_profit_usd: 2.07,

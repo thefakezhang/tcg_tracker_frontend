@@ -509,6 +509,7 @@ const en = {
   "mercariLeads.ageDays": "{days} d",
   "mercariLeads.observed": "Last seen (JST)",
   "mercariLeads.observedAgo": "{age} ago",
+  "mercariLeads.onSaleConfirmed": "Still on sale at a re-check (JST)",
   "mercariLeads.psaGradeUnread": "PSA, grade not read",
   "mercariLeads.unresolved": "Not in the cloud catalog; the identity is the acquisition host's.",
   "mercariLeads.photoCheckRequested": "Photo check requested",
