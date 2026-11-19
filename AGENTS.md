@@ -367,7 +367,8 @@ Each context follows the same pattern:
 
 ### Data Fetching (`use-card-data.ts`)
 
-- `useCardData()` is the main hook. It queries pre-computed summary read models with server-side pagination, sorting, and filtering. Pokémon uses `pokemon_price_summaries_browser_v`, which keeps counterpart-only English rows internal unless the exact summary grain has a positive JP bid. MTG uses `mtg_price_summaries`. Both join card definitions via the `!inner` foreign key.
+- `useCardData()` is the main hook. It queries pre-computed summary read models with server-side pagination, sorting, and filtering. Pokémon uses `pokemon_price_summaries_browser_v`, which keeps counterpart-only English rows internal unless the exact summary grain has a positive JP bid. MTG browses `mtg_price_summaries_browser_v` (backend 000660), a flat join of the summaries and the card fields, and rebuilds the embedded `mtg_card_definitions_v` object client-side (`mtgBrowserRowToSummaryRow`); a source-filtered MTG browse and the Pokémon views still join card definitions via the `!inner` embed.
+  **Why MTG is flat.** `mtg_card_definitions_v` is a view, so its embed goes through a computed relationship that PostgREST renders as a LATERAL subquery with its own LIMIT. That LIMIT stops Postgres applying the page's ORDER BY ... LIMIT before the join, so it joined and JSON-encoded every tier-1 summary row (261k) to return 50: 7-8 s against the authenticated role's 8 s `statement_timeout`, a 500 whenever it ran long (2026-11-19). The flat view sorts first and joins only the page, 11-158 ms. Do not move the MTG browse back onto the embed, and keep a new card field on both the view and `MTG_CARD_DEF_COLS`.
 - Filters: game, PSA mode, name search, card number, set (by NAME or code), single selected tier.
 The set box resolves typed text through `pokemon_set_search_v` (our set names plus artofpkm's JP/EN names) to the codes to filter on, falling back to a raw code ilike; codes are identifiers nobody should have to memorise ("vending" finds the vending sheets).
 - Source availability is an exact server-side presence gate backed by `*_price_summaries_by_source_v`; source choices come from `card_browser_source_options_v` and keep buylist evidence separate from for-sale evidence.
@@ -862,15 +863,15 @@ Adding a label is one entry in `TAG_COLUMNS`, one in `MTG_LABEL_COLS`, and a `ca
 
 #### Both read paths, or the label silently disappears
 
-MTG cards reach the browser through two surfaces that share no SQL:
+MTG cards reach the browser through surfaces that share no SQL:
 
 | path | surface |
 |---|---|
-| browse | `mtg_card_definitions_v`, embedded by PostgREST per summary row |
+| browse | `mtg_price_summaries_browser_v`, a flat join (backend 000660); a source-filtered browse still embeds `mtg_card_definitions_v` per summary row |
 | search | `search_mtg_price_summaries`, which bypasses the view and builds its own `card` jsonb |
 
 A column added to one and not the other **does not fail**. The RPC's `jsonb_build_object` is a hand-kept list, so a missing key reads as null: the label renders on an unfiltered browse and vanishes the instant the user types a search term, with no error anywhere.
-`MTG_LABEL_COLS` in `use-card-data.ts` is the frontend half and is pinned by `use-card-data-variant.test.ts`; the backend half is pinned by `TestMtgLabelColumnsReachBothReadPaths` (backend migration 000566).
+`MTG_LABEL_COLS` in `use-card-data.ts` is the frontend half and is pinned by `use-card-data-variant.test.ts`; the backend half is pinned by `TestMtgLabelColumnsReachBothReadPaths` (backend migration 000566) and, for the flat browse view, `TestMtgLabelColumnsReachTheFlatBrowserView` and `TestMtgBrowserViewCarriesEverySummaryColumn` (000660).
 A chip's column additionally has to be in the RPC's `tag_cols` whitelist, where omission means the chip is **silently ignored** rather than refused.
 
 Backend contract: `docs/commander_demand_signal.md`.

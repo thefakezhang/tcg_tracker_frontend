@@ -39,7 +39,7 @@ import {
 
 interface JapanExclusivityQueryBuilder {
   eq(column: string, value: boolean): unknown;
-  or(filters: string, options: { referencedTable: string }): unknown;
+  or(filters: string, options?: { referencedTable: string }): unknown;
 }
 
 interface SoldEvidenceQueryBuilder {
@@ -110,20 +110,23 @@ export function applyJapanExclusivityQuery<T>(
   return filtered as T;
 }
 
-function applyMtgTagQuery<T>(
+// cardDefinitionTable is the embedded card table the label columns live on,
+// or null when the query reads the flat browse view, where they are top-level.
+export function applyMtgTagQuery<T>(
   query: T,
-  cardDefinitionTable: string,
+  cardDefinitionTable: string | null,
   selected: ReadonlySet<MtgTagDimension>,
 ): T {
   let filtered = query as T & JapanExclusivityQueryBuilder;
   const filter = mtgTagSelectionQueryFilter(selected);
   for (const column of filter.equalsTrue) {
-    filtered = filtered.eq(`${cardDefinitionTable}.${column}`, true) as T & JapanExclusivityQueryBuilder;
+    const target = cardDefinitionTable ? `${cardDefinitionTable}.${column}` : column;
+    filtered = filtered.eq(target, true) as T & JapanExclusivityQueryBuilder;
   }
   if (filter.anyOfTrue.length > 0) {
     filtered = filtered.or(
       filter.anyOfTrue.map((column) => `${column}.eq.true`).join(","),
-      { referencedTable: cardDefinitionTable },
+      cardDefinitionTable ? { referencedTable: cardDefinitionTable } : undefined,
     ) as T & JapanExclusivityQueryBuilder;
   }
   return filtered as T;
@@ -291,6 +294,35 @@ export const MTG_LABEL_COLS =
   "is_cedh_staple, is_cedh_exclusive, is_top_commander, edhrec_tags_reason, edhrec_tags_evidence_url, edhrec_tags_as_of, is_commander_stockable, commander_demand_reason, commander_demand_evidence_url, commander_demand_as_of";
 export const MTG_CARD_DEF_COLS =
   `card_id, card_uid, regional_name, set_code, card_number, misc_info, image_url, is_foil, foil_type, language, ${MTG_LABEL_COLS}`;
+
+// The MTG browse page reads this flat view (backend migration 000660) rather
+// than embedding mtg_card_definitions_v. A view has no foreign key, so that
+// embed went through a computed relationship that PostgREST renders as a
+// LATERAL subquery with its own LIMIT, which stops Postgres applying the page's
+// ORDER BY ... LIMIT before the join: every tier-1 summary row (261k) was
+// joined and JSON-encoded to return 50, 7-8 s against the authenticated role's
+// 8 s statement_timeout, so the default MTG browse failed with 500 whenever it
+// ran a little long. The flat view lets the planner sort first and join only
+// the page (11-158 ms; 757 ms worst case on a generic plan).
+//
+// The view names its card fields exactly as mtg_card_definitions_v does, and
+// mtgBrowserRowToSummaryRow puts them back under that key, so every consumer of
+// a browse row sees the same shape as before.
+export const MTG_BROWSER_VIEW = "mtg_price_summaries_browser_v";
+const MTG_CARD_DEF_COL_LIST = MTG_CARD_DEF_COLS.split(",").map((c) => c.trim());
+
+export function mtgBrowserRowToSummaryRow(
+  flat: Record<string, unknown>,
+  cardTable: string,
+): Record<string, unknown> {
+  const summary: Record<string, unknown> = {};
+  const card: Record<string, unknown> = { card_id: flat.card_id };
+  for (const [key, value] of Object.entries(flat)) {
+    if (key !== "card_id" && MTG_CARD_DEF_COL_LIST.includes(key)) card[key] = value;
+    else summary[key] = value;
+  }
+  return { ...summary, [cardTable]: card };
+}
 
 export function cardDefCols(game: Game): string {
   return game === "pokemon" ? POKEMON_CARD_DEF_COLS : MTG_CARD_DEF_COLS;
@@ -832,8 +864,17 @@ export function useCardData(options: {
     setError(null);
 
     const supabase = createClient();
-    const summariesTable = summaryTableForSource(activeGame, requiredSource);
+    // MTG without a source filter browses the flat view; see MTG_BROWSER_VIEW.
+    // The per-source summaries keep the embed: a source filter narrows them.
+    const flatMtg = activeGame === "mtg" && !requiredSource;
+    const summariesTable = flatMtg
+      ? MTG_BROWSER_VIEW
+      : summaryTableForSource(activeGame, requiredSource);
     const cardDefTable = CARD_TABLE_MAP[activeGame];
+    // Where a card column lives: on the embedded table, or top-level on the
+    // flat view.
+    const cardCol = (column: string) => (flatMtg ? column : `${cardDefTable}.${column}`);
+    const cardRef = flatMtg ? undefined : { referencedTable: cardDefTable };
 
     // Set filter by NAME or code. Codes are identifiers (TMP-VM1-B, OLD-IPB)
     // nobody should have to memorise; pokemon_set_search_v carries every name
@@ -854,7 +895,7 @@ export function useCardData(options: {
     }
 
     // Build query with joined card definitions
-    const selectStr = cardSummarySelect(activeGame, cardDefTable);
+    const selectStr = flatMtg ? "*" : cardSummarySelect(activeGame, cardDefTable);
 
     let query = supabase
       .from(summariesTable)
@@ -900,13 +941,13 @@ export function useCardData(options: {
         : ["regional_name", "misc_info", "foil_type", "language", "card_number", "set_code"];
       const variantFilters = activeGame === "pokemon" ? pokemonVariantSearchFilters : undefined;
       for (const f of smartSearchFilters(s, textCols, "card_uid", "card_id", extIds, variantFilters)) {
-        query = query.or(f, { referencedTable: cardDefTable });
+        query = query.or(f, cardRef);
       }
     }
-    if (cn) query = query.ilike(`${cardDefTable}.card_number`, `%${cn}%`);
+    if (cn) query = query.ilike(cardCol("card_number"), `%${cn}%`);
     if (sc) {
-      if (setCodesByName) query = query.in(`${cardDefTable}.set_code`, setCodesByName);
-      else query = query.ilike(`${cardDefTable}.set_code`, `%${sc}%`);
+      if (setCodesByName) query = query.in(cardCol("set_code"), setCodesByName);
+      else query = query.ilike(cardCol("set_code"), `%${sc}%`);
     }
     if (rarity) query = query.eq(`${cardDefTable}.rarity`, rarity);
     if (promosOnly && activeGame === "pokemon") {
@@ -916,7 +957,7 @@ export function useCardData(options: {
       query = applyJapanExclusivityQuery(query, cardDefTable, japanExclusivity);
     }
     if (activeGame === "mtg") {
-      query = applyMtgTagQuery(query, cardDefTable, mtgTags);
+      query = applyMtgTagQuery(query, flatMtg ? null : cardDefTable, mtgTags);
     }
     query = applySoldEvidenceQuery(query, soldEvidenceOnly);
     query = applyMeasuredExitQuery(query, measuredExitsOnly);
@@ -948,7 +989,7 @@ export function useCardData(options: {
       query = query.order(sortColumn, {
         ascending: sortAsc,
         nullsFirst: false,
-        referencedTable: cardDefTable,
+        referencedTable: flatMtg ? undefined : cardDefTable,
       });
     } else {
       const dbCol = SORT_COLUMN_MAP[sortColumn] || sortColumn;
@@ -1038,7 +1079,10 @@ export function useCardData(options: {
     } else {
     try {
       const res = await query;
-      rows = res.data;
+      rows = flatMtg && res.data
+        ? (res.data as unknown as Record<string, unknown>[]).map((row) =>
+            mtgBrowserRowToSummaryRow(row, cardDefTable))
+        : res.data;
       queryError = res.error;
       count = res.count;
     } catch (e) {
