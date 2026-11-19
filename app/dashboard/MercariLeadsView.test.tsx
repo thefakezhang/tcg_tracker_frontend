@@ -8,6 +8,7 @@ import MercariLeadsView, {
   DEFAULT_LEAD_FILTERS,
   MercariLeadsRequestError,
   parseMercariLeads,
+  setAge,
   slabGradeText,
   type MercariLead,
   type MercariLeadCursor,
@@ -327,6 +328,25 @@ describe("MercariLeadsView", () => {
     const image = within(card).getByRole("img", { name: "Catalog image of リザードンex (SV2a 006/165)" });
     expect(image.getAttribute("src")).toContain("/api/proxy-image?url=");
     expect(document.body.textContent).toContain("Nothing here is a completed sale");
+  });
+
+  it("warns that a card from a set a few weeks old may keep falling, and dates an older set plainly", async () => {
+    const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+    view(vi.fn(async () => page([{ ...RAW, set_release_date: iso(30) }])));
+    const fresh = within(await onlyCard()).getByTestId("mercari-lead-set-age");
+    expect(fresh.textContent).toMatch(/^Set released .+ · new set \(4 wk\): prices often keep falling for months after release$/);
+    expect(fresh.className).toContain("text-amber-700");
+    cleanup();
+
+    view(vi.fn(async () => page([{ ...RAW, set_release_date: "2023-07-28" }])));
+    const old = within(await onlyCard()).getByTestId("mercari-lead-set-age");
+    expect(old.textContent).toBe("Set released Jul 28, 2023");
+    expect(old.className).toContain("text-muted-foreground");
+    cleanup();
+
+    // No catalog set row: nothing to say.
+    view(vi.fn(async () => page([RAW])));
+    expect(within(await onlyCard()).queryByTestId("mercari-lead-set-age")).toBeNull();
   });
 
   it("names the age by first sighting when the listing has no creation time", async () => {
@@ -1773,5 +1793,26 @@ describe("MercariTab", () => {
     expect(screen.getByRole("tab", { name: "Verified" }).hasAttribute("data-active")).toBe(true);
     expect(leadsLoader).not.toHaveBeenCalled();
     expect(dealsLoader).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("setAge", () => {
+  const now = new Date("2026-11-19T12:00:00Z");
+
+  it("calls a set under 13 weeks old new, under a year recent, and older sets neither", () => {
+    expect(setAge("2026-09-16", now)).toMatchObject({ weeks: 9, tier: "new" });
+    expect(setAge("2026-05-22", now)).toMatchObject({ months: 5, tier: "recent" });
+    expect(setAge("2025-11-28", now)).toMatchObject({ tier: "recent" });
+    expect(setAge("2023-07-28", now)?.tier).toBeNull();
+  });
+
+  it("ignores a missing or malformed date", () => {
+    expect(setAge(null, now)).toBeNull();
+    expect(setAge(undefined, now)).toBeNull();
+    expect(setAge("2026-13", now)).toBeNull();
+  });
+
+  it("reads a release date that is still in the future as zero weeks old", () => {
+    expect(setAge("2026-12-01", now)).toMatchObject({ weeks: 0, tier: "new" });
   });
 });

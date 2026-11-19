@@ -202,7 +202,7 @@ app/
     MarketEvidenceCallout.tsx # Compact and detail presentation of Collectr/TCGPlayer market evidence
     MatchReviewView.tsx   # Match review queue for pending external-identifier candidates
     MercariTab.tsx        # The `mercari` slug: Leads | Verified switch (?feed=verified), Leads the default
-    MercariLeadsView.tsx  # Leads feed: one lane and format at a time, the slab plays and a seller-condition filter, age and photo-check badges, value evidence and multiple, slab-play panel, auctions with their maximum bid, fail-closed row parser
+    MercariLeadsView.tsx  # Leads feed: one lane and format at a time, the slab plays and a seller-condition filter, age and photo-check badges, value evidence and multiple, slab-play panel, auctions with their maximum bid, the set's release date with a young-set price warning, fail-closed row parser
     MercariDealsView.tsx  # Verified feed: photo-checked deal publication with exit, economics and reason codes
     MtgAliasesTab.tsx     # MTG text-variance alias manager (mtg_card_aliases)
     MtgCardIndex.tsx      # MTG catalog tab of the Card Index
