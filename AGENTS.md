@@ -408,10 +408,11 @@ Combined, the two corrections take MTG from 19,002 positive-ROI near-mint lanes 
 A Japanese shop is never adjusted: its ask is the cost and its bid is a firm offer it will honour, so neither stands in for a market.
   `lib/price-kind.ts` maps a kind to the one-word marker `PriceCell` and the detail modals show beside a price (sold / offer / est.; an ask has none); `lib/lane.ts` names the lane `RoiCell` shows under the ROI.
   Design and evidence: `docs/realized_sale_comps.md` in the backend repo.
-- Three caches still exist for `CardDetailModal` use:
-  - `rateMapCache` — exchange rates (currency → USD rate)
-  - `conditionsCache` — condition_id → tier mapping + available tiers
-  - `locationMapCache` — location_id → name
+- `fetchRateMap`, `fetchConditionsCache`, and `fetchLocationMap` share session metadata for currency conversion, condition tiers, and location names/regions.
+Successful results, including empty tables, are cached through `lib/session-cache.ts`; concurrent readers share one pending query.
+Supabase errors return the existing empty fallback without caching it, so the next caller retries.
+`refreshLocationMap` supersedes an ordinary pending read, coalesces simultaneous refreshes, and prevents older completions from replacing the current cache.
+These shared reads are independent of per-card cancellation; see [docs/shared_metadata_cache.md](docs/shared_metadata_cache.md).
 
 ### The PostgREST 1000-row cap (read this before writing any query)
 
