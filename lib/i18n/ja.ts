@@ -777,6 +777,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "refreshPrices.error": "更新リクエストに失敗しました: {message}",
   "cardDetail.copiesOnHand": "在庫 {count}",
   "cardDetail.copiesOnHandTitle": "最終確認時にこの店舗が公開していた在庫数",
+  "cardDetail.belowRange": "通常の価格帯より{pct}%安い",
   "dataTable.loading": "読み込み中...",
   "dataTable.noResults": "結果が見つかりません",
   "dataTable.selectAllOnPage": "このページをすべて選択",

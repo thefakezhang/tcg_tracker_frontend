@@ -65,7 +65,7 @@ import {
   cardVariant,
   getCardDisplayName,
 } from "./use-card-data";
-import { CompSpreadBar, toCompSpread } from "./CompSpreadBar";
+import { belowBandPercent, CompSpreadBar, toCompSpread } from "./CompSpreadBar";
 import { useLanguage } from "./LanguageContext";
 import type { Game } from "./GameContext";
 import { FreshnessChip } from "./FreshnessChip";
@@ -117,11 +117,14 @@ export interface DetailListing {
   // Copies the shop published when we last looked. null means it does not
   // publish a count - not that it has none.
   availableQuantity?: number | null;
-  // Interquartile spread of the comps this price is the median of, in the same
-  // currency as `price`. Both set or both null. Only the sources that publish
-  // a distribution (130point today) carry it.
+  // Interquartile spread in the same currency as `price`: of the comps it is
+  // the median of (130point), or of every store's offer when it is the
+  // cheapest of them (Surugaya's sell side). Both set or both null.
   p25?: number | null;
   p75?: number | null;
+  // The listing's seller_text: Surugaya's cheapest store, or 130point's
+  // description of its figure. null when the source records none.
+  sellerText?: string | null;
 }
 
 // TCGplayer's product page accepts query params to preselect a specific SKU
@@ -610,6 +613,7 @@ export default function CardDetailModal({
         availableQuantity: l.available_quantity ?? null,
         p25: l.price_p25 ?? null,
         p75: l.price_p75 ?? null,
+        sellerText: l.seller_text?.trim() || null,
       };
     };
 
@@ -1358,6 +1362,14 @@ export function ListingTable({
                   {spread && (
                     <CompSpreadBar spread={spread} format={showSpread} className="mt-1" />
                   )}
+                  {/* A price well under its own band is the cheapest of
+                      several offers sitting far below the rest: an outlier
+                      low, not the going price. */}
+                  {spread && belowBandPercent(spread) != null && (
+                    <div className="mt-0.5 text-[10px] font-medium text-amber-500">
+                      {t("cardDetail.belowRange", { pct: belowBandPercent(spread) ?? 0 })}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1.5">
@@ -1404,6 +1416,14 @@ export function ListingTable({
                       </Badge>
                     )}
                   </div>
+                  {l.sellerText && (
+                    <div
+                      className="mt-0.5 max-w-64 truncate text-xs text-muted-foreground"
+                      title={l.sellerText}
+                    >
+                      {l.sellerText}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell>{l.conditionLabel}</TableCell>
               </TableRow>

@@ -48,6 +48,7 @@ describe("listingCols", () => {
       "location_id",
       "listing_url",
       "last_updated",
+      "seller_text",
       "currencies(symbol)",
     ];
     for (const game of Object.keys(LISTINGS_TABLE_MAP) as Array<
