@@ -775,6 +775,7 @@ const en = {
   "refreshPrices.error": "Refresh request failed: {message}",
   "cardDetail.copiesOnHand": "{count} in stock",
   "cardDetail.copiesOnHandTitle": "Copies this shop reported when we last looked",
+  "cardDetail.belowRange": "{pct}% below the typical range",
   "dataTable.loading": "Loading...",
   "dataTable.noResults": "No results found",
   "dataTable.selectAllOnPage": "Select all on this page",

@@ -570,6 +570,12 @@ See [docs/card_sale_feedback.md](docs/card_sale_feedback.md) for the preserved m
 - Displays buy/sell listings in side-by-side tables, separated by Non-PSA/PSA tabs.
 - Has its own tier filter dropdown.
 - Uses `useCurrency()` for price conversion in `ListingTable`.
+- Each listing row shows its `seller_text` under the location, truncated to one line with the full text on hover.
+For Surugaya's sell side that is the store holding the cheapest offer in that condition (or `駿河屋 通販` for its online stock); for 130point it is what the figure is ("eBay sold median (n=10, 30d, cleaned)").
+- `CompSpreadBar` draws a row's `price_p25`/`price_p75` around its price on a scale that runs from the lower of the price and P25 to the higher of the price and P75.
+A median inside its band (130point, Mana Pool) draws exactly as before; Surugaya's cheapest offer sits at or below the spread of every store's offer, so an outlier low lands visibly left of the band instead of pinned to its edge.
+`belowBandPercent` adds an amber "N% below the typical range" line when the price is at least 20% under P25 (`BELOW_BAND_OUTLIER`).
+The spread on an ask is display only: `aggregate-prices` reads a spread only to gate a `sold` exit.
 - "Add to Buy List" button (popover) lets users save cards to any buy list.
 - The manual **Cute** curator flag remains editable as a `Switch` control (`is_cute`, RPC `set_pokemon_cute`, 000293 - the "cute" market segment the operator buys and sells by).
 `use-card-data.ts` selects the evidence-backed `artwork` and `stamps` dimensions with their short reason and primary evidence URL, applies the `all`, `artwork`, `stamps`, `either`, or `both` query mode server-side, and filters Cute independently.
@@ -948,7 +954,7 @@ The authoritative schema is `docs/schema.md` in the backend repository; this tab
 | `pokemon_card_definitions` | card_id, regional_name, english_name, set_code, card_number, misc_info, edition, foil_treatment, image_url |
 | `mtg_card_definitions` | card_id, regional_name, set_code, card_number, misc_info, image_url |
 | `mtg_card_definitions_v` (view) | the above joined to `mtg_universal_cards`, plus the EDHREC and mtgtop8 labels and their provenance (see **MTG card labels**) |
-| `pokemon_market_listings` / `mtg_market_listings` | card_id, price_type (Buy/Sell), price, currency, psa_grade, condition, location_id |
+| `pokemon_market_listings` / `mtg_market_listings` | card_id, price_type (Buy/Sell), price, currency, psa_grade, condition, location_id, seller_text, price_p25/price_p75 (spread of the comps or, for Surugaya, of every store's offer) |
 | `currencies` | code (PK), symbol |
 | `exchange_rates` | from_currency, to_currency, rate |
 | `conditions` | condition_id, tier |

@@ -160,8 +160,11 @@ export const LISTINGS_TABLE_MAP: Record<Game, string> = {
 // ("column mtg_market_listings.available_quantity does not exist"), so asking
 // for it unconditionally returned zero listings for every MTG card rather than
 // just a null quantity.
+// seller_text is on all three listings tables (000002; sealed since its own
+// table). 130point writes what its figure is ("eBay sold median (n=10, 30d)")
+// and Surugaya's sell side the store holding the cheapest offer.
 const LISTING_COLS_COMMON =
-  "card_id, price_type, price_kind, price, currency, psa_grade, condition, location_id, listing_url, last_updated";
+  "card_id, price_type, price_kind, price, currency, psa_grade, condition, location_id, listing_url, last_updated, seller_text";
 
 const LISTING_HAS_AVAILABLE_QUANTITY: Record<Game, boolean> = {
   pokemon: true,
@@ -365,10 +368,14 @@ export interface MarketListing {
   // which is NOT none - the listing is purchasable at an unknown depth.
   // Optional because not every fetch selects it.
   available_quantity?: number | null;
-  // Interquartile spread of the comps this price is the median of. Both set or
+  // Interquartile spread of the comps this price is the median of, or for
+  // Surugaya's sell side of every store's offer in this condition. Both set or
   // both null. Absent on sealed, which does not carry the columns.
   price_p25?: number | null;
   price_p75?: number | null;
+  // Who or what the figure is: the store holding a Surugaya offer, or 130point's
+  // description of its median. Optional because not every fetch selects it.
+  seller_text?: string | null;
 }
 
 export interface PriceEntry {

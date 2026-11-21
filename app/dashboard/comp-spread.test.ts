@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { spreadRatio, toCompSpread } from "./CompSpreadBar";
+import { belowBandPercent, spreadGeometry, spreadRatio, toCompSpread } from "./CompSpreadBar";
 
 // The bar exists to distinguish a median twelve comps agreed on from one three
 // comps disagreed about. Every way of ending up with no usable band has to
@@ -63,5 +63,49 @@ describe("spreadRatio", () => {
 
   it("does not divide by zero when the median is zero", () => {
     expect(Number.isFinite(spreadRatio({ median: 0, p25: 1, p75: 3 }))).toBe(true);
+  });
+});
+
+describe("spreadGeometry", () => {
+  it("draws a median inside its band exactly as before: band full width", () => {
+    const g = spreadGeometry({ p25: 120, p75: 180, median: 150 });
+    expect(g).toEqual({ lo: 120, hi: 180, bandLeft: 0, bandWidth: 100, marker: 50 });
+  });
+
+  // Surugaya's sell row is the cheapest of every store's offer: マーレイン at
+  // ¥260 against a band of ¥390-¥573 (2026-11-21). Pinned to the band's edge it
+  // would read the same as a price at ¥390.
+  it("puts a price below its band left of the band, not on its edge", () => {
+    const g = spreadGeometry({ p25: 390, p75: 573, median: 260 });
+    expect(g.lo).toBe(260);
+    expect(g.hi).toBe(573);
+    expect(g.marker).toBe(0);
+    expect(g.bandLeft).toBeCloseTo(41.53, 1);
+    expect(g.bandLeft + g.bandWidth).toBeCloseTo(100, 6);
+  });
+
+  it("keeps the old centre pin when every comp shares one price", () => {
+    expect(spreadGeometry({ p25: 50, p75: 50, median: 50 })).toEqual({
+      lo: 50, hi: 50, bandLeft: 0, bandWidth: 100, marker: 50,
+    });
+  });
+});
+
+describe("belowBandPercent", () => {
+  it("names an outlier low as a whole percent of P25", () => {
+    expect(belowBandPercent({ p25: 390, p75: 573, median: 260 })).toBe(33);
+    expect(belowBandPercent({ p25: 965, p75: 995, median: 500 })).toBe(48);
+  });
+
+  it("stays quiet inside the band, above it, or just under it", () => {
+    expect(belowBandPercent({ p25: 120, p75: 180, median: 150 })).toBeNull();
+    expect(belowBandPercent({ p25: 120, p75: 180, median: 200 })).toBeNull();
+    // ココドラ: ¥100 against ¥115-¥145 is 13% under, within the noise.
+    expect(belowBandPercent({ p25: 115, p75: 145, median: 100 })).toBeNull();
+  });
+
+  it("does not divide by a zero P25", () => {
+    const spread = toCompSpread(0, 0, 10);
+    expect(spread && belowBandPercent(spread)).toBeNull();
   });
 });
