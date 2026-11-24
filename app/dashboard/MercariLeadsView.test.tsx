@@ -454,6 +454,18 @@ describe("MercariLeadsView", () => {
       .toBe("Unpriced: Card Ladder stopped updating this card's sales, so they price nothing (5 found)");
   });
 
+  it("names TCGplayer as a raw lead's value and its 30-day sales (#2895)", async () => {
+    view(vi.fn(async () => page([{
+      ...RAW, value_basis: "tcgplayer_market_v0", value_usd: 25, nm_value_usd: 25,
+      value_sample_count: 6, value_window_days: 30, value_as_of: "2026-10-26",
+    }])));
+
+    const card = await onlyCard();
+    expect(card.textContent).toContain("$25.00 · TCGplayer market, from raw sales");
+    expect(card.textContent).not.toContain("Provisional eBay value");
+    expect(within(card).getByTestId("mercari-lead-evidence").textContent).toBe("6 sales in the last 30 days, newest Oct\u00a026,\u00a02026");
+  });
+
   it("values a PSA lead only at its exact grade and never as raw", async () => {
     view(vi.fn(async () => page([PSA10])));
 
@@ -1530,6 +1542,17 @@ describe("parseMercariLeads", () => {
     }])).toThrow("Invalid Mercari lead seller condition");
     expect(() => parseMercariLeads([{ ...DAMAGED_VINTAGE, seller_condition_id: "2" }])).toThrow("Invalid Mercari lead seller condition");
     expect(() => parseMercariLeads([{ ...RAW, multiple: null, multiple_withheld_reason: "psa_thin_comps" }])).toThrow("Invalid Mercari lead seller condition");
+  });
+
+  it("fails closed on a TCGplayer value outside a raw Near Mint row or its 30-day window", () => {
+    const tcgplayer = { ...RAW, value_basis: "tcgplayer_market_v0", value_window_days: 30 };
+    expect(parseMercariLeads([tcgplayer])).toHaveLength(1);
+    expect(() => parseMercariLeads([{ ...tcgplayer, value_window_days: 60 }])).toThrow("Invalid Mercari lead value window");
+    expect(() => parseMercariLeads([{ ...RAW, value_window_days: 30 }])).toThrow("Invalid Mercari lead value window");
+    expect(() => parseMercariLeads([{ ...DAMAGED_VINTAGE, value_basis: "tcgplayer_market_v0", value_window_days: 30 }]))
+      .toThrow("Invalid Mercari lead value basis");
+    expect(() => parseMercariLeads([{ ...PSA10, value_basis: "tcgplayer_market_v0", value_window_days: 30 }]))
+      .toThrow("Invalid Mercari lead value basis");
   });
 
   it("fails closed on a raw value condition the CHECKs forbid", () => {
