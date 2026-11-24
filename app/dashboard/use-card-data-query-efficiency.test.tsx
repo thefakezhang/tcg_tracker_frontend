@@ -3,7 +3,7 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mock = vi.hoisted(() => ({ lookup: vi.fn(), rpc: vi.fn(), summaryReads: 0, rows: [] as Record<string, unknown>[], signals: [] as Record<string, unknown>[], signalBuckets: [] as number[] }));
+const mock = vi.hoisted(() => ({ lookup: vi.fn(), rpc: vi.fn(), laneCalls: [] as string[], summaryReads: 0, rows: [] as Record<string, unknown>[], signals: [] as Record<string, unknown>[], signalBuckets: [] as number[] }));
 vi.mock("@/lib/card-search", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/card-search")>(),
   externalIdMatches: mock.lookup,
@@ -24,8 +24,17 @@ vi.mock("@/lib/supabase/client", () => ({
         : () => query });
       return query;
     },
-    rpc: (name: string, args: unknown) => {
-      mock.rpc(name, args);
+    rpc: (name: string, args: unknown, opts?: unknown) => {
+      if (opts === undefined) mock.rpc(name, args);
+      else mock.rpc(name, args, opts);
+      if (name === "pokemon_price_lanes_browser") {
+        // The lane function feeds the same filter chain as a table read.
+        const query: object = new Proxy({}, { get: (_target, method) => method === "then"
+          ? (resolve: (value: unknown) => unknown) =>
+            Promise.resolve(resolve({ data: mock.rows, count: mock.rows.length, error: null }))
+          : (...callArgs: unknown[]) => { mock.laneCalls.push(`${String(method)}:${JSON.stringify(callArgs)}`); return query; } });
+        return query;
+      }
       return { abortSignal: async () => ({ data: [], error: null }) };
     },
   }),
@@ -40,13 +49,13 @@ vi.mock("./grade-signals", async (importOriginal) => {
 import { useCardData } from "./use-card-data";
 const options: Parameters<typeof useCardData>[0] = {
   activeGame: "mtg", psaMode: "non-psa", search: "12345", searchCardNumber: "", searchSetCode: "",
-  selectedTier: 1, sellRegion: "all", requiredSource: "", sourceSide: "sell", rarity: null,
+  selectedTier: 1, sellRegion: "all", requiredSource: "", sourceSide: "sell", laneSources: null, rarity: null,
   promosOnly: false, soldEvidenceOnly: false, measuredExitsOnly: false, japanExclusivity: new Set(), mtgTags: new Set(),
   cuteOnly: false, minBuyPrice: null, minSellPrice: null, roiFloor: null, roiCeiling: null,
   sortColumn: "roi", sortAsc: false, exitPercentile: 25, page: 0, pageSize: 50,
 };
 afterEach(cleanup);
-beforeEach(() => { mock.lookup.mockReset().mockResolvedValue([7, 11]); mock.rpc.mockClear(); mock.summaryReads = 0; mock.rows = []; mock.signals = []; mock.signalBuckets = []; });
+beforeEach(() => { mock.lookup.mockReset().mockResolvedValue([7, 11]); mock.rpc.mockClear(); mock.laneCalls = []; mock.summaryReads = 0; mock.rows = []; mock.signals = []; mock.signalBuckets = []; });
 
 describe("card browser search work", () => {
   it("resolves an MTG identifier once and sends those exact IDs to the search RPC", async () => {
@@ -95,6 +104,32 @@ describe("card browser search work", () => {
     expect(result.current.data.map((row) => [row.signal?.cardId, row.signal?.psaGrade, row.signal?.bandP25]))
       .toEqual(mock.rows.map((row) => [row.card_id, 10, 100 + Number(row.card_id)]));
     expect(mock.signalBuckets).toEqual(Array(50).fill(11));
+  });
+  it("asks the lane function for a source-restricted Pokemon lane, without the by-source filter", async () => {
+    const laneSources = { entry: ["surugaya"], exit: ["tcgplayer", "cardrush"] };
+    const { result } = renderHook(() => useCardData({
+      ...options, activeGame: "pokemon", search: "", requiredSource: "surugaya", sourceSide: "sell", laneSources,
+    }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(mock.rpc).toHaveBeenCalledWith(
+      "pokemon_price_lanes_browser",
+      { p_tier: 1, p_psa: false, p_entry_sources: ["surugaya"], p_exit_sources: ["tcgplayer", "cardrush"] },
+      { count: "exact" },
+    );
+    expect(mock.summaryReads).toBe(0);
+    expect(mock.laneCalls.filter((call) => call.startsWith('eq:["source"'))).toEqual([]);
+    expect(mock.laneCalls).toContain('eq:["tier",1]');
+  });
+  it("asks the lane function for graded copies at no tier", async () => {
+    const { result } = renderHook(() => useCardData({
+      ...options, activeGame: "pokemon", search: "", psaMode: "psa", laneSources: { entry: null, exit: ["cardladder"] },
+    }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(mock.rpc).toHaveBeenCalledWith(
+      "pokemon_price_lanes_browser",
+      { p_tier: null, p_psa: true, p_entry_sources: null, p_exit_sources: ["cardladder"] },
+      { count: "exact" },
+    );
   });
   it("retains the by-source embed fallback and uses one lookup", async () => {
     const { result } = renderHook(() => useCardData({ ...options, requiredSource: "cardrush" }));

@@ -84,8 +84,6 @@ export default function SealedBrowser() {
   useEffect(() => {
     if (window.matchMedia?.("(max-width: 639px)").matches) setViewMode("grid");
   }, []);
-  // Tally the copies you can actually sell: owned minus consignment.
-  const [availableOnly, setAvailableOnly] = useState(false);
   const [sortColumn, setSortColumn] = useState("roi");
   const [sortAsc, setSortAsc] = useState(false);
   const [page, setPage] = useState(0);
@@ -164,7 +162,7 @@ export default function SealedBrowser() {
   useEffect(() => {
     setPage(0);
     setRowSelection({});
-  }, [search, searchSetCode, condition, edition, sellRegion, minBuyPrice, minSellPrice, roiFloor, roiCeiling, availableOnly, sortColumn, sortAsc, pageSize]);
+  }, [search, searchSetCode, condition, edition, sellRegion, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setRowSelection({});
@@ -192,8 +190,8 @@ export default function SealedBrowser() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const columns = useMemo(
-    () => [createSelectColumn(t), ...createSealedColumns(t, language, availableOnly)],
-    [availableOnly, language, t],
+    () => [createSelectColumn(t), ...createSealedColumns(t, language)],
+    [language, t],
   );
 
   const conditionTriggerLabel =
@@ -273,14 +271,6 @@ export default function SealedBrowser() {
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button
-          variant={availableOnly ? "default" : "outline"}
-          className="h-11 shrink-0 sm:h-8"
-          onClick={() => setAvailableOnly((v) => !v)}
-          title={t("inventory.excludeConsigned")}
-        >
-          {t("inventory.excludeConsigned")}
-        </Button>
         <Input
           type="number"
           placeholder={t("cardBrowser.minBuyPrice")}
@@ -469,7 +459,7 @@ export default function SealedBrowser() {
                     {editionLabel(t, row.variantEdition)} · {conditionLabel(t, row.sealedCondition)}
                     {misc ? ` · ${misc}` : ""}
                   </CardDescription>
-                  <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} avgCost={row.ownedAvgCostUsd} totalCost={row.ownedCostBasisUsd} consigned={row.ownedConsigned} availableOnly={availableOnly} />
+                  <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} avgCost={row.ownedAvgCostUsd} totalCost={row.ownedCostBasisUsd} consigned={row.ownedConsigned} />
                 </CardHeader>
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
                   <div className="grid w-full grid-cols-[1fr_auto_1fr] gap-2">
@@ -491,7 +481,7 @@ export default function SealedBrowser() {
               </Card>
             );
           },
-          [availableOnly, language, t]
+          [language, t]
         )}
       />
 

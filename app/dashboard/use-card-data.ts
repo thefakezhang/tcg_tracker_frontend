@@ -20,6 +20,14 @@ import {
   type SourceSide,
 } from "./source-availability";
 import {
+  LANE_BROWSER_RPC,
+  LANE_SOURCE_OPTIONS_VIEW,
+  laneSourceSetsKey,
+  type LaneSourceOption,
+  type LaneSourceOptions,
+  type LaneSourceSets,
+} from "./lane-sources";
+import {
   japanExclusivitySelectionQueryFilter,
   type JapanExclusivityDimension,
 } from "./japan-exclusivity";
@@ -767,6 +775,44 @@ export function useAvailableCardSources(
   return sources;
 }
 
+// The sources a Pokemon lane can use, per side, for the "Source" and "Exits"
+// selectors (pokemon_lane_source_options_v). Empty for other games.
+export function useLaneSourceOptions(activeGame: Game): LaneSourceOptions {
+  const [options, setOptions] = useState<LaneSourceOptions>({ entry: [], exit: [] });
+
+  useEffect(() => {
+    if (activeGame !== "pokemon") {
+      setOptions({ entry: [], exit: [] });
+      return;
+    }
+
+    let current = true;
+    const supabase = createClient();
+    void supabase
+      .from(LANE_SOURCE_OPTIONS_VIEW)
+      .select("side, source, region")
+      .order("source", { ascending: true })
+      .then(({ data, error }) => {
+        if (!current) return;
+        if (error) {
+          console.error("Failed to load lane source options:", error);
+          setOptions({ entry: [], exit: [] });
+          return;
+        }
+        const rows = (data ?? []) as { side: string; source: string; region: string | null }[];
+        const pick = (side: string): LaneSourceOption[] =>
+          rows.filter((row) => row.side === side).map(({ source, region }) => ({ source, region }));
+        setOptions({ entry: pick("entry"), exit: pick("exit") });
+      });
+
+    return () => {
+      current = false;
+    };
+  }, [activeGame]);
+
+  return options;
+}
+
 // Debounce free-text inputs so we fire one query after typing settles, not one
 // per keystroke (each query is an ilike over a joined table — expensive).
 export function useDebouncedValue<T>(value: T, ms: number): T {
@@ -788,6 +834,9 @@ export function useCardData(options: {
   sellRegion: RegionFilter;
   requiredSource: string;
   sourceSide: SourceSide;
+  // Pokemon only: the entry and exit sources the lane is chosen from, or null
+  // for the stored summaries (lane-sources.ts).
+  laneSources: LaneSourceSets | null;
   rarity: string | null;
   promosOnly: boolean;
   soldEvidenceOnly: boolean;
@@ -823,6 +872,7 @@ export function useCardData(options: {
     sellRegion,
     requiredSource,
     sourceSide,
+    laneSources,
     rarity,
     promosOnly,
     soldEvidenceOnly,
@@ -840,6 +890,8 @@ export function useCardData(options: {
     page,
     pageSize,
   } = options;
+  // Arrays are new on every render; the key changes only with the selection.
+  const laneKey = laneSourceSetsKey(laneSources);
   const [data, setData] = useState<CardRowData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -859,7 +911,7 @@ export function useCardData(options: {
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, measuredExitsOnly, japanExclusivity, mtgTags, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
+  }, [activeGame, psaMode, dSearch, dCardNumber, dSetCode, selectedTier, sellRegion, requiredSource, sourceSide, laneKey, rarity, promosOnly, soldEvidenceOnly, measuredExitsOnly, japanExclusivity, mtgTags, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, sortColumn, sortAsc, exitPercentile, page, pageSize]);
 
   async function fetchPage() {
     if (abortRef.current) abortRef.current.abort();
@@ -906,6 +958,27 @@ export function useCardData(options: {
     let query = supabase
       .from(summariesTable)
       .select(selectStr, { count: "estimated" });
+    // A source-restricted Pokemon lane is chosen per request by the backend
+    // (pokemon_price_lanes_browser), which returns rows shaped as the browser
+    // view, so every filter, sort and page below applies unchanged. Its count
+    // is exact: an estimate over a function scan is the planner's guess.
+    const laneMode = activeGame === "pokemon" && laneSources !== null;
+    if (laneMode) {
+      query = supabase
+        .rpc(
+          LANE_BROWSER_RPC,
+          {
+            p_tier: psaMode === "non-psa" ? selectedTier : null,
+            p_psa: psaMode !== "non-psa",
+            p_entry_sources: laneSources.entry,
+            p_exit_sources: laneSources.exit,
+          },
+          { count: "exact" },
+        )
+        // The same builder class with different type parameters: the rows
+        // are the browser view's.
+        .select(selectStr) as unknown as typeof query;
+    }
 
     // Filter by tier/psa
     if (psaMode === "non-psa") {
@@ -914,7 +987,8 @@ export function useCardData(options: {
       query = query.eq("tier", -1).gt("psa_grade", 0);
     }
 
-    if (requiredSource && activeGame !== "pokemon_sealed") {
+    // In lane mode the source is part of the lane, not a filter on it.
+    if (requiredSource && activeGame !== "pokemon_sealed" && !laneMode) {
       query = query.eq("source", requiredSource).eq("source_side", sourceSide);
     }
 
