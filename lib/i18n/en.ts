@@ -535,6 +535,7 @@ const en = {
   "mercariLeads.value": "Value",
   "mercariLeads.valueBasis.ebay_rule_v0": "Provisional eBay value",
   "mercariLeads.valueBasis.cardladder_psa_v0": "Card Ladder PSA sales",
+  "mercariLeads.valueBasis.tcgplayer_market_v0": "TCGplayer market",
   "mercariLeads.valueBasisOther": "Value basis {basis}",
   "mercariLeads.valueAtGrade": "at PSA {grade}",
   "mercariLeads.valueRaw": "from raw sales",

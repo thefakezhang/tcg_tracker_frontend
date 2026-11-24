@@ -537,6 +537,7 @@ const ja: { [K in keyof typeof en]: string } = {
   "mercariLeads.value": "価値",
   "mercariLeads.valueBasis.ebay_rule_v0": "eBay による暫定の価値",
   "mercariLeads.valueBasis.cardladder_psa_v0": "Card Ladder の PSA 成約",
+  "mercariLeads.valueBasis.tcgplayer_market_v0": "TCGplayer のマーケット価格",
   "mercariLeads.valueBasisOther": "価値の根拠 {basis}",
   "mercariLeads.valueAtGrade": "PSA {grade} で評価",
   "mercariLeads.valueRaw": "素のカードの成約から",

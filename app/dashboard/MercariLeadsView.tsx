@@ -561,7 +561,18 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       throw invalid("value date", index);
     }
     const windowDays = optionalInteger(row.value_window_days, "value_window_days");
-    if (windowDays !== null && windowDays !== 60 && windowDays !== 180) throw invalid("value window", index);
+    // Since backend 000679 (#2895) a raw lead is valued from TCGplayer first:
+    // basis tcgplayer_market_v0, copies sold in a 30-day window, and only ever
+    // a Near Mint value on a raw lane. Every other basis keeps the eBay rule's
+    // and Card Ladder's 60 or 180 days.
+    const tcgplayerBasis = row.value_basis === "tcgplayer_market_v0";
+    if (windowDays !== null && !(tcgplayerBasis ? windowDays === 30 : windowDays === 60 || windowDays === 180)) {
+      throw invalid("value window", index);
+    }
+    if (tcgplayerBasis && ((lane !== "modern_raw" && lane !== "vintage_raw") || valueUsd === null
+      || valueCondition !== "nm" || windowDays !== 30)) {
+      throw invalid("value basis", index);
+    }
     const sampleCount = requiredInteger(row.value_sample_count, "value_sample_count");
     if (sampleCount < 0) throw invalid("sample count", index);
 
@@ -1026,6 +1037,7 @@ const STATUS_KEYS: Record<Exclude<MercariSourceStatus, "ON_SALE">, TranslationKe
 const VALUE_BASIS_KEYS: Record<string, TranslationKey> = {
   ebay_rule_v0: "mercariLeads.valueBasis.ebay_rule_v0",
   cardladder_psa_v0: "mercariLeads.valueBasis.cardladder_psa_v0",
+  tcgplayer_market_v0: "mercariLeads.valueBasis.tcgplayer_market_v0",
 };
 
 // psa_thin_comps names its sale count and grade, so it is worded in LeadCard.
