@@ -1998,12 +1998,12 @@ function LeadCard({
                   )}
                   <dd className="text-xs text-muted-foreground" data-testid="mercari-lead-evidence">
                     {lead.value_window_days !== null
-                      ? t("mercariLeads.valueEvidence", {
+                      ? t(lead.value_sample_count === 1 ? "mercariLeads.valueEvidenceOne" : "mercariLeads.valueEvidence", {
                         count: lead.value_sample_count,
                         days: lead.value_window_days,
                         date: unbroken(formatDate(lead.value_as_of, language)),
                       })
-                      : t("mercariLeads.valueEvidenceNoWindow", {
+                      : t(lead.value_sample_count === 1 ? "mercariLeads.valueEvidenceNoWindowOne" : "mercariLeads.valueEvidenceNoWindow", {
                         count: lead.value_sample_count,
                         date: unbroken(formatDate(lead.value_as_of, language)),
                       })}

@@ -466,6 +466,16 @@ describe("MercariLeadsView", () => {
     expect(within(card).getByTestId("mercari-lead-evidence").textContent).toBe("6 sales in the last 30 days, newest Oct\u00a026,\u00a02026");
   });
 
+  it("says one sale, not one sales, for a modern lead valued on a single TCGplayer copy (#2895)", async () => {
+    view(vi.fn(async () => page([{
+      ...RAW, value_basis: "tcgplayer_market_v0", value_usd: 25, nm_value_usd: 25,
+      value_sample_count: 1, value_window_days: 30, value_as_of: "2026-10-26",
+    }])));
+
+    const card = await onlyCard();
+    expect(within(card).getByTestId("mercari-lead-evidence").textContent).toBe("1 sale in the last 30 days, on Oct\u00a026,\u00a02026");
+  });
+
   it("values a PSA lead only at its exact grade and never as raw", async () => {
     view(vi.fn(async () => page([PSA10])));
 
