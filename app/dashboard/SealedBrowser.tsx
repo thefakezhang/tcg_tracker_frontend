@@ -257,6 +257,7 @@ export default function SealedBrowser() {
         </DropdownMenu>
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="outline" className="h-11 shrink-0 sm:h-8" />}>
+            {t("cardBrowser.buyInPrefix")}
             {sellRegion === "all" ? t("cardBrowser.regionAll") : sellRegion}
             <ChevronDown className="ml-1 size-4" />
           </DropdownMenuTrigger>

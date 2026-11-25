@@ -377,11 +377,13 @@ Each context follows the same pattern:
 - Filters: game, PSA mode, name search, card number, set (by NAME or code), single selected tier.
 The set box resolves typed text through `pokemon_set_search_v` (our set names plus artofpkm's JP/EN names) to the codes to filter on, falling back to a raw code ilike; codes are identifiers nobody should have to memorise ("vending" finds the vending sheets).
 - **Pokémon singles: the source selectors recompute the lane** (backend `docs/source_lanes.md`, #2890).
-  "For sale: X" buys the card from X, "Buylist: X" sells it to X, and the Exits menu leaves out unticked exit sites; any mix is allowed, and `lane-sources.ts` turns the selectors into entry and exit source sets.
+  Both selectors read from the operator's side (#2927): "Buy at X" buys the card from X (X's cheapest copy is the entry), and the "Sell to" menu leaves out unticked exit sites (untick every site, then tick one, to sell to exactly one); any mix is allowed, and `lane-sources.ts` turns the selectors into entry and exit source sets.
+  The two used to be "Source type" (Buylist or For sale, defaulting to Buylist) plus "Source", so picking a shop that is also a buylist, such as Suruga-ya, silently made it the exit; "Buy at" offers entry sources only.
   With any of them set, the page reads `pokemon_price_lanes_browser`, which chooses each card's lane again from those sources by the same rules as the stored summaries and returns rows shaped as `pokemon_price_summaries_browser_v`, so every filter, sort and page applies unchanged (count exact; 1.0-1.4 s on cloud).
   With none set, the browse reads the stored summaries as before.
   Options come from `pokemon_lane_source_options_v`, not `card_browser_source_options_v`, because the per-source snapshot leaves out cardladder, a real exit, and an "all but X" selection built from it would drop cardladder too. Exclusions are stored rather than inclusions, so a new source is included by default.
 - MTG keeps source availability as an exact server-side presence gate backed by `mtg_price_summaries_by_source_v`, with choices from `card_browser_source_options_v`: a selected source changes the query target but not the meaning of the global best-price columns.
+  Its one "Shop" menu groups the shops by the operator's side, "Buy at" (the shop sells, `source_side = 'sell'`) and "Sell to" (the shop's buylist, `'buy'`), defaulting to neither; see `source_availability_filter.md`.
 - External-identifier lookup failures use a typed safe error, keep the last successful page visible, and expose an accessible Retry action without rendering database details.
 - AbortController cancels stale requests. No client-side caching needed (queries are fast paginated reads).
 - The `aggregate-prices` edge function pre-computes summaries from raw listings into `pokemon_price_summaries` / `mtg_price_summaries`. Invoke it to refresh data.

@@ -19,12 +19,17 @@ const mocks = vi.hoisted(() => ({
   // A stable object, as the real hook's state is between loads.
   laneOptions: {
     entry: [{ source: "surugaya", region: "JP" }, { source: "tcgplayer", region: "NA" }],
+    // Surugaya is an exit too (its buylist), as it is on cloud: picking it to
+    // buy at must never make it the exit (#2927).
     exit: [
       { source: "130point", region: "NA" },
       { source: "cardladder", region: "NA" },
       { source: "cardrush", region: "JP" },
+      { source: "surugaya", region: "JP" },
     ],
   },
+  // MTG's shop filter options, per side (we buy at "sell", sell to "buy").
+  cardSources: { sell: ["cardkingdom_mtg"], buy: ["cardkingdom_mtg", "expedition_gaming"] },
 }));
 const translate = (key: string, values?: Record<string, string | number>) => {
   if (values?.message) return `${key}: ${values.message}`;
@@ -52,7 +57,7 @@ vi.mock("./HeaderContext", () => ({ useHeader: () => ({ setHeaderActions: vi.fn(
 vi.mock("./use-card-data", async () => {
   const { pokemonVariantLabel } = await import("@/lib/pokemon-variant");
   return {
-    useAvailableCardSources: () => ["expedition_gaming"],
+    useAvailableCardSources: () => mocks.cardSources,
     useLaneSourceOptions: () => mocks.laneOptions,
     useCardData: mocks.useCardData,
     getCardDisplayName: (card: { regional_name: string; english_name?: string | null }, language: "en" | "ja") =>
@@ -543,27 +548,73 @@ describe("CardBrowser lane sources", () => {
   it("browses the stored summaries until a lane is restricted", () => {
     render(<CardBrowser />);
     expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({ laneSources: null }));
-    expect(screen.getByTestId("browser-exit-sources").textContent).toContain("cardBrowser.exitsAll");
+    expect(screen.getByTestId("browser-buy-at").textContent).toContain("cardBrowser.buyAtAll");
+    expect(screen.getByTestId("browser-sell-to").textContent).toContain("cardBrowser.sellToAll");
+  });
+
+  // #2927: the old "Source" menu defaulted to the buylist side, so choosing
+  // Surugaya listed cards to SELL to Surugaya. Buy at is the entry, always.
+  it("buys at the chosen shop and keeps every exit open", async () => {
+    render(<CardBrowser />);
+    await act(async () => {});
+    fireEvent.click(screen.getByTestId("browser-buy-at"));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Surugaya" }));
+    await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      requiredSource: "surugaya",
+      sourceSide: "sell",
+      laneSources: { entry: ["surugaya"], exit: null },
+    })));
+    expect(screen.getByTestId("browser-buy-at").textContent).toBe("cardBrowser.buyAtPrefixSurugaya");
   });
 
   it("recomputes each card's lane without an unticked exit, keeping every other exit", async () => {
     render(<CardBrowser />);
     await act(async () => {});
-    fireEvent.click(screen.getByTestId("browser-exit-sources"));
+    fireEvent.click(screen.getByTestId("browser-sell-to"));
     fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: /^130point/ }));
     // cardladder is a real exit the per-source snapshot leaves out; an
     // "all but 130point" selection must keep it.
     await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
-      laneSources: { entry: null, exit: ["cardladder", "cardrush"] },
+      laneSources: { entry: null, exit: ["cardladder", "cardrush", "surugaya"] },
     })));
-    expect(screen.getByTestId("browser-exit-sources").textContent).toContain("cardBrowser.exitsWithout");
+    expect(screen.getByTestId("browser-sell-to").textContent).toContain("cardBrowser.sellToWithout");
   });
 
-  it("offers the exits menu for Pokemon singles only", () => {
+  it("sells to one site after unticking every site and ticking it", async () => {
+    render(<CardBrowser />);
+    await act(async () => {});
+    fireEvent.click(screen.getByTestId("browser-sell-to"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "cardBrowser.sellToClear" }));
+    await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      laneSources: { entry: null, exit: [] },
+    })));
+    expect(screen.getByTestId("browser-sell-to").textContent).toContain("cardBrowser.sellToNone");
+    fireEvent.click(screen.getByTestId("browser-sell-to"));
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: /^Cardrush/ }));
+    await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      laneSources: { entry: null, exit: ["cardrush"] },
+    })));
+    expect(screen.getByTestId("browser-sell-to").textContent).toBe("cardBrowser.sellToPrefixCardrush");
+  });
+
+  it("offers Buy at and Sell to for Pokemon singles only; MTG gets one shop menu on either side", async () => {
     mocks.activeGame = "mtg";
     render(<CardBrowser />);
-    expect(screen.queryByTestId("browser-exit-sources")).toBeNull();
-    expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({ laneSources: null }));
+    await act(async () => {});
+    expect(screen.queryByTestId("browser-sell-to")).toBeNull();
+    expect(screen.queryByTestId("browser-buy-at")).toBeNull();
+    expect(screen.getByTestId("browser-shop").textContent).toContain("cardBrowser.shopAll");
+    fireEvent.click(screen.getByTestId("browser-shop"));
+    const sellToGroup = await screen.findByText("cardBrowser.shopSellToGroup");
+    const expedition = screen.getByRole("menuitemradio", { name: "Expedition Gaming" });
+    expect(sellToGroup.closest('[role="group"]')?.contains(expedition)).toBe(true);
+    fireEvent.click(expedition);
+    await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      requiredSource: "expedition_gaming",
+      sourceSide: "buy",
+      laneSources: null,
+    })));
+    expect(screen.getByTestId("browser-shop").textContent).toBe("cardBrowser.sellToPrefixExpedition Gaming");
   });
 });
 

@@ -58,7 +58,7 @@ import { DecisionActions } from "./DecisionActions";
 import { browserOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
 import { sourceLabel } from "@/lib/source-labels";
 import type { SourceSide } from "./source-availability";
-import { laneSourceSets } from "./lane-sources";
+import { laneSourceSets, type LaneSourceOption } from "./lane-sources";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
 import { MtgLabelEvidence } from "./MtgLabelEvidence";
 import type { JapanExclusivityDimension } from "./japan-exclusivity";
@@ -98,6 +98,18 @@ const POKEMON_RARITIES = [
 // cross-cutting promo filter (set_code/rarity) rather than a single rarity value.
 const PROMOS_OPTION = "__promos__";
 
+// Lane source options grouped by region for the "Buy at" and "Sell to" menus:
+// NA first, then JP, then anything else by name.
+function optionsByRegion(options: readonly LaneSourceOption[]): [string, LaneSourceOption[]][] {
+  const groups = new Map<string, LaneSourceOption[]>();
+  for (const option of options) {
+    const region = option.region ?? "";
+    groups.set(region, [...(groups.get(region) ?? []), option]);
+  }
+  const rank = (region: string) => (region === "NA" ? 0 : region === "JP" ? 1 : 2);
+  return [...groups.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
+}
+
 // Compact USD for the tcgplayer market value: whole dollars once it's meaningful,
 // cents for the sub-$100 long tail.
 function fmtUsd(n: number): string {
@@ -132,10 +144,14 @@ export default function CardBrowser() {
   const [searchSetCode, setSearchSetCode] = useState("");
   const [selectedTier, setSelectedTier] = useState(1);
   const [sellRegion, setSellRegion] = useState<RegionFilter>("all");
+  // The shop filter, read from the operator's side (#2927). Pokemon: the shop
+  // to buy at, always the "sell" side (the shop sells, we buy), which
+  // recomputes each card's lane. MTG: one shop on either side, a presence gate.
   const [requiredSource, setRequiredSource] = useState("");
-  const [sourceSide, setSourceSide] = useState<SourceSide>("buy");
-  // Pokemon: exit sources left out of each card's lane (lane-sources.ts).
-  // Exclusions rather than inclusions, so a new source is in by default.
+  const [sourceSide, setSourceSide] = useState<SourceSide>("sell");
+  // Pokemon "Sell to": exit sources left out of each card's lane
+  // (lane-sources.ts). Exclusions rather than inclusions, so a new source is in
+  // by default.
   const [excludedExits, setExcludedExits] = useState<string[]>([]);
   const [rarity, setRarity] = useState<string>("");          // "" = all (Pokémon only)
   const [promosOnly, setPromosOnly] = useState(false);       // Pokémon promotional cards
@@ -180,7 +196,8 @@ export default function CardBrowser() {
   // only consumer, and it is Pokemon-scoped for the same identity reason.
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const selectionEnabled = activeGame === "pokemon";
-  const availableSources = useAvailableCardSources(activeGame, sourceSide);
+  // MTG's shop filter offers both sides from the per-source snapshot.
+  const availableSources = useAvailableCardSources(activeGame);
   // Pokemon offers the sources its lanes can use, cardladder included; the
   // per-source snapshot behind availableSources leaves cardladder out.
   const laneOptions = useLaneSourceOptions(activeGame);
@@ -188,32 +205,32 @@ export default function CardBrowser() {
     () => [...new Set(laneOptions.exit.map((option) => option.source))],
     [laneOptions.exit],
   );
-  const sourceOptions = useMemo(
-    () => activeGame === "pokemon"
-      ? [...new Set((sourceSide === "sell" ? laneOptions.entry : laneOptions.exit).map((option) => option.source))]
-      : availableSources,
-    [activeGame, availableSources, laneOptions, sourceSide],
-  );
-  const exitRegions = useMemo(() => {
-    const regions = [...new Set(laneOptions.exit.map((option) => option.region ?? ""))];
-    const rank = (region: string) => (region === "NA" ? 0 : region === "JP" ? 1 : 2);
-    return regions.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
-  }, [laneOptions.exit]);
+  const entryByRegion = useMemo(() => optionsByRegion(laneOptions.entry), [laneOptions.entry]);
+  const exitByRegion = useMemo(() => optionsByRegion(laneOptions.exit), [laneOptions.exit]);
   const laneSources = useMemo(
     () => laneSourceSets({
       game: activeGame,
-      requiredSource,
-      sourceSide,
+      buyAt: sourceSide === "sell" ? requiredSource : "",
       excludedExits,
       exitOptions: exitOptionSources,
     }),
     [activeGame, requiredSource, sourceSide, excludedExits, exitOptionSources],
   );
-  const exitsLabel = excludedExits.length === 0
-    ? t("cardBrowser.exitsAll")
-    : excludedExits.length === 1
-      ? t("cardBrowser.exitsWithout", { source: sourceLabel(excludedExits[0]) })
-      : t("cardBrowser.exitsExcluded", { count: excludedExits.length });
+  const includedExits = exitOptionSources.filter((source) => !excludedExits.includes(source));
+  const sellToLabel = excludedExits.length === 0
+    ? t("cardBrowser.sellToAll")
+    : includedExits.length === 0
+      ? t("cardBrowser.sellToNone")
+      : includedExits.length === 1
+        ? `${t("cardBrowser.sellToPrefix")}${sourceLabel(includedExits[0])}`
+        : excludedExits.length === 1
+          ? t("cardBrowser.sellToWithout", { source: sourceLabel(excludedExits[0]) })
+          : t("cardBrowser.sellToSome", { count: includedExits.length });
+  const regionLabel = (region: string) =>
+    region === "NA" ? t("cardBrowser.regionNA") : region === "JP" ? t("cardBrowser.regionJP") : region;
+  const shopLabel = requiredSource
+    ? `${t(sourceSide === "sell" ? "cardBrowser.buyAtPrefix" : "cardBrowser.sellToPrefix")}${sourceLabel(requiredSource)}`
+    : t(activeGame === "pokemon" ? "cardBrowser.buyAtAll" : "cardBrowser.shopAll");
 
   const { data, loading, error, availableTiers, totalCount, refetch, refresh } =
     useCardData({
@@ -364,7 +381,7 @@ export default function CardBrowser() {
     setSelectedTier(1);
     setSellRegion("all");
     setRequiredSource("");
-    setSourceSide("buy");
+    setSourceSide("sell");
     setExcludedExits((current) => current.length === 0 ? current : []);
     setRarity("");
     setPromosOnly(false);
@@ -523,7 +540,8 @@ export default function CardBrowser() {
               <Button variant="outline" className="h-11 shrink-0 sm:h-8" />
             }
           >
-            {sellRegion === "all" ? t("cardBrowser.regionAll") : sellRegion}
+            {t("cardBrowser.buyInPrefix")}
+            {sellRegion === "all" ? t("cardBrowser.regionAll") : regionLabel(sellRegion)}
             <ChevronDown className="ml-1 size-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent>
@@ -537,46 +555,100 @@ export default function CardBrowser() {
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="outline" className="h-11 shrink-0 sm:h-8" />}>
-            {t("cardBrowser.sourceTypePrefix")}
-            {sourceSide === "buy" ? t("cardBrowser.sourceTypeBuylist") : t("cardBrowser.sourceTypeForSale")}
-            <ChevronDown className="ml-1 size-4" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuRadioGroup
-              value={sourceSide}
-              onValueChange={(value) => {
-                setSourceSide(value as SourceSide);
-                setRequiredSource("");
-              }}
+        {activeGame === "pokemon" ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant={requiredSource ? "default" : "outline"}
+                  className="h-11 shrink-0 sm:h-8"
+                  data-testid="browser-buy-at"
+                />
+              }
+              title={t("cardBrowser.buyAtHint")}
             >
-              <DropdownMenuRadioItem value="buy">{t("cardBrowser.sourceTypeBuylist")}</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="sell">{t("cardBrowser.sourceTypeForSale")}</DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<Button variant="outline" className="h-11 shrink-0 sm:h-8" />}
-            title={activeGame === "pokemon" ? t("cardBrowser.laneSourceHint") : undefined}
-          >
-            {requiredSource
-              ? `${t("cardBrowser.sourcePrefix")}${sourceLabel(requiredSource)}`
-              : t("cardBrowser.sourceAll")}
-            <ChevronDown className="ml-1 size-4" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="max-h-72 overflow-auto">
-            <DropdownMenuRadioGroup value={requiredSource} onValueChange={setRequiredSource}>
-              <DropdownMenuRadioItem value="">{t("cardBrowser.sourceAll")}</DropdownMenuRadioItem>
-              {sourceOptions.map((source) => (
-                <DropdownMenuRadioItem key={source} value={source}>
-                  {sourceLabel(source)}
+              {shopLabel}
+              <ChevronDown className="ml-1 size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="max-h-80 overflow-auto">
+              <DropdownMenuRadioGroup
+                value={requiredSource}
+                onValueChange={(source) => {
+                  setSourceSide("sell");
+                  setRequiredSource(source);
+                }}
+              >
+                <DropdownMenuRadioItem value="" className="min-h-11 sm:min-h-0">
+                  {t("cardBrowser.buyAtAny")}
                 </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+                {entryByRegion.map(([region, options]) => (
+                  <DropdownMenuGroup key={region || "other"}>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>{regionLabel(region)}</DropdownMenuLabel>
+                    {options.map((option) => (
+                      <DropdownMenuRadioItem
+                        key={`${region}:${option.source}`}
+                        value={option.source}
+                        className="min-h-11 sm:min-h-0"
+                        data-source={option.source}
+                      >
+                        {sourceLabel(option.source)}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuGroup>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant={requiredSource ? "default" : "outline"}
+                  className="h-11 shrink-0 sm:h-8"
+                  data-testid="browser-shop"
+                />
+              }
+              title={t("cardBrowser.shopHint")}
+            >
+              {shopLabel}
+              <ChevronDown className="ml-1 size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="max-h-80 overflow-auto">
+              <DropdownMenuRadioGroup
+                value={requiredSource ? `${sourceSide}:${requiredSource}` : ""}
+                onValueChange={(value) => {
+                  const at = value.indexOf(":");
+                  setSourceSide(at > 0 && value.slice(0, at) === "buy" ? "buy" : "sell");
+                  setRequiredSource(at > 0 ? value.slice(at + 1) : "");
+                }}
+              >
+                <DropdownMenuRadioItem value="" className="min-h-11 sm:min-h-0">
+                  {t("cardBrowser.shopAny")}
+                </DropdownMenuRadioItem>
+                {(["sell", "buy"] as const).map((side) => availableSources[side].length > 0 && (
+                  <DropdownMenuGroup key={side}>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>
+                      {t(side === "sell" ? "cardBrowser.shopBuyAtGroup" : "cardBrowser.shopSellToGroup")}
+                    </DropdownMenuLabel>
+                    {availableSources[side].map((source) => (
+                      <DropdownMenuRadioItem
+                        key={`${side}:${source}`}
+                        value={`${side}:${source}`}
+                        className="min-h-11 sm:min-h-0"
+                        data-source={source}
+                      >
+                        {sourceLabel(source)}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuGroup>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         {activeGame === "pokemon" && (
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -584,50 +656,50 @@ export default function CardBrowser() {
                 <Button
                   variant={excludedExits.length > 0 ? "default" : "outline"}
                   className="h-11 shrink-0 sm:h-8"
-                  data-testid="browser-exit-sources"
+                  data-testid="browser-sell-to"
                 />
               }
-              title={t("cardBrowser.exitsHint")}
+              title={t("cardBrowser.sellToHint")}
             >
-              {exitsLabel}
+              {sellToLabel}
               <ChevronDown className="ml-1 size-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent className="max-h-80 overflow-auto">
               <DropdownMenuItem
                 disabled={excludedExits.length === 0}
                 onClick={() => setExcludedExits([])}
+                className="min-h-11 sm:min-h-0"
               >
-                {t("cardBrowser.exitsReset")}
+                {t("cardBrowser.sellToReset")}
               </DropdownMenuItem>
-              {exitRegions.map((region) => (
+              <DropdownMenuItem
+                disabled={includedExits.length === 0}
+                onClick={() => setExcludedExits([...exitOptionSources])}
+                className="min-h-11 sm:min-h-0"
+              >
+                {t("cardBrowser.sellToClear")}
+              </DropdownMenuItem>
+              {exitByRegion.map(([region, options]) => (
                 <DropdownMenuGroup key={region || "other"}>
                   <DropdownMenuSeparator />
-                  <DropdownMenuLabel>
-                    {region === "NA"
-                      ? t("cardBrowser.regionNA")
-                      : region === "JP"
-                        ? t("cardBrowser.regionJP")
-                        : region}
-                  </DropdownMenuLabel>
-                  {laneOptions.exit
-                    .filter((option) => (option.region ?? "") === region)
-                    .map((option) => (
-                      <DropdownMenuCheckboxItem
-                        key={`${region}:${option.source}`}
-                        checked={!excludedExits.includes(option.source)}
-                        onCheckedChange={(checked) =>
-                          setExcludedExits((current) =>
-                            checked
-                              ? current.filter((source) => source !== option.source)
-                              : current.includes(option.source)
-                                ? current
-                                : [...current, option.source])}
-                        className="min-h-11 sm:min-h-0"
-                        data-source={option.source}
-                      >
-                        {sourceLabel(option.source)}
-                      </DropdownMenuCheckboxItem>
-                    ))}
+                  <DropdownMenuLabel>{regionLabel(region)}</DropdownMenuLabel>
+                  {options.map((option) => (
+                    <DropdownMenuCheckboxItem
+                      key={`${region}:${option.source}`}
+                      checked={!excludedExits.includes(option.source)}
+                      onCheckedChange={(checked) =>
+                        setExcludedExits((current) =>
+                          checked
+                            ? current.filter((source) => source !== option.source)
+                            : current.includes(option.source)
+                              ? current
+                              : [...current, option.source])}
+                      className="min-h-11 sm:min-h-0"
+                      data-source={option.source}
+                    >
+                      {sourceLabel(option.source)}
+                    </DropdownMenuCheckboxItem>
+                  ))}
                 </DropdownMenuGroup>
               ))}
             </DropdownMenuContent>
