@@ -78,4 +78,12 @@ fi
 
 echo "OK: $path is identical to origin/main ($(git rev-parse --short origin/main))."
 echo "Deploying $fn to $project_ref ..."
-npx --yes supabase@latest functions deploy "$fn" --project-ref "$project_ref"
+# A pinned CLI, never @latest. The script proves the FUNCTION is what main says
+# it is; an unpinned CLI made the deploy itself vary with whatever npm served
+# that day. On 2026-11-25 supabase 3.4.0 (released the day before) refused
+# this repository's supabase/config.toml outright ("inbucket ... is no longer
+# supported. Use local_smtp instead"), so no edge function could be deployed.
+# 2.122.1 is the v2.stable tag and reads the config; moving to v3 means
+# migrating config.toml first, which every worktree's local stack shares.
+SUPABASE_CLI_VERSION=2.122.1
+npx --yes "supabase@$SUPABASE_CLI_VERSION" functions deploy "$fn" --project-ref "$project_ref"
