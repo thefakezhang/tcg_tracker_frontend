@@ -675,6 +675,23 @@ describe("MercariLeadsView", () => {
     expect(within(modern).getByTestId("mercari-lead-match").textContent).toBe("Title match: a_future_tier");
   });
 
+  it("badges a lead whose card photo 1 named, and says the title named no printing", async () => {
+    view(vi.fn(async () => page([
+      { ...RAW, match_tier: "photo_identity" },
+      DAMAGED_VINTAGE,
+    ])));
+
+    const [identified, titled] = await screen.findAllByTestId("mercari-lead-card");
+    const badge = within(identified).getByTestId("mercari-lead-photo-identity");
+    expect(badge.textContent).toBe("Identified from photo");
+    expect(badge.getAttribute("title")).toContain("photo 1 was matched against every printing of that name");
+    expect(within(identified).getByTestId("mercari-lead-match").textContent)
+      .toBe("Card match: photo 1 (the title names no printing)");
+    // A title-identified lead keeps its title match and carries no badge.
+    expect(within(titled).queryByTestId("mercari-lead-photo-identity")).toBeNull();
+    expect(within(titled).getByTestId("mercari-lead-match").textContent).toContain("Title match:");
+  });
+
   it("shows a thin PSA value as evidence, at its grade, with the sale count", async () => {
     view(vi.fn(async () => page([
       { ...PSA10, value_sample_count: 2, multiple: null, multiple_withheld_reason: "psa_thin_comps" },

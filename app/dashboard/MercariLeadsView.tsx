@@ -1096,6 +1096,7 @@ const MATCH_TIER_KEYS: Record<string, TranslationKey> = {
   sql_family: "mercariLeads.matchTier.sql_family",
   set_name: "mercariLeads.matchTier.set_name",
   name_rarity: "mercariLeads.matchTier.name_rarity",
+  photo_identity: "mercariLeads.matchTier.photo_identity",
 };
 
 // A fresh lead waiting for its photo check reads blue, not amber: the check is
@@ -1730,6 +1731,8 @@ function LeadCard({
   // Edition and finish come from the typed axes, never from misc_info alone.
   const variant = pokemonVariantLabel(lead);
   const tierKey = MATCH_TIER_KEYS[lead.match_tier];
+  // A refused title whose photo 1 named the printing (backend #2937).
+  const photoIdentified = lead.match_tier === "photo_identity";
   const photo = photoStatus(lead);
   // An auction (backend #2436): its shown price is the current bid, so the card
   // leads with the highest bid that still clears the bars, then the bid, the
@@ -1813,6 +1816,16 @@ function LeadCard({
           <Badge variant="outline" className={photo.className} data-testid="mercari-lead-photo">
             {t(photo.key)}
           </Badge>
+          {photoIdentified && (
+            <Badge
+              variant="outline"
+              className="border-sky-500/50 bg-sky-500/10 text-sky-800 dark:text-sky-200"
+              title={t("mercariLeads.photoIdentity.hint")}
+              data-testid="mercari-lead-photo-identity"
+            >
+              {t("mercariLeads.photoIdentity.badge")}
+            </Badge>
+          )}
           <Badge variant="outline">{holderLabel}</Badge>
           {lead.slab_play_state !== null && (
             <Badge
@@ -1996,9 +2009,11 @@ function LeadCard({
                 </dd>
               ) : null}
               <dd className="text-xs text-muted-foreground" data-testid="mercari-lead-match">
-                {t("mercariLeads.matchedBy", {
-                  tier: tierKey ? t(tierKey) : lead.match_tier,
-                })}
+                {photoIdentified
+                  ? t("mercariLeads.photoIdentity.matched")
+                  : t("mercariLeads.matchedBy", {
+                      tier: tierKey ? t(tierKey) : lead.match_tier,
+                    })}
               </dd>
               {lead.card_resolution === "unresolved" && (
                 <dd className="text-xs text-muted-foreground">{t("mercariLeads.unresolved")}</dd>
