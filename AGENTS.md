@@ -75,6 +75,7 @@ Nothing warned, and the symptom was two columns going null that the change had n
 
 The script proves the exact file is byte-identical to `origin/main` before pushing anything, which is the property that was false.
 It also pins the Supabase CLI it deploys with (`SUPABASE_CLI_VERSION`, 2.122.1, the v2.stable tag): on 2026-11-25 the 3.4.0 release refused this repository's `supabase/config.toml` over its `inbucket` key, and `@latest` had made every deploy depend on what npm served that day. Moving to CLI v3 means migrating `config.toml` first.
+It deploys with `--use-api`, which bundles server-side: without it the CLI runs a Docker container to bundle, and a container start on the workstation can disturb a running browser scraper (backend AGENTS.md, "Keep browser network topology stable").
 It refuses a divergent tree and prints the diff.
 `git status` is not sufficient on its own: a worktree can sit on a detached merge commit and be perfectly correct, while a clean checkout of someone else's branch is clean and wrong.
 - Skill `.claude/skills/ship-pr` - the branch -> commit -> PR -> poll -> merge -> cleanup flow.
