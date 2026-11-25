@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CardBrowser from "./CardBrowser";
 
@@ -16,6 +16,15 @@ const mocks = vi.hoisted(() => ({
   useEnglishCounterparts: vi.fn(),
   language: "en" as "en" | "ja",
   activeGame: "pokemon" as "pokemon" | "mtg" | "pokemon_sealed",
+  // A stable object, as the real hook's state is between loads.
+  laneOptions: {
+    entry: [{ source: "surugaya", region: "JP" }, { source: "tcgplayer", region: "NA" }],
+    exit: [
+      { source: "130point", region: "NA" },
+      { source: "cardladder", region: "NA" },
+      { source: "cardrush", region: "JP" },
+    ],
+  },
 }));
 const translate = (key: string, values?: Record<string, string | number>) => {
   if (values?.message) return `${key}: ${values.message}`;
@@ -44,6 +53,7 @@ vi.mock("./use-card-data", async () => {
   const { pokemonVariantLabel } = await import("@/lib/pokemon-variant");
   return {
     useAvailableCardSources: () => ["expedition_gaming"],
+    useLaneSourceOptions: () => mocks.laneOptions,
     useCardData: mocks.useCardData,
     getCardDisplayName: (card: { regional_name: string; english_name?: string | null }, language: "en" | "ja") =>
       language === "en" && card.english_name ? card.english_name : card.regional_name,
@@ -526,6 +536,34 @@ describe("CardBrowser surfaces", () => {
     expect(screen.getByTestId("browse-table").getAttribute("data-count")).toBe("1");
     fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
     expect(mocks.refetch).toHaveBeenCalledOnce();
+  });
+});
+
+describe("CardBrowser lane sources", () => {
+  it("browses the stored summaries until a lane is restricted", () => {
+    render(<CardBrowser />);
+    expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({ laneSources: null }));
+    expect(screen.getByTestId("browser-exit-sources").textContent).toContain("cardBrowser.exitsAll");
+  });
+
+  it("recomputes each card's lane without an unticked exit, keeping every other exit", async () => {
+    render(<CardBrowser />);
+    await act(async () => {});
+    fireEvent.click(screen.getByTestId("browser-exit-sources"));
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: /^130point/ }));
+    // cardladder is a real exit the per-source snapshot leaves out; an
+    // "all but 130point" selection must keep it.
+    await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      laneSources: { entry: null, exit: ["cardladder", "cardrush"] },
+    })));
+    expect(screen.getByTestId("browser-exit-sources").textContent).toContain("cardBrowser.exitsWithout");
+  });
+
+  it("offers the exits menu for Pokemon singles only", () => {
+    mocks.activeGame = "mtg";
+    render(<CardBrowser />);
+    expect(screen.queryByTestId("browser-exit-sources")).toBeNull();
+    expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({ laneSources: null }));
   });
 });
 

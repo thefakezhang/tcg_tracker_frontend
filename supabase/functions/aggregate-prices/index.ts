@@ -5,6 +5,15 @@ type QueryConnection = Awaited<ReturnType<Pool["connect"]>>;
 
 const GAMES = ["pokemon", "mtg"] as const;
 
+// CARD LANES ARE CHOSEN IN THE DATABASE. Since backend migration 000678 the
+// card summaries come from public.compute_price_lanes (backend
+// docs/source_lanes.md), the one implementation of the lane choice, which the
+// Card Browser also calls with the operator's entry and exit sources. The
+// rules and their measured reasons moved there with it. The helpers below
+// are what the SEALED pass still builds its own SQL from; moving sealed into
+// the database as well is tracked separately, and until then a rule change
+// must be made in both places.
+//
 // Every summary row carries exactly ONE lane: an entry (the cheapest live ask
 // in one region) and an exit (the best realizable price in the OTHER region),
 // with the ROI of that trade. Both directions are scored for every card and
@@ -116,38 +125,6 @@ const exitEvidence = (p25: string, p75: string, liquid: string) =>
 // next increment. SQL fragment.
 const INDICATOR_LOCATIONS = "'collectr', 'cardladder', 'pricecharting'";
 
-// Third-party estimates, dropped from the CARD summaries entirely (operator,
-// 2026-09-19). Both write one guessed number to both sides, and the exit takes
-// the highest row within a kind, so what reaches the summary is the top of
-// whatever spread the feed carries: 7,514 of collectr's 23,407 cards hold more
-// than one valuation and 4,046 hold a high more than 10x their own low. VS
-// Lance's Gyarados carried seven collectr numbers between $8.70 and $669.64,
-// and $669.64 is what the summary published.
-//
-// This is the reverse of the 2026-08-27 decision above, and it is safe now for
-// one reason: 130point supplies OBSERVED eBay sales for the same exit. Of the
-// 10,904 cards whose only NA exit was one of these two, 7,501 already have
-// 130point live listings and 6,514 have sold comps; 2,629 are left with no NA
-// exit and fall back to the informational row with roi NULL.
-//
-// Two things this does NOT do. cardladder stays: it is a median of real slab
-// sales, kind 'sold', not an estimate. And SEALED keeps both, because 130point
-// is scoped to singles, so there is no observed sale to replace them with.
-// SQL fragment.
-const ESTIMATE_LOCATIONS = "'collectr', 'pricecharting'";
-
-// The one source whose asks are a LADDER rather than a price. tcgplayer is a
-// marketplace: its listing rows hold the minimum ask per condition, which is
-// one seller's price for one copy. Every other source here is a shop quoting
-// its own single price, where the ask IS the cost. See MEDIAN_ASK_CARDS and
-// the comment on computeAndInsert. SQL literal.
-const MARKETPLACE_LOCATION = "'tcgplayer'";
-
-// Near mint. tcgplayer_metrics carries one row per SKU and a SKU is a
-// (product, language, printing, condition) tuple, so the median it reports is
-// the near-mint median; it says nothing about a played copy.
-const NM_TIER = 1;
-
 serve(async () => {
   const pool = new Pool(Deno.env.get("SUPABASE_DB_URL")!, 1, true);
 
@@ -159,15 +136,8 @@ serve(async () => {
 
       for (const game of GAMES) {
         const listingsTable = `${game}_market_listings`;
-        const identifiersTable = `${game}_external_identifiers`;
         const summariesTable = `${game}_price_summaries`;
         const bySourceTable = `${game}_summary_by_source`;
-        // MTG only. Backend 000595 builds mtg_card_liquidity; Pokemon has no
-        // counterpart and needs none, because 130point carries a comp spread
-        // on every one of its sold rows so the spread test already admits
-        // them. Passing null here keeps the liquidity term out of the SQL
-        // entirely rather than joining an absent table.
-        const liquidityTable = game === "mtg" ? "mtg_card_liquidity" : null;
 
         // Get all distinct tiers
         const tierResult = await conn.queryObject<{ tier: number }>(
@@ -186,46 +156,14 @@ serve(async () => {
 
         // For each tier, compute non-PSA summaries + per-source snapshot
         for (const tier of tiers) {
-          const count = await computeAndInsert(
-            conn,
-            listingsTable,
-            identifiersTable,
-            // Near mint only. The median is a near-mint number, so a played
-            // tier keeps the minimum ask it always had.
-            tier === NM_TIER,
-            summariesTable,
-            "non-psa",
-            [tier],
-            tier,
-            liquidityTable
-          );
-          totalRows += count;
+          totalRows += await computeAndInsert(conn, game, summariesTable, "non-psa", tier);
           await insertBySourceCards(
             conn, listingsTable, bySourceTable, "non-psa", [tier], tier,
           );
         }
 
         // Compute PSA summaries (no tier filter, tier = -1)
-        const psaCount = await computeAndInsert(
-          conn,
-          listingsTable,
-          identifiersTable,
-          // Graded slabs. A PSA 10 and a raw near-mint copy are different
-          // goods at different prices, and tcgplayer_metrics knows nothing of
-          // a grade, so its median says nothing about this row.
-          false,
-          summariesTable,
-          "psa",
-          null,
-          -1,
-          // null for the same reason useTcgDepth is false above:
-          // mtg_card_liquidity is built from TCGplayer SKU sales, which are
-          // raw copies. A PSA 10's liquidity is not the raw card's, and
-          // lending it the raw volume would be the same cross-attribution
-          // that put one row's spread on another row's price.
-          null
-        );
-        totalRows += psaCount;
+        totalRows += await computeAndInsert(conn, game, summariesTable, "psa", null);
         await insertBySourceCards(
           conn, listingsTable, bySourceTable, "psa", null, -1,
         );
@@ -266,405 +204,20 @@ serve(async () => {
   }
 });
 
-// computeAndInsert writes one summary row per (card, grade group) that has any
-// listing in this slice:
-//   best_sell_* - the ENTRY: the cheapest live ask in the lane's entry region
-//   best_buy_*  - the EXIT:  the best realizable price in the other region,
-//                 ranked by EXIT_KIND_RANK and then by price
-//   roi         - (exit - entry) / entry for the better of the two directions
-//
-// A card with no cross-region lane at all still gets a row, because the
-// browser lists summary rows: it shows the best entry and the best exit from
-// anywhere (so the operator still sees what the card costs and fetches) with
-// roi NULL, exactly as it did before.
-//
-// The column names read backwards because price_type is named from the SHOP's
-// point of view: a shop's "Buy" price is what it pays you, i.e. your exit.
-// best_buy_kind / best_sell_kind record what each side actually is so the UI
-// can label an estimate as one.
-// useTcgDepth corrects BOTH sides of a tcgplayer lane from "the price we
-// stored" to "the price you would transact at", using the live depth in
-// tcgplayer_metrics.
-//
-// The two sides were optimistic in opposite ways, and for the same reason: a
-// single stored number was standing in for a market with a ladder of sellers.
-//
-//   ENTRY was min(ask)        -> one seller's price for one copy, often the
-//                                worst copy. Understates what you PAY.
-//                                LTC 493, 2026-10-08: $21.50 minimum against a
-//                                $51.23 median, while the card had traded
-//                                above $45 since August.
-//   EXIT  was the sold median -> VolumeWeightedLowMedian, correctly
-//                                conservative but HISTORICAL. Overstates what
-//                                you GET once supply has buried the price.
-//                                FRA 431, 2026-10-09: a $3.39 sold estimate
-//                                with 625 copies listed from $0.11.
-//
-// buyestimate.go in the backend states the principle for the exit: "a Buy
-// price that overstates turns an unprofitable purchase into an apparently
-// profitable one. Understating costs a missed deal; overstating costs money."
-// Read in both directions it governs the whole lane - understating what you
-// pay and overstating what you receive are the same error - and before this
-// change neither side of a tcgplayer lane obeyed it fully.
-//
-// So: entry rises to the median ask, exit falls to the cheapest competing ask,
-// and each is clamped so it can only move the pessimistic way.
-//
-// Only tcgplayer, and only at near mint:
-//
-//   - tcgplayer is a marketplace. A Japanese shop lists ONE price per card, so
-//     its ask IS the cost and its bid is a firm offer it will honour; neither
-//     stands in for a market and neither is adjusted.
-//   - tcgplayer_metrics keys on a SKU, which is a (product, language, printing,
-//     condition) tuple, so its depth describes near mint only. Played tiers and
-//     the PSA pass keep the stored prices they always had.
-//
-// The join is pre-aggregated, because a card with two tcgplayer_SKU
-// identifiers would otherwise duplicate every listing row.
-// netExit is what selling at an exit returns. A US exit loses the platform's
-// fee, per-order fee and postage (backend migrations 000549/000550 and
-// docs/net_exit_roi.md): raw copies sell on TCGplayer, graded ones on eBay.
-// A Japanese exit is a shop buylist paying cash, so it stays gross. Gross ROI
-// hid this: a Jirachi GX bought for $70.52 against a ~$90 market showed +28%
-// and returned +1.6%.
-//
-// The lane joins its exit's exit_cost_profiles row (exitCostJoin) and applies
-// public.exit_net_from_costs, a pure function PostgreSQL inlines. Calling
-// exit_net_unit_usd per row instead costs ~18us a call, measured 2026-10-13,
-// which is tens of seconds over the MTG lanes.
-//
-// A US copy can also go to a vendor, who pays a flat share of market with no
-// fees or postage (the 'vendor' profile, 80%; backend 000553). The net is the
-// better of the two channels, matching exit_net_best_unit_usd: with vendors at
-// 80%, TCGplayer wins only from about $20 to $50 and above about $100.
-function exitCostJoin(gradeExpr: string): string {
-  return `LEFT JOIN exit_cost_profiles xf
-        ON xf.platform = CASE WHEN x.market_region = 'NA'
-                              THEN CASE WHEN ${gradeExpr} > 0 THEN 'ebay' ELSE 'tcgplayer' END
-                         END
-      LEFT JOIN exit_cost_profiles vf
-        ON vf.platform = 'vendor' AND x.market_region = 'NA'`;
-}
-function netFrom(alias: string): string {
-  return `public.exit_net_from_costs(x.normalized_price::numeric, ${alias}.fee_pct, ${alias}.fixed_fee,
-                    ${alias}.postage_usd, ${alias}.tracked_postage_usd, ${alias}.tracked_from_usd,
-                    ${alias}.signature_postage_usd, ${alias}.signature_from_usd)`;
-}
-const NET_EXIT = `CASE WHEN xf.platform IS NULL THEN x.normalized_price::numeric
-             ELSE GREATEST(${netFrom("xf")}, ${netFrom("vf")})
-           END`;
-
+// computeAndInsert writes one slice of a game's card summaries: a raw
+// condition tier, or graded copies at tier -1. The lane choice is the
+// backend's compute_price_lanes (migration 000678), called with every source
+// (NULL entry and exit sets). Its SQL is this function's former query, moved
+// unchanged apart from the source filters, which are no-ops when NULL; the
+// parity check that proved it is in backend docs/source_lanes.md.
 async function computeAndInsert(
   conn: QueryConnection,
-  listingsTable: string,
-  identifiersTable: string,
-  useTcgDepth: boolean,
+  game: (typeof GAMES)[number],
   summariesTable: string,
   psaMode: "non-psa" | "psa",
-  tiers: number[] | null,
-  outputTier: number,
-  // null where the game has no precomputed liquidity. Pokemon does not need
-  // one: 130point carries a comp spread on 100% of its sold rows, so the
-  // spread test already admits its volume-backed solds.
-  liquidityTable: string | null
+  tier: number | null,
 ): Promise<number> {
-  // One row per card, so a card with two tcgplayer_SKU identifiers cannot
-  // duplicate its listings. It is 1:1 today - 204,926 MTG identifiers across
-  // 204,926 cards, 2026-10-08 - but a join that is only correct because of
-  // today's data is a fan-out waiting to happen: an earlier ad-hoc query
-  // joined locations on name and silently reported 1,555 rows where 691
-  // existed, because five location rows are named 'cardrush'.
-  //
-  // Both sides reference the same number, the median ask, because that is the
-  // one figure here that describes the market rather than one listing in it.
-  // The two aggregates are the same column read the conservative way for each
-  // side - max() for the entry you pay, min() for the exit cap - so a card
-  // that ever does carry two SKUs cannot be made to look better by which side
-  // the join happens to pick.
-  const depthJoin = useTcgDepth
-    ? `LEFT JOIN (
-             SELECT ext.card_id,
-                    max(tm.median_listing_price) AS median_ask_high,
-                    min(tm.median_listing_price) AS median_ask_low
-               FROM ${identifiersTable} ext
-               JOIN tcgplayer_metrics tm
-                 ON tm.external_reference_id = ext.external_reference_id
-              WHERE ext.platform_name = 'tcgplayer_SKU'
-                AND tm.median_listing_price > 0
-              GROUP BY ext.card_id
-           ) med ON med.card_id = ml.card_id`
-    : "";
-
-  // Both sides of a tcgplayer lane are corrected here, by the same principle
-  // pointed in opposite directions: never let an optimistic figure stand when
-  // a live quote contradicts it.
-  //
-  // ENTRY (a 'Sell' row) rises to the median ask. The stored minimum is one
-  // seller's price for one copy and frequently the worst copy, so it
-  // understates what you will PAY.
-  //
-  // EXIT (a 'Buy' row) falls to the median ask. The stored number is
-  // VolumeWeightedLowMedian, the right conservative estimate of a realized
-  // sale and already used that way - but it is HISTORICAL, and when current
-  // supply has collapsed the price it overstates what you will GET. CODIE,
-  // RAVENOUS CODEX (FRA 431), measured 2026-10-09: a $3.39 sold estimate
-  // against a $0.65 median ask with 625 copies listed. Nothing realizes $3.39
-  // there.
-  //
-  // The cap is the MEDIAN ask and deliberately not the minimum, which is what
-  // this first shipped as and which was wrong. The minimum is one seller's
-  // price for one copy - the same objection that disqualifies it as an entry
-  // disqualifies it as an exit reference - and capping there is refuted by our
-  // own sale data: COUNT ON LUCK (DFT 457, foil) carries a $5.00 sold estimate
-  // over 14 sales in 60 days while its cheapest listing sits at $3.49, so
-  // sales plainly clear above the floor. Capping at $3.49 understated the exit
-  // by a quarter; the $4.72 median is what the market is.
-  //
-  // GREATEST and LEAST rather than plain substitutions, so each correction can
-  // only move its side the pessimistic way. The two tables refresh on their
-  // own cadences - on 2,026 of 191,306 MTG near-mint rows the median already
-  // sits BELOW the live minimum - and a bare substitution would then commit
-  // the very error it is fixing, in reverse.
-  //
-  // Only tcgplayer is touched, because only tcgplayer is a marketplace. A
-  // Japanese shop's ask is the cost and its bid is a firm offer it will honour;
-  // neither is an estimate standing in for a market, so neither is adjusted.
-  //
-  // A SUMMARY ROW can still show a lower entry than before, and that is the
-  // lane rule working rather than a leak: raising the US entry makes the
-  // export lane worse, so for a few cards the import lane now wins instead
-  // and the row's entry becomes a Japanese shop's ask. Measured 2026-10-08,
-  // every such row changed BOTH region and source - 16 of 253,344 MTG rows
-  // and 132 of 31,630 Pokemon - and none of them stayed on tcgplayer.
-  const lanePrice = useTcgDepth
-    ? `CASE
-             WHEN l.name NOT IN (${MARKETPLACE_LOCATION}) THEN ml.price
-             WHEN ml.price_type = 'Sell' AND med.median_ask_high IS NOT NULL
-               THEN GREATEST(ml.price, med.median_ask_high)
-             WHEN ml.price_type = 'Buy'  AND med.median_ask_low  IS NOT NULL
-               THEN LEAST(ml.price, med.median_ask_low)
-             ELSE ml.price
-           END`
-    : "ml.price";
-
-  // The depth adjustment above can move a MARKETPLACE_LOCATION price off
-  // ml.price. The percentiles describe ml.price's OWN distribution, so once the
-  // published number is nudged they no longer bracket it and the spread bar
-  // would be drawn around a number that is not in it. tcgplayer publishes no
-  // percentiles today, so this is a guard rather than a live correction - it
-  // keeps the invariant true if that ever changes.
-  // A sold counts as volume-backed when a copy actually SOLD recently AND the
-  // printing clears its supply. Both halves matter:
-  //
-  //   last_sale_date  the newest day a copy really sold - NOT the newest price
-  //                   bucket, which is written daily whether or not anything
-  //                   moved and overstated freshness 3.2x before 000595.
-  //   sell-through    sales over available supply. Calibrated against cards
-  //                   the format plays, which run 12-20%; the catalogue-wide
-  //                   median is 1.3%. 14 sales is their 25th percentile.
-  //
-  // The OR is what rescues a scarce printing: 2 sales against 3 copies has
-  // cleared its supply, while 2 sales against 189 copies has not, and a flat
-  // sales-count bar cannot tell those apart. Of 4,261 played printings selling
-  // under 10 copies per 60 days, 541 are scarce and 2,325 are oversupplied.
-  const liquidExpr = liquidityTable
-    ? `(liq.last_sale_date >= current_date - 30
-         AND (liq.sell_through_60d >= 0.10 OR liq.sales_60d >= 14))`
-    : "FALSE";
-  const liquidityJoin = liquidityTable
-    ? `LEFT JOIN ${liquidityTable} liq ON liq.card_id = ml.card_id`
-    : "";
-  const liqLastSaleExpr = liquidityTable ? "liq.last_sale_date" : "NULL::date";
-  const liqQtyExpr = liquidityTable ? "liq.qty_30d" : "NULL::integer";
-
-  const laneSpread = (col: string) =>
-    useTcgDepth
-      ? `CASE WHEN l.name IN (${MARKETPLACE_LOCATION}) THEN NULL ELSE ml.${col} END`
-      : `ml.${col}`;
-
   const query = `
-    WITH filtered_listings AS (
-      SELECT
-        ml.card_id,
-        CASE WHEN '${psaMode}' = 'non-psa' THEN 0 ELSE ml.psa_grade END AS group_grade,
-        ml.price_type,
-        ml.price_kind,
-        ${exitKindRank(laneSpread("price_p25"), laneSpread("price_p75"), liquidExpr)} AS kind_rank,
-        ${exitEvidence(laneSpread("price_p25"), laneSpread("price_p75"), liquidExpr)} AS evidence,
-        -- Provenance for a weak exit: when a copy last really sold, and
-        -- how many. NULL where the game has no liquidity table, which
-        -- reads as "no evidence recorded" rather than as zero sales.
-        ${liqLastSaleExpr} AS liq_last_sale_date,
-        ${liqQtyExpr} AS liq_qty_30d,
-        ${lanePrice} AS price,
-        ml.currency,
-        c.symbol AS currency_symbol,
-        l.name AS location_name,
-        l.market_region,
-        ${lanePrice} * COALESCE(er.rate, 1) AS normalized_price,
-        ${laneSpread("price_p25")} AS price_p25,
-        ${laneSpread("price_p75")} AS price_p75
-      FROM ${listingsTable} ml
-      JOIN currencies c ON c.code = ml.currency
-      JOIN locations l ON l.location_id = ml.location_id
-      LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
-      ${depthJoin}
-      ${liquidityJoin}
-      WHERE
-        -- Estimates are out of the card summary entirely; see
-        -- ESTIMATE_LOCATIONS. Dropping them here rather than in the exit
-        -- ranking also keeps them off the entry side, where their
-        -- both-sides write would otherwise still be filtered by kind alone.
-        l.name NOT IN (${ESTIMATE_LOCATIONS})
-        AND CASE
-          WHEN '${psaMode}' = 'non-psa' THEN ml.psa_grade = 0
-          ELSE ml.psa_grade > 0
-        END
-        AND CASE
-          WHEN '${psaMode}' = 'non-psa' AND $1::int[] IS NOT NULL THEN
-            ml.condition IS NULL OR EXISTS (
-              SELECT 1 FROM conditions cond
-              WHERE cond.condition_id = ml.condition
-                AND cond.tier = ANY($1::int[])
-            )
-          ELSE TRUE
-        END
-    ),
-    -- The CENTRAL sold price per group, which is what a sale actually realises.
-    --
-    -- A sold is an OBSERVATION, not an offer. docs/price_anchor_policy.md in
-    -- the backend repo names max(sold) as an exit "the headline defect this
-    -- policy exists to prevent", and aggregates a sold centrally for exactly
-    -- this reason, while a bid is aggregated at its maximum because a buylist
-    -- quote is a commitment its issuer will honour.
-    --
-    -- Measured on cloud, 2026-10-21, before this change: 83.7% of MTG exits
-    -- (268,626 rows) and 83.7% of Pokemon exits (39,676) were sold-kind. On a
-    -- 600-card sample of those where a real USD bid ALSO existed, the
-    -- displayed exit was 1.55x the best committed bid at the median, 2.20x on
-    -- average, and 25.5x at worst. The exit was claiming more than any actual
-    -- buyer had offered.
-    --
-    -- The kind PREFERENCE is deliberately untouched: a sold still outranks a
-    -- bid, because NET_EXIT models a US sold exit as selling into the
-    -- marketplace net of fees and postage, which legitimately beats a buylist.
-    -- What was wrong was taking the top of the distribution instead of its
-    -- middle.
-    sold_central AS (
-      SELECT
-        card_id,
-        group_grade,
-        market_region,
-        percentile_cont(0.5) WITHIN GROUP (ORDER BY normalized_price) AS central
-      FROM filtered_listings
-      WHERE price_type = 'Buy'
-        AND market_region IS NOT NULL
-        AND price_kind::text = 'sold'
-      GROUP BY 1, 2, 3
-    ),
-    -- Best exit PER REGION: best kind first, then - within that kind - the
-    -- row nearest the central sold value for a sold, or the highest price for
-    -- a quote. Selecting the NEAREST ROW rather than the computed median
-    -- keeps the price, currency, location and spread all belonging to one
-    -- real listing, so nothing downstream displays a figure no source
-    -- published.
-    exits AS (
-      SELECT f.*,
-        ROW_NUMBER() OVER (
-          PARTITION BY f.card_id, f.group_grade, f.market_region
-          ORDER BY f.kind_rank,
-                   CASE WHEN f.price_kind::text = 'sold'
-                        THEN abs(f.normalized_price - sc.central) END ASC NULLS LAST,
-                   f.normalized_price DESC
-        ) AS rn
-      FROM filtered_listings f
-      LEFT JOIN sold_central sc
-        ON sc.card_id = f.card_id
-       AND sc.group_grade = f.group_grade
-       AND sc.market_region = f.market_region
-      WHERE f.price_type = 'Buy' AND f.market_region IS NOT NULL
-    ),
-    -- Best entry PER REGION: the cheapest live ask.
-    entries AS (
-      SELECT *,
-        ROW_NUMBER() OVER (
-          PARTITION BY card_id, group_grade, market_region
-          ORDER BY normalized_price ASC
-        ) AS rn
-      FROM filtered_listings
-      WHERE price_type = 'Sell' AND market_region IS NOT NULL
-        AND normalized_price > 0
-        -- Only a live ask can be an entry. Indicator sources write their one
-        -- estimate to BOTH sides (collectr, pricecharting) and cardladder
-        -- writes its sold median to both, so without this a "Sell" row that
-        -- nobody can buy at would become the cheapest way in. An unclassified
-        -- source (NULL kind) on the Sell side is a shop listing until told
-        -- otherwise.
-        AND COALESCE(price_kind::text, 'ask') = 'ask'
-    ),
-    -- Every cross-region lane (entry region -> a different exit region),
-    -- keeping the best ROI per card. Ties go to the better exit kind, then
-    -- to the import direction.
-    lanes AS (
-      SELECT DISTINCT ON (e.card_id, e.group_grade)
-        e.card_id,
-        e.group_grade,
-        x.price AS buy_price,
-        x.currency AS buy_currency,
-        x.currency_symbol AS buy_symbol,
-        x.location_name AS buy_location,
-        x.market_region AS buy_region,
-        x.normalized_price AS buy_normalized,
-        x.price_kind AS buy_kind,
-        x.evidence AS buy_evidence,
-        x.liq_last_sale_date AS buy_last_sale_date,
-        x.liq_qty_30d AS buy_qty_30d,
-        x.price_p25 AS buy_p25,
-        x.price_p75 AS buy_p75,
-        e.price AS sell_price,
-        e.currency AS sell_currency,
-        e.currency_symbol AS sell_symbol,
-        e.location_name AS sell_location,
-        e.market_region AS sell_region,
-        e.normalized_price AS sell_normalized,
-        e.price_kind AS sell_kind,
-        (x.normalized_price - e.normalized_price) / e.normalized_price * 100 AS roi,
-        (${NET_EXIT} - e.normalized_price) / e.normalized_price * 100 AS net_roi
-      FROM entries e
-      JOIN exits x
-        ON x.card_id = e.card_id
-        AND x.group_grade = e.group_grade
-        AND x.market_region <> e.market_region
-        AND x.rn = 1
-      ${exitCostJoin("e.group_grade")}
-      WHERE e.rn = 1
-      ORDER BY
-        e.card_id,
-        e.group_grade,
-        -- The better lane is the one that returns more after selling costs,
-        -- so a Japanese buylist can now beat a US exit that only looked
-        -- better gross.
-        (${NET_EXIT} - e.normalized_price) / e.normalized_price DESC,
-        x.kind_rank ASC,
-        (e.market_region = 'JP') DESC
-    ),
-    -- Fallbacks for a card with no cross-region lane: best exit and best
-    -- entry from anywhere, shown without an ROI.
-    any_exit AS (
-      SELECT DISTINCT ON (card_id, group_grade) *
-      FROM exits
-      WHERE rn = 1
-      ORDER BY card_id, group_grade, kind_rank, normalized_price DESC
-    ),
-    any_entry AS (
-      SELECT DISTINCT ON (card_id, group_grade) *
-      FROM entries
-      WHERE rn = 1
-      ORDER BY card_id, group_grade, normalized_price ASC
-    ),
-    all_groups AS (
-      SELECT DISTINCT card_id, group_grade FROM filtered_listings
-    )
     INSERT INTO ${summariesTable} (
       card_id, tier, psa_grade,
       best_buy_price, best_buy_currency, best_buy_symbol, best_buy_location, best_buy_region, best_buy_normalized, best_buy_kind,
@@ -674,56 +227,13 @@ async function computeAndInsert(
       roi, net_roi, updated_at
     )
     SELECT
-      g.card_id,
-      ${outputTier},
-      g.group_grade,
-      -- SWITCHED ON LANE PRESENCE, NOT ON EACH FIELD BEING NULL.
-      --
-      -- These were per-field COALESCEs, which silently mixed two different
-      -- listings into one row. A lane whose exit is TCGplayer has a real price
-      -- and a NULL spread, so COALESCE(ln.buy_p25, ax.price_p25) fell through
-      -- to any_exit - a DIFFERENT row, often Mana Pool - and attached its
-      -- spread to TCGplayer's price. Measured on cloud 2026-10-22 before this
-      -- change: 17,506 MTG rows carried a spread belonging to another source's
-      -- row, and on 10,592 of them the spread did not even bracket the price
-      -- it was drawn around (1,888 more in Pokemon). One example: card
-      -- 26217327 showed exit 0.17 from TCGplayer with p25/p75 of 0.20/0.26,
-      -- which are Mana Pool's 0.26 row's percentiles.
-      --
-      -- The comment above laneSpread already states the invariant this broke:
-      -- a spread must bracket the number it is drawn around. Switching on
-      -- ln.card_id makes every buy field come from one listing and every sell
-      -- field from one listing, so a NULL spread now reads as "this source
-      -- publishes none", which is the truth.
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_price      ELSE ax.price             END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_currency   ELSE ax.currency          END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_symbol     ELSE ax.currency_symbol   END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_location   ELSE ax.location_name     END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_region     ELSE ax.market_region     END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_normalized ELSE ax.normalized_price  END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_kind       ELSE ax.price_kind        END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_evidence       ELSE ax.evidence            END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_last_sale_date ELSE ax.liq_last_sale_date  END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_qty_30d        ELSE ax.liq_qty_30d         END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_p25        ELSE ax.price_p25         END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.buy_p75        ELSE ax.price_p75         END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_price      ELSE ae.price            END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_currency   ELSE ae.currency         END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_symbol     ELSE ae.currency_symbol  END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_location   ELSE ae.location_name    END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_region     ELSE ae.market_region    END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_normalized ELSE ae.normalized_price END,
-      CASE WHEN ln.card_id IS NOT NULL THEN ln.sell_kind       ELSE ae.price_kind       END,
-      ln.roi,
-      ln.net_roi,
-      now()
-    FROM all_groups g
-    LEFT JOIN lanes ln
-      ON ln.card_id = g.card_id AND ln.group_grade = g.group_grade
-    LEFT JOIN any_exit ax
-      ON ax.card_id = g.card_id AND ax.group_grade = g.group_grade
-    LEFT JOIN any_entry ae
-      ON ae.card_id = g.card_id AND ae.group_grade = g.group_grade
+      card_id, tier, psa_grade,
+      best_buy_price, best_buy_currency, best_buy_symbol, best_buy_location, best_buy_region, best_buy_normalized, best_buy_kind,
+      best_buy_evidence, best_buy_last_sale_date, best_buy_qty_30d,
+      best_buy_p25, best_buy_p75,
+      best_sell_price, best_sell_currency, best_sell_symbol, best_sell_location, best_sell_region, best_sell_normalized, best_sell_kind,
+      roi, net_roi, now()
+    FROM public.compute_price_lanes($1::text, $2::boolean, $3::integer, NULL, NULL)
     ON CONFLICT (card_id, tier, psa_grade) DO UPDATE SET
       best_buy_price = EXCLUDED.best_buy_price,
       best_buy_currency = EXCLUDED.best_buy_currency,
@@ -748,8 +258,7 @@ async function computeAndInsert(
       net_roi = EXCLUDED.net_roi,
       updated_at = EXCLUDED.updated_at;
   `;
-
-  const result = await conn.queryObject(query, [tiers]);
+  const result = await conn.queryObject(query, [game, psaMode === "psa", tier]);
   return result.rowCount ?? 0;
 }
 

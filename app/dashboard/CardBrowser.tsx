@@ -6,9 +6,14 @@ import { ChevronDown, CircleAlert, Hash, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -27,7 +32,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AddToPlanAction } from "./AddToPlanAction";
 import { useGame } from "./GameContext";
 import { useHeader } from "./HeaderContext";
-import { useAvailableCardSources, useCardData, type CardRowData, type RegionFilter, cardVariant, getCardDisplayName } from "./use-card-data";
+import { useAvailableCardSources, useCardData, useLaneSourceOptions, type CardRowData, type RegionFilter, cardVariant, getCardDisplayName } from "./use-card-data";
 import { createClient } from "@/lib/supabase/client";
 import { useLanguage } from "./LanguageContext";
 import { createColumns, createMtgColumns, createSelectColumn, PriceCell } from "./columns";
@@ -53,6 +58,7 @@ import { DecisionActions } from "./DecisionActions";
 import { browserOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
 import { sourceLabel } from "@/lib/source-labels";
 import type { SourceSide } from "./source-availability";
+import { laneSourceSets } from "./lane-sources";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
 import { MtgLabelEvidence } from "./MtgLabelEvidence";
 import type { JapanExclusivityDimension } from "./japan-exclusivity";
@@ -128,6 +134,9 @@ export default function CardBrowser() {
   const [sellRegion, setSellRegion] = useState<RegionFilter>("all");
   const [requiredSource, setRequiredSource] = useState("");
   const [sourceSide, setSourceSide] = useState<SourceSide>("buy");
+  // Pokemon: exit sources left out of each card's lane (lane-sources.ts).
+  // Exclusions rather than inclusions, so a new source is in by default.
+  const [excludedExits, setExcludedExits] = useState<string[]>([]);
   const [rarity, setRarity] = useState<string>("");          // "" = all (Pokémon only)
   const [promosOnly, setPromosOnly] = useState(false);       // Pokémon promotional cards
   const [japanExclusivity, setJapanExclusivity] = useState<Set<JapanExclusivityDimension>>(() => new Set());
@@ -159,8 +168,6 @@ export default function CardBrowser() {
   const [tcgMarket, setTcgMarket] = useState<Map<number, number>>(() => new Map());
   const [marketEvidence, setMarketEvidence] = useState<Map<number, MarketEvidence>>(() => new Map());
   const [weakEvidenceOnly, setWeakEvidenceOnly] = useState(false);
-  // Tally the copies you can actually sell: owned minus consignment.
-  const [availableOnly, setAvailableOnly] = useState(false);
   const [surface, setSurface] = useState<"browse" | "watchlist" | "outcomes">("browse");
 
   useEffect(() => {
@@ -174,6 +181,39 @@ export default function CardBrowser() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const selectionEnabled = activeGame === "pokemon";
   const availableSources = useAvailableCardSources(activeGame, sourceSide);
+  // Pokemon offers the sources its lanes can use, cardladder included; the
+  // per-source snapshot behind availableSources leaves cardladder out.
+  const laneOptions = useLaneSourceOptions(activeGame);
+  const exitOptionSources = useMemo(
+    () => [...new Set(laneOptions.exit.map((option) => option.source))],
+    [laneOptions.exit],
+  );
+  const sourceOptions = useMemo(
+    () => activeGame === "pokemon"
+      ? [...new Set((sourceSide === "sell" ? laneOptions.entry : laneOptions.exit).map((option) => option.source))]
+      : availableSources,
+    [activeGame, availableSources, laneOptions, sourceSide],
+  );
+  const exitRegions = useMemo(() => {
+    const regions = [...new Set(laneOptions.exit.map((option) => option.region ?? ""))];
+    const rank = (region: string) => (region === "NA" ? 0 : region === "JP" ? 1 : 2);
+    return regions.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  }, [laneOptions.exit]);
+  const laneSources = useMemo(
+    () => laneSourceSets({
+      game: activeGame,
+      requiredSource,
+      sourceSide,
+      excludedExits,
+      exitOptions: exitOptionSources,
+    }),
+    [activeGame, requiredSource, sourceSide, excludedExits, exitOptionSources],
+  );
+  const exitsLabel = excludedExits.length === 0
+    ? t("cardBrowser.exitsAll")
+    : excludedExits.length === 1
+      ? t("cardBrowser.exitsWithout", { source: sourceLabel(excludedExits[0]) })
+      : t("cardBrowser.exitsExcluded", { count: excludedExits.length });
 
   const { data, loading, error, availableTiers, totalCount, refetch, refresh } =
     useCardData({
@@ -186,6 +226,7 @@ export default function CardBrowser() {
       sellRegion,
       requiredSource,
       sourceSide,
+      laneSources,
       rarity: rarity || null,
       promosOnly,
       soldEvidenceOnly,
@@ -324,6 +365,7 @@ export default function CardBrowser() {
     setSellRegion("all");
     setRequiredSource("");
     setSourceSide("buy");
+    setExcludedExits((current) => current.length === 0 ? current : []);
     setRarity("");
     setPromosOnly(false);
     setJapanExclusivity((current) => current.size === 0 ? current : new Set());
@@ -349,7 +391,7 @@ export default function CardBrowser() {
   useEffect(() => {
     setPage(0);
     setRowSelection({});
-  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, rarity, promosOnly, soldEvidenceOnly, measuredExitsOnly, japanExclusivity, mtgTags, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
+  }, [search, searchCardNumber, searchSetCode, selectedTier, sellRegion, requiredSource, sourceSide, excludedExits, rarity, promosOnly, soldEvidenceOnly, measuredExitsOnly, japanExclusivity, mtgTags, cuteOnly, minBuyPrice, minSellPrice, roiFloor, roiCeiling, psaMode, sortColumn, sortAsc, pageSize]);
 
   useEffect(() => {
     setHeaderActions(null);
@@ -515,7 +557,10 @@ export default function CardBrowser() {
           </DropdownMenuContent>
         </DropdownMenu>
         <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="outline" className="h-11 shrink-0 sm:h-8" />}>
+          <DropdownMenuTrigger
+            render={<Button variant="outline" className="h-11 shrink-0 sm:h-8" />}
+            title={activeGame === "pokemon" ? t("cardBrowser.laneSourceHint") : undefined}
+          >
             {requiredSource
               ? `${t("cardBrowser.sourcePrefix")}${sourceLabel(requiredSource)}`
               : t("cardBrowser.sourceAll")}
@@ -524,7 +569,7 @@ export default function CardBrowser() {
           <DropdownMenuContent className="max-h-72 overflow-auto">
             <DropdownMenuRadioGroup value={requiredSource} onValueChange={setRequiredSource}>
               <DropdownMenuRadioItem value="">{t("cardBrowser.sourceAll")}</DropdownMenuRadioItem>
-              {availableSources.map((source) => (
+              {sourceOptions.map((source) => (
                 <DropdownMenuRadioItem key={source} value={source}>
                   {sourceLabel(source)}
                 </DropdownMenuRadioItem>
@@ -532,6 +577,62 @@ export default function CardBrowser() {
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
+        {activeGame === "pokemon" && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant={excludedExits.length > 0 ? "default" : "outline"}
+                  className="h-11 shrink-0 sm:h-8"
+                  data-testid="browser-exit-sources"
+                />
+              }
+              title={t("cardBrowser.exitsHint")}
+            >
+              {exitsLabel}
+              <ChevronDown className="ml-1 size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="max-h-80 overflow-auto">
+              <DropdownMenuItem
+                disabled={excludedExits.length === 0}
+                onClick={() => setExcludedExits([])}
+              >
+                {t("cardBrowser.exitsReset")}
+              </DropdownMenuItem>
+              {exitRegions.map((region) => (
+                <DropdownMenuGroup key={region || "other"}>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel>
+                    {region === "NA"
+                      ? t("cardBrowser.regionNA")
+                      : region === "JP"
+                        ? t("cardBrowser.regionJP")
+                        : region}
+                  </DropdownMenuLabel>
+                  {laneOptions.exit
+                    .filter((option) => (option.region ?? "") === region)
+                    .map((option) => (
+                      <DropdownMenuCheckboxItem
+                        key={`${region}:${option.source}`}
+                        checked={!excludedExits.includes(option.source)}
+                        onCheckedChange={(checked) =>
+                          setExcludedExits((current) =>
+                            checked
+                              ? current.filter((source) => source !== option.source)
+                              : current.includes(option.source)
+                                ? current
+                                : [...current, option.source])}
+                        className="min-h-11 sm:min-h-0"
+                        data-source={option.source}
+                      >
+                        {sourceLabel(option.source)}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                </DropdownMenuGroup>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         {activeGame === "pokemon" && (
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button variant="outline" className="h-11 shrink-0 sm:h-8" />}>
@@ -607,14 +708,6 @@ export default function CardBrowser() {
             {t("cardBrowser.cuteOnly")}
           </Button>
         )}
-        <Button
-          variant={availableOnly ? "default" : "outline"}
-          className="h-11 shrink-0 sm:h-8"
-          onClick={() => setAvailableOnly((v) => !v)}
-          title={t("inventory.excludeConsigned")}
-        >
-          {t("inventory.excludeConsigned")}
-        </Button>
         <div
           data-testid="browser-price-filters"
           className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:w-auto xl:flex-1 xl:grid-cols-4"
@@ -785,11 +878,10 @@ export default function CardBrowser() {
 
       {(!error || visibleData.length > 0) && <DataTable
         columns={activeGame === "mtg"
-          ? createMtgColumns(t, language, availableOnly)
+          ? createMtgColumns(t, language)
           : [createSelectColumn(t), ...createColumns(
               t,
               language,
-              availableOnly,
               tcgMarket,
               marketEvidence,
             )]}
@@ -899,7 +991,7 @@ export default function CardBrowser() {
                   )}
                   <JapanExclusiveEvidence card={row.card} compact />
                   <MtgLabelEvidence card={row.card} compact />
-                  <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} avgCost={row.ownedAvgCostUsd} totalCost={row.ownedCostBasisUsd} consigned={row.ownedConsigned} availableOnly={availableOnly} />
+                  <OwnedCountLine owned={row.ownedQty} incoming={row.incomingQty} avgCost={row.ownedAvgCostUsd} totalCost={row.ownedCostBasisUsd} consigned={row.ownedConsigned} />
                   <ObservedLine observed={row.observed} />
                 </CardHeader>
                 <CardFooter className="mt-auto flex-col gap-2 text-xs">
