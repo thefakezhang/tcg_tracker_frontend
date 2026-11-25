@@ -17,6 +17,7 @@ const SOURCE_LABELS: Record<string, string> = {
   haohao: "Haohao",
   laurier: "Laurier",
   meets: "MEETS",
+  offmall: "Off-Mall",
   pdg: "PDG",
   ponpoko: "Ponpoko",
   pricecharting: "PriceCharting",

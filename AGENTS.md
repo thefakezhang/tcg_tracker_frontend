@@ -578,7 +578,7 @@ See [docs/card_sale_feedback.md](docs/card_sale_feedback.md) for the preserved m
 - Has its own tier filter dropdown.
 - Uses `useCurrency()` for price conversion in `ListingTable`.
 - Each listing row shows its `seller_text` under the location, truncated to one line with the full text on hover.
-For Surugaya's sell side that is the store holding the cheapest offer in that condition (or `駿河屋 通販` for its online stock); for 130point it is what the figure is ("eBay sold median (n=10, 30d, cleaned)").
+For Surugaya's sell side that is the store holding the cheapest offer in that condition (or `駿河屋 通販` for its online stock), and Off-Mall's (`offmall`, Hard Off and Hobby Off stores, backend #2910) works the same way; for 130point it is what the figure is ("eBay sold median (n=10, 30d, cleaned)").
 - `CompSpreadBar` draws a row's `price_p25`/`price_p75` around its price on a scale that runs from the lower of the price and P25 to the higher of the price and P75.
 A median inside its band (130point, Mana Pool) draws exactly as before; Surugaya's cheapest offer sits at or below the spread of every store's offer, so an outlier low lands visibly left of the band instead of pinned to its edge.
 `belowBandPercent` adds an amber "N% below the typical range" line when the price is at least 20% under P25 (`BELOW_BAND_OUTLIER`).
