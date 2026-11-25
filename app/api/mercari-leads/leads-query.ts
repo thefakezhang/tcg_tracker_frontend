@@ -28,8 +28,8 @@ export const NULL_MULTIPLE = "null";
 
 // The row lanes, and the slab plays (backend 000646, #2707): every raw lane's
 // leads whose card's Card Ladder PSA 1-6 floor clears the ask after grading.
-// "slab_play" is a feed, never a row's lane.
-export const LEAD_LANES = ["modern_raw", "vintage_raw", "psa", "unpriced", "slab_play"] as const;
+// "slab_play" is a feed, never a row's lane. mid_raw is backend 000681 (#2905).
+export const LEAD_LANES = ["modern_raw", "mid_raw", "vintage_raw", "psa", "unpriced", "slab_play"] as const;
 export type LeadLane = (typeof LEAD_LANES)[number];
 
 export const LEAD_SORTS = ["multiple", "newest", "ending", "condition", "profit"] as const;
@@ -259,7 +259,7 @@ export function parseLeadsRequest(params: URLSearchParams): { ok: true; value: L
   // a PSA value are never ranked against each other.
   const lane = params.get("lane")?.trim() ?? "";
   if (!isOneOf(LEAD_LANES, lane)) {
-    return fail("lane is required and must be modern_raw, vintage_raw, psa, unpriced or slab_play");
+    return fail("lane is required and must be modern_raw, mid_raw, vintage_raw, psa, unpriced or slab_play");
   }
   const format = params.get("format")?.trim() || "fixed_price";
   if (!isOneOf(LEAD_FORMATS, format)) return fail("format must be fixed_price or auction");

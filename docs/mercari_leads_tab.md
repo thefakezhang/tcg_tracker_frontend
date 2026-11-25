@@ -16,26 +16,44 @@ Since phase L4 a fresh lead is photo-checked against the card its title names, b
 
 Since tcg_tracker #2517 the feed is lighter: copies of one card at one holder or grade are one row with "+N more ¥X-¥Y" to expand them, the default shows only rows with a multiple from C2C sellers, unpriced rows that could never clear the bars are flagged and hidden, and every value says how old its newest sale is.
 
-Tracking: tcg_tracker epic #2304, phases L1 and L4 (frontend), tcg_tracker #2340 and #2517.
-Backend contract: migrations `000616_mercari_title_leads`, `000617_mercari_lead_title_identity`, `000620_mercari_lead_scan_publication`, `000623_mercari_lead_photo_check_publication`, `000633_mercari_lead_auctions`, `000634_mercari_lead_photo_checks_paused`, `000638_mercari_lighter_leads`, `000646`, `000648` and `000653_mercari_psa_grading_tiers_and_cardladder_values`, and `docs/mercari_title_leads.md` in the backend repo (sections "Fresh-lead photo checks (phase L4)" and "A lighter feed (#2517)").
+Tracking: tcg_tracker epic #2304, phases L1 and L4 (frontend), tcg_tracker #2340, #2517 and #2905.
+Backend contract: migrations `000616_mercari_title_leads`, `000617_mercari_lead_title_identity`, `000620_mercari_lead_scan_publication`, `000623_mercari_lead_photo_check_publication`, `000633_mercari_lead_auctions`, `000634_mercari_lead_photo_checks_paused`, `000638_mercari_lighter_leads`, `000646`, `000648`, `000653_mercari_psa_grading_tiers_and_cardladder_values` and `000681_mercari_raw_eras_condition_ladder`, and `docs/mercari_title_leads.md` in the backend repo (sections "Fresh-lead photo checks (phase L4)" and "A lighter feed (#2517)").
 
 ## The operator's rules behind the feed
 
-Set by the operator on 2026-11-01 and enforced by the publisher and the table's CHECKs; the tab shows them and never re-derives them:
+Set by the operator on 2026-11-01, revised on 2026-11-25 (#2905), and enforced by the publisher and the table's CHECKs; the tab shows them and never re-derives them:
 
 - A lead with a multiple clears both a 1.0x multiple and $10 of profit (net value less landed ask). Evidence rows are held to the same bars at the value they show.
 - A PSA lead needs 3 sales at its exact grade in 180 days for a multiple. On fewer, its value is still shown, at that grade, as evidence (`psa_thin_comps`).
 - Since backend 000653 (#2756, operator 2026-11-17) a PSA lead is valued from Card Ladder only, never eBay comps: the median of the newest 10 Card Ladder sales at the title's grade in 180 days, labelled "Card Ladder PSA sales" (`value_basis = 'cardladder_psa_v0'`). A PSA title with no Card Ladder sale at its grade reads "no PSA G Card Ladder sales in the last 180 days", and a card whose Card Ladder profile stopped updating reads that its sales price nothing (`cardladder_comps_frozen`). Raw leads keep the provisional eBay value.
-- Since backend 000679 (#2895, operator 2026-11-24) a raw lead is valued from TCGplayer first: when its card has a trusted TCGplayer anchor (a copy sold within 7 days, 3 or more copies in 30 days, a Near Mint SKU) the value is that market price, labelled "TCGplayer market" (`value_basis = 'tcgplayer_market_v0'`), with the copies sold over a 30-day window as its evidence line; only without one does the eBay value apply. Since backend 000680 a modern card needs only one Near Mint copy sold in 30 days, so a value can rest on a single sale, and the evidence line then reads "1 sale in the last 30 days, on <date>" rather than "1 sales". The parser accepts the 30-day window only on that basis, and that basis only on a raw lane valued Near Mint, so a damaged vintage row (always the eBay rule) or a PSA row carrying it fails closed.
-- A vintage card the seller rates 3 to 6 is priced as damaged, at P25 of the same raw sales the Near Mint value uses, and gets a real multiple at that price ("if it's beat up but vintage then maybe consider it more"). Its Near Mint value is kept beside it.
-- A modern card the seller rates 3 to 6 is evidence only: its Near Mint value is shown, with no multiple (`seller_condition_3_6`).
+- Since backend 000681 (#2905, operator 2026-11-25) the raw lanes are three eras of the card's set, by its release date: `modern_raw` from Sun & Moon (SM0 and the SM promos, 2016-11-18), `mid_raw` from Diamond & Pearl (DP1 and the DP promos, 2006-11-30) until then, so all of XY including CP3-CP6, and `vintage_raw` before Diamond & Pearl or with no release date ("I think we need a mid era thing").
+  Before 000681 there were two, cut at 2016-01-01, which put CP3 (ポケキュンコレクション, 2016-01-29) among the modern cards.
+- A raw card's Near Mint value comes from TCGplayer or the eBay rule, whichever had more sales in the last 30 days; a tie goes to the newer sale, and when neither sold in 30 days the same test runs over 60, then 180 days ("We look at who has more sales and more recent sales. This should be true for everything").
+  A TCGplayer value is the market price on the card's Near Mint SKU, labelled "TCGplayer market" (`value_basis = 'tcgplayer_market_v0'`), and its evidence line counts the copies sold in the window that decided, so its window is 30, 60 or 180 days and its count at least one; "1 sale in the last 30 days, on <date>" reads in the singular.
+  The eBay value keeps the eBay rule's own 60 or 180 days and reads "Provisional eBay value".
+  This replaces TCGplayer first (backend 000679 and 000680, #2895), which took a single TCGplayer sale over 25 eBay ones.
+  The parser accepts the TCGplayer basis on every raw lane and every raw value condition except the eBay rule's damaged P25, and fails closed on it anywhere else.
+- A raw card the seller rates 3 to 6 is valued at a step of its Near Mint value, with a multiple, in every era ("We should be using tiers, not going from NM immediately to damaged"):
+
+  | Seller condition | Step (`value_condition`) | Share of Near Mint |
+  |---|---|---|
+  | 1 新品、未使用, 2 未使用に近い | Near Mint (`nm`) | 1.00 |
+  | 3 目立った傷や汚れなし | between Near Mint and Lightly Played (`nm_lp`) | 0.875 |
+  | 4 やや傷や汚れあり | Lightly Played (`lp`) | 0.75 |
+  | 5 傷や汚れあり | Moderately Played (`mp`) | 0.54 |
+  | 6 全体的に状態が悪い | Damaged (`damaged`) | 0.30 |
+
+  The shares are TCGplayer's played-condition sold prices against Near Mint on Japanese cards over $20, and the operator shifted the steps one place up because Japanese sellers rate strictly.
+  The row names its step and the card shows its share and the Near Mint value beneath; the share is copy in the tab, never recomputed from the row.
+- Publisher v18's shapes still parse until v19 has rewritten every row, then a backend migration removes them: a vintage card rated 3 to 6 priced as damaged at P25 of the eBay window (`damaged_p25`), with a multiple, and a modern one at its Near Mint value as evidence only (`seller_condition_3_6`).
+  Neither shape is valid in the mid era, which v18 never wrote.
 
 ## Goals
 
-- One lane at a time (`modern_raw`, `vintage_raw`, `psa`, `unpriced`), so a raw value and a PSA value are never ranked against each other.
+- One lane at a time (`modern_raw`, `mid_raw`, `vintage_raw`, `psa`, `unpriced`), so a raw value and a PSA value are never ranked against each other, and cards of different eras are not ranked together.
 - Every lead shows its value with the basis, sample count, window and as-of date, the net value and the multiple of the landed ask, the listing's age, and its photo-check state.
 - The card label carries its edition and finish, because a first edition or a mirror changes a vintage card's value, and says how the title was matched.
-- A damaged price and a thin PSA value read as what they are, never as a Near Mint value or a market.
+- A price below Near Mint (a ladder step, or v18's damaged P25) and a thin PSA value read as what they are, never as a Near Mint value or a market.
 - A PSA lead shows its grade and a value at exactly that grade; a raw value or a neighbouring grade's value never appears on it.
 - Unpriced listings are visible with the reason, never dropped; one that could never clear the bars even at twice its best price on file is flagged "Can't be a deal" and hidden by default, one toggle away (backend #2517).
 - Copies of one card at one holder or grade are one row, the group's best under the sort, with "+N more ¥X-¥Y" to expand the others, so a page shows 50 cards rather than 50 copies of a few.
@@ -82,7 +100,7 @@ Every parameter is bounded in `leads-query.ts` before the database is asked anyt
 
 | parameter | values | default |
 |---|---|---|
-| `lane` | `modern_raw`, `vintage_raw`, `psa`, `unpriced`, `slab_play` | required, a request without one is a 400 |
+| `lane` | `modern_raw`, `mid_raw`, `vintage_raw`, `psa`, `unpriced`, `slab_play` | required, a request without one is a 400 |
 | `format` | `fixed_price`, `auction`; `slab_play` is fixed price only | `fixed_price` |
 | `sort` | fixed price: `multiple` (best multiple), `condition` (best condition), `newest`; slab plays: `profit`, `condition`, `newest`; auctions: `ending` (ending soonest), `newest`; any other pairing is a 400 | the feed's first |
 | `conditions` | a comma list of distinct seller conditions `1` to `6` | all six |
@@ -109,7 +127,7 @@ Every request is one lane and one format (`listing_format = format`), and every 
 | Best condition | `seller_condition_id ASC`, then the lane's value `DESC NULLS LAST` (the multiple, or the slab profit in the slab plays), `external_item_id` | none; the grouped feed sorts the lane |
 | Slab profit | `slab_play_profit_usd DESC, external_item_id` | none; the grouped feed sorts the lane |
 
-Rows without a multiple (modern codes 3-6, thin PSA comps, a PSA title with no grade) sort last under Best multiple, so a page can end inside them.
+Rows without a multiple (thin PSA comps, a PSA title with no grade, and publisher v18's modern codes 3-6) sort last under Best multiple, so a page can end inside them.
 The cursor spells that boundary `after=null`, and the next page reads `multiple IS NULL AND external_item_id > after_key`; after a priced row it reads the smaller multiples, the tie on the id, and then every row without a multiple.
 The id and the cursor value are checked against their exact shape (`m` plus 9 to 11 digits or 20 to 32 alphanumerics; a `numeric(12,3)` decimal; an RFC 3339 timestamp) before they reach the database; the grouped feed takes the cursor as typed arguments (`p_after_multiple`, `p_after_time`, `p_after_seen`, `p_after_key`, `p_after_null`), and the ids are spliced into a PostgREST `in` filter.
 The unpriced lane has no multiple at all, so the view asks it for Newest when Best multiple is chosen and disables Best multiple there; Best condition still applies.
@@ -153,8 +171,9 @@ On a cold-crawl lead a request is recorded only, because only fresh leads are qu
 
 `parseMercariLeads` holds every row to the lane rules the table's CHECKs enforce, and a row that breaks one fails the page rather than rendering:
 
-- a raw lane row has no holder named, a raw value (`value_psa_grade = 0`), a `value_condition` and an `nm_value_usd`; a Near Mint row's value is its Near Mint value, and a damaged value is never above it;
-- the seller's condition decides the raw shapes: codes 1-2 are Near Mint with a multiple, vintage codes 3-6 are `damaged_p25` with a multiple, modern codes 3-6 are Near Mint with `seller_condition_3_6` and no multiple, and nothing else passes (a multiple on modern codes 3-6, or on vintage codes 3-6 valued Near Mint, is refused);
+- a raw lane row (`modern_raw`, `mid_raw` or `vintage_raw`) has no holder named, a raw value (`value_psa_grade = 0`), a `value_condition` and an `nm_value_usd`; a Near Mint row's value is its Near Mint value, and a value below Near Mint is never above it;
+- the seller's condition decides the raw shapes: codes 1-2 are Near Mint with a multiple, and codes 3-6 are their ladder step (3 `nm_lp`, 4 `lp`, 5 `mp`, 6 `damaged`) with no withheld reason, in every era; publisher v18's vintage codes 3-6 at `damaged_p25` and modern codes 3-6 at Near Mint with `seller_condition_3_6` still pass, in those lanes only, and nothing else does (a step another code gives, Near Mint with a multiple on codes 3-6, or a v18 shape in the mid era is refused);
+- a TCGplayer value sits on a raw lane at any value condition but `damaged_p25`, with a window of 30, 60 or 180 days and at least one sale; any other basis has a window of 60 or 180 days;
 - a PSA lane row has no value condition and a value at exactly the title's grade, with a multiple or `psa_thin_comps`, or, when the title does not say the grade, no value, no multiple and `psa_grade_unread`;
 - an unpriced row has no value, no value condition, no withheld reason and a reason of its own;
 - a multiple exists only with a positive net value, and a priced lane row without a multiple says why;
@@ -173,7 +192,7 @@ The match tier is the one new field that does not fail closed: a tier the matche
 - The listing's age as the first badge, toned fresh under 24 hours, aging under 72, and old after that, because Mercari listings sell within days; it is "Listed" when Mercari gave a creation time and "First seen" otherwise. A cold-crawl lead carries a muted "Cold crawl" badge beside it; a fresh lead, now every lead, carries none, because a "New" badge on every card would say nothing. The last observation time follows in JST.
 - The photo-check badge, described below. On a conflict the card the photo check found is shown with its image, name, set, number and PSA grade.
 - The holder: Raw, PSA with the grade, or "PSA, grade not read".
-- The multiple of the landed ask (net value over landed ask), marked "priced as damaged" for a damaged vintage row, or the reason it is withheld: a modern card the seller rates 3 to 6 keeps its Near Mint value as evidence, a thin PSA value reads "Only N PSA G sales; shown as evidence", and a PSA title without a grade has no value to compare.
+- The multiple of the landed ask (net value over landed ask), marked "priced as Lightly Played" (or the row's other step) for a ladder row and "priced as damaged" for v18's damaged vintage row, or the reason it is withheld: v18's modern card rated 3 to 6 keeps its Near Mint value as evidence, a thin PSA value reads "Only N PSA G sales; shown as evidence", and a PSA title without a grade has no value to compare.
 - For an unpriced lead, the reason and, when the lead stands for its group, "+N other listings" still on sale for the same card, holder and seller condition.
 - The ask in JPY, any buyer-paid shipping added, the landed ask in USD, and a "Buyer pays shipping" marker.
 - The seller's condition, in Japanese with an English gloss.
@@ -186,12 +205,12 @@ TCGplayer's own `volatility_label` is not used, because it is blank on all but a
 - On a raw lead whose card has a Card Ladder PSA 1-6 floor: when it is a play, a green panel with the profit after grading ("+$466.81 profit even if it grades PSA 1-6 · 1.7x"), the floor ("Card Ladder PSA 1-6: $1,401.00, the lower quarter of 47 sales (newest date)") and the arithmetic (floor less eBay costs less grading, with the PSA service level and its turnaround in business days, or the grading days on an older publication, against the landed ask), and a "Slab play" badge; when only a set and name named the card, the panel is amber, the badge reads "Slab play: check the card" and the panel says to check the photos before buying; when the floor does not pay for grading, no grading cost is set, or the photos disagree, one muted line with the floor and the reason.
 - The value with its basis, holder, sample count, window and newest-sale date, how old that sale is ("value as of 3 days ago", amber with "no newer sale" past 14 days, because a value with no recent sale may have moved; backend `value_age_days`), then the net after eBay fees and postage.
 - On an unpriced row, the never-a-deal screen: a grey "Can't be a deal" badge and "Even at 2x its best price on file ($4.50, SNKRDUNK, date), this listing could not clear 1.0x and $10 of profit at its ask" (`never_clears`); the best price on file for a row that could clear (`may_clear`); or that nothing prices it (`no_evidence`). A sale is named by its platform ("eBay sale").
-- When the row stands for a group of more than one, a "+N more ¥X-¥Y" button over the group's ask range; it expands the best 50 other copies, each on one line with its ask (linked to the listing), multiple or reason, seller condition, age and photo badge, and the number of listings in all when unpriced rows stand for more. A damaged vintage row reads "priced as damaged (bottom quarter of raw sales)" with "Near Mint $Y" beneath it. `value_basis = 'ebay_rule_v0'` reads "Provisional eBay value", never a final price; `cardladder_psa_v0` reads "Card Ladder PSA sales"; `tcgplayer_market_v0` reads "TCGplayer market"; an unknown basis is shown by its code.
+- When the row stands for a group of more than one, a "+N more ¥X-¥Y" button over the group's ask range; it expands the best 50 other copies, each on one line with its ask (linked to the listing), multiple or reason, seller condition, age and photo badge, and the number of listings in all when unpriced rows stand for more. A ladder row reads "priced as Lightly Played, 0.75 of Near Mint" (its own step and share) and v18's damaged vintage row "priced as damaged (bottom quarter of raw sales)", each with "Near Mint $Y" beneath it. `value_basis = 'ebay_rule_v0'` reads "Provisional eBay value", never a final price; `cardladder_psa_v0` reads "Card Ladder PSA sales"; `tcgplayer_market_v0` reads "TCGplayer market"; an unknown basis is shown by its code.
 
 An auction card differs in these places:
 
 - A violet "Auction" badge leads the badges ("Auction ended", grey, once its stated end has passed, which only shows with "Show listings no longer on sale").
-- Where a multiple would be, the maximum bid in large type with "max bid: the highest that still clears 1.0x and $10 of profit"; then "Current bid: ¥X · ¥Y below the max" (or "at the max"); a modern 3-6 or thin PSA auction adds its evidence reason, an unpriced one shows its reason instead of a maximum, and a PSA auction without a grade its withheld reason; then "N bids · Ends date JST (in N h)", each "not read yet" when no lead scan read it.
+- Where a multiple would be, the maximum bid in large type with "max bid: the highest that still clears 1.0x and $10 of profit"; then "Current bid: ¥X · ¥Y below the max" (or "at the max"); a v18 modern 3-6 or thin PSA auction adds its evidence reason, an unpriced one shows its reason instead of a maximum, and a PSA auction without a grade its withheld reason; then "N bids · Ends date JST (in N h)", each "not read yet" when no lead scan read it.
 - An unpriced auction stands for the other auctions of its card, holder and seller condition, never for a fixed-price listing, and says it has the lowest current bid among them.
 - The ask row reads "Current bid", and when the newest search no longer marks the listing as an auction a note under it says when it was last marked and that it has probably ended or been converted to a fixed price.
 - No photo check is offered or queued: the badge is the grey "Not photo-checked" with "Auctions are not photo-checked.", because the backend never queues an auction.

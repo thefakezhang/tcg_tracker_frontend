@@ -156,7 +156,7 @@ describe("dashboard URL codec", () => {
     expect(parseMercariFeedParam(" verified ")).toBe("verified");
     expect(parseMercariFeedParam("leads")).toBe("leads");
     expect(parseMercariFeedParam("Verified")).toBeNull();
-    for (const lane of ["modern_raw", "vintage_raw", "psa", "unpriced"] as const) {
+    for (const lane of ["modern_raw", "mid_raw", "vintage_raw", "psa", "unpriced"] as const) {
       expect(parseMercariLaneParam(lane)).toBe(lane);
     }
     expect(parseMercariLaneParam("raw")).toBeNull();
