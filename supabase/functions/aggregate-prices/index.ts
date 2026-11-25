@@ -204,6 +204,41 @@ serve(async () => {
   }
 });
 
+// The sealed pass still prices its own lanes from these (see the header);
+// the card lanes use the same rules inside compute_price_lanes.
+// netExit is what selling at an exit returns. A US exit loses the platform's
+// fee, per-order fee and postage (backend migrations 000549/000550 and
+// docs/net_exit_roi.md): raw copies sell on TCGplayer, graded ones on eBay.
+// A Japanese exit is a shop buylist paying cash, so it stays gross. Gross ROI
+// hid this: a Jirachi GX bought for $70.52 against a ~$90 market showed +28%
+// and returned +1.6%.
+//
+// The lane joins its exit's exit_cost_profiles row (exitCostJoin) and applies
+// public.exit_net_from_costs, a pure function PostgreSQL inlines. Calling
+// exit_net_unit_usd per row instead costs ~18us a call, measured 2026-10-13,
+// which is tens of seconds over the MTG lanes.
+//
+// A US copy can also go to a vendor, who pays a flat share of market with no
+// fees or postage (the 'vendor' profile, 80%; backend 000553). The net is the
+// better of the two channels, matching exit_net_best_unit_usd: with vendors at
+// 80%, TCGplayer wins only from about $20 to $50 and above about $100.
+function exitCostJoin(gradeExpr: string): string {
+  return `LEFT JOIN exit_cost_profiles xf
+        ON xf.platform = CASE WHEN x.market_region = 'NA'
+                              THEN CASE WHEN ${gradeExpr} > 0 THEN 'ebay' ELSE 'tcgplayer' END
+                         END
+      LEFT JOIN exit_cost_profiles vf
+        ON vf.platform = 'vendor' AND x.market_region = 'NA'`;
+}
+function netFrom(alias: string): string {
+  return `public.exit_net_from_costs(x.normalized_price::numeric, ${alias}.fee_pct, ${alias}.fixed_fee,
+                    ${alias}.postage_usd, ${alias}.tracked_postage_usd, ${alias}.tracked_from_usd,
+                    ${alias}.signature_postage_usd, ${alias}.signature_from_usd)`;
+}
+const NET_EXIT = `CASE WHEN xf.platform IS NULL THEN x.normalized_price::numeric
+             ELSE GREATEST(${netFrom("xf")}, ${netFrom("vf")})
+           END`;
+
 // computeAndInsert writes one slice of a game's card summaries: a raw
 // condition tier, or graded copies at tier -1. The lane choice is the
 // backend's compute_price_lanes (migration 000678), called with every source
