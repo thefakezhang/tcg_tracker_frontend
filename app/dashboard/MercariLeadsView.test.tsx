@@ -162,6 +162,32 @@ const UNREAD_PSA: MercariLead = {
 
 // A vintage card the seller rates 3-6, priced as damaged at P25 of the same
 // raw sales, with its Near Mint value kept beside it (backend 000617).
+// A mid-era card (CP3, 2016-01-29) the seller rates 4, priced at the
+// ladder's Lightly Played step of its Near Mint value (backend 000681, #2905).
+const LADDER_MID: MercariLead = {
+  ...RAW,
+  external_item_id: "m77777777777",
+  canonical_url: "https://jp.mercari.com/item/m77777777777",
+  sanitized_title: "リザードン U CP3 ポケキュンコレクション 005/032",
+  set_code: "CP3",
+  set_name: "ポケキュンコレクション",
+  card_number: "005/032",
+  match_tier: "exact",
+  lane: "mid_raw",
+  seller_condition_id: "4",
+  ask_jpy: 5500,
+  landed_ask_usd: 34.54,
+  value_usd: 84.29,
+  value_condition: "lp",
+  nm_value_usd: 112.39,
+  value_basis: "tcgplayer_market_v0",
+  value_sample_count: 1,
+  value_window_days: 30,
+  selling_cost_usd: 18.5,
+  net_value_usd: 65.79,
+  multiple: 1.905,
+};
+
 const DAMAGED_VINTAGE: MercariLead = {
   ...RAW,
   external_item_id: "m66666666666",
@@ -365,6 +391,9 @@ describe("MercariLeadsView", () => {
     await onlyCard();
     const lanes = screen.getByRole("group", { name: "Lane" });
     expect(within(lanes).getByRole("button", { name: "Modern raw" }).getAttribute("aria-pressed")).toBe("true");
+    // The raw lanes are eras, in order: modern, mid era, vintage (#2905).
+    expect(within(lanes).getAllByRole("button").map((button) => button.textContent))
+      .toEqual(["Modern raw", "Mid-era raw", "Vintage raw", "PSA", "Unpriced", "Slab plays"]);
     fireEvent.click(within(lanes).getByRole("button", { name: "PSA" }));
 
     await waitFor(() => expect(screen.getByText(PSA10.sanitized_title)).toBeTruthy());
@@ -375,6 +404,17 @@ describe("MercariLeadsView", () => {
     for (const [filters] of loader.mock.calls) {
       expect(["modern_raw", "psa"]).toContain(filters.lane);
     }
+  });
+
+  it("reads the mid-era lane from the URL and asks for it alone", async () => {
+    window.history.replaceState(null, "", "/dashboard?view=mercari&lane=mid_raw");
+    const loader = vi.fn(async () => page([LADDER_MID]));
+    view(loader);
+
+    await onlyCard();
+    expect(loader).toHaveBeenCalledWith({ ...DEFAULT_LEAD_FILTERS, lane: "mid_raw" }, null);
+    const lanes = screen.getByRole("group", { name: "Lane" });
+    expect(within(lanes).getByRole("button", { name: "Mid-era raw" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("reads the lane and sort from the URL and sorts newest on request", async () => {
@@ -590,6 +630,38 @@ describe("MercariLeadsView", () => {
     expect(card.textContent).toContain("$45.00 · Provisional eBay value, priced as damaged (bottom quarter of raw sales)");
     expect(within(card).getByTestId("mercari-lead-nm-value").textContent).toBe("Near Mint $120.00");
     expect(card.textContent).not.toContain("from raw sales");
+  });
+
+  it("prices a mid-era card rated 4 at the ladder's Lightly Played step, with a multiple and its Near Mint value (#2905)", async () => {
+    view(vi.fn(async () => page([LADDER_MID])));
+
+    const card = await onlyCard();
+    const multiple = within(card).getByTestId("mercari-lead-multiple");
+    expect(multiple.textContent).toContain("1.91x");
+    expect(multiple.textContent).toContain("net value over the landed ask, priced as Lightly Played");
+    expect(card.textContent).toContain("$84.29 · TCGplayer market, priced as Lightly Played, 0.75 of Near Mint");
+    expect(within(card).getByTestId("mercari-lead-nm-value").textContent).toBe("Near Mint $112.39");
+    expect(within(card).getByTestId("mercari-lead-evidence").textContent).toBe("1 sale in the last 30 days, on Oct\u00a028,\u00a02026");
+    expect(card.textContent).not.toContain("from raw sales");
+  });
+
+  it("names every ladder step, and words one in Japanese", async () => {
+    const steps = [
+      ["3", "nm_lp", "between Near Mint and Lightly Played, 0.875 of Near Mint"],
+      ["5", "mp", "Moderately Played, 0.54 of Near Mint"],
+      ["6", "damaged", "Damaged, 0.30 of Near Mint"],
+    ] as const;
+    for (const [condition, step, text] of steps) {
+      const { unmount } = view(vi.fn(async () => page([{ ...LADDER_MID, seller_condition_id: condition, value_condition: step }])));
+      expect((await onlyCard()).textContent).toContain(`priced as ${text}`);
+      unmount();
+    }
+    window.localStorage.setItem("language", "ja");
+    view(vi.fn(async () => page([LADDER_MID])));
+    const card = await onlyCard();
+    expect(card.textContent).toContain("軽い使用感（LP）として評価、美品の0.75倍");
+    expect(within(card).getByTestId("mercari-lead-multiple").textContent).toContain("正味の価値 ÷ 到着価格（軽い使用感（LP）として評価）");
+    expect(within(card).getByTestId("mercari-lead-nm-value").textContent).toBe("美品の場合 $112.39");
   });
 
   it("labels the card with its edition and finish from the typed axes, and names the match tier", async () => {
@@ -1505,7 +1577,7 @@ describe("MercariLeadsView slab plays and the seller's condition", () => {
 
 describe("parseMercariLeads", () => {
   it("accepts every lane's real shape and numeric strings", () => {
-    expect(parseMercariLeads([RAW, PSA10, UNREAD_PSA, UNPRICED, DAMAGED_VINTAGE])).toHaveLength(5);
+    expect(parseMercariLeads([RAW, PSA10, UNREAD_PSA, UNPRICED, DAMAGED_VINTAGE, LADDER_MID])).toHaveLength(6);
     expect(parseMercariLeads([{ ...RAW, ask_jpy: "6000", multiple: "2.477" }])[0]).toMatchObject({ ask_jpy: 6000, multiple: 2.477 });
   });
 
@@ -1523,7 +1595,37 @@ describe("parseMercariLeads", () => {
     expect(() => parseMercariLeads([{ ...RAW, value_usd: null }])).toThrow("Invalid Mercari lead raw value");
   });
 
-  it("accepts the 000617 shapes: damaged vintage with a multiple, modern 3-6 evidence, thin PSA evidence", () => {
+  it("accepts the ladder in every raw lane: each seller condition 3 to 6 at its step, with a multiple (#2905)", () => {
+    const steps = [["3", "nm_lp"], ["4", "lp"], ["5", "mp"], ["6", "damaged"]] as const;
+    for (const lane of ["modern_raw", "mid_raw", "vintage_raw"] as const) {
+      for (const [condition, step] of steps) {
+        const [lead] = parseMercariLeads([{ ...LADDER_MID, lane, seller_condition_id: condition, value_condition: step }]);
+        expect(lead).toMatchObject({ lane, value_condition: step, value_usd: 84.29, nm_value_usd: 112.39, multiple: 1.905 });
+      }
+      // A card rated 1-2 is still Near Mint in every era.
+      expect(parseMercariLeads([{ ...RAW, lane }])[0].value_condition).toBe("nm");
+    }
+    // A step may equal Near Mint when the value rounds to it; the parser never recomputes the share.
+    expect(parseMercariLeads([{ ...LADDER_MID, value_usd: 112.39 }])[0].value_usd).toBe(112.39);
+    // An unpriced or evidence-free mid-era row is shown the way the other raw lanes are.
+    expect(parseMercariLeads([{ ...LADDER_MID, kept_for: "slab_play", multiple: null, net_value_usd: -1 }])[0].kept_for).toBe("slab_play");
+  });
+
+  it("fails closed on a ladder step the seller's condition does not give, above Near Mint, or withheld", () => {
+    expect(() => parseMercariLeads([{ ...LADDER_MID, value_condition: "nm_lp" }])).toThrow("Invalid Mercari lead seller condition");
+    expect(() => parseMercariLeads([{ ...LADDER_MID, seller_condition_id: "2" }])).toThrow("Invalid Mercari lead seller condition");
+    expect(() => parseMercariLeads([{ ...LADDER_MID, value_usd: 120 }])).toThrow("Invalid Mercari lead raw value");
+    expect(() => parseMercariLeads([{ ...LADDER_MID, multiple: null, multiple_withheld_reason: "seller_condition_3_6" }]))
+      .toThrow("Invalid Mercari lead seller condition");
+    expect(() => parseMercariLeads([{ ...LADDER_MID, value_condition: "hp" }])).toThrow("Invalid Mercari lead value condition");
+    // Publisher v18's shapes belong to the lanes it wrote them in, never the mid era.
+    expect(() => parseMercariLeads([{ ...DAMAGED_VINTAGE, lane: "mid_raw" }])).toThrow("Invalid Mercari lead seller condition");
+    expect(() => parseMercariLeads([{
+      ...RAW, lane: "mid_raw", seller_condition_id: "4", multiple: null, multiple_withheld_reason: "seller_condition_3_6",
+    }])).toThrow("Invalid Mercari lead seller condition");
+  });
+
+  it("accepts publisher v18's shapes until they are rewritten: damaged vintage with a multiple, modern 3-6 evidence, thin PSA evidence", () => {
     const [damaged, modernEvidence, thinPsa] = parseMercariLeads([
       DAMAGED_VINTAGE,
       { ...RAW, seller_condition_id: "4", multiple: null, multiple_withheld_reason: "seller_condition_3_6" },
@@ -1554,10 +1656,17 @@ describe("parseMercariLeads", () => {
     expect(() => parseMercariLeads([{ ...RAW, multiple: null, multiple_withheld_reason: "psa_thin_comps" }])).toThrow("Invalid Mercari lead seller condition");
   });
 
-  it("fails closed on a TCGplayer value outside a raw Near Mint row or its 30-day window", () => {
+  it("fails closed on a TCGplayer value off a raw lane, on the eBay rule's damaged P25, or outside its windows", () => {
     const tcgplayer = { ...RAW, value_basis: "tcgplayer_market_v0", value_window_days: 30 };
     expect(parseMercariLeads([tcgplayer])).toHaveLength(1);
-    expect(() => parseMercariLeads([{ ...tcgplayer, value_window_days: 60 }])).toThrow("Invalid Mercari lead value window");
+    // The window that decided the source: 30, then 60, then 180 days (#2905).
+    for (const days of [60, 180]) {
+      expect(parseMercariLeads([{ ...tcgplayer, value_window_days: days }])[0].value_window_days).toBe(days);
+    }
+    expect(parseMercariLeads([{ ...LADDER_MID, value_window_days: 180 }])).toHaveLength(1);
+    expect(() => parseMercariLeads([{ ...tcgplayer, value_window_days: 90 }])).toThrow("Invalid Mercari lead value window");
+    expect(() => parseMercariLeads([{ ...tcgplayer, value_window_days: null }])).toThrow("Invalid Mercari lead value basis");
+    expect(() => parseMercariLeads([{ ...tcgplayer, value_sample_count: 0 }])).toThrow("Invalid Mercari lead value basis");
     expect(() => parseMercariLeads([{ ...RAW, value_window_days: 30 }])).toThrow("Invalid Mercari lead value window");
     expect(() => parseMercariLeads([{ ...DAMAGED_VINTAGE, value_basis: "tcgplayer_market_v0", value_window_days: 30 }]))
       .toThrow("Invalid Mercari lead value basis");
@@ -1570,7 +1679,8 @@ describe("parseMercariLeads", () => {
     expect(() => parseMercariLeads([{ ...RAW, nm_value_usd: 150 }])).toThrow("Invalid Mercari lead raw value");
     expect(() => parseMercariLeads([{ ...RAW, value_condition: null }])).toThrow("Invalid Mercari lead raw value");
     expect(() => parseMercariLeads([{ ...RAW, nm_value_usd: null }])).toThrow("Invalid Mercari lead raw value");
-    expect(() => parseMercariLeads([{ ...RAW, value_condition: "lp" }])).toThrow("Invalid Mercari lead value condition");
+    expect(() => parseMercariLeads([{ ...RAW, value_condition: "lp" }])).toThrow("Invalid Mercari lead seller condition");
+    expect(() => parseMercariLeads([{ ...RAW, value_condition: "hp" }])).toThrow("Invalid Mercari lead value condition");
   });
 
   it("fails closed on a PSA row with a raw value condition or a misplaced thin-comps reason", () => {

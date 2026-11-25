@@ -106,8 +106,13 @@ export function parseMercariFeedParam(value: string | null | undefined): Mercari
 /** The Mercari leads feed's lane leaf param: one lane at a time, so lanes never mix. */
 export const MERCARI_LANE_PARAM = "lane";
 
-/** The lead lanes a row carries; the same vocabulary as mercari_leads_v.lane. */
-export const MERCARI_LEAD_LANES = ["modern_raw", "vintage_raw", "psa", "unpriced"] as const;
+/**
+ * The lead lanes a row carries; the same vocabulary as mercari_leads_v.lane.
+ * The three raw lanes are eras of the card's set (backend 000681, #2905):
+ * modern from Sun & Moon (2016-11-18), mid era from Diamond & Pearl
+ * (2006-11-30), vintage before it or with no release date.
+ */
+export const MERCARI_LEAD_LANES = ["modern_raw", "mid_raw", "vintage_raw", "psa", "unpriced"] as const;
 export type MercariLeadLane = (typeof MERCARI_LEAD_LANES)[number];
 
 /**

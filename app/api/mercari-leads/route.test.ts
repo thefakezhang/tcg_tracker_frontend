@@ -194,6 +194,16 @@ describe("protected Mercari leads route", () => {
     expect(body.next_cursor).toBeNull();
   });
 
+  it("reads the mid-era lane as its own lane (#2905)", async () => {
+    const query = serve([group("m11111111111", { multiple: 1.905 })], [row("m11111111111", { multiple: 1.905 })]);
+
+    const response = await GET(request("?lane=mid_raw"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("mercari_lead_groups", expect.objectContaining({ p_lane: "mid_raw" }));
+    expect(query.calls).toContainEqual(["eq", ["lane", "mid_raw"]]);
+  });
+
   it("passes every filter and toggle to the grouped feed", async () => {
     serve([], []);
 
