@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RowSelectionState } from "@tanstack/react-table";
-import { ChevronDown, CircleAlert, Hash, RefreshCw } from "lucide-react";
+import { ChevronDown, CircleAlert, Hash, Minus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -58,7 +58,13 @@ import { DecisionActions } from "./DecisionActions";
 import { browserOpportunityPayloads, recordOpportunityExposures } from "./opportunity-exposures";
 import { sourceLabel } from "@/lib/source-labels";
 import type { SourceSide } from "./source-availability";
-import { laneSourceSets, type LaneSourceOption } from "./lane-sources";
+import {
+  laneSourceSets,
+  regionTick,
+  soleTickedRegion,
+  withRegionExits,
+  type LaneSourceOption,
+} from "./lane-sources";
 import { JapanExclusiveEvidence } from "./JapanExclusiveEvidence";
 import { MtgLabelEvidence } from "./MtgLabelEvidence";
 import type { JapanExclusivityDimension } from "./japan-exclusivity";
@@ -217,17 +223,20 @@ export default function CardBrowser() {
     [activeGame, requiredSource, sourceSide, excludedExits, exitOptionSources],
   );
   const includedExits = exitOptionSources.filter((source) => !excludedExits.includes(source));
+  const regionLabel = (region: string) =>
+    region === "NA" ? t("cardBrowser.regionNA") : region === "JP" ? t("cardBrowser.regionJP") : region;
+  const soleExitRegion = soleTickedRegion(exitByRegion, excludedExits);
   const sellToLabel = excludedExits.length === 0
     ? t("cardBrowser.sellToAll")
     : includedExits.length === 0
       ? t("cardBrowser.sellToNone")
       : includedExits.length === 1
         ? `${t("cardBrowser.sellToPrefix")}${sourceLabel(includedExits[0])}`
-        : excludedExits.length === 1
-          ? t("cardBrowser.sellToWithout", { source: sourceLabel(excludedExits[0]) })
-          : t("cardBrowser.sellToSome", { count: includedExits.length });
-  const regionLabel = (region: string) =>
-    region === "NA" ? t("cardBrowser.regionNA") : region === "JP" ? t("cardBrowser.regionJP") : region;
+        : soleExitRegion !== null
+          ? t("cardBrowser.sellToRegionOnly", { region: regionLabel(soleExitRegion) })
+          : excludedExits.length === 1
+            ? t("cardBrowser.sellToWithout", { source: sourceLabel(excludedExits[0]) })
+            : t("cardBrowser.sellToSome", { count: includedExits.length });
   const shopLabel = requiredSource
     ? `${t(sourceSide === "sell" ? "cardBrowser.buyAtPrefix" : "cardBrowser.sellToPrefix")}${sourceLabel(requiredSource)}`
     : t(activeGame === "pokemon" ? "cardBrowser.buyAtAll" : "cardBrowser.shopAll");
@@ -679,12 +688,46 @@ export default function CardBrowser() {
               >
                 {t("cardBrowser.sellToClear")}
               </DropdownMenuItem>
-              {exitByRegion.map(([region, options]) => (
+              {exitByRegion.map(([region, options]) => {
+                const regionSources = options.map((option) => option.source);
+                const tick = regionTick(regionSources, excludedExits);
+                return (
                 <DropdownMenuGroup key={region || "other"}>
                   <DropdownMenuSeparator />
-                  <DropdownMenuLabel>{regionLabel(region)}</DropdownMenuLabel>
+                  {/* The region heading is itself a tick box: it ticks or
+                      unticks every site in the region at once. */}
+                  <DropdownMenuCheckboxItem
+                    checked={tick.state === "all"}
+                    onCheckedChange={() =>
+                      setExcludedExits((current) =>
+                        withRegionExits(
+                          current,
+                          regionSources,
+                          regionTick(regionSources, current).state !== "all",
+                        ))}
+                    className="min-h-11 font-medium sm:min-h-0"
+                    data-region={region || "other"}
+                    data-tick={tick.state}
+                    title={t("cardBrowser.sellToRegionHint", { region: regionLabel(region) })}
+                  >
+                    {regionLabel(region)}
+                    {tick.state === "some" && (
+                      <>
+                        <span className="text-xs font-normal text-muted-foreground">
+                          {t("cardBrowser.sellToRegionCount", { included: tick.included, total: tick.total })}
+                        </span>
+                        <span
+                          aria-hidden
+                          className="pointer-events-none absolute right-2 flex items-center justify-center"
+                        >
+                          <Minus className="size-4" />
+                        </span>
+                      </>
+                    )}
+                  </DropdownMenuCheckboxItem>
                   {options.map((option) => (
                     <DropdownMenuCheckboxItem
+                      inset
                       key={`${region}:${option.source}`}
                       checked={!excludedExits.includes(option.source)}
                       onCheckedChange={(checked) =>
@@ -701,7 +744,8 @@ export default function CardBrowser() {
                     </DropdownMenuCheckboxItem>
                   ))}
                 </DropdownMenuGroup>
-              ))}
+                );
+              })}
             </DropdownMenuContent>
           </DropdownMenu>
         )}

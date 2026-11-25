@@ -66,3 +66,52 @@ export function laneSourceSets(input: {
 export function laneSourceSetsKey(sets: LaneSourceSets | null): string {
   return sets === null ? "" : JSON.stringify([sets.entry, sets.exit]);
 }
+
+// "Sell to" by region: one tick on a region heading ticks or unticks every exit
+// source in that region, and the heading shows whether all, some or none of
+// them are ticked. Sources are the unit of the selection, so a source listed
+// under two regions follows whichever region was toggled last.
+export type RegionTick = "all" | "some" | "none";
+
+export function regionTick(
+  regionSources: readonly string[],
+  excludedExits: readonly string[],
+): { state: RegionTick; included: number; total: number } {
+  const unique = [...new Set(regionSources)];
+  const included = unique.filter((source) => !excludedExits.includes(source)).length;
+  const state: RegionTick =
+    included === unique.length ? "all" : included === 0 ? "none" : "some";
+  return { state, included, total: unique.length };
+}
+
+// The exclusions after ticking (include) or unticking every source of one
+// region. Every other source keeps the state it had.
+export function withRegionExits(
+  excludedExits: readonly string[],
+  regionSources: readonly string[],
+  include: boolean,
+): string[] {
+  if (include) {
+    return excludedExits.filter((source) => !regionSources.includes(source));
+  }
+  return [...new Set([...excludedExits, ...regionSources])];
+}
+
+// The region whose sources are exactly the ticked ones, when some but not all
+// sources are ticked, so the button can say "Sell to: NA only".
+export function soleTickedRegion(
+  byRegion: readonly (readonly [string, readonly LaneSourceOption[]])[],
+  excludedExits: readonly string[],
+): string | null {
+  if (excludedExits.length === 0) return null;
+  const all = new Set(byRegion.flatMap(([, options]) => options.map((option) => option.source)));
+  const ticked = new Set([...all].filter((source) => !excludedExits.includes(source)));
+  if (ticked.size === 0) return null;
+  for (const [region, options] of byRegion) {
+    const sources = new Set(options.map((option) => option.source));
+    if (sources.size === ticked.size && [...sources].every((source) => ticked.has(source))) {
+      return region;
+    }
+  }
+  return null;
+}
