@@ -86,4 +86,10 @@ echo "Deploying $fn to $project_ref ..."
 # 2.122.1 is the v2.stable tag and reads the config; moving to v3 means
 # migrating config.toml first, which every worktree's local stack shares.
 SUPABASE_CLI_VERSION=2.122.1
-npx --yes "supabase@$SUPABASE_CLI_VERSION" functions deploy "$fn" --project-ref "$project_ref"
+# --use-api bundles server-side. Without it the CLI pulls and runs a Docker
+# image to bundle, and on 2026-11-25 that happened on the workstation while the
+# 130point browser lanes were running. AGENTS.md (backend) forbids anything that
+# can touch host networking under a live browser scraper, because Chromium
+# surfaces a route change as net::ERR_NETWORK_CHANGED; that deploy got away
+# with it, and a deploy must not depend on luck.
+npx --yes "supabase@$SUPABASE_CLI_VERSION" functions deploy "$fn" --project-ref "$project_ref" --use-api
