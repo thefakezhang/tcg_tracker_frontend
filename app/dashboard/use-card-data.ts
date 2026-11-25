@@ -736,15 +736,22 @@ export async function fetchCardRowsByIds(
 
 export type RegionFilter = "all" | "NA" | "JP";
 
-export function useAvailableCardSources(
-  activeGame: Game,
-  sourceSide: SourceSide,
-): string[] {
-  const [sources, setSources] = useState<string[]>([]);
+// The shops with a current offer, per side, for MTG's shop filter: "sell" is a
+// shop selling copies (we buy there), "buy" a shop's buylist (we sell there).
+// Pokemon singles use useLaneSourceOptions instead. One read for both sides.
+export interface CardSourceOptions {
+  sell: string[];
+  buy: string[];
+}
+
+const NO_CARD_SOURCES: CardSourceOptions = { sell: [], buy: [] };
+
+export function useAvailableCardSources(activeGame: Game): CardSourceOptions {
+  const [sources, setSources] = useState<CardSourceOptions>(NO_CARD_SOURCES);
 
   useEffect(() => {
     if (activeGame === "pokemon_sealed") {
-      setSources([]);
+      setSources(NO_CARD_SOURCES);
       return;
     }
 
@@ -752,30 +759,32 @@ export function useAvailableCardSources(
     const supabase = createClient();
     void supabase
       .from(SOURCE_OPTIONS_VIEW)
-      .select("source")
+      .select("source, source_side")
       .eq("game", activeGame)
-      .eq("source_side", sourceSide)
       .gt("entry_count", 0)
       .order("source", { ascending: true })
       .then(({ data, error }) => {
         if (!current) return;
         if (error) {
           console.error("Failed to load source filter options:", error);
-          setSources([]);
+          setSources(NO_CARD_SOURCES);
           return;
         }
-        setSources((data ?? []).map((row) => String(row.source)));
+        const rows = (data ?? []) as { source: string; source_side: string }[];
+        const pick = (side: SourceSide): string[] =>
+          [...new Set(rows.filter((row) => row.source_side === side).map((row) => String(row.source)))];
+        setSources({ sell: pick("sell"), buy: pick("buy") });
       });
 
     return () => {
       current = false;
     };
-  }, [activeGame, sourceSide]);
+  }, [activeGame]);
 
   return sources;
 }
 
-// The sources a Pokemon lane can use, per side, for the "Source" and "Exits"
+// The sources a Pokemon lane can use, per side, for the "Buy at" and "Sell to"
 // selectors (pokemon_lane_source_options_v). Empty for other games.
 export function useLaneSourceOptions(activeGame: Game): LaneSourceOptions {
   const [options, setOptions] = useState<LaneSourceOptions>({ entry: [], exit: [] });

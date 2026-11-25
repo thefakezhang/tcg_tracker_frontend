@@ -1,5 +1,4 @@
 import type { Game } from "./GameContext";
-import type { SourceSide } from "./source-availability";
 
 // Source-restricted lanes (backend docs/source_lanes.md, #2890).
 //
@@ -33,37 +32,31 @@ export interface LaneSourceSets {
   exit: string[] | null;
 }
 
-// Turns the browser's selectors into the lane function's source sets, or null
-// when nothing restricts the lane and the stored summaries already answer.
+// Turns the browser's two Pokemon selectors into the lane function's source
+// sets, or null when nothing restricts the lane and the stored summaries
+// already answer. Both read from the operator's side (#2927):
 //
-//   Source "For sale: X"  -> the card is bought from X: entry set {X}
-//   Source "Buylist: X"   -> the card is sold to X:     exit set {X}
-//   Exits, some unticked  -> exit set = the ticked exit sources
+//   "Buy at X"                -> the card is bought from X: entry set {X}
+//   "Sell to", some unticked  -> the card is sold to a ticked site: exit set
 //
-// The two exit restrictions intersect, so "Buylist: X" with X unticked is an
-// empty exit set and returns nothing, which is what was asked for.
+// A single "Sell to" site is the exit set {X}; every site unticked is the empty
+// exit set, which returns nothing, which is what was asked for.
 //
 // Exclusions are kept rather than inclusions so that a source that starts
 // publishing later is included by default, the way it is in the stored view.
 export function laneSourceSets(input: {
   game: Game;
-  requiredSource: string;
-  sourceSide: SourceSide;
+  buyAt: string;
   excludedExits: readonly string[];
   exitOptions: readonly string[];
 }): LaneSourceSets | null {
   if (input.game !== "pokemon") return null;
 
-  const entry =
-    input.sourceSide === "sell" && input.requiredSource ? [input.requiredSource] : null;
-
-  let exit: string[] | null =
+  const entry = input.buyAt ? [input.buyAt] : null;
+  const exit =
     input.excludedExits.length > 0
       ? input.exitOptions.filter((source) => !input.excludedExits.includes(source))
       : null;
-  if (input.sourceSide === "buy" && input.requiredSource) {
-    exit = (exit ?? [input.requiredSource]).filter((source) => source === input.requiredSource);
-  }
 
   if (entry === null && exit === null) return null;
   return { entry, exit };
