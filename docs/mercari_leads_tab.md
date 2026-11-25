@@ -186,6 +186,14 @@ On a cold-crawl lead a request is recorded only, because only fresh leads are qu
 
 The match tier is the one new field that does not fail closed: a tier the matcher adds later is shown by its code, because it says how the card was read, not what it is worth.
 
+### Identified from photo (backend #2937)
+
+Since publisher v22 a listing whose title names a card but not which printing (one the title rules refuse) can still be a lead: a lead check matched its photo 1 against every printing whose name contains the title's name, and the publisher named the printing it showed, at match tier `photo_identity`.
+Printings with the same art (a reprint, an edition, a finish) are priced at the cheapest of them, and a lead is unpriced when one of them has no value.
+Such a card carries a sky-blue "Identified from photo" badge beside the photo-check badge, whose hover text says how the card was named, and its match line reads "Card match: photo 1 (the title names no printing)" instead of "Title match: ...".
+The row has no title set code or number (000686), and the parser needs nothing new: `match_tier` parses as any string.
+The fresh-lead photo check and the status re-checks apply to these leads as to any other, so a full-gallery check can still confirm or contradict the card.
+
 ### What a lead card shows
 
 - The listing title, linked to the listing.
