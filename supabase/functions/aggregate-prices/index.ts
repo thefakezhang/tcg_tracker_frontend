@@ -115,15 +115,20 @@ const exitEvidence = (p25: string, p75: string, liquid: string) =>
      ELSE 'unclassified'
    END::exit_evidence_enum`;
 
-// Indicator sources: price guides and sold-comp trackers, not shops the
-// operator can transact with. They no longer need excluding from the summary
-// itself - an estimate can only ever be an EXIT (they write no asks the lane
-// would use as an entry), it ranks below every transacted price, and
-// best_buy_kind labels it. The per-source availability snapshot still leaves
-// them out: its Buylist / For-sale toggle answers "which shops carry this",
-// and an estimate is not a shop. Widening that filter to price kinds is the
-// next increment. SQL fragment.
-const INDICATOR_LOCATIONS = "'collectr', 'cardladder', 'pricecharting'";
+// The per-source snapshot leaves out estimates, by price kind (#3000). A
+// valuation (a price guide's figure) can only ever be an exit, it ranks below
+// every transacted price, and the snapshot's readers ask what a source
+// actually offered or sold: the MTG shop menu, and the Mercari lead screen,
+// which screens a title against every source's evidence at its grade.
+//
+// It used to leave out a list of names - collectr, cardladder, pricecharting -
+// written when all three were price guides. Card Ladder publishes sold comps
+// with a measured spread since #2913, the evidence 130point publishes, and the
+// name list was then excluding nothing else: on 2026-11-26 neither Collectr
+// nor PriceCharting held a Pokemon listing and no listing was a valuation. So
+// the snapshot held 130point's graded sales and not Card Ladder's, and the
+// Mercari screen judged a slab without them. SQL fragment.
+const SNAPSHOT_KIND_FILTER = "COALESCE(ml.price_kind::text, 'ask') <> 'valuation'";
 
 serve(async () => {
   const pool = new Pool(Deno.env.get("SUPABASE_DB_URL")!, 1, true);
@@ -554,9 +559,9 @@ async function insertBySourceCards(
       JOIN locations l ON l.location_id = ml.location_id
       LEFT JOIN exchange_rates er ON er.from_currency = ml.currency AND er.to_currency = 'USD'
       WHERE
-        -- The source toggle answers "which shops carry this"; an estimate is
-        -- not a shop (see INDICATOR_LOCATIONS).
-        l.name NOT IN (${INDICATOR_LOCATIONS})
+        -- Evidence a source offered or sold; an estimate is left out (see
+        -- SNAPSHOT_KIND_FILTER).
+        ${SNAPSHOT_KIND_FILTER}
         AND CASE
           WHEN '${psaMode}' = 'non-psa' THEN ml.psa_grade = 0
           ELSE ml.psa_grade > 0

@@ -28,7 +28,8 @@ To sell to exactly one site, untick every site and tick that one.
 A summary row carries one lane, an entry, an exit and the ROI between them, chosen from every source, so a filter over those rows cannot answer either question: restricting the sources changes which entry and which exit win.
 With "Buy at" or "Sell to" set, the page reads the backend function `pokemon_price_lanes_browser(tier, psa, entry_sources, exit_sources)`, which chooses each card's lane again from the allowed sources by the same rules as the stored summaries (backend `docs/source_lanes.md`).
 `lane-sources.ts` turns the two selectors into those source sets; with neither set, the browse reads the stored summaries.
-The options come from `pokemon_lane_source_options_v`, which includes cardladder, a real exit that the per-source snapshot leaves out.
+The options come from `pokemon_lane_source_options_v`, which lists exactly the sources the lane function chooses from, cardladder included.
+They do not come from `card_browser_source_options_v`, which is derived from aggregate-prices' per-source snapshot and, until #3000, left cardladder out.
 "Sell to" stores exclusions rather than inclusions, so a source that starts publishing later is included by default.
 
 **MTG is a presence gate.**
