@@ -11,9 +11,11 @@ import type { Game } from "./GameContext";
 // pokemon_price_lanes_browser returns it shaped as the browser view.
 export const LANE_BROWSER_RPC = "pokemon_price_lanes_browser";
 
-// Every source a Pokemon lane can use, per side. Not card_browser_source_options_v:
-// that one leaves out cardladder, a real exit, so an "all but X" selection
-// built from it would drop cardladder too.
+// Every source a Pokemon lane can use, per side, read from the listings the
+// lane function chooses from. Not card_browser_source_options_v, which is
+// derived from aggregate-prices' per-source snapshot: an "all but X" selection
+// must list exactly the exits the lane can pick, and until #3000 that snapshot
+// left out cardladder, a real exit.
 export const LANE_SOURCE_OPTIONS_VIEW = "pokemon_lane_source_options_v";
 
 export interface LaneSourceOption {

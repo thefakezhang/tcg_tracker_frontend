@@ -198,8 +198,8 @@ export default function CardBrowser() {
   const selectionEnabled = activeGame === "pokemon";
   // MTG's shop filter offers both sides from the per-source snapshot.
   const availableSources = useAvailableCardSources(activeGame);
-  // Pokemon offers the sources its lanes can use, cardladder included; the
-  // per-source snapshot behind availableSources leaves cardladder out.
+  // Pokemon offers exactly the sources its lanes can use, cardladder included
+  // (see LANE_SOURCE_OPTIONS_VIEW).
   const laneOptions = useLaneSourceOptions(activeGame);
   const exitOptionSources = useMemo(
     () => [...new Set(laneOptions.exit.map((option) => option.source))],

@@ -572,8 +572,7 @@ describe("CardBrowser lane sources", () => {
     await act(async () => {});
     fireEvent.click(screen.getByTestId("browser-sell-to"));
     fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: /^130point/ }));
-    // cardladder is a real exit the per-source snapshot leaves out; an
-    // "all but 130point" selection must keep it.
+    // cardladder is a real exit; an "all but 130point" selection must keep it.
     await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
       laneSources: { entry: null, exit: ["cardladder", "cardrush", "surugaya"] },
     })));
