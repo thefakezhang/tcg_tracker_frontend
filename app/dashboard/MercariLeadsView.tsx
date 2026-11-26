@@ -49,14 +49,15 @@ export type { MercariFeedLane, MercariLeadFormat, MercariLeadLane, MercariLeadSo
 export type MercariPhotoState = "unchecked" | "confirmed" | "conflict" | "inconclusive" | "rejected";
 export type MercariLeadAction = "dismissed" | "photo_check_requested";
 export type MercariSourceStatus = "ON_SALE" | "TRADING" | "SOLD_OUT" | "UNKNOWN";
-export type MercariWithheldReason = "seller_condition_3_6" | "psa_grade_unread" | "psa_thin_comps";
+// Why a priced row carries no multiple: only ever a PSA row's (backend 000689,
+// #2916, dropped publisher v18's seller_condition_3_6).
+export type MercariWithheldReason = "psa_grade_unread" | "psa_thin_comps";
 // How a raw row is valued (backend 000681, #2905): Near Mint for a card the
 // seller rates 1-2, and for 3-6 a step of a condition ladder below its Near
-// Mint value, in every era. damaged_p25 (a vintage 3-6 at P25 of the eBay
-// window, backend 000617) is publisher v18's shape, read until every row is
-// rewritten.
+// Mint value, in every era. Backend 000689 (#2916) dropped publisher v18's
+// damaged_p25, so nothing else parses.
 export type MercariLadderStep = "nm_lp" | "lp" | "mp" | "damaged";
-export type MercariValueCondition = "nm" | MercariLadderStep | "damaged_p25";
+export type MercariValueCondition = "nm" | MercariLadderStep;
 // Where a lead comes from: the fresh lead scan, or the cold crawl, whose rows
 // were retired on 2026-11-02 (backend 000620).
 export type MercariLeadSourceKind = "cold_crawl" | "lead_scan";
@@ -319,8 +320,8 @@ const SELLER_CONDITIONS = new Set(["1", "2", "3", "4", "5", "6"]);
 const SOURCE_STATUSES = new Set(["ON_SALE", "TRADING", "SOLD_OUT", "UNKNOWN"]);
 const SHIPPING_PAYERS = new Set(["seller", "buyer", "unknown"]);
 const RESOLUTIONS = new Set(["uid", "identity", "unresolved"]);
-const WITHHELD_REASONS = new Set(["seller_condition_3_6", "psa_grade_unread", "psa_thin_comps"]);
-const VALUE_CONDITIONS = new Set(["nm", "nm_lp", "lp", "mp", "damaged", "damaged_p25"]);
+const WITHHELD_REASONS = new Set(["psa_grade_unread", "psa_thin_comps"]);
+const VALUE_CONDITIONS = new Set(["nm", "nm_lp", "lp", "mp", "damaged"]);
 // The raw lanes, one per era of the card's set (backend 000681, #2905).
 const RAW_LANES: ReadonlySet<MercariLeadLane> = new Set(["modern_raw", "mid_raw", "vintage_raw"]);
 // The ladder step a seller condition of 3 to 6 is valued at, and its share of
@@ -508,14 +509,10 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
       }
       // The seller's condition, as the operator set it on 2026-11-25 (#2905):
       // a card rated 1-2 is valued Near Mint, and one rated 3-6 at its step of
-      // the ladder, each with a multiple, in every era. Publisher v18's shapes
-      // still read until every row is rewritten: a vintage card rated 3-6 as
-      // damaged at P25, and a modern one at Near Mint as evidence only.
-      const allowed = !ratedThreeToSix
-        ? valueCondition === "nm" && withheld === null
-        : (valueCondition === LADDER_STEP_BY_CONDITION[sellerCondition as "3" | "4" | "5" | "6"] && withheld === null)
-          || (lane === "vintage_raw" && valueCondition === "damaged_p25" && withheld === null)
-          || (lane === "modern_raw" && valueCondition === "nm" && withheld === "seller_condition_3_6");
+      // the ladder, each with a multiple, in every era.
+      const allowed = withheld === null && valueCondition === (!ratedThreeToSix
+        ? "nm"
+        : LADDER_STEP_BY_CONDITION[sellerCondition as "3" | "4" | "5" | "6"]);
       if (!allowed) throw invalid("seller condition", index);
     } else if (lane === "psa") {
       if (valueCondition !== null || nmValue !== null) throw invalid("PSA value", index);
@@ -592,7 +589,7 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
     // sales in 30 days, then 60, then 180 (backend 000681, #2905): basis
     // tcgplayer_market_v0 counts the copies sold in the window that decided,
     // so its window is 30, 60 or 180 days and its count at least one, on a raw
-    // lane at any of its value conditions but the eBay rule's damaged P25.
+    // lane at any of its value conditions.
     // Every other basis keeps the eBay rule's and Card Ladder's 60 or 180 days.
     const tcgplayerBasis = row.value_basis === "tcgplayer_market_v0";
     if (windowDays !== null && !(windowDays === 60 || windowDays === 180 || (tcgplayerBasis && windowDays === 30))) {
@@ -601,7 +598,7 @@ export function parseMercariLeads(value: unknown): MercariLead[] {
     const sampleCount = requiredInteger(row.value_sample_count, "value_sample_count");
     if (sampleCount < 0) throw invalid("sample count", index);
     if (tcgplayerBasis && (!RAW_LANES.has(lane) || valueUsd === null || valueCondition === null
-      || valueCondition === "damaged_p25" || windowDays === null || sampleCount < 1)) {
+      || windowDays === null || sampleCount < 1)) {
       throw invalid("value basis", index);
     }
 
@@ -1080,7 +1077,6 @@ const LADDER_STEP_KEYS: Record<MercariLadderStep, TranslationKey> = {
 
 // psa_thin_comps names its sale count and grade, so it is worded in LeadCard.
 const WITHHELD_KEYS: Record<Exclude<MercariWithheldReason, "psa_thin_comps">, TranslationKey> = {
-  seller_condition_3_6: "mercariLeads.withheld.seller_condition_3_6",
   psa_grade_unread: "mercariLeads.withheld.psa_grade_unread",
 };
 
@@ -1703,19 +1699,16 @@ function LeadCard({
     : unpricedReason;
   const basisKey = VALUE_BASIS_KEYS[lead.value_basis];
   const basis = basisKey ? t(basisKey) : t("mercariLeads.valueBasisOther", { basis: lead.value_basis });
-  // A raw row priced below Near Mint: a ladder step (#2905), or publisher
-  // v18's damaged P25. Either shows its Near Mint value beneath.
-  const damaged = lead.value_condition === "damaged_p25";
+  // A raw row priced below Near Mint, at a ladder step (#2905), shows its
+  // Near Mint value beneath.
   const ladderStep = isLadderStep(lead.value_condition) ? lead.value_condition : null;
   const ladderTier = ladderStep === null ? "" : t(LADDER_STEP_KEYS[ladderStep]);
-  const belowNearMint = damaged || ladderStep !== null;
+  const belowNearMint = ladderStep !== null;
   const valueHolder = lead.value_psa_grade !== null && lead.value_psa_grade > 0
     ? t("mercariLeads.valueAtGrade", { grade: lead.value_psa_grade })
-    : damaged
-      ? t("mercariLeads.valueDamaged")
-      : ladderStep !== null
-        ? t("mercariLeads.valueLadder", { tier: ladderTier, share: LADDER_SHARE[ladderStep] })
-        : t("mercariLeads.valueRaw");
+    : ladderStep !== null
+      ? t("mercariLeads.valueLadder", { tier: ladderTier, share: LADDER_SHARE[ladderStep] })
+      : t("mercariLeads.valueRaw");
   const withheldText = lead.multiple_withheld_reason === null
     ? null
     : lead.multiple_withheld_reason === "psa_thin_comps"
@@ -1923,7 +1916,7 @@ function LeadCard({
               <span className="text-xs text-muted-foreground">
                 {ladderStep !== null
                   ? t("mercariLeads.multipleHintLadder", { tier: ladderTier })
-                  : t(damaged ? "mercariLeads.multipleHintDamaged" : "mercariLeads.multipleHint")}
+                  : t("mercariLeads.multipleHint")}
               </span>
             </div>
           ) : withheldText !== null ? (
