@@ -596,6 +596,44 @@ describe("CardBrowser lane sources", () => {
     expect(screen.getByTestId("browser-sell-to").textContent).toBe("cardBrowser.sellToPrefixCardrush");
   });
 
+  it("ticks and unticks every site of a region from its heading", async () => {
+    render(<CardBrowser />);
+    await act(async () => {});
+    fireEvent.click(screen.getByTestId("browser-sell-to"));
+    const jp = await screen.findByRole("menuitemcheckbox", { name: /^cardBrowser\.regionJP/ });
+    expect(jp.getAttribute("data-tick")).toBe("all");
+    fireEvent.click(jp);
+    // Unticking JP leaves exactly the NA sites, cardladder included.
+    await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      laneSources: { entry: null, exit: ["130point", "cardladder"] },
+    })));
+    expect(screen.getByTestId("browser-sell-to").textContent).toContain("cardBrowser.sellToRegionOnly");
+    const jpAfter = await screen.findByRole("menuitemcheckbox", { name: /^cardBrowser\.regionJP/ });
+    expect(jpAfter.getAttribute("data-tick")).toBe("none");
+    expect(screen.getByRole("menuitemcheckbox", { name: /^Cardrush/ }).getAttribute("aria-checked")).toBe("false");
+    // Ticking the heading again brings every JP site back, so nothing restricts the lane.
+    fireEvent.click(jpAfter);
+    await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      laneSources: null,
+    })));
+    expect(screen.getByTestId("browser-sell-to").textContent).toContain("cardBrowser.sellToAll");
+  });
+
+  it("marks a region whose sites are only partly ticked, with the count", async () => {
+    render(<CardBrowser />);
+    await act(async () => {});
+    fireEvent.click(screen.getByTestId("browser-sell-to"));
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: /^130point/ }));
+    const na = await screen.findByRole("menuitemcheckbox", { name: /^cardBrowser\.regionNA/ });
+    await waitFor(() => expect(na.getAttribute("data-tick")).toBe("some"));
+    expect(na.textContent).toContain("cardBrowser.sellToRegionCount");
+    // A partly ticked region ticks every site when its heading is pressed.
+    fireEvent.click(na);
+    await waitFor(() => expect(mocks.useCardData).toHaveBeenLastCalledWith(expect.objectContaining({
+      laneSources: null,
+    })));
+  });
+
   it("offers Buy at and Sell to for Pokemon singles only; MTG gets one shop menu on either side", async () => {
     mocks.activeGame = "mtg";
     render(<CardBrowser />);
