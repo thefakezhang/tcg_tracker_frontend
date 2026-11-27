@@ -18,7 +18,10 @@ import {
 // grading. Since backend 000653 (#2755) each is graded at the cheapest PSA
 // service level covering its floor: $1,401 at Priority ($79.99), $574 at
 // Standard ($59.99), $30 and $62 at Value ($39.99). Images are left out so
-// the fixture makes no outside request.
+// the fixture makes no outside request. The two raw cards the seller rates
+// 3-6 were measured as publisher v18's damaged P25; since backend 000689
+// (#2916) they sit on the condition ladder at the same value, with the Near
+// Mint value their step implies (6 damaged x0.30, 3 nm_lp x0.875).
 const BASE: MercariLead = {
   external_item_id: "m10425422029",
   source_item_type: "mercari",
@@ -52,8 +55,8 @@ const BASE: MercariLead = {
   title_card_in_photo_scope: true,
   lane: "vintage_raw",
   value_usd: 1050,
-  value_condition: "damaged_p25",
-  nm_value_usd: 1480,
+  value_condition: "damaged",
+  nm_value_usd: 3500,
   value_psa_grade: 0,
   value_basis: "ebay_rule_v0",
   value_as_of: "2026-11-12",
@@ -142,7 +145,8 @@ const UNVERIFIED: MercariLead = {
   current_card_uid: "c0000000-0000-4000-8000-000000000009",
   landed_ask_usd: 25.03,
   value_usd: 210,
-  nm_value_usd: 349,
+  value_condition: "nm_lp",
+  nm_value_usd: 240,
   selling_cost_usd: 37,
   net_value_usd: 173,
   multiple: 6.912,
